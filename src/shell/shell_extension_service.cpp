@@ -185,6 +185,7 @@ struct MenuService::Impl
     std::thread worker;
     std::filesystem::path directory;
     QueryFactory factory;
+    bool nativeFactory = false, usePreparedQuery = false, preparationRequested = false;
     CatalogueReader readCatalogue;
     FolderVerifier verifyFolder;
     BackgroundVerifier verifyBackground;
@@ -193,12 +194,12 @@ struct MenuService::Impl
     explicit Impl(std::filesystem::path path, QueryFactory f, CatalogueReader r, FolderVerifier v, BackgroundVerifier b)
         : directory(std::move(path)), factory(std::move(f)), readCatalogue(std::move(r)), verifyFolder(std::move(v)), verifyBackground(std::move(b))
     {
-        if (!factory) factory = [](const Request &request) {
-            auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000);
+        if (!factory) { nativeFactory = true; factory = [this](const Request &request) {
+            auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000, usePreparedQuery);
             return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); },
                 [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); },
                 [session] { return session->SelectionContexts(); }};
-        };
+        }; }
         if (!readCatalogue)
         {
             readCatalogue = [] { return ReadCatalogue(); };
@@ -262,6 +263,12 @@ struct MenuService::Impl
     bool AnyEnabled() const
     {
         return std::any_of(shown.begin(), shown.end(), [](const auto &ids) { return !ids.empty(); });
+    }
+    bool ObjectPreparationEnabled() const
+    {
+        for (int i = 0; i < 2; ++i)
+            for (const auto &id : shown[i]) if (StateVisibilityId(id) != "state:start-pin") return true;
+        return false;
     }
     bool OnlyStartShown(const Request &request, unsigned contexts = 0) const
     {
@@ -758,7 +765,7 @@ struct MenuService::Impl
     {
         if (scan.valid() && scan.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready)
         {
-            auto value = scan.get(); std::vector<Request> affected;
+            auto value = scan.get(); std::vector<Request> affected; bool retirePreparation = false;
             if (!value.revision)
             {
                 std::lock_guard lock(mutex); scanning = false; typesRequested = false; catalogueStale = true;
@@ -783,6 +790,9 @@ struct MenuService::Impl
                 }
                 else
                 {
+                    // Preparation contains registrations for unseen selections
+                    // too; retiring it cannot depend on existing affected rows.
+                    retirePreparation = true;
                     std::vector<Registration> changed;
                     for (const auto &old : catalogue.rows)
                         if (std::none_of(value.rows.begin(), value.rows.end(), [&](const auto &r) { return r.id == old.id && r.revision == old.revision; })) changed.push_back(old);
@@ -827,6 +837,11 @@ struct MenuService::Impl
                 }
             }
             for (const auto &request : affected) cache.Erase(request);
+            if (retirePreparation)
+            {
+                Session::ReleasePreparedMenuWorker();
+                std::lock_guard lock(mutex); preparationRequested |= ObjectPreparationEnabled();
+            }
             if (!affected.empty()) Session::ReleaseIdleWorker();
             SaveCatalogue(cache);
         }
@@ -978,12 +993,16 @@ struct MenuService::Impl
             }
             if (TakeMenuRegistryChanges())
             {
+                const bool prepared = nativeFactory && Session::PollPreparedMenuWorker() != Session::PreparationState::Absent;
                 std::lock_guard lock(mutex);
                 // Classes notifications also include unrelated Shell caches.
                 // Mark cached views stale, but retain published payloads for an open
                 // popup until the inventory confirms an actual registration change.
                 catalogueStale = true;
                 ++registryRevision;
+                // Verify a prepared provider inventory even when no visible
+                // selection currently needs a refresh.
+                scanRequested |= prepared;
                 for (auto &[key, row] : rows)
                 {
                     row.invalid = true; row.snapshotTargetChecked = false; ++row.view.revision;
@@ -1142,6 +1161,15 @@ struct MenuService::Impl
                     }
                 }
                 Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0};
+                usePreparedQuery = priority != QueryPriority::Inspect && !request.startPinOnly;
+                if (nativeFactory && usePreparedQuery)
+                {
+                    bool unverified = false;
+                    { std::lock_guard lock(mutex);
+                      unverified = catalogueStale || scanning || checkedRegistryRevision < registryRevision;
+                      preparationRequested |= ObjectPreparationEnabled(); }
+                    if (unverified) Session::ReleasePreparedMenuWorker();
+                }
                 try { job.work = factory(request); running.push_back(std::move(job)); }
                 catch (...) { Complete(job, Reply{false, {}, "helper start failed"}, cache); }
             }
@@ -1151,9 +1179,33 @@ struct MenuService::Impl
                 if (auto job = NextSource())
                 {
                     job->started = GetTickCount64();
+                    usePreparedQuery = false;
                     try { job->work = factory(job->request); sourceJob = std::move(job); }
                     catch (...) { std::lock_guard lock(mutex); failedSources.insert(job->source.id); MenuTrace("attribution", "start_failed"); }
                 }
+            bool preparing = false;
+            if (nativeFactory)
+            {
+                bool prepare = false, enabled = false;
+                {
+                    std::lock_guard lock(mutex);
+                    enabled = ObjectPreparationEnabled();
+                    if (!enabled) preparationRequested = false;
+                    else if (preparationRequested && running.empty() && !sourceJob &&
+                        catalogue.revision && !scanning && !scanRequested && !catalogueStale &&
+                        !typesPreparing && nextType >= typeDiscovery.size() &&
+                        std::none_of(rows.begin(), rows.end(), [](const auto &pair) { return pair.second.queued; }))
+                        prepare = std::exchange(preparationRequested, false);
+                }
+                if (!enabled) Session::ReleasePreparedMenuWorker();
+                if (prepare)
+                {
+                    // One attempt per idle opportunity; a failed or expired
+                    // bootstrap must not become a perpetual background restart.
+                    try { Session::PrepareFirstMenuWorker(); } catch (...) {}
+                }
+                preparing = Session::PollPreparedMenuWorker() == Session::PreparationState::Pending;
+            }
             std::vector<std::tuple<Key, Request, bool>> checks;
             {
                 std::lock_guard lock(mutex);
@@ -1196,7 +1248,7 @@ struct MenuService::Impl
             auto handles = MenuRegistryWaitHandles(watchesComplete);
             handles.insert(handles.begin(), wake);
             DWORD wait = watchesComplete ? INFINITE : 1000;
-            if (!running.empty() || sourceJob || scan.valid() ||
+            if (preparing || !running.empty() || sourceJob || scan.valid() ||
                 std::any_of(scopedVerification.begin(), scopedVerification.end(), [](const auto &scope) { return scope.scan.valid(); })) wait = 20;
             {
                 std::lock_guard lock(mutex);
@@ -1306,8 +1358,10 @@ void MenuService::Configure(Preferences preferences)
         std::lock_guard lock(impl_->mutex);
         const bool enabled = impl_->AnyEnabled();
         const bool desktop = !impl_->shown[static_cast<int>(Context::Desktop)].empty();
+        const bool objectPreparation = impl_->ObjectPreparationEnabled();
         impl_->preferences = std::move(preferences); impl_->configured = true;
         for (int i = 0; i < 4; ++i) impl_->shown[i] = EffectiveShownIds(impl_->preferences, static_cast<Context>(i));
+        if (!objectPreparation && impl_->ObjectPreparationEnabled()) impl_->preparationRequested = true;
         if (!enabled && impl_->AnyEnabled()) { impl_->scanRequested = true; MenuTrace("catalogue", "request.configure"); }
         if (!desktop && !impl_->shown[static_cast<int>(Context::Desktop)].empty()) impl_->startupWarm = true;
         for (auto &[key, row] : impl_->rows)

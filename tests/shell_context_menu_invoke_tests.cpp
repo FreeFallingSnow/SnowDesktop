@@ -2144,7 +2144,83 @@ void TestExtensionSessions()
         Expect(direct.ok && reserved.ProcessId() != first.ProcessId() && reserved.ProcessId() != second.ProcessId(),
             "Start queries have an isolated reserved helper even while both ordinary slots are occupied");
     }
+    auto prepare = [&](DWORD timeout = 2500) {
+        Expect(ext::Session::PrepareFirstMenuWorker(timeout), "preparation acquires a supervised ordinary slot");
+        const auto end = GetTickCount64() + 3500;
+        auto state = ext::Session::PreparationState::Pending;
+        while (GetTickCount64() < end && state == ext::Session::PreparationState::Pending)
+        {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+            state = ext::Session::PollPreparedMenuWorker();
+            if (state == ext::Session::PreparationState::Pending)
+                MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+        Expect(state != ext::Session::PreparationState::Pending, "preparation completion or retirement is bounded");
+        return state;
+    };
+    auto preparedRequest = request; preparedRequest.paths = {L"synthetic-prepared"};
+    std::wstring preparationPath;
+    {
+        Expect(prepare() == ext::Session::PreparationState::Ready, "private bootstrap becomes ready");
+        Expect(ext::Session::PrepareFirstMenuWorker(), "repeated preparation keeps the same reserved slot");
+        ext::Session fresh(request, 2500); Expect(wait(fresh).ok, "one fresh query can coexist with preparation");
+        bool refused = false;
+        try { ext::Session overflow(request, 2500); } catch (const snowdesktop::settings_ipc::ProtocolError &) { refused = true; }
+        Expect(refused, "preparation counts against the ordinary two-process limit");
+        auto startRequest = request; startRequest.startPinOnly = true;
+        ext::Session startWorker(startRequest, 2500);
+        Expect(wait(startWorker).ok && ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Ready,
+            "Start keeps its separate slot without consuming the prepared ordinary worker");
+        ext::Session selected(preparedRequest, 2500, true); const auto reply = wait(selected);
+        preparationPath = reply.entries.front().label;
+        Expect(reply.ok && reply.entries.front().key == "prepared" && selected.ProcessId() != fresh.ProcessId() &&
+            selected.ProcessId() != startWorker.ProcessId() &&
+            ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent &&
+            GetFileAttributesW(preparationPath.c_str()) != INVALID_FILE_ATTRIBUTES,
+            "the first selection transfers one reserved slot and retains its independent bootstrap objects");
+    }
+    Expect(GetFileAttributesW(preparationPath.c_str()) == INVALID_FILE_ATTRIBUTES,
+        "retiring the first real menu also removes its delete-on-close bootstrap sample");
+    {
+        ext::Session next(preparedRequest, 2500, true); const auto reply = wait(next);
+        Expect(reply.ok && reply.entries.front().key == "cold", "ordinary helpers are not recycled after a prepared real query");
+        ext::Session second(request, 2500); Expect(wait(second).ok, "prepared slot ownership is released exactly once");
+        Expect(!ext::Session::PrepareFirstMenuWorker(), "preparation cannot create a third ordinary process");
+    }
+    {
+        Expect(ext::Session::PrepareFirstMenuWorker(), "pending preparation starts asynchronously");
+        ext::Session immediate(preparedRequest, 2500, true); const auto reply = wait(immediate);
+        Expect(reply.ok && reply.entries.front().key == "cold", "an immediate popup replaces pending preparation without waiting for it");
+    }
+    {
+        Expect(prepare() == ext::Session::PreparationState::Ready, "background fallback setup");
+        auto background = preparedRequest; background.background = true; background.context = ext::Context::FolderBackground;
+        ext::Session unchanged(background, 2500, true); const auto reply = wait(unchanged);
+        Expect(reply.ok && reply.entries.front().key == "cold", "background menus always retain their original unprepared host");
+    }
+    {
+        struct PreparationFailureMode
+        {
+            ~PreparationFailureMode() { SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_PREPARATION", nullptr); }
+        } mode;
+        for (const auto fault : {L"fail", L"hang"})
+        {
+            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_PREPARATION", fault);
+            Expect(prepare(std::wstring_view(fault) == L"hang" ? 150 : 2500) == ext::Session::PreparationState::Absent,
+                "failed or timed-out preparation stops its helper and returns its ordinary slot");
+            ext::Session recovered(preparedRequest, 2500, true); const auto reply = wait(recovered);
+            Expect(reply.ok && reply.entries.front().key == "cold", "preparation failure preserves the normal first-query path");
+        }
+    }
+    Expect(prepare() == ext::Session::PreparationState::Ready, "generation invalidation setup");
     ext::InvalidateMenuCache();
+    Expect(ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent,
+        "an invalidated registry generation retires prepared registrations before an unseen selection");
+    Expect(prepare() == ext::Session::PreparationState::Ready, "explicit retirement setup");
+    ext::Session::ReleaseIdleWorker();
+    Expect(ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent,
+        "worker teardown releases preparation and the Start pool together");
     {ext::Session session(request,2500);auto reply=wait(session);
         Expect(session.ProcessId()!=firstProcess && reply.ok,"explicit refresh discards the previous cached worker");}
     {
@@ -5331,6 +5407,15 @@ int wmain(int argc, wchar_t **argv)
     snowdesktop::shell_extensions::QueryExecutor query;
     wchar_t realMode[4]{};
     if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
+        static std::wstring preparedSample;
+        if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename().wstring().starts_with(L"SnowDesktop-MenuInit-"))
+        {
+            wchar_t fault[16]{};
+            GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_PREPARATION", fault, static_cast<DWORD>(std::size(fault)));
+            if (std::wstring_view(fault) == L"hang") Sleep(INFINITE);
+            if (std::wstring_view(fault) == L"fail") return snowdesktop::shell_extensions::Reply{false, {}, "preparation fault"};
+            preparedSample = request.paths.front();
+        }
         if (!request.paths.empty() && request.paths.front() == L"synthetic-hang") Sleep(INFINITE);
         if(request.paths.size()==3&&request.paths[0]==L"read-disk-cache")
         {
@@ -5341,6 +5426,8 @@ int wmain(int argc, wchar_t **argv)
         snowdesktop::shell_extensions::Reply reply; reply.ok = true;
         snowdesktop::shell_extensions::Entry entry; entry.label=L"压缩";entry.checked=true;entry.enabled=false;
         entry.key=request.paths.front()==L"synthetic-second" ? "second" : "first";
+        if (request.paths.front() == L"synthetic-prepared")
+        { entry.key = preparedSample.empty() ? "cold" : "prepared"; entry.label = preparedSample; }
         if (request.paths.front() == L"synthetic-stdio")
         {
             DWORD written = 0;

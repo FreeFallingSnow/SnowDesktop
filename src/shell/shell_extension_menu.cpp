@@ -1184,7 +1184,7 @@ void InvalidateMenuCache()
 
 struct Session::Impl
 {
-    // One idle worker per UI thread, never shared across active sessions.
+    // One prepared ordinary worker and one system Start worker per owning STA.
     static thread_local std::vector<std::unique_ptr<Impl>> idle;
     settings_ipc::Channel channel;
     std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
@@ -1198,6 +1198,7 @@ struct Session::Impl
     std::uint64_t generation = 0;
     DWORD timeout = 8000;
     bool delivered = false, detached = false, succeeded = false, startPinOnly = false;
+    bool ownsSessionSlot = false, preparationOnly = false, preparationReady = false, preparationFailed = false;
     void RemoveRetiredSamples()
     {
         for (const auto &directory : retiredSamples)
@@ -1222,30 +1223,94 @@ struct Session::Impl
         if (!detached) process->Stop();
         RemoveSample();
         RemoveRetiredSamples();
+        if (ownsSessionSlot) (startPinOnly ? startPinSessions : sessions).fetch_sub(1);
     }
 };
 thread_local std::vector<std::unique_ptr<Session::Impl>> Session::Impl::idle;
-Session::Session(const Request &request, DWORD queryTimeoutMs)
+Session::PreparationState Session::PollPreparedMenuWorker()
+{
+    const auto generation = MenuCacheGeneration();
+    const auto now = GetTickCount64();
+    std::erase_if(Impl::idle, [&](const auto &worker) {
+        return worker->preparationOnly && (worker->preparationFailed || worker->generation != generation ||
+            !worker->process->Running() || now - worker->born >= kWorkerLifetimeMs ||
+            (!worker->preparationReady && now - worker->started >= worker->timeout));
+    });
+    for (const auto &worker : Impl::idle) if (worker->preparationOnly)
+        return worker->preparationReady ? PreparationState::Ready : PreparationState::Pending;
+    return PreparationState::Absent;
+}
+bool Session::PrepareFirstMenuWorker(DWORD timeoutMs)
+{
+    if (PollPreparedMenuWorker() != PreparationState::Absent) return true;
+    auto worker = std::make_unique<Impl>();
+    if (sessions.fetch_add(1) >= 2) { sessions.fetch_sub(1); return false; }
+    worker->ownsSessionSlot = worker->preparationOnly = true;
+    worker->generation = MenuCacheGeneration();
+    worker->started = GetTickCount64();
+    worker->timeout = std::clamp<DWORD>(timeoutMs, 100, 8000);
+    worker->channel.Bind<void, std::string>("menu.progress", [p = worker.get()](std::string stage) {
+        p->stage = std::move(stage);
+    });
+    worker->channel.Bind<void, bool>("menu.prepared", [p = worker.get()](bool ready) {
+        p->preparationReady = ready; p->preparationFailed = !ready;
+        MenuTrace("preparation", ready ? "ready" : "failed", double(GetTickCount64() - p->started));
+    });
+    try
+    {
+        worker->process->Start(worker->channel, L"--shell-menu-helper");
+        worker->channel.Notify("menu.prepare");
+        Impl::idle.push_back(std::move(worker));
+        MenuTrace("preparation", "started");
+        return true;
+    }
+    catch (...) { return false; }
+}
+void Session::ReleasePreparedMenuWorker()
+{
+    std::erase_if(Impl::idle, [](const auto &worker) { return worker->preparationOnly; });
+}
+Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedWorker)
 {
     MenuTiming timing("helper_start");
     auto &counter = request.startPinOnly ? startPinSessions : sessions;
-    if (counter.fetch_add(1) >= (request.startPinOnly ? 1u : 2u))
-    {
-        counter.fetch_sub(1);
-        throw settings_ipc::ProtocolError("too many Shell menus");
-    }
+    bool acquiredSlot = false;
     try
     {
+        PollPreparedMenuWorker();
         const auto generation = MenuCacheGeneration();
         auto &idle = Impl::idle;
         std::erase_if(idle, [=](const auto &worker) { return worker->generation != generation || !worker->process->Running() || GetTickCount64() - worker->born >= kWorkerLifetimeMs; });
         const auto available = std::find_if(idle.begin(), idle.end(), [&](const auto &worker) {
-            return worker->startPinOnly == request.startPinOnly;
+            return request.startPinOnly ? worker->startPinOnly : usePreparedWorker && worker->preparationOnly;
         });
-        const bool reused = available != idle.end();
+        bool reused = available != idle.end();
         if (reused) { impl_ = std::move(*available); idle.erase(available); }
-        else impl_ = std::make_unique<Impl>();
+        if (!impl_ || !impl_->ownsSessionSlot)
+        {
+            if (counter.fetch_add(1) >= (request.startPinOnly ? 1u : 2u))
+            {
+                counter.fetch_sub(1);
+                throw settings_ipc::ProtocolError("too many Shell menus");
+            }
+            acquiredSlot = true;
+        }
+        if (!impl_) impl_ = std::make_unique<Impl>();
         impl_->startPinOnly = request.startPinOnly;
+        impl_->ownsSessionSlot = true; acquiredSlot = false;
+        if (impl_->preparationOnly)
+        {
+            // The immediate popup never waits for preparation. Backgrounds keep
+            // their original host: priming another context can alter their rows.
+            if (!impl_->preparationReady || impl_->preparationFailed || request.background ||
+                request.context == Context::Desktop || request.catalogueOnly ||
+                !request.sourceClsid.empty() || !request.sourceKey.empty())
+            {
+                impl_->process->Stop(); impl_->channel.Close(); reused = false;
+                impl_->born = GetTickCount64();
+            }
+            impl_->preparationOnly = impl_->preparationReady = impl_->preparationFailed = false;
+        }
         impl_->generation = generation;
         impl_->started = GetTickCount64();
         impl_->delivered = impl_->succeeded = false;
@@ -1274,7 +1339,7 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
     catch (...)
     {
         impl_.reset();
-        counter.fetch_sub(1);
+        if (acquiredSlot) counter.fetch_sub(1);
         throw;
     }
 }
@@ -1304,11 +1369,15 @@ Session::~Session()
             const auto pooled = std::count_if(Impl::idle.begin(), Impl::idle.end(), [=](const auto &worker) {
                 return worker->startPinOnly == startPinOnly;
             });
-            if (pooled < 1) Impl::idle.push_back(std::move(impl_));
+            if (pooled < 1)
+            {
+                impl_->ownsSessionSlot = false;
+                startPinSessions.fetch_sub(1);
+                Impl::idle.push_back(std::move(impl_));
+            }
         }
         catch (...) { /* A disconnected worker is destroyed instead of pooled. */ }
     }
-    (startPinOnly ? startPinSessions : sessions).fetch_sub(1);
 }
 void Session::ReleaseIdleWorker() { Impl::idle.clear(); }
 unsigned Session::SelectionContexts() const noexcept { return impl_->selectionContexts; }
@@ -1382,6 +1451,11 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
         settings_ipc::OpenInheritedSettingsChannel(channel, L"--shell-menu-helper");
         Host host(std::move(startPin));
         host.progress = [&](const auto &stage) { channel.Notify("menu.progress", stage); };
+        // Retain bootstrap objects until process retirement: extensions can keep
+        // window/timer callbacks referring to their menu even after QCM returns.
+        std::unique_ptr<TemporaryMenuFile> preparationSample;
+        std::unique_ptr<Host> filePreparation, backgroundPreparation;
+        bool actualQueryReceived = false;
         bool invocationQueued = false;
         ULONGLONG lastQuery = GetTickCount64();
         ULONGLONG invokedAt = 0, dispatchedAt = 0;
@@ -1389,8 +1463,30 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
             if (!invocationQueued)
                 PostQuitMessage(0);
         });
+        channel.Bind<void>("menu.prepare", [&] {
+            if (actualQueryReceived || invocationQueued || preparationSample) return;
+            preparationSample = std::make_unique<TemporaryMenuFile>();
+            bool prepared = preparationSample->handle != INVALID_HANDLE_VALUE;
+            if (prepared)
+            {
+                Request file; file.paths = {preparationSample->path};
+                Request background; background.paths = {std::filesystem::path(preparationSample->path).parent_path().wstring()};
+                background.background = true; background.context = Context::FolderBackground;
+                if (query) prepared = query(file).ok && query(background).ok;
+                else
+                {
+                    filePreparation = std::make_unique<Host>(StartPinExecutor{});
+                    backgroundPreparation = std::make_unique<Host>(StartPinExecutor{});
+                    filePreparation->progress = backgroundPreparation->progress = host.progress;
+                    prepared = filePreparation->QueryOnce(file, true).ok &&
+                        backgroundPreparation->QueryOnce(background, true).ok;
+                }
+            }
+            channel.Notify("menu.prepared", prepared);
+        });
         channel.Bind<void, Request>("menu.query", [&](Request request) {
             if (invocationQueued) return;
+            actualQueryReceived = true;
             lastQuery = GetTickCount64();
             auto reply = query ? query(request) : host.Query(request);
             if (reply.ok)

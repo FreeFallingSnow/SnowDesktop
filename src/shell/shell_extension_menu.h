@@ -49,13 +49,13 @@ struct Reply
     std::string error;
 };
 
-// One fresh COM/menu session in a supervised child. Successful, uninvoked
-// sessions may return the child to the owning UI thread's bounded warm pool.
-// Tokens still expire when this object closes; they are never cached.
+// One fresh COM/menu session in a supervised child. Ordinary workers retire
+// with their first real selection; only the system Start handler is pooled.
+// Tokens expire when this object closes; they are never cached.
 class Session
 {
   public:
-    explicit Session(const Request &request, DWORD queryTimeoutMs = 8000);
+    explicit Session(const Request &request, DWORD queryTimeoutMs = 8000, bool usePreparedWorker = false);
     ~Session();
     Session(const Session &) = delete;
     Session &operator=(const Session &) = delete;
@@ -64,6 +64,12 @@ class Session
     // Metadata resolved inside the supervised helper, never on the scheduler.
     unsigned SelectionContexts() const noexcept;
     static void ReleaseIdleWorker();
+    // Owning STA only. Preparation reserves one of the two ordinary slots and
+    // never queries the eventual selection or supplies cached command tokens.
+    enum class PreparationState { Absent, Pending, Ready };
+    static bool PrepareFirstMenuWorker(DWORD timeoutMs = 8000);
+    static PreparationState PollPreparedMenuWorker();
+    static void ReleasePreparedMenuWorker();
     // Transfers ownership to a bounded invocation monitor; modeless dialogs
     // remain alive after the custom popup closes.
     void Invoke(UINT token, POINT position, HWND owner = nullptr);
