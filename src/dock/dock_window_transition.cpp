@@ -847,6 +847,7 @@ bool DockWindowTransition::Start(
     restoreCleanupDeadlineMs_ = 0.0;
     restoreVisibleTimeMs_ = 0.0;
     restoreFadeStartTimeMs_ = 0.0;
+    RequestRestoreForAnimation();
     if (!ScheduleAnimationWake())
     {
         if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=schedule");
@@ -986,6 +987,11 @@ bool DockWindowTransition::Reverse(
     restoreVisibleTimeMs_ = 0.0;
     restoreFadeStartTimeMs_ = 0.0;
     awaitingRestoreVisibility_ = false;
+    preparingRestore_ = false;
+    restoreRequested_ = false;
+    restoreActivated_ = false;
+    restoreGeometryStableTimeMs_ = 0.0;
+    RequestRestoreForAnimation();
     if (!ScheduleAnimationWake())
     {
         CompleteRestoreAfterRenderFailure();
@@ -1475,6 +1481,7 @@ bool DockWindowTransition::CreateSharedWindowImage()
     snapshotResult_ = snowdesktop::dock_thumbnail::SourceSize(sourceWindow_, size);
     if (FAILED(snapshotResult_) || !EnsureCompositionVisuals()) return false;
     compositionSnapshotSize_ = size;
+    compositionSourceRegion_ = snowdesktop::dock_thumbnail::SourceRegion(sourceWindow_, size);
     compositionSharedWindowActive_ = true;
     HRESULT hr = compositionVisual_->SetContent(nullptr);
     if (SUCCEEDED(hr)) hr = compositionEffect_->SetOpacity(0.0f);
@@ -1488,7 +1495,8 @@ bool DockWindowTransition::CreateSharedWindowImage()
     }
     else if (SUCCEEDED(hr))
     {
-        hr = compositionWindowImage_.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), size);
+        hr = compositionWindowImage_.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), size,
+            &compositionSourceRegion_);
         if (SUCCEEDED(hr)) hr = compositionVisual_->AddVisual(compositionWindowImage_.visual.Get(), TRUE, nullptr);
     }
     if (FAILED(hr))
@@ -1544,7 +1552,8 @@ bool DockWindowTransition::CreateGenieStrips()
         if (compositionSharedWindowActive_)
         {
             snowdesktop::dock_thumbnail::SharedVisual image;
-            hr = image.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), compositionSnapshotSize_);
+            hr = image.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), compositionSnapshotSize_,
+                &compositionSourceRegion_);
             strip = image.visual;
             if (SUCCEEDED(hr)) genieWindowImages_.push_back(std::move(image));
         }
@@ -1735,7 +1744,7 @@ bool DockWindowTransition::ScheduleAnimationWake()
         animationScheduler_->Cancel(animationToken_);
     animationToken_ = 0;
 
-    if (UsesCompositionImage() && effect_ != 3)
+    if (UsesCompositionImage() && effect_ != 3 && !preparingRestore_)
     {
         if (!StartCompositionTimeline())
             return false;
@@ -1978,6 +1987,8 @@ bool DockWindowTransition::OnAnimationFrame(
     }
 
     const double now = nowMilliseconds;
+    if (preparingRestore_ && !PrepareRestoredWindow(now))
+        return IsActive();
     if (awaitingRestoreVisibility_)
     {
         if (restoreFadeStartTimeMs_ > 0.0)
@@ -2043,10 +2054,17 @@ bool DockWindowTransition::OnAnimationFrame(
         // 目标进程挂起（例如求解器无法处理 SW_RESTORE）时 IsIconic 会一直
         // 保持为真，此时必须中止动画而不是无限等待，否则过渡层会永久停留
         // 在窗口位置，表现为 Dock 卡死。
-        if (!IsIconic(sourceWindow_))
+        RECT restoredFrame{};
+        if (RestoreGeometryReady(restoredFrame) && EqualRect(&restoredFrame, &windowRect_))
         {
             ActivateRestoredWindowForHandoff();
-            restoreVisibleTimeMs_ = now;
+            // A failed cross-process release retains ownership; do not retire
+            // the only visible image while its source is still cloaked.
+            if (!sourceCloaked_)
+            {
+                DwmFlush();
+                restoreVisibleTimeMs_ = now;
+            }
             return true;
         }
         if (now >= restoreCleanupDeadlineMs_)
@@ -2082,9 +2100,8 @@ bool DockWindowTransition::OnAnimationFrame(
     if (direction_ == DockWindowTransitionDirection::Restore &&
         restoreCallback_)
     {
-        restoreCallback_(
-            sourceWindow_,
-            DockWindowRestoreTransitionPhase::RequestRestore);
+        // The source has been restoring underneath the visual timeline. Keep
+        // its full-size image until the final source frame can be exposed.
         awaitingRestoreVisibility_ = true;
         restoreCleanupDeadlineMs_ =
             now + static_cast<double>(
@@ -2092,6 +2109,105 @@ bool DockWindowTransition::OnAnimationFrame(
         return true;
     }
     Finish();
+    return false;
+}
+
+void DockWindowTransition::RequestRestoreForAnimation()
+{
+    if (direction_ != DockWindowTransitionDirection::Restore ||
+        !restoreCallback_ || restoreRequested_)
+        return;
+    restoreRequested_ = true;
+    preparingRestore_ = true;
+    restoreGeometryStableTimeMs_ = 0.0;
+    restoreCleanupDeadlineMs_ = MonotonicTimeMilliseconds() + kRestoreCleanupTimeoutMs;
+    // Request the native restore while the source is cloaked and our first
+    // (collapsed, transparent) frame is already committed. This gives native
+    // geometry and application painting the whole Genie timeline to settle.
+    restoreCallback_(sourceWindow_, DockWindowRestoreTransitionPhase::RequestRestore);
+}
+
+bool DockWindowTransition::RestoreGeometryReady(RECT& frame) const
+{
+    if (!sourceWindow_ || IsIconic(sourceWindow_) || !IsWindowVisible(sourceWindow_) ||
+        !ResolveVisibleWindowRect(sourceWindow_, frame))
+        return false;
+    if (UsesCompositionImage())
+    {
+        // IsIconic can clear while a toolkit still has the minimized-bar
+        // geometry. Compare with DWM's retained full image, not that flag alone.
+        return frame.right - frame.left == compositionSnapshotSize_.cx &&
+            frame.bottom - frame.top == compositionSnapshotSize_.cy;
+    }
+    WINDOWPLACEMENT placement{sizeof(placement)};
+    RECT window{};
+    return GetWindowPlacement(sourceWindow_, &placement) &&
+        (IsZoomed(sourceWindow_) ||
+            (GetWindowRect(sourceWindow_, &window) &&
+                window.right - window.left == placement.rcNormalPosition.right - placement.rcNormalPosition.left &&
+                window.bottom - window.top == placement.rcNormalPosition.bottom - placement.rcNormalPosition.top));
+}
+
+bool DockWindowTransition::PrepareRestoredWindow(double now)
+{
+    RECT frame{};
+    if (!RestoreGeometryReady(frame))
+    {
+        restoreGeometryStableTimeMs_ = 0.0;
+    }
+    else if (restoreGeometryStableTimeMs_ <= 0.0 || !EqualRect(&frame, &restoreGeometryRect_))
+    {
+        restoreGeometryRect_ = frame;
+        restoreGeometryStableTimeMs_ = now;
+    }
+    else if (now - restoreGeometryStableTimeMs_ >= kRestorePresentationDelayMs)
+    {
+        // Resolve both target geometry and source crop from the actual restored
+        // window. WINDOWPLACEMENT and a minimized HWND cannot supply this crop.
+        windowRect_ = frame;
+        toRect_ = windowRect_;
+        if (effect_ == 2) fromRect_ = toRect_;
+        const RECT requestedHost = UsesCompositionImage()
+            ? ResolveDockWindowSnapshotHostRect(fromRect_, toRect_) : fromRect_;
+        const auto safeHost = ResolveDockWindowNonFullscreenHostRect(requestedHost, animationMonitorRects_);
+        bool prepared = safeHost.has_value();
+        if (prepared)
+        {
+            snapshotHostRect_ = *safeHost;
+            prepared = SetWindowPos(hwnd_, nullptr, snapshotHostRect_.left, snapshotHostRect_.top,
+                snapshotHostRect_.right - snapshotHostRect_.left,
+                snapshotHostRect_.bottom - snapshotHostRect_.top,
+                SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
+        }
+        if (prepared && compositionSharedWindowActive_)
+        {
+            ClearGenieStrips();
+            compositionWindowImage_.Reset();
+            compositionVisual_->RemoveAllVisuals();
+            prepared = CreateSharedWindowImage();
+        }
+        hasLastFrame_ = false;
+        compositionTimelineActive_ = false;
+        animationStartTimeMs_ = now;
+        if (prepared) prepared = ApplyFrame(0.0);
+        if (!prepared)
+        {
+            if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=restore-rebind");
+            CompleteRestoreAfterRenderFailure();
+            Finish();
+            return false;
+        }
+        DwmFlush();
+        preparingRestore_ = false;
+        if (diagnosticCallback_) diagnosticCallback_(L"Dock restore prepared: full-geometry before animation");
+        return true;
+    }
+    if (now >= restoreCleanupDeadlineMs_)
+    {
+        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=restore-geometry-timeout");
+        CompleteRestoreAfterRenderFailure();
+        Finish();
+    }
     return false;
 }
 
@@ -2119,6 +2235,8 @@ ActivateRestoredWindowForHandoff()
         !IsWindow(sourceWindow_) || IsIconic(sourceWindow_))
         return;
     ReleaseSourceCloak();
+    if (sourceCloaked_ || restoreActivated_) return;
+    restoreActivated_ = true;
     restoreCallback_(
         sourceWindow_,
         DockWindowRestoreTransitionPhase::ActivateRestored);
@@ -2208,6 +2326,7 @@ void DockWindowTransition::Finish()
         compositionVisual_->SetContent(nullptr);
     compositionSurface_.Reset();
     compositionSnapshotSize_ = {};
+    compositionSourceRegion_ = {};
     if (compositionSnapshotActive_ && compositionDevice_)
         compositionDevice_->Commit();
     compositionSnapshotActive_ = false;
@@ -2241,6 +2360,11 @@ void DockWindowTransition::Finish()
     animationFromOpacity_ = 255;
     animationToOpacity_ = 0;
     awaitingRestoreVisibility_ = false;
+    preparingRestore_ = false;
+    restoreRequested_ = false;
+    restoreActivated_ = false;
+    restoreGeometryStableTimeMs_ = 0.0;
+    restoreGeometryRect_ = {};
     effect_ = 1;
     collapseFrom_ = 0.0;
     collapseTo_ = 1.0;
@@ -2256,8 +2380,8 @@ void DockWindowTransition::Cancel()
 void DockWindowTransition::CompleteImmediately()
 {
     // The source has already received the native minimize command. A restore
-    // is deferred until the overlay reaches its destination, so complete that
-    // request explicitly before removing the presentation window.
+    // starts underneath the overlay, so complete any pending source restoration
+    // explicitly before removing the presentation window.
     if (direction_ == DockWindowTransitionDirection::Restore &&
         restoreCallback_ && sourceWindow_ && IsWindow(sourceWindow_))
     {

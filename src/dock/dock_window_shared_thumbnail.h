@@ -55,6 +55,28 @@ inline HRESULT SourceSize(HWND source, SIZE& size) noexcept
     return SUCCEEDED(hr) && (size.cx <= 1 || size.cy <= 1) ? E_UNEXPECTED : hr;
 }
 
+inline RECT SourceRegion(HWND source, SIZE size) noexcept
+{
+    RECT region{0, 0, size.cx, size.cy};
+    RECT window{}, frame{};
+    // QuerySize describes the visible frame, but rcSource is relative to the
+    // legacy HWND rectangle, including its invisible resize border. Using a
+    // zero origin shifts the pixels inside an otherwise correctly placed mesh.
+    // An iconic HWND has only its minimized-bar rectangle; resolve its crop
+    // again after restoring it underneath the invisible presentation.
+    if (!IsIconic(source) && GetWindowRect(source, &window) &&
+        SUCCEEDED(DwmGetWindowAttribute(source, DWMWA_EXTENDED_FRAME_BOUNDS,
+            &frame, sizeof(frame))) &&
+        frame.right - frame.left == size.cx && frame.bottom - frame.top == size.cy &&
+        frame.left >= window.left && frame.top >= window.top &&
+        frame.right <= window.right && frame.bottom <= window.bottom)
+    {
+        region = {frame.left - window.left, frame.top - window.top,
+            frame.right - window.left, frame.bottom - window.top};
+    }
+    return region;
+}
+
 class SharedVisual final
 {
 public:
@@ -77,7 +99,8 @@ public:
         return *this;
     }
 
-    HRESULT Create(HWND destination, HWND source, IUnknown* device, SIZE size) noexcept
+    HRESULT Create(HWND destination, HWND source, IUnknown* device, SIZE size,
+        const RECT* sourceRegion = nullptr) noexcept
     {
         Reset();
         if (!destination || !source || !IsWindow(destination) || !IsWindow(source))
@@ -91,7 +114,8 @@ public:
         properties.fVisible = TRUE;
         properties.fSourceClientAreaOnly = FALSE;
         properties.opacity = 255;
-        properties.rcSource = properties.rcDestination = {0, 0, size.cx, size.cy};
+        properties.rcSource = sourceRegion ? *sourceRegion : SourceRegion(source, size);
+        properties.rcDestination = {0, 0, size.cx, size.cy};
         void* raw = nullptr;
         HRESULT hr = create(destination, source, 2, &properties, device, &raw, &thumbnail_);
         Microsoft::WRL::ComPtr<IUnknown> returned;

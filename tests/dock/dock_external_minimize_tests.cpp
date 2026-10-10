@@ -186,6 +186,7 @@ void CheckCrossProcessGenie()
         Check(restoring && presentation.find(L"effective=3") != std::wstring::npos &&
             presentation.find(L"snapshot=dwm-shared-window") != std::wstring::npos && AppCloaked(fixture),
             "already-minimized child starts Genie with no previous minimize snapshot or native fallback");
+        Check(restores == 1, "cross-process native restore is submitted before the Genie timeline starts");
         if (restoring) drain();
         Check(restores == 1 && !IsIconic(fixture) && !AppCloaked(fixture),
             "first child restore commits once and releases its source cloak");

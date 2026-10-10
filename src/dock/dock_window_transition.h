@@ -240,7 +240,7 @@ private:
         kMinimumReverseDurationMs = 80;
     static constexpr ULONGLONG
         kPrimedSnapshotLifetimeMs = 500;
-    static constexpr ULONGLONG kRestoreCleanupTimeoutMs = 240;
+    static constexpr ULONGLONG kRestoreCleanupTimeoutMs = 1000;
     static constexpr ULONGLONG kMinimizeCleanupTimeoutMs = 1000;
     static constexpr ULONGLONG
         kRestorePresentationDelayMs = 16;
@@ -310,6 +310,9 @@ private:
         DockWindowTransitionCapturePolicy actualPolicy,
         const wchar_t* fallbackStage);
     bool OnAnimationFrame(double nowMilliseconds);
+    void RequestRestoreForAnimation();
+    bool PrepareRestoredWindow(double nowMilliseconds);
+    bool RestoreGeometryReady(RECT& frame) const;
     void Finish();
     void CompleteRestoreAfterRenderFailure();
     void ActivateRestoredWindowForHandoff();
@@ -350,6 +353,7 @@ private:
     Microsoft::WRL::ComPtr<IDCompositionSurface>
         compositionSurface_;
     SIZE compositionSnapshotSize_{};
+    RECT compositionSourceRegion_{};
     bool compositionSnapshotActive_ = false;
     bool compositionTimelineActive_ = false;
     std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual3>> genieStrips_;
@@ -388,6 +392,11 @@ private:
     BYTE animationFromOpacity_ = 255;
     BYTE animationToOpacity_ = 0;
     bool awaitingRestoreVisibility_ = false;
+    bool preparingRestore_ = false;
+    bool restoreRequested_ = false;
+    bool restoreActivated_ = false;
+    double restoreGeometryStableTimeMs_ = 0.0;
+    RECT restoreGeometryRect_{};
     bool sourceCloaked_ = false;
     HWND sourceCloakWindow_ = nullptr;
     RestoreCallback restoreCallback_;

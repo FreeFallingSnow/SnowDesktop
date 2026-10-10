@@ -1452,9 +1452,9 @@ void DesktopApp::HandleDockWindowRestoreTransition(
                     IsDockWindowClosePending(target)))
         {
             // Only submit the maximized/normal restore here. The transition
-            // keeps its final snapshot visible while the target processes the
-            // request, so the UI thread never waits inside the animation end
-            // frame and no second restore can alter the placement.
+            // restores the cloaked source before its visual timeline starts,
+            // letting the application finish its native restore underneath the
+            // animation. This remains asynchronous and submits no second restore.
             const DockWindowActivationOutcome outcome =
                 RequestDockWindowActivation(target, true);
             UpdateDockWindowActivationState(

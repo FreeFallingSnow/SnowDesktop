@@ -82,6 +82,156 @@ void CheckContinuousOutline()
     }
 }
 
+LRESULT CALLBACK FrameFixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == WM_PAINT)
+    {
+        PAINTSTRUCT paint{};
+        HDC dc = BeginPaint(window, &paint);
+        RECT client{};
+        GetClientRect(window, &client);
+        FillRect(dc, &client, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
+        if (GetWindowLongPtrW(window, GWLP_USERDATA))
+        {
+            RECT marker{20, 20, 36, 60};
+            HBRUSH brush = CreateSolidBrush(RGB(220, 20, 40));
+            FillRect(dc, &marker, brush);
+            DeleteObject(brush);
+            marker = {client.right - 36, 20, client.right - 20, 60};
+            brush = CreateSolidBrush(RGB(20, 220, 40));
+            FillRect(dc, &marker, brush);
+            DeleteObject(brush);
+        }
+        EndPaint(window, &paint);
+        return 0;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+std::array<double, 2> FrameMarkerCenters(HWND ownedDestination)
+{
+    RECT area{};
+    if (!GetWindowRect(ownedDestination, &area)) return {-1, -1};
+    const int width = area.right - area.left, height = area.bottom - area.top;
+    if (width <= 0 || height <= 0 || width > 512 || height > 512) return {-1, -1};
+    HDC screen = GetDC(nullptr), memory = CreateCompatibleDC(screen);
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = width;
+    info.bmiHeader.biHeight = -height;
+    info.bmiHeader.biPlanes = 1;
+    info.bmiHeader.biBitCount = 32;
+    void* bits = nullptr;
+    HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+    std::array<double, 2> sums{}, counts{};
+    if (bitmap)
+    {
+        const HGDIOBJ previous = SelectObject(memory, bitmap);
+        // Capture only the rectangle occupied by this test's composition HWND
+        // and opaque backing fixture; never inspect SnowDesktop or other apps.
+        if (BitBlt(memory, 0, 0, width, height, screen, area.left, area.top, SRCCOPY | CAPTUREBLT))
+        {
+            const auto* pixels = static_cast<const unsigned*>(bits);
+            for (int y = 0; y < height; ++y)
+                for (int x = 0; x < width; ++x)
+                {
+                    const unsigned pixel = pixels[y * width + x];
+                    const unsigned red = (pixel >> 16) & 255, green = (pixel >> 8) & 255, blue = pixel & 255;
+                    if (red > 150 && green < 70 && blue < 100) { sums[0] += x; ++counts[0]; }
+                    if (green > 150 && red < 70 && blue < 100) { sums[1] += x; ++counts[1]; }
+                }
+        }
+        SelectObject(memory, previous);
+        DeleteObject(bitmap);
+    }
+    DeleteDC(memory);
+    ReleaseDC(nullptr, screen);
+    return {counts[0] ? sums[0] / counts[0] : -1, counts[1] ? sums[1] / counts[1] : -1};
+}
+
+void CheckFramePixelAlignment()
+{
+    using Microsoft::WRL::ComPtr;
+    const auto previousDpi = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    WNDCLASSW type{};
+    type.hInstance = GetModuleHandleW(nullptr);
+    type.lpszClassName = L"SnowDesktopGenieFramePixelFixture";
+    type.lpfnWndProc = FrameFixtureProc;
+    Check(RegisterClassW(&type) != 0, "owned pixel-alignment fixture registers");
+    const HWND source = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+        type.lpszClassName, L"Owned frame fixture", WS_OVERLAPPEDWINDOW, 500, 32, 320, 200,
+        nullptr, nullptr, type.hInstance, nullptr);
+    SetWindowLongPtrW(source, GWLP_USERDATA, 1);
+    ShowWindow(source, SW_SHOWNOACTIVATE);
+    UpdateWindow(source);
+    DwmFlush();
+    SIZE size{};
+    RECT frame{}, client{};
+    POINT clientOrigin{};
+    HRESULT hr = snowdesktop::dock_thumbnail::SourceSize(source, size);
+    if (SUCCEEDED(hr)) hr = DwmGetWindowAttribute(source, DWMWA_EXTENDED_FRAME_BOUNDS, &frame, sizeof(frame));
+    const bool geometry = source && SUCCEEDED(hr) && GetClientRect(source, &client) && ClientToScreen(source, &clientOrigin);
+    Check(geometry, "framed source supplies its visible bounds and client origin");
+    HWND backing = nullptr, destination = nullptr;
+    if (geometry)
+    {
+        const auto make = [&](DWORD extra) {
+            return CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_TOPMOST | extra,
+                type.lpszClassName, L"", WS_POPUP, 32, 32, size.cx, size.cy, nullptr, nullptr, type.hInstance, nullptr);
+        };
+        backing = make(0);
+        destination = make(WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED);
+        SetLayeredWindowAttributes(destination, 0, 255, LWA_ALPHA);
+        ShowWindow(backing, SW_SHOWNOACTIVATE);
+        UpdateWindow(backing);
+        ComPtr<ID3D11Device> graphics;
+        hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            nullptr, 0, D3D11_SDK_VERSION, &graphics, nullptr, nullptr);
+        ComPtr<IDXGIDevice> dxgi;
+        ComPtr<IDCompositionDesktopDevice> composition;
+        ComPtr<IDCompositionTarget> target;
+        snowdesktop::dock_thumbnail::SharedVisual image;
+        if (SUCCEEDED(hr)) hr = graphics.As(&dxgi);
+        if (SUCCEEDED(hr)) hr = DCompositionCreateDevice3(dxgi.Get(), IID_PPV_ARGS(&composition));
+        if (SUCCEEDED(hr)) hr = image.Create(destination, source, composition.Get(), size);
+        if (SUCCEEDED(hr)) hr = composition->CreateTargetForHwnd(destination, TRUE, &target);
+        if (SUCCEEDED(hr)) hr = target->SetRoot(image.visual.Get());
+        if (SUCCEEDED(hr)) hr = composition->Commit();
+        if (SUCCEEDED(hr)) hr = composition->WaitForCommitCompletion();
+        Check(SUCCEEDED(hr), "cropped shared frame is composed through the production image wrapper");
+        if (SUCCEEDED(hr))
+        {
+            ShowWindow(destination, SW_SHOWNOACTIVATE);
+            const ULONGLONG deadline = GetTickCount64() + 500;
+            std::array<double, 2> actual{-1, -1};
+            do
+            {
+                MSG message{};
+                while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                { TranslateMessage(&message); DispatchMessageW(&message); }
+                DwmFlush();
+                actual = FrameMarkerCenters(destination);
+                if (actual[0] >= 0 && actual[1] >= 0) break;
+                MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+            } while (GetTickCount64() < deadline);
+            const double red = clientOrigin.x - frame.left + 27.5;
+            const double green = clientOrigin.x - frame.left + client.right - 28.5;
+            std::cout << "Shared frame marker centers: " << actual[0] << ',' << actual[1]
+                << " expected=" << red << ',' << green << '\n';
+            Check(std::abs(actual[0] - red) < 1 && std::abs(actual[1] - green) < 1,
+                "left and right image pixels align with the visible frame instead of its invisible resize border");
+        }
+        if (target) target->SetRoot(nullptr);
+        if (composition) { composition->Commit(); composition->WaitForCommitCompletion(); }
+        image.Reset();
+    }
+    if (destination) DestroyWindow(destination);
+    if (backing) DestroyWindow(backing);
+    if (source) DestroyWindow(source);
+    UnregisterClassW(type.lpszClassName, type.hInstance);
+    if (previousDpi) SetThreadDpiAwarenessContext(previousDpi);
+}
+
 void CheckRetainedWindowImage()
 {
     using Microsoft::WRL::ComPtr;
@@ -177,18 +327,26 @@ void CheckRetainedWindowImage()
                     &alreadyDisabled, sizeof(alreadyDisabled));
                 const RECT dock{-19720, -19720, -19656, -19656};
                 int restores = 0;
+                int activations = 0;
+                bool requestedWhileCloaked = false;
                 const bool restoring = transition.StartRestore(source, dock,
                     [&](HWND window, DockWindowRestoreTransitionPhase phase) {
                         if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
                         {
                             ++restores;
+                            DWORD flags = 0;
+                            requestedWhileCloaked = SUCCEEDED(DwmGetWindowAttribute(window,
+                                DWMWA_CLOAKED, &flags, sizeof(flags))) && (flags & DWM_CLOAKED_APP) != 0;
                             ShowWindow(window, SW_SHOWNOACTIVATE);
                         }
+                        else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) ++activations;
                     });
                 std::wcout << presentation << L'\n';
                 Check(restoring && presentation.find(L"effective=3") != std::wstring::npos &&
                     presentation.find(L"snapshot=dwm-shared-window") != std::wstring::npos,
                     "first restore uses Genie and a DWM image without a prior minimize animation");
+                Check(restores == 1 && requestedWhileCloaked,
+                    "restore is requested under the source cloak before the visual timeline, not after it");
                 const auto drain = [&] {
                     const ULONGLONG deadline = GetTickCount64() + 3000;
                     while (transition.IsActive() && GetTickCount64() < deadline)
@@ -208,6 +366,7 @@ void CheckRetainedWindowImage()
                 };
                 if (restoring) drain();
                 Check(restores == 1 && !IsIconic(source), "restore handoff runs exactly once");
+                Check(activations == 1, "restore handoff activates the completed source once");
                 const auto appCloaked = [](HWND window) {
                     DWORD flags = 0;
                     const HRESULT query = DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags));
@@ -215,6 +374,89 @@ void CheckRetainedWindowImage()
                     return (flags & DWM_CLOAKED_APP) != 0;
                 };
                 Check(!appCloaked(source), "restore handoff releases only the animation's temporary source cloak");
+
+                for (const int effect : {1, 2, 3})
+                {
+                    std::cout << "Short-bar restore effect: " << effect << '\n';
+                    snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                        2, 0, 60, false, false, effect);
+                    // Emulate the short iconic bar reported for Electron: the
+                    // native flag clears before the application's full geometry.
+                    RECT fullRect{};
+                    GetWindowRect(source, &fullRect);
+                    ShowWindow(source, SW_MINIMIZE);
+                    DwmFlush();
+                    struct ShortRestore
+                    {
+                        DockWindowTransition* transition;
+                        RECT fullRect;
+                        bool prepared = false;
+                        bool hiddenDuringBar = false;
+                        bool waitingWhileHidden = false;
+                        int requests = 0;
+                        int activations = 0;
+                    } shortRestore{&transition, fullRect};
+                    transition.SetDiagnosticCallback([&](const wchar_t* message) {
+                        if (std::wstring(message).find(L"Dock restore prepared:") == 0) shortRestore.prepared = true;
+                    });
+                    SetWindowLongPtrW(source, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&shortRestore));
+                    Check(transition.StartRestore(source, dock,
+                        [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                            if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                            {
+                                ++shortRestore.requests;
+                                ShowWindow(window, SW_SHOWNOACTIVATE);
+                                SetWindowPos(window, nullptr, fullRect.left, fullRect.top, 160, 24,
+                                    SWP_NOZORDER | SWP_NOACTIVATE);
+                                Check(SetTimer(window, 2, 120, [](HWND targetWindow, UINT, UINT_PTR timer, DWORD) {
+                                    KillTimer(targetWindow, timer);
+                                    auto* state = reinterpret_cast<ShortRestore*>(GetWindowLongPtrW(targetWindow, GWLP_USERDATA));
+                                    DWORD flags = 0;
+                                    state->hiddenDuringBar = state->transition->IsActive() && !state->prepared &&
+                                        !IsIconic(targetWindow) && SUCCEEDED(DwmGetWindowAttribute(targetWindow,
+                                            DWMWA_CLOAKED, &flags, sizeof(flags))) && (flags & DWM_CLOAKED_APP) != 0;
+                                    SetWindowPos(targetWindow, nullptr, state->fullRect.left, state->fullRect.top,
+                                        state->fullRect.right - state->fullRect.left,
+                                        state->fullRect.bottom - state->fullRect.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                                    // Complete geometry can precede visibility too;
+                                    // neither phase may start the visual timeline.
+                                    ShowWindow(targetWindow, SW_HIDE);
+                                    Check(SetTimer(targetWindow, 3, 80, [](HWND visibleWindow, UINT, UINT_PTR visibleTimer, DWORD) {
+                                        KillTimer(visibleWindow, visibleTimer);
+                                        auto* visibleState = reinterpret_cast<ShortRestore*>(GetWindowLongPtrW(visibleWindow, GWLP_USERDATA));
+                                        DWORD cloakFlags = 0;
+                                        RECT hiddenRect{};
+                                        GetWindowRect(visibleWindow, &hiddenRect);
+                                        visibleState->waitingWhileHidden = visibleState->transition->IsActive() &&
+                                            !visibleState->prepared && !IsWindowVisible(visibleWindow) &&
+                                            EqualRect(&hiddenRect, &visibleState->fullRect) &&
+                                            SUCCEEDED(DwmGetWindowAttribute(visibleWindow, DWMWA_CLOAKED,
+                                                &cloakFlags, sizeof(cloakFlags))) && (cloakFlags & DWM_CLOAKED_APP) != 0;
+                                        ShowWindow(visibleWindow, SW_SHOWNOACTIVATE);
+                                    }) != 0, "owned hidden restore visibility timer is armed");
+                                }) != 0, "owned short-bar restore completion timer is armed");
+                            }
+                            else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored)
+                            {
+                                ++shortRestore.activations;
+                                RECT actual{};
+                                GetWindowRect(window, &actual);
+                                Check(EqualRect(&actual, &fullRect) && IsWindowVisible(window) && !appCloaked(window),
+                                    "source is exposed only at its complete geometry");
+                            }
+                        }), "owned short-bar restore starts");
+                    Check(shortRestore.requests == 1, "short-bar fixture receives the restore immediately");
+                    drain();
+                    Check(shortRestore.hiddenDuringBar && shortRestore.waitingWhileHidden && shortRestore.prepared &&
+                        shortRestore.requests == 1 && shortRestore.activations == 1 && !appCloaked(source),
+                        "full geometry and visibility are both required before any restore effect starts or retires");
+                    KillTimer(source, 2);
+                    KillTimer(source, 3);
+                    SetWindowLongPtrW(source, GWLP_USERDATA, 0);
+                    transition.SetDiagnosticCallback([&](const wchar_t* message) {
+                        if (std::wstring(message).find(L"Dock transition:") == 0) presentation = message;
+                    });
+                }
                 const DWORD preparationStart = GetTickCount();
                 const bool minimizing = transition.StartExternalMinimize(source, dock,
                     preparationStart + snowdesktop::dock_minimize::kRequestTimeoutMs);
@@ -311,6 +553,7 @@ void CheckRetainedWindowImage()
 int main()
 {
     CheckContinuousOutline();
+    CheckFramePixelAlignment();
     CheckRetainedWindowImage();
     if (!failures) std::cout << "Genie outline and cache-independent DWM image checks passed\n";
     return failures ? 1 : 0;
