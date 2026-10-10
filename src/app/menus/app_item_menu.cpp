@@ -213,6 +213,8 @@ void DesktopApp::ShowItemContextMenu(
         (!items_[itemIndex].desktopIconClsid.empty() || protectedDesktopIcon);
     // Query supported verbs without displaying the native popup. Keep its site,
     // menu and COM object alive until a selected command has been invoked.
+    Pidl namespaceSnapshot;
+    ComPtr<IShellFolder> namespaceFolder;
     snowdesktop::ShellContextMenuSite namespaceSite;
     ComPtr<IContextMenu> namespaceContext;
     struct NativeMenuOwner { HMENU value = nullptr; ~NativeMenuOwner() { if (value) DestroyMenu(value); } } namespaceNative;
@@ -220,19 +222,22 @@ void DesktopApp::ShowItemContextMenu(
     if (namespaceItem && desktopFolder_)
     {
         const HWND owner = ShellDialogOwnerHwnd();
-        namespaceSite.Initialize(desktopFolder_.Get(), owner);
-        PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[itemIndex].childPidl.get());
-        if (child && SUCCEEDED(desktopFolder_->GetUIObjectOf(namespaceSite.HostWindow() ? namespaceSite.HostWindow() : owner,
-            1, &child, IID_IContextMenu, nullptr, reinterpret_cast<void**>(namespaceContext.GetAddressOf()))))
+        namespaceFolder = desktopFolder_;
+        if (items_[itemIndex].childPidl.get())
+            namespaceSnapshot.reset(ILCloneFull(items_[itemIndex].childPidl.get()));
+        PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(namespaceSnapshot.get());
+        namespaceNative.value = CreatePopupMenu();
+        if (child && namespaceNative.value && SUCCEEDED(namespaceSite.BuildMenu(
+            namespaceFolder.Get(), owner, namespaceNative.value, 1, 0x7fff, CMF_NORMAL | CMF_SYNCCASCADEMENU,
+            [&](HWND bindOwner, IContextMenu** target) {
+                return namespaceFolder->GetUIObjectOf(bindOwner, 1, &child, IID_IContextMenu,
+                    nullptr, reinterpret_cast<void**>(target));
+            }, namespaceContext.GetAddressOf())))
         {
-            namespaceSite.Attach(namespaceContext.Get()); namespaceNative.value = CreatePopupMenu();
-            if (SUCCEEDED(namespaceContext->QueryContextMenu(namespaceNative.value, 0, 1, 0x7fff, CMF_NORMAL | CMF_SYNCCASCADEMENU)))
-            {
-                const wchar_t* verbs[] = {L"manage", L"empty", L"connectNetworkDrive", L"disconnectNetworkDrive", L"properties"};
-                for (size_t i = 0; i < std::size(verbs); ++i)
-                    if (auto action = snowdesktop::namespace_menu_actions::Find(namespaceContext.Get(), namespaceNative.value, verbs[i]))
-                        namespaceActions.emplace_back(i == 4 ? kContextPropertiesCommand : kContextNamespaceActionFirst + static_cast<UINT>(i), std::move(*action));
-            }
+            const wchar_t* verbs[] = {L"manage", L"empty", L"connectNetworkDrive", L"disconnectNetworkDrive", L"properties"};
+            for (size_t i = 0; i < std::size(verbs); ++i)
+                if (auto action = snowdesktop::namespace_menu_actions::Find(namespaceContext.Get(), namespaceNative.value, verbs[i]))
+                    namespaceActions.emplace_back(i == 4 ? kContextPropertiesCommand : kContextNamespaceActionFirst + static_cast<UINT>(i), std::move(*action));
         }
     }
     const auto namespaceProperty = std::find_if(namespaceActions.begin(), namespaceActions.end(), [](const auto& entry) { return entry.first == kContextPropertiesCommand; });
@@ -1162,24 +1167,35 @@ void DesktopApp::ShowShellContextMenu(
         }
     }
     if (pidls.empty()) return;
+    // Shell activation/view creation can dispatch STA messages. Both bindings
+    // must retain the same folder and PIDLs even if a refresh replaces items_.
+    const ComPtr<IShellFolder> menuFolder = desktopFolder_;
+    if (!menuFolder) return;
+    std::vector<Pidl> selectionSnapshot;
+    selectionSnapshot.reserve(pidls.size());
+    for (auto& pidl : pidls)
+    {
+        if (!pidl) return;
+        Pidl copy(ILCloneFull(reinterpret_cast<PCIDLIST_ABSOLUTE>(pidl)));
+        if (!copy.get()) return;
+        pidl = copy.get();
+        selectionSnapshot.push_back(std::move(copy));
+    }
 
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
     snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(desktopFolder_.Get(), menuOwner);
-    HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : menuOwner;
     ComPtr<IContextMenu> ctxMenu;
-    if (FAILED(desktopFolder_->GetUIObjectOf(shellOwner, static_cast<UINT>(pidls.size()), pidls.data(),
-        IID_IContextMenu, nullptr, reinterpret_cast<void**>(ctxMenu.GetAddressOf()))) || !ctxMenu)
-        return;
-    menuSite.Attach(ctxMenu.Get());
-
     HMENU menu = CreatePopupMenu();
+    if (!menu) return;
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
-    if (FAILED(ctxMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd,
-            CMF_NORMAL | CMF_CANRENAME | CMF_SYNCCASCADEMENU)))
+    if (FAILED(menuSite.BuildMenu(menuFolder.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
+            CMF_NORMAL | CMF_CANRENAME | CMF_SYNCCASCADEMENU,
+            [&](HWND bindOwner, IContextMenu** target) {
+                return menuFolder->GetUIObjectOf(bindOwner, static_cast<UINT>(pidls.size()), pidls.data(),
+                    IID_IContextMenu, nullptr, reinterpret_cast<void**>(target));
+            }, ctxMenu.GetAddressOf())))
         { DestroyMenu(menu); return; }
 
     ctxMenu.As(&activeContextMenu2_);

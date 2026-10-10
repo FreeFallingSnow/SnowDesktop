@@ -31,6 +31,8 @@
 #include <wrl/implements.h>
 
 void TestCatalogueRegistryHandles();
+void TestShellContextMenuBootstrap();
+void ProbeNativeShellMenuBootstrap(bool legacy);
 
 namespace
 {
@@ -2161,6 +2163,7 @@ void TestExtensionSessions()
     };
     auto preparedRequest = request; preparedRequest.paths = {L"synthetic-prepared"};
     std::wstring preparationPath;
+    ObservedHelper preparedHelper;
     {
         Expect(prepare() == ext::Session::PreparationState::Ready, "private bootstrap becomes ready");
         Expect(ext::Session::PrepareFirstMenuWorker(), "repeated preparation keeps the same reserved slot");
@@ -2173,6 +2176,7 @@ void TestExtensionSessions()
         Expect(wait(startWorker).ok && ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Ready,
             "Start keeps its separate slot without consuming the prepared ordinary worker");
         ext::Session selected(preparedRequest, 2500, true); const auto reply = wait(selected);
+        preparedHelper.process = OpenProcess(SYNCHRONIZE, FALSE, selected.ProcessId());
         preparationPath = reply.entries.front().label;
         Expect(reply.ok && reply.entries.front().key == "prepared" && selected.ProcessId() != fresh.ProcessId() &&
             selected.ProcessId() != startWorker.ProcessId() &&
@@ -2180,6 +2184,10 @@ void TestExtensionSessions()
             GetFileAttributesW(preparationPath.c_str()) != INVALID_FILE_ATTRIBUTES,
             "the first selection transfers one reserved slot and retains its independent bootstrap objects");
     }
+    // Closing the kill-on-close job requests termination asynchronously. Check
+    // the kernel's process-exit signal before judging delete-on-close cleanup.
+    Expect(preparedHelper.process && WaitForSingleObject(preparedHelper.process, 2500) == WAIT_OBJECT_0,
+        "retiring the prepared query stops its helper within the lifetime bound");
     Expect(GetFileAttributesW(preparationPath.c_str()) == INVALID_FILE_ATTRIBUTES,
         "retiring the first real menu also removes its delete-on-close bootstrap sample");
     {
@@ -5770,6 +5778,9 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-bootstrap") TestShellContextMenuBootstrap();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-native-menu-bootstrap") ProbeNativeShellMenuBootstrap(false);
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-legacy-native-menu") ProbeNativeShellMenuBootstrap(true);
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-state-commands")
         { TestPairedCommandVisibility(); TestPairedCommandRefresh(); TestStartQueryScheduling(); TestExposedStartPinHelper(); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-loading-deadlines")

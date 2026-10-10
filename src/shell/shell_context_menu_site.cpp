@@ -1,6 +1,7 @@
 #include "shell_context_menu_site.h"
 
 #include <shlguid.h>
+#include <filesystem>
 #include <wrl/client.h>
 #include <wrl/implements.h>
 
@@ -105,6 +106,50 @@ private:
 
 } // namespace
 
+ShellMenuInitializationFile::ShellMenuInitializationFile()
+{
+    GUID id{};
+    if (FAILED(CoCreateGuid(&id))) return;
+    wchar_t guid[40]{};
+    StringFromGUID2(id, guid, 40);
+    std::error_code error;
+    const auto directory = std::filesystem::temp_directory_path(error);
+    if (error) return;
+    path = (directory / (std::wstring(L"SnowDesktop-MenuInit-") + guid + L".txt")).wstring();
+    handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_NEW,
+        FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
+}
+
+ShellMenuInitializationFile::~ShellMenuInitializationFile()
+{
+    if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
+}
+
+struct ShellFileMenuPrimer::Impl
+{
+    ShellMenuInitializationFile file;
+    ComPtr<IContextMenu> context;
+    HMENU menu = CreatePopupMenu();
+    ~Impl()
+    {
+        context.Reset();
+        if (menu) DestroyMenu(menu);
+    }
+};
+
+ShellFileMenuPrimer::ShellFileMenuPrimer() : impl_(std::make_unique<Impl>()) {}
+ShellFileMenuPrimer::~ShellFileMenuPrimer() = default;
+
+bool ShellFileMenuPrimer::Initialize()
+{
+    if (impl_->file.handle == INVALID_HANDLE_VALUE || !impl_->menu) return false;
+    ComPtr<IShellItem> item;
+    if (FAILED(SHCreateItemFromParsingName(impl_->file.path.c_str(), nullptr, IID_PPV_ARGS(&item))) || !item ||
+        FAILED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&impl_->context))) || !impl_->context) return false;
+    return SUCCEEDED(impl_->context->QueryContextMenu(impl_->menu, 0, 1, 0x7fff, CMF_NORMAL | CMF_ITEMMENU));
+}
+
 struct ShellContextMenuSite::Impl
 {
     ~Impl() { Reset(); }
@@ -126,6 +171,10 @@ struct ShellContextMenuSite::Impl
         if (hostWindow)
             DestroyWindow(hostWindow);
         hostWindow = nullptr;
+        initialMenu.Reset();
+        if (initialPopup) DestroyMenu(initialPopup);
+        initialPopup = nullptr;
+        filePrimer.reset();
     }
 
     HWND hostWindow = nullptr;
@@ -133,6 +182,9 @@ struct ShellContextMenuSite::Impl
     ComPtr<IShellView> view;
     ComPtr<BrowserSite> browser;
     ComPtr<IObjectWithSite> attachedMenu;
+    ComPtr<IContextMenu> initialMenu;
+    HMENU initialPopup = nullptr;
+    std::unique_ptr<ShellFileMenuPrimer> filePrimer;
 };
 
 ShellContextMenuSite::ShellContextMenuSite()
@@ -212,6 +264,48 @@ bool ShellContextMenuSite::Attach(IContextMenu* contextMenu)
         return false;
     }
     return true;
+}
+
+HRESULT ShellContextMenuSite::BuildMenu(IShellFolder* folder, HWND owner, HMENU menu,
+    UINT firstCommand, UINT lastCommand, UINT flags,
+    const MenuFactory& bind, IContextMenu** contextMenu)
+{
+    if (!contextMenu) return E_POINTER;
+    *contextMenu = nullptr;
+    impl_->Reset();
+    if (!folder || !IsWindow(owner) || !menu || !bind || firstCommand > lastCommand)
+        return E_INVALIDARG;
+
+    // Match the ordinary helper's folder/ShellLink bootstrap: initialize file
+    // associations before folder-only providers create windows from DllMain.
+    auto filePrimer = std::make_unique<ShellFileMenuPrimer>();
+    filePrimer->Initialize();
+    ComPtr<IContextMenu> initial;
+    HRESULT hr = bind(owner, initial.GetAddressOf());
+    if (FAILED(hr) || !initial) return FAILED(hr) ? hr : E_FAIL;
+    const HMENU scratch = CreatePopupMenu();
+    if (!scratch) return E_OUTOFMEMORY;
+    // No Shell view and no synchronous cascade expansion during initial loads.
+    hr = initial->QueryContextMenu(scratch, 0, firstCommand, lastCommand,
+        flags & ~CMF_SYNCCASCADEMENU);
+    if (FAILED(hr)) { initial.Reset(); DestroyMenu(scratch); return hr; }
+
+    Initialize(folder, owner);
+    impl_->initialMenu = std::move(initial);
+    // Provider windows/timers can still refer to the unpublished HMENU during
+    // view initialization and final binding. Retain it with its COM aggregate.
+    impl_->initialPopup = scratch;
+    impl_->filePrimer = std::move(filePrimer);
+    ComPtr<IContextMenu> actual;
+    hr = bind(HostWindow() ? HostWindow() : owner, actual.GetAddressOf());
+    if (FAILED(hr) || !actual) return FAILED(hr) ? hr : E_FAIL;
+    Attach(actual.Get());
+    // The unpublished aggregate's offsets/state must never be reused by a
+    // real command. The fresh aggregate receives the original site and flags.
+    hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
+    if (FAILED(hr)) return hr;
+    actual.CopyTo(contextMenu);
+    return hr;
 }
 
 HWND ShellContextMenuSite::HostWindow() const

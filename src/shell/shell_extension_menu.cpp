@@ -228,27 +228,7 @@ struct Pidl
         CoTaskMemFree(value);
     }
 };
-struct TemporaryMenuFile
-{
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    std::wstring path;
-    TemporaryMenuFile()
-    {
-        GUID id{};
-        if (FAILED(CoCreateGuid(&id))) return;
-        wchar_t guid[40]{};
-        StringFromGUID2(id, guid, 40);
-        path = (std::filesystem::temp_directory_path() /
-                (std::wstring(L"SnowDesktop-MenuInit-") + guid + L".txt")).wstring();
-        handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
-                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_NEW,
-                             FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
-    }
-    ~TemporaryMenuFile()
-    {
-        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-    }
-};
+using TemporaryMenuFile = ShellMenuInitializationFile;
 std::wstring RegistryString(const std::wstring &key, const wchar_t *name = nullptr)
 {
     wchar_t value[32768]{};
@@ -878,8 +858,7 @@ struct Host
             std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
                 return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
             });
-        std::unique_ptr<TemporaryMenuFile> warmFile;
-        std::unique_ptr<Native> warmMenu;
+        std::unique_ptr<ShellFileMenuPrimer> filePrimer;
         if (!request.startPinOnly && request.sourceClsid.empty() && !fileAssociationsReady &&
             (ResolveContext(request) == Context::Folder || shortcutSelection))
         {
@@ -890,14 +869,8 @@ struct Host
             // The sample is private, never invoked, and deleted by the kernel
             // even if this supervised process is terminated on timeout.
             progress("initialize file associations");
-            warmFile = std::make_unique<TemporaryMenuFile>();
-            ComPtr<IShellItem> item;
-            warmMenu = std::make_unique<Native>();
-            if (warmFile->handle != INVALID_HANDLE_VALUE &&
-                SUCCEEDED(SHCreateItemFromParsingName(warmFile->path.c_str(), nullptr, IID_PPV_ARGS(&item))) &&
-                SUCCEEDED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&warmMenu->context))))
-                fileAssociationsReady = SUCCEEDED(warmMenu->context->QueryContextMenu(
-                    warmMenu->menu, 0, 1, 0x7fff, CMF_NORMAL | CMF_ITEMMENU));
+            filePrimer = std::make_unique<ShellFileMenuPrimer>();
+            fileAssociationsReady = filePrimer->Initialize();
         }
         if (request.originalShortcutOnly)
         {

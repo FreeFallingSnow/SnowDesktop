@@ -229,23 +229,17 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
     }
     const HWND menuOwner = ShellDialogOwnerHwnd();
     snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(backgroundFolder.Get(), menuOwner);
-    HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : menuOwner;
     ComPtr<IContextMenu> contextMenu;
-    HRESULT hr = backgroundFolder->CreateViewObject(shellOwner, IID_IContextMenu,
-        reinterpret_cast<void**>(contextMenu.GetAddressOf()));
-    if (FAILED(hr) || !contextMenu)
-        return;
-    menuSite.Attach(contextMenu.Get());
-
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
 
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
-    hr = contextMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd,
-        CMF_NORMAL | CMF_SYNCCASCADEMENU);
+    const HRESULT hr = menuSite.BuildMenu(backgroundFolder.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
+        CMF_NORMAL | CMF_SYNCCASCADEMENU,
+        [&](HWND bindOwner, IContextMenu** target) {
+            return backgroundFolder->CreateViewObject(bindOwner, IID_IContextMenu, reinterpret_cast<void**>(target));
+        }, contextMenu.GetAddressOf());
     if (FAILED(hr)) { DestroyMenu(menu); RestoreDesktopWindowLayer(); return; }
 
     contextMenu.As(&activeContextMenu2_);
@@ -583,39 +577,27 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
         return;
     }
 
-    IShellFolder* folder = nullptr;
-    HRESULT bindHr = parentFolder->BindToObject(child, nullptr, IID_IShellFolder, reinterpret_cast<void**>(&folder));
+    ComPtr<IShellFolder> folder;
+    HRESULT bindHr = parentFolder->BindToObject(child, nullptr, IID_IShellFolder, reinterpret_cast<void**>(folder.GetAddressOf()));
     parentFolder->Release();
-    if (FAILED(bindHr) || folder == nullptr)
+    if (FAILED(bindHr) || !folder)
     {
         ILFree(pidl);
         return;
     }
 
     snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(folder, menuOwner);
-    HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : menuOwner;
     ComPtr<IContextMenu> contextMenu;
-    HRESULT hr = folder->CreateViewObject(shellOwner, IID_IContextMenu, reinterpret_cast<void**>(contextMenu.GetAddressOf()));
-    if (SUCCEEDED(hr) && contextMenu)
-        menuSite.Attach(contextMenu.Get());
-    folder->Release();
-    if (FAILED(hr) || !contextMenu)
-    {
-        ILFree(pidl);
-        return;
-    }
-
     HMENU menu = CreatePopupMenu();
     if (!menu) { ILFree(pidl); return; }
 
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
-    if (FAILED(contextMenu->QueryContextMenu(menu, 0,
-            kFirstCmd, kLastCmd,
-            CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME |
-                CMF_SYNCCASCADEMENU)))
+    if (FAILED(menuSite.BuildMenu(folder.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
+            CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | CMF_SYNCCASCADEMENU,
+            [&](HWND bindOwner, IContextMenu** target) {
+                return folder->CreateViewObject(bindOwner, IID_IContextMenu, reinterpret_cast<void**>(target));
+            }, contextMenu.GetAddressOf())))
     {
         DestroyMenu(menu);
         RestoreDesktopWindowLayer();
@@ -686,26 +668,9 @@ ShowShellItemContextMenuForPath(
     }
 
     snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(parentFolder, menuOwner);
-    HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : menuOwner;
+    ComPtr<IShellFolder> boundParent;
+    boundParent.Attach(parentFolder);
     ComPtr<IContextMenu> contextMenu;
-    const HRESULT hr =
-        parentFolder->GetUIObjectOf(
-            shellOwner, 1, &child,
-            IID_IContextMenu, nullptr,
-            reinterpret_cast<void**>(
-                contextMenu.
-                    GetAddressOf()));
-    if (SUCCEEDED(hr) && contextMenu)
-        menuSite.Attach(contextMenu.Get());
-    parentFolder->Release();
-    if (FAILED(hr) || !contextMenu)
-    {
-        ILFree(pidl);
-        return;
-    }
-
     HMENU menu = CreatePopupMenu();
     if (!menu)
     {
@@ -715,13 +680,12 @@ ShowShellItemContextMenuForPath(
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
     if (FAILED(
-            contextMenu->QueryContextMenu(
-                menu, 0, kFirstCmd,
-                kLastCmd,
-                CMF_NORMAL |
-                    CMF_EXPLORE |
-                    CMF_CANRENAME |
-                    CMF_SYNCCASCADEMENU)))
+            menuSite.BuildMenu(boundParent.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
+                CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | CMF_SYNCCASCADEMENU,
+                [&](HWND bindOwner, IContextMenu** target) {
+                    return boundParent->GetUIObjectOf(bindOwner, 1, &child, IID_IContextMenu,
+                        nullptr, reinterpret_cast<void**>(target));
+                }, contextMenu.GetAddressOf())))
     {
         DestroyMenu(menu);
         ILFree(pidl);

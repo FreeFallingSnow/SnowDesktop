@@ -77,6 +77,8 @@ int main(int argc, char** argv)
     const auto facade = ReadSource(root, "src/settings/settings_window.cpp");
     const auto presenter = ReadSource(root, "src/winui/dock_page_presenter.cpp");
     const auto settingsHost = ReadSource(root, "src/winui/settings_window_host.cpp");
+    const auto itemMenus = ReadSource(root, "src/app/menus/app_item_menu.cpp");
+    const auto shellMenus = ReadSource(root, "src/app/shell/app_shell_menu.cpp");
 
     const auto discovery = Section(utils, "DesktopWindows FindDesktopWindows()",
         "void RestoreExplorerIconLayerNow()");
@@ -113,6 +115,11 @@ int main(int argc, char** argv)
         Forbid(facade, token, "settings facade rendering ownership");
     Forbid(presenter, "RequestSystemTaskbar", "presenter must use typed host actions");
     Forbid(settingsHost, "SendMessageTimeoutW", "WinUI host Shell broadcast boundary");
+    // Native entry points must use the shared loader bootstrap. Its COM/view
+    // ordering and fresh final command tokens have separate behavioral tests.
+    Forbid(itemMenus, "menuSite.Initialize(", "native item menu loader boundary");
+    Forbid(itemMenus, "namespaceSite.Initialize(", "namespace menu loader boundary");
+    Forbid(shellMenus, "menuSite.Initialize(", "native background/mapped item menu loader boundary");
 
     if (failures == 0)
         std::cout << "Shell source boundary checks passed; runtime behavior is not exercised.\n";

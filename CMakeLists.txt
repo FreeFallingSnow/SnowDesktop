@@ -2341,6 +2341,7 @@ if (BUILD_TESTING)
         shell_context_menu_invoke
         SOURCES tests/shell_context_menu_invoke_tests.cpp
             tests/shell/shell_catalogue_registry_handle_tests.cpp
+            tests/shell/shell_context_menu_bootstrap_tests.cpp
             src/shell/shell_extension_menu.cpp
             src/shell/shell_extension_menu_cache.cpp
     src/shell/shell_extension_catalogue.cpp
@@ -2358,7 +2359,9 @@ if (BUILD_TESTING)
         COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-loading-deadlines)
     add_test(NAME shell_extension_session_lifetime
         COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-extension-sessions)
-    set_tests_properties(shell_menu_loading_deadlines shell_extension_session_lifetime PROPERTIES
+    add_test(NAME shell_context_menu_bootstrap
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-bootstrap)
+    set_tests_properties(shell_menu_loading_deadlines shell_extension_session_lifetime shell_context_menu_bootstrap PROPERTIES
         TIMEOUT 60
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests>"
         LABELS "integration;contract;shell")
