@@ -65,9 +65,9 @@ inline Microsoft::WRL::ComPtr<IShellItem> NvidiaControlPanelApplication()
     Microsoft::WRL::ComPtr<IShellItem> item;
     // This publisher-qualified AUMID identifies the installed DCH Control
     // Panel, independently of the NVIDIA App and localized display names.
-    if (SUCCEEDED(SHCreateItemFromParsingName(
-        L"shell:AppsFolder\\NVIDIACorp.NVIDIAControlPanel_56jybvy8sckqj!NVIDIACorp.NVIDIAControlPanel",
-        nullptr, IID_PPV_ARGS(&item)))) return item;
+    if (SUCCEEDED(SHCreateItemInKnownFolder(FOLDERID_AppsFolder, KF_FLAG_DONT_VERIFY,
+        L"NVIDIACorp.NVIDIAControlPanel_56jybvy8sckqj!NVIDIACorp.NVIDIAControlPanel",
+        IID_PPV_ARGS(&item)))) return item;
     // Standard drivers can instead register the classic Win32 executable.
     // Never search PATH, the current directory, or an arbitrary command value.
     for (const auto hive : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
