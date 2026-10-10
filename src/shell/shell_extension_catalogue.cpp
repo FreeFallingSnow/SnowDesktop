@@ -311,6 +311,7 @@ struct Scanner
     std::vector<std::pair<Registration, std::wstring>> captured;
     Catalogue result;
     std::vector<Registration> folderRows;
+    std::array<std::vector<Registration>, 2> backgroundRows;
     std::map<std::string, size_t> ids;
     // One inventory contains many registrations of the same provider. Reuse
     // their metadata only within this scan; the next scan rechecks files,
@@ -390,10 +391,18 @@ struct Scanner
     }
     std::uint64_t FolderRevision()
     {
-        std::sort(folderRows.begin(), folderRows.end(), [](const auto &a, const auto &b) {
+        return ScopedRevision(folderRows);
+    }
+    std::uint64_t BackgroundRevision(Context scope)
+    {
+        return ScopedRevision(backgroundRows[scope == Context::Desktop ? 1 : 0]);
+    }
+    static std::uint64_t ScopedRevision(std::vector<Registration> &rows)
+    {
+        std::sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) {
             return std::tie(a.id, a.sources, a.contexts) < std::tie(b.id, b.sources, b.contexts);
         });
-        return Hash(settings_ipc::Pack(folderRows));
+        return Hash(settings_ipc::Pack(rows));
     }
     void Add(Registration row, const std::wstring &icon)
     {
@@ -408,6 +417,12 @@ struct Scanner
             auto source = row; Image(source.display, icon);
             folderRows.push_back(std::move(source));
         }
+        for (size_t i = 0; i < backgroundRows.size(); ++i)
+            if (row.contexts & ContextBit(i ? Context::Desktop : Context::FolderBackground))
+            {
+                auto source = row; Image(source.display, icon);
+                backgroundRows[i].push_back(std::move(source));
+            }
         if (const auto it = ids.find(row.id); it != ids.end())
         {
             auto &existing = result.rows[it->second];
@@ -633,6 +648,7 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
     std::sort(scanner.result.rows.begin(), scanner.result.rows.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
     scanner.result.revision = Hash(settings_ipc::Pack(scanner.result.rows));
     scanner.result.folderRevision = scanner.FolderRevision();
+    scanner.result.backgroundRevisions = {scanner.BackgroundRevision(Context::FolderBackground), scanner.BackgroundRevision(Context::Desktop)};
     timing.Record("complete", static_cast<unsigned>(scanner.result.rows.size()));
     return std::move(scanner.result);
 }
@@ -646,6 +662,18 @@ std::uint64_t ReadFolderCatalogueRevision(HKEY classes, bool packages)
     if (packages) scanner.Packages();
     timing.Record("complete", static_cast<unsigned>(scanner.folderRows.size()));
     return scanner.FolderRevision();
+}
+std::uint64_t ReadBackgroundCatalogueRevision(Context scope, HKEY classes, bool packages)
+{
+    if (scope != Context::FolderBackground && scope != Context::Desktop) return 0;
+    MenuTiming timing(scope == Context::Desktop ? "desktop.catalogue" : "background.catalogue");
+    Scanner scanner{classes};
+    scanner.Root(L"Directory\\Background", ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop));
+    if (scope == Context::Desktop) scanner.Root(L"DesktopBackground", ContextBit(Context::Desktop));
+    if (packages) scanner.Packages();
+    const auto revision = scanner.BackgroundRevision(scope);
+    timing.Record("complete", static_cast<unsigned>(scanner.backgroundRows[scope == Context::Desktop ? 1 : 0].size()));
+    return revision;
 }
 bool HandlerEnabled(const std::wstring &clsid, HKEY user, HKEY machine)
 {

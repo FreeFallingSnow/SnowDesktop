@@ -1446,7 +1446,40 @@ void TestRegistryCatalogue()
         }
     }
     const auto restored = snowdesktop::settings_ipc::Unpack<ext::Catalogue>(snowdesktop::settings_ipc::Pack(catalogue));
-    Expect(!restored.folderRevision, "persisted and IPC catalogue data never carry a live scoped verification proof");
+    Expect(!restored.folderRevision && !restored.backgroundRevisions[0] && !restored.backgroundRevisions[1],
+        "persisted and IPC catalogue data never carry a live scoped verification proof");
+    put(L"Directory\\Background\\shell\\background-proof\\command", nullptr, L"unused.exe /background");
+    put(L"DesktopBackground\\shell\\desktop-proof\\command", nullptr, L"unused.exe /desktop");
+    auto backgroundProofs = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
+    for (const auto context : {ext::Context::FolderBackground, ext::Context::Desktop})
+        Expect(backgroundProofs[context == ext::Context::Desktop ? 1 : 0] == ext::ReadBackgroundCatalogueRevision(context, registry.key, false),
+            "full inventory and each background-only verification read identical inputs");
+    put(L"*\\shell\\metadata-case", L"MUIVerb", L"Another unrelated file caption");
+    Expect(ext::ReadCatalogue(registry.key, false).backgroundRevisions == backgroundProofs,
+        "unrelated file metadata cannot invalidate either background scope");
+    put(L"DesktopBackground\\shell\\desktop-proof", L"LegacyDisable", L"");
+    auto changedBackgrounds = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
+    Expect(changedBackgrounds[0] == backgroundProofs[0] && changedBackgrounds[1] != backgroundProofs[1] &&
+        changedBackgrounds[1] == ext::ReadBackgroundCatalogueRevision(ext::Context::Desktop, registry.key, false),
+        "DesktopBackground policy affects desktop proof without invalidating folder backgrounds");
+    for (const auto &[name, value] : std::vector<std::pair<const wchar_t *, const wchar_t *>>{
+        {L"MUIVerb", L"Shared background action"}, {L"AppliesTo", L"System.ItemNameDisplay:proof"},
+        {L"MultiSelectModel", L"Single"}, {L"Extended", L""}, {L"LegacyDisable", L""},
+        {L"ProgrammaticAccessOnly", L""}, {L"SubCommands", L"background-one;background-two"},
+        {L"ExtendedSubCommandsKey", L"BackgroundProof.SubCommands"},
+        {L"ExplorerCommandHandler", L"{B92A9760-188A-44ED-88A5-F9E3D30E33AF}"}})
+    {
+        backgroundProofs = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
+        put(L"Directory\\Background\\shell\\background-proof", name, value);
+        changedBackgrounds = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
+        for (const auto context : {ext::Context::FolderBackground, ext::Context::Desktop})
+        {
+            const auto index = context == ext::Context::Desktop ? 1 : 0;
+            Expect(changedBackgrounds[index] != backgroundProofs[index] &&
+                changedBackgrounds[index] == ext::ReadBackgroundCatalogueRevision(context, registry.key, false),
+                "shared background action, applicability and policy changes invalidate both scopes");
+        }
+    }
 
 }
 
@@ -3423,7 +3456,7 @@ void TestRegistrationVerificationBeforePopupPublication(bool slowVerification = 
 
 // Real registry metadata and notifications drive production publication. Only
 // helper replies and completion order are controlled; no fixture is invoked.
-void TestFolderRegistrationVerification(int mode = 0)
+void TestFolderRegistrationVerification(int mode = 0, snowdesktop::shell_extensions::Context context = snowdesktop::shell_extensions::Context::Folder)
 {
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory temp;
@@ -3447,25 +3480,38 @@ void TestFolderRegistrationVerification(int mode = 0)
             static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t)));
         RegCloseKey(created); Expect(status == ERROR_SUCCESS, "write isolated menu metadata");
     };
-    put(L"Directory\\shell\\folder-proof", L"MUIVerb", L"17");
-    put(L"Directory\\shell\\folder-proof\\command", nullptr, L"unused.exe /17 %1");
+    const std::wstring rootKey = context == ext::Context::Desktop ? L"DesktopBackground" :
+        context == ext::Context::FolderBackground ? L"Directory\\Background" : L"Directory";
+    const auto actionKey = rootKey + L"\\shell\\folder-proof";
+    const auto registrationId = context == ext::Context::Desktop ? "reg:desktopbackground\\shell\\folder-proof" :
+        context == ext::Context::FolderBackground ? "reg:directory\\background\\shell\\folder-proof" : "reg:directory\\shell\\folder-proof";
+    put(actionKey.c_str(), L"MUIVerb", L"17");
+    put((actionKey + L"\\command").c_str(), nullptr, L"unused.exe /17 %1");
     ext::Request selected, barrier;
     const auto selectedPath = temp.path / L"selected";
     std::filesystem::create_directory(selectedPath);
     selected.paths = {selectedPath.wstring()};
+    selected.background = context == ext::Context::Desktop || context == ext::Context::FolderBackground;
+    selected.context = context;
     barrier.paths = {(temp.path / L"barrier.txt").wstring()};
     std::ofstream(barrier.paths.front()) << "private";
-    if (mode == 4) { selected.paths = barrier.paths; }
+    if (mode == 4) { selected.paths = barrier.paths; selected.background = false; }
     std::atomic<bool> blocked = false, scopeDone = false, helperReady = false;
     std::atomic<unsigned> queries = 0, scans = 0, scopeReads = 0, version = 17;
     std::mutex gateMutex; std::condition_variable gate; bool release = false;
+    const auto readScope = [&] {
+        ++scopeReads;
+        const auto signature = mode == 2 ? 0 : context == ext::Context::Folder ?
+            ext::ReadFolderCatalogueRevision(registry.key, false) : ext::ReadBackgroundCatalogueRevision(context, registry.key, false);
+        scopeDone = true; return signature;
+    };
     ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
         if (target.paths != selected.paths) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
         const auto query = ++queries; const auto captured = version.load();
         return ext::QueryWork{[&, query, captured]() -> std::optional<ext::Reply> {
             if (query == 1 && !helperReady) return {};
             ext::Entry entry; entry.key = "folder-proof"; entry.provider = "verb:folder-proof";
-            entry.registration = "reg:directory\\shell\\folder-proof"; entry.label = std::to_wstring(captured);
+            entry.registration = registrationId; entry.label = std::to_wstring(captured);
             return ext::Reply{true, {entry}, {}};
         }, {}};
     }, [&] {
@@ -3475,19 +3521,18 @@ void TestFolderRegistrationVerification(int mode = 0)
                 throw std::runtime_error("full inventory gate exceeded its bound");
         }
         auto catalogue = ext::ReadCatalogue(registry.key, false);
-        if (mode == 3) catalogue.folderRevision = 0; // A persisted/legacy inventory cannot provide proof.
+        if (mode == 3) { catalogue.folderRevision = 0; catalogue.backgroundRevisions = {}; } // A persisted/legacy inventory cannot provide proof.
         return catalogue;
-    }, [&] {
-        ++scopeReads;
-        const auto revision = mode == 2 ? 0 : ext::ReadFolderCatalogueRevision(registry.key, false);
-        scopeDone = true; return revision;
-    });
+    }, context == ext::Context::Folder ? ext::MenuService::FolderVerifier(readScope) : ext::MenuService::FolderVerifier{},
+       context == ext::Context::Folder ? ext::MenuService::BackgroundVerifier{} : ext::MenuService::BackgroundVerifier([&](ext::Context scope) {
+           Expect(scope == context, "background verifier receives the actual menu scope"); return readScope();
+       }));
     struct Release {
         std::mutex &mutex; std::condition_variable &gate; bool &released;
         ~Release() { { std::lock_guard lock(mutex); released = true; } gate.notify_all(); }
     } releaseOnFailure{gateMutex, gate, release};
     ext::Preferences preferences;
-    ext::SetCommon(preferences, "reg:directory\\shell\\folder-proof", ext::Category::Objects, true);
+    ext::SetCommon(preferences, registrationId, ext::CategoryOf(context), true);
     service.Configure(preferences); service.Inspect();
     PumpUntil([&] { return !service.Inspect().scanning; }, "initial live folder inventory is ready");
     service.Query(selected, mode == 4 ? ext::QueryPriority::Execute : ext::QueryPriority::Menu);
@@ -3495,8 +3540,8 @@ void TestFolderRegistrationVerification(int mode = 0)
     const auto before = service.View(selected).revision;
     if (mode == 1) {
         version = 18;
-        put(L"Directory\\shell\\folder-proof", L"MUIVerb", L"18");
-        put(L"Directory\\shell\\folder-proof\\command", nullptr, L"unused.exe /18 %1");
+        put(actionKey.c_str(), L"MUIVerb", L"18");
+        put((actionKey + L"\\command").c_str(), nullptr, L"unused.exe /18 %1");
     }
     DWORD data = 1;
     Expect(RegSetValueExW(noise.key, L"Sequence", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&data), sizeof(data))
@@ -4673,7 +4718,9 @@ int wmain(int argc, wchar_t **argv)
             TestRegistrationVerificationBeforePopupPublication(true);
         }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-folder-registration-verification")
-        { TestRegistryCatalogue(); for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode); }
+        { TestRegistryCatalogue(); for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
+            for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+                for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-registry-catalogue")
             TestRegistryCatalogue();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-extension-sessions")
@@ -4716,6 +4763,8 @@ int wmain(int argc, wchar_t **argv)
             TestKnownScopeQueryPolicy();
             TestRegistryCatalogue();
             for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
+            for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+                for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context);
             TestNvidiaCompatibility();
         }
         else
@@ -4728,6 +4777,8 @@ int wmain(int argc, wchar_t **argv)
             TestCatalogueCache();
             TestRegistryCatalogue();
             for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
+            for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+                for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context);
             TestNvidiaCompatibility();
             TestManagementUpdates();
             TestManagementFilters();
