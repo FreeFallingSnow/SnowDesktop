@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cwctype>
 #include <map>
+#include <optional>
 #include <set>
 #include <mutex>
 #include <shlwapi.h>
@@ -33,8 +34,14 @@ std::string Utf8(const std::wstring &s)
 struct Key
 {
     HKEY value = nullptr;
-    Key(HKEY root, const std::wstring &path, REGSAM access = KEY_READ) { RegOpenKeyExW(root, path.c_str(), 0, access, &value); }
-    ~Key() { if (value) RegCloseKey(value); }
+    bool owned = false;
+    Key(HKEY root, const std::wstring &path, REGSAM access = KEY_READ)
+    {
+        RegOpenKeyExW(root, path.c_str(), 0, access, &value);
+        // Opening an empty path on a predefined key returns the borrowed root.
+        owned = value && value != root;
+    }
+    ~Key() { if (owned) RegCloseKey(value); }
     Key(const Key &) = delete;
 };
 std::vector<std::wstring> Children(HKEY root, const std::wstring &path)
@@ -620,20 +627,28 @@ std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
     std::map<std::wstring, std::vector<std::wstring>> &sourceValues)
 {
     std::map<std::wstring, std::vector<std::wstring>> types;
-    const auto readAssociation = [classes](const std::wstring &name) {
+    std::optional<Key> choices;
+    if (classes == HKEY_CLASSES_ROOT)
+        choices.emplace(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts", KEY_QUERY_VALUE);
+    const auto readAssociation = [classes, &choices](const std::wstring &name) {
+        Key extension(classes, name, KEY_QUERY_VALUE);
+        const auto queryRoot = extension.value ? extension.value : classes;
+        const auto queryPath = extension.value ? std::wstring{} : name;
         std::map<std::wstring, std::vector<std::wstring>> result;
         result[Lower(name)].push_back(Lower(name));
-        const auto prog = Read(classes, name); if (!prog.empty()) result[Lower(prog)].push_back(Lower(name));
+        const auto prog = Read(queryRoot, queryPath); if (!prog.empty()) result[Lower(prog)].push_back(Lower(name));
         // Preserve the original values used by row fingerprints in this scan.
         // A new Scanner reads fresh values; this does not cache associations across scans.
         std::vector<std::wstring> values{prog};
-        const auto perceived = Read(classes, name, L"PerceivedType");
+        const auto perceived = Read(queryRoot, queryPath, L"PerceivedType");
         if (!perceived.empty()) result[L"systemfileassociations\\" + Lower(perceived)].push_back(Lower(name));
         result[L"systemfileassociations\\" + Lower(name)].push_back(Lower(name));
-        for (const auto &progId : Values(classes, name + L"\\OpenWithProgids")) result[Lower(progId)].push_back(Lower(name));
+        for (const auto &progId : Values(queryRoot, queryPath.empty() ? L"OpenWithProgids" : name + L"\\OpenWithProgids")) result[Lower(progId)].push_back(Lower(name));
         if (classes == HKEY_CLASSES_ROOT)
         {
-            const auto choice = Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + name + L"\\UserChoice", L"ProgId");
+            const auto choice = choices && choices->value
+                ? Read(choices->value, name + L"\\UserChoice", L"ProgId")
+                : Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + name + L"\\UserChoice", L"ProgId");
             if (!choice.empty()) result[Lower(choice)].push_back(Lower(name));
             values.push_back(choice);
         }

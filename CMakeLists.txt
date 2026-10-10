@@ -2315,6 +2315,7 @@ if (BUILD_TESTING)
         SnowDesktopShellContextMenuInvokeTests
         shell_context_menu_invoke
         SOURCES tests/shell_context_menu_invoke_tests.cpp
+            tests/shell/shell_catalogue_registry_handle_tests.cpp
             src/shell/shell_extension_menu.cpp
             src/shell/shell_extension_menu_cache.cpp
     src/shell/shell_extension_catalogue.cpp

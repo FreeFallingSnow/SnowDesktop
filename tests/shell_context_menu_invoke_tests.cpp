@@ -30,6 +30,8 @@
 #include <wrl/client.h>
 #include <wrl/implements.h>
 
+void TestCatalogueRegistryHandles();
+
 namespace
 {
 
@@ -1547,6 +1549,7 @@ void TestRegistryCatalogue()
 {
     TestPackageManifestRefresh();
     TestParallelRegistryCatalogue();
+    TestCatalogueRegistryHandles();
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory temp;
     const auto path = L"Software\\SnowDesktopCatalogueTests\\" + temp.path.filename().wstring();
