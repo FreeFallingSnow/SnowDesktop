@@ -2583,5 +2583,6 @@
   "settings.dock.fullscreenFromRunning": "실행 중인 앱에서 선택",
   "settings.dock.fullscreenDefaultPolicy": "기본 보호",
   "app.settings.fan_title_font_size": "부채꼴 펼치기 제목 글꼴 크기",
-  "settings.dock.fullscreenExceptionManage": "앱 예외 관리"
+  "settings.dock.fullscreenExceptionManage": "앱 예외 관리",
+  "app.dock.create_mapping_action": "매핑 만들기"
 }

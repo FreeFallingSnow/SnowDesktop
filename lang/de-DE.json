@@ -2583,5 +2583,6 @@
   "settings.dock.fullscreenFromRunning": "Laufende App auswählen",
   "settings.dock.fullscreenDefaultPolicy": "Standardschutz",
   "app.settings.fan_title_font_size": "Schriftgröße der Titel in der Fächeransicht",
-  "settings.dock.fullscreenExceptionManage": "Anwendungsausnahmen verwalten"
+  "settings.dock.fullscreenExceptionManage": "Anwendungsausnahmen verwalten",
+  "app.dock.create_mapping_action": "Zuordnung erstellen"
 }

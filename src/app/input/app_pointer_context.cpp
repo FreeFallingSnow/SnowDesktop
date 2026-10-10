@@ -408,8 +408,13 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
         }
         if (accepted)
         {
-            const char* label = externalSource && dynamic_cast<DockContainer*>(target)
-                ? "widget.base.create_shortcut" : choice.label;
+            const bool dockTarget = dynamic_cast<DockContainer*>(target) != nullptr;
+            const bool copyCreatesDockMapping = dockTarget && !luaFileDrop &&
+                region != HitRegion::Handoff && choice.effect == DROPEFFECT_COPY;
+            const char* label = externalSource && dockTarget
+                ? "widget.base.create_shortcut"
+                : copyCreatesDockMapping
+                    ? "app.dock.create_mapping_action" : choice.label;
             AppendMenuW(menu, MF_STRING, choice.command, _LW(label));
             hasChoice = true;
         }

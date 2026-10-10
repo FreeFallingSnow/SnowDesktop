@@ -2583,5 +2583,6 @@
   "settings.dock.fullscreenFromRunning": "実行中のアプリから選択",
   "settings.dock.fullscreenDefaultPolicy": "既定の保護",
   "app.settings.fan_title_font_size": "扇形展開のタイトルの文字サイズ",
-  "settings.dock.fullscreenExceptionManage": "アプリの例外を管理"
+  "settings.dock.fullscreenExceptionManage": "アプリの例外を管理",
+  "app.dock.create_mapping_action": "マッピングを作成"
 }

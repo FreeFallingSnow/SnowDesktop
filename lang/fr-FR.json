@@ -2583,5 +2583,6 @@
   "settings.dock.fullscreenFromRunning": "Choisir une application en cours",
   "settings.dock.fullscreenDefaultPolicy": "Protection par défaut",
   "app.settings.fan_title_font_size": "Taille de police des titres de la vue en éventail",
-  "settings.dock.fullscreenExceptionManage": "Gérer les exceptions des applications"
+  "settings.dock.fullscreenExceptionManage": "Gérer les exceptions des applications",
+  "app.dock.create_mapping_action": "Créer un mappage"
 }
