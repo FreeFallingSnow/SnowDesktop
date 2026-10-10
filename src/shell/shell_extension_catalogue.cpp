@@ -304,6 +304,86 @@ struct KeyValues
         return Read(key, L"", name);
     }
 };
+// Cache parsed XML only, never registration or policy. Every scan re-enumerates
+// packages and verifies file ID, size, write/change times before reusing results.
+// Missing, malformed or unidentifiable files are not negatively cached.
+struct ManifestVerb { std::wstring clsid, id, type; };
+struct ManifestStamp
+{
+    ULONGLONG volume;
+    std::array<BYTE, 16> fileId;
+    LONGLONG size, written, changed;
+    bool operator==(const ManifestStamp &) const = default;
+};
+struct ManifestFile
+{
+    HANDLE handle;
+    explicit ManifestFile(const std::wstring &path) : handle(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)) {}
+    ~ManifestFile() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+    std::optional<ManifestStamp> Stamp() const
+    {
+        FILE_ID_INFO id{}; FILE_BASIC_INFO basic{}; FILE_STANDARD_INFO standard{};
+        if (handle == INVALID_HANDLE_VALUE || !GetFileInformationByHandleEx(handle, FileIdInfo, &id, sizeof(id)) ||
+            !GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) ||
+            !GetFileInformationByHandleEx(handle, FileStandardInfo, &standard, sizeof(standard))) return {};
+        ManifestStamp stamp{id.VolumeSerialNumber, {}, standard.EndOfFile.QuadPart,
+            basic.LastWriteTime.QuadPart, basic.ChangeTime.QuadPart};
+        std::copy(std::begin(id.FileId.Identifier), std::end(id.FileId.Identifier), stamp.fileId.begin());
+        return stamp;
+    }
+};
+std::wstring ManifestAttribute(IXMLDOMNode *node, const wchar_t *name)
+{
+    ComPtr<IXMLDOMNamedNodeMap> attributes; ComPtr<IXMLDOMNode> value;
+    BSTR key = SysAllocString(name), text = nullptr;
+    if (node && SUCCEEDED(node->get_attributes(&attributes)) && attributes) attributes->getNamedItem(key, &value);
+    if (value) value->get_text(&text);
+    std::wstring result = text ? text : L"";
+    SysFreeString(key); SysFreeString(text); return result;
+}
+std::vector<ManifestVerb> ReadManifestVerbs(const std::wstring &path)
+{
+    struct Cached { ManifestStamp stamp; std::vector<ManifestVerb> verbs; };
+    static std::mutex cacheMutex;
+    static std::map<std::wstring, Cached> cache;
+    ManifestFile file(path);
+    const auto stamp = file.Stamp();
+    if (stamp)
+    {
+        std::lock_guard lock(cacheMutex);
+        const auto found = cache.find(path);
+        if (found != cache.end() && found->second.stamp == *stamp) return found->second.verbs;
+    }
+    ComPtr<IXMLDOMDocument2> document;
+    if (FAILED(CoCreateInstance(__uuidof(DOMDocument60), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&document)))) return {};
+    document->put_async(VARIANT_FALSE); document->put_validateOnParse(VARIANT_FALSE); document->put_resolveExternals(VARIANT_FALSE);
+    VARIANT filename{}; VariantInit(&filename); filename.vt = VT_BSTR;
+    filename.bstrVal = SysAllocString(path.c_str());
+    VARIANT_BOOL loaded = VARIANT_FALSE; document->load(filename, &loaded); VariantClear(&filename);
+    if (!loaded) return {};
+    BSTR query = SysAllocString(L"//*[local-name()='Extension' and @Category='windows.fileExplorerContextMenus']//*[local-name()='Verb']");
+    ComPtr<IXMLDOMNodeList> nodes; document->selectNodes(query, &nodes); SysFreeString(query);
+    if (!nodes) return {};
+    long count = 0; nodes->get_length(&count);
+    std::vector<ManifestVerb> result;
+    for (long i = 0; i < count; ++i)
+    {
+        ComPtr<IXMLDOMNode> verb, parent; nodes->get_item(i, &verb); verb->get_parentNode(&parent);
+        result.push_back({ManifestAttribute(verb.Get(), L"Clsid"), ManifestAttribute(verb.Get(), L"Id"), ManifestAttribute(parent.Get(), L"Type")});
+    }
+    // Recheck the open object and the current path. A replacement during XML
+    // loading must not associate a new manifest with the old file identity.
+    ManifestFile current(path);
+    if (stamp && file.Stamp() == stamp && current.Stamp() == stamp)
+    {
+        std::lock_guard lock(cacheMutex);
+        if (cache.size() >= 1024) cache.clear();
+        cache.insert_or_assign(path, Cached{*stamp, result});
+    }
+    return result;
+}
+
 struct Scanner
 {
     HKEY classes;
@@ -500,15 +580,6 @@ struct Scanner
             Add(std::move(row), info.icon.empty() ? info.module : info.icon);
         }
     }
-    static std::wstring Attribute(IXMLDOMNode *node, const wchar_t *name)
-    {
-        ComPtr<IXMLDOMNamedNodeMap> attributes; ComPtr<IXMLDOMNode> value;
-        BSTR key = SysAllocString(name), text = nullptr;
-        if (node && SUCCEEDED(node->get_attributes(&attributes)) && attributes) attributes->getNamedItem(key, &value);
-        if (value) value->get_text(&text);
-        std::wstring result = text ? text : L"";
-        SysFreeString(key); SysFreeString(text); return result;
-    }
     void Packages()
     {
         const std::wstring root = L"Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages";
@@ -516,24 +587,12 @@ struct Scanner
         {
             const auto directory = Read(classes, root + L"\\" + package, L"PackageRootFolder");
             if (directory.empty()) continue;
-            ComPtr<IXMLDOMDocument2> document;
-            if (FAILED(CoCreateInstance(__uuidof(DOMDocument60), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&document)))) return;
-            document->put_async(VARIANT_FALSE); document->put_validateOnParse(VARIANT_FALSE); document->put_resolveExternals(VARIANT_FALSE);
-            VARIANT filename{}; VariantInit(&filename); filename.vt = VT_BSTR;
-            filename.bstrVal = SysAllocString((directory + L"\\AppxManifest.xml").c_str());
-            VARIANT_BOOL loaded = VARIANT_FALSE; document->load(filename, &loaded); VariantClear(&filename);
-            if (!loaded) continue;
-            BSTR query = SysAllocString(L"//*[local-name()='Extension' and @Category='windows.fileExplorerContextMenus']//*[local-name()='Verb']");
-            ComPtr<IXMLDOMNodeList> nodes; document->selectNodes(query, &nodes); SysFreeString(query);
-            if (!nodes) continue;
-            long count = 0; nodes->get_length(&count);
-            for (long i = 0; i < count; ++i)
+            for (const auto &verb : ReadManifestVerbs(directory + L"\\AppxManifest.xml"))
             {
-                ComPtr<IXMLDOMNode> verb, parent; nodes->get_item(i, &verb); verb->get_parentNode(&parent);
-                auto clsid = Attribute(verb.Get(), L"Clsid");
-                const auto id = Attribute(verb.Get(), L"Id");
+                auto clsid = verb.clsid;
+                const auto &id = verb.id;
+                const auto &type = verb.type;
                 if (clsid.size() == 36) clsid = L"{" + clsid + L"}";
-                const auto type = Attribute(parent.Get(), L"Type");
                 if (clsid.empty() || type.empty()) continue;
                 const auto first = package.find(L'_'), last = package.rfind(L'_');
                 const auto family = first != std::wstring::npos && last > first ? package.substr(0, first) + package.substr(last) : package;
@@ -543,7 +602,7 @@ struct Scanner
                 row.sources = {L"package:" + package + L":" + id}; row.verbs = {Utf8(Lower(clsid))};
                 row.contexts = type == L"Directory" ? ContextBit(Context::Folder) : type == L"Directory\\Background" ? ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop) : ContextBit(Context::File);
                 if (type != L"*" && type != L"Directory" && type != L"Directory\\Background") row.types = {Lower(type)};
-                row.systemEnabled = !Blocked(clsid); row.display.label = family.substr(0, family.find(L'_'));
+                row.systemEnabled = !IsBlocked(clsid); row.display.label = family.substr(0, family.find(L'_'));
                 row.revision = Hash(settings_ipc::Pack(package, id, clsid));
                 Add(std::move(row), L"");
             }

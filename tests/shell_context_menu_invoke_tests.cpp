@@ -1297,6 +1297,105 @@ void ProbePowerShellSubmenus()
     }
 }
 
+void TestPackageManifestRefresh()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct RegistryFixture
+    {
+        HKEY key = nullptr; std::wstring path;
+        ~RegistryFixture() { if (key) RegCloseKey(key); RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry{nullptr, L"Software\\SnowDesktopManifestTests\\" + temp.path.filename().wstring()};
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, registry.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr,
+        &registry.key, nullptr) == ERROR_SUCCESS, "private package inventory fixture");
+    const std::wstring packageKey = L"Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages\\Example_1.0.0.0_x64__publisher";
+    auto registerPackage = [&] {
+        HKEY key = nullptr;
+        Expect(RegCreateKeyExW(registry.key, packageKey.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr,
+            &key, nullptr) == ERROR_SUCCESS, "register private package manifest");
+        const auto directory = temp.path.wstring();
+        const auto status = RegSetValueExW(key, L"PackageRootFolder", 0, REG_SZ,
+            reinterpret_cast<const BYTE *>(directory.c_str()), static_cast<DWORD>((directory.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(key); Expect(status == ERROR_SUCCESS, "write private package directory");
+    };
+    registerPackage();
+    const auto manifest = temp.path / L"AppxManifest.xml";
+    const std::string firstId = "{A6510AE1-9C45-4F16-A120-4A320B231001}";
+    const std::string secondId = "{A6510AE1-9C45-4F16-A120-4A320B231002}";
+    auto text = [](const std::string &id) { return "<Package><Extensions><Extension Category=\"windows.fileExplorerContextMenus\"><ItemType Type=\"Directory\\Background\"><Verb Id=\"Inspect\" Clsid=\"" + id + "\"/></ItemType></Extension></Extensions></Package>"; };
+    auto write = [](const std::filesystem::path &path, const std::string &xml) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output.write(xml.data(), static_cast<std::streamsize>(xml.size()));
+        output.close(); Expect(!output.fail(), "write actual private manifest file");
+    };
+    auto check = [&](const char *expected) {
+        const auto catalogue = ext::ReadCatalogue(registry.key, true);
+        Expect(catalogue.rows.size() == 1 && catalogue.rows.front().id == expected &&
+            catalogue.rows.front().contexts == (ext::ContextBit(ext::Context::Desktop) | ext::ContextBit(ext::Context::FolderBackground)) &&
+            catalogue.rows.front().sources == std::vector<std::wstring>{L"package:Example_1.0.0.0_x64__publisher:Inspect"},
+            "PACKAGE_REFRESH: live package inventory retains the current manifest command and contexts");
+        Expect(catalogue.backgroundRevisions[1] == ext::ReadBackgroundCatalogueRevision(ext::Context::Desktop, registry.key, true),
+            "full and scoped scans use the same current package manifest");
+        return catalogue.revision;
+    };
+    write(manifest, text(firstId));
+    const auto firstRevision = check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}");
+    Expect(firstRevision == check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}"), "unchanged manifest remains deterministic");
+    FILE_BASIC_INFO oldBasic{};
+    HANDLE oldFile = CreateFileW(manifest.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(oldFile != INVALID_HANDLE_VALUE && GetFileInformationByHandleEx(oldFile, FileBasicInfo, &oldBasic, sizeof(oldBasic)), "read original manifest timestamp");
+    CloseHandle(oldFile);
+    write(manifest, text(secondId));
+    HANDLE changedFile = CreateFileW(manifest.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    auto changedBasic = oldBasic; changedBasic.ChangeTime.QuadPart += 10000000;
+    Expect(changedFile != INVALID_HANDLE_VALUE && SetFileInformationByHandle(changedFile, FileBasicInfo, &changedBasic, sizeof(changedBasic)),
+        "change content while preserving the last-write timestamp and size");
+    FILE_BASIC_INFO observed{};
+    Expect(GetFileInformationByHandleEx(changedFile, FileBasicInfo, &observed, sizeof(observed)) &&
+        observed.LastWriteTime.QuadPart == oldBasic.LastWriteTime.QuadPart && observed.ChangeTime.QuadPart != oldBasic.ChangeTime.QuadPart,
+        "in-place change fixture has equal last-write time but distinct change time");
+    CloseHandle(changedFile);
+    Expect(firstRevision != check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231002}"),
+        "same-size edit with restored last-write time invalidates parsed metadata");
+    const auto replacement = temp.path / L"replacement.xml";
+    write(replacement, text(firstId));
+    HANDLE replacementFile = CreateFileW(replacement.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(replacementFile != INVALID_HANDLE_VALUE && SetFileInformationByHandle(replacementFile, FileBasicInfo, &observed, sizeof(observed)),
+        "prepare same-size replacement with matching timestamps");
+    FILE_ID_INFO replacementId{}, previousId{};
+    oldFile = CreateFileW(manifest.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(oldFile != INVALID_HANDLE_VALUE && GetFileInformationByHandleEx(oldFile, FileIdInfo, &previousId, sizeof(previousId)) &&
+        GetFileInformationByHandleEx(replacementFile, FileIdInfo, &replacementId, sizeof(replacementId)) &&
+        memcmp(previousId.FileId.Identifier, replacementId.FileId.Identifier, sizeof(previousId.FileId.Identifier)) != 0,
+        "replacement fixture is a distinct file object");
+    CloseHandle(replacementFile);
+    Expect(MoveFileExW(replacement.c_str(), manifest.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE, "replace private manifest");
+    CloseHandle(oldFile);
+    check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}");
+    Expect(std::filesystem::remove(manifest), "remove private manifest");
+    Expect(ext::ReadCatalogue(registry.key, true).rows.empty(), "a removed manifest cannot retain old commands");
+    write(manifest, "<Package/>");
+    Expect(ext::ReadCatalogue(registry.key, true).rows.empty(), "valid manifest without context commands stays empty");
+    write(manifest, text(secondId));
+    check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231002}");
+    write(manifest, "<Package>");
+    Expect(ext::ReadCatalogue(registry.key, true).rows.empty(), "malformed manifest is not a cached command source");
+    write(manifest, text(firstId));
+    check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}");
+    const std::wstring utf16 = L"<Package><Extension Category=\"windows.fileExplorerContextMenu&#115;\"><ItemType Type=\"Directory&#92;Background\"><Verb Id=\"Inspect\" Clsid=\"{A6510AE1-9C45-4F16-A120-4A320B231002}\"/></ItemType></Extension></Package>";
+    std::string unicode("\xff\xfe", 2); unicode.append(reinterpret_cast<const char *>(utf16.data()), utf16.size() * sizeof(wchar_t));
+    write(manifest, unicode);
+    check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231002}");
+    Expect(RegDeleteTreeW(registry.key, packageKey.c_str()) == ERROR_SUCCESS, "unregister private package");
+    Expect(ext::ReadCatalogue(registry.key, true).rows.empty(), "cached XML cannot restore an unregistered package");
+    registerPackage();
+    check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231002}");
+}
+
 void TestParallelRegistryCatalogue()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -1367,6 +1466,7 @@ void TestParallelRegistryCatalogue()
 }
 void TestRegistryCatalogue()
 {
+    TestPackageManifestRefresh();
     TestParallelRegistryCatalogue();
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory temp;
@@ -5024,6 +5124,8 @@ int wmain(int argc, wchar_t **argv)
         { TestShortcutQueryRecovery(); TestShortcutQueryRecovery(true); TestSourceScheduler(true); TestSlowShortcutQueryRecovery(); TestSlowShortcutQueryRecovery(true); TestSlowShortcutQueryRecovery(false, true); TestSlowShortcutQueryRecovery(true, true); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-attribution-snapshot")
         { TestMenuDisplayAttributionSnapshot(); TestLateInitialRegistrationAttribution(); TestLateInitialRegistrationAttribution(true); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-package-manifest-refresh")
+            TestPackageManifestRefresh();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-native-catalogue-prime")
             TestAggregateCataloguePriming();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
