@@ -20,6 +20,10 @@ struct DockWindowTransitionTestAccess
     {
         transition.presentationWait_ = std::move(wait);
     }
+    static void SetRetainedImageSize(DockWindowTransition& transition, SIZE size)
+    {
+        transition.compositionImageSize_ = size;
+    }
 };
 
 namespace
@@ -581,6 +585,76 @@ void CheckRetainedWindowImage()
                     }
                     return predicate();
                 };
+                // The Win10 capture keeps invisible resize borders while iconic.
+                // Supply that platform-specific retained size at the real restore
+                // entry; HWND restore, image rebind and scheduler remain real.
+                const HWND framedSource = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                    type.lpszClassName, L"", WS_OVERLAPPEDWINDOW, -20000, -20000, 600, 420,
+                    nullptr, nullptr, type.hInstance, nullptr);
+                Check(framedSource != nullptr, "owned framed restore fixture initializes");
+                if (framedSource)
+                {
+                    DwmSetWindowAttribute(framedSource, DWMWA_TRANSITIONS_FORCEDISABLED,
+                        &alreadyDisabled, sizeof(alreadyDisabled));
+                    ShowWindow(framedSource, SW_SHOWNOACTIVATE);
+                    DwmFlush();
+                    RECT legacy{}, visibleFrame{};
+                    GetWindowRect(framedSource, &legacy);
+                    Check(SUCCEEDED(DwmGetWindowAttribute(framedSource, DWMWA_EXTENDED_FRAME_BOUNDS,
+                        &visibleFrame, sizeof(visibleFrame))) &&
+                        (legacy.right - legacy.left != visibleFrame.right - visibleFrame.left ||
+                            legacy.bottom - legacy.top != visibleFrame.bottom - visibleFrame.top),
+                        "framed fixture distinguishes invisible borders from the visible image");
+                    for (const int effect : {1, 2, 3})
+                    {
+                        for (const bool changedSize : {false, true})
+                        {
+                            snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                                2, 0, 60, false, false, effect);
+                            ShowWindow(framedSource, SW_MINIMIZE);
+                            DwmFlush();
+                            int requested = 0, activated = 0, fallback = 0;
+                            bool prepared = false;
+                            double preparedAt = 0, activatedAt = 0;
+                            transition.SetDiagnosticCallback([&](const wchar_t* message) {
+                                if (std::wstring(message).find(L"Dock restore prepared:") == 0)
+                                {
+                                    prepared = true;
+                                    preparedAt = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                                }
+                            });
+                            const bool started = transition.StartRestore(framedSource, dock,
+                                [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                                    if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                                    {
+                                        ++requested;
+                                        ShowWindow(window, SW_SHOWNOACTIVATE);
+                                    }
+                                    else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored)
+                                    {
+                                        ++activated;
+                                        activatedAt = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                                    }
+                                    else ++fallback;
+                                });
+                            Check(started, "framed restore starts through the production entry");
+                            DockWindowTransitionTestAccess::SetRetainedImageSize(transition,
+                                changedSize ? SIZE{737, 511} : SIZE{legacy.right - legacy.left, legacy.bottom - legacy.top});
+                            if (started) drain();
+                            const double visibleDuration = (effect == 3 ? 360.0 : effect == 2 ? 180.0 : 240.0) *
+                                snowdesktop::animation::RuntimeDurationScale();
+                            Check(prepared && requested == 1 && activated == 1 && fallback == 0 &&
+                                !IsIconic(framedSource) && !appCloaked(framedSource),
+                                "retained border or size mismatch rebinds the live image instead of skipping restore");
+                            Check(prepared && activatedAt - preparedAt >= visibleDuration - 15.0,
+                                "size-mismatched restore plays its complete visible timeline");
+                        }
+                    }
+                    DestroyWindow(framedSource);
+                    transition.SetDiagnosticCallback([&](const wchar_t* message) {
+                        if (std::wstring(message).find(L"Dock transition:") == 0) presentation = message;
+                    });
+                }
                 // Real restore entry with a controlled slow presentation wait:
                 // the source stays cloaked while independent UI work progresses.
                 for (const int effect : {1, 2, 3})

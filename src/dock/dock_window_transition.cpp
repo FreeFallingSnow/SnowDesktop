@@ -1694,14 +1694,28 @@ bool DockWindowTransition::RestoreGeometryReady(RECT& frame) const
     if (!sourceWindow_ || IsIconic(sourceWindow_) || !IsWindowVisible(sourceWindow_) ||
         !ResolveVisibleWindowRect(sourceWindow_, frame))
         return false;
-    if (UsesCompositionImage())
-    {
-        // IsIconic can clear while a toolkit still has the minimized-bar
-        // geometry. Compare with DWM's retained full image, not that flag alone.
-        return frame.right - frame.left == compositionImageSize_.cx &&
-            frame.bottom - frame.top == compositionImageSize_.cy;
-    }
-    return false;
+    if (!UsesCompositionImage()) return false;
+    RECT actualWindow{};
+    if (!GetWindowRect(sourceWindow_, &actualWindow) || !IsUsableRect(actualWindow))
+        return false;
+    // Win10 can retain the legacy resize borders in an iconic shared image,
+    // then report only the visible frame on restore. Image-size differences
+    // are valid: preparation rebinds the live image at the current geometry.
+    // Reject only the recognizable temporary iconic bar after IsIconic clears.
+    const UINT dpi = GetDpiForWindow(sourceWindow_);
+    const int barWidth = GetSystemMetricsForDpi(SM_CXMINIMIZED, dpi ? dpi : 96);
+    const int barHeight = GetSystemMetricsForDpi(SM_CYMINIMIZED, dpi ? dpi : 96);
+    if (actualWindow.right - actualWindow.left <= barWidth &&
+        actualWindow.bottom - actualWindow.top <= barHeight &&
+        (windowRect_.right - windowRect_.left > barWidth ||
+            windowRect_.bottom - windowRect_.top > barHeight))
+        return false;
+    // DWM's frame bounds may lag the native HWND during restore. A usable
+    // current HWND rectangle is sufficient while the shared image catches up.
+    if (frame.left < actualWindow.left || frame.top < actualWindow.top ||
+        frame.right > actualWindow.right || frame.bottom > actualWindow.bottom)
+        frame = actualWindow;
+    return true;
 }
 
 bool DockWindowTransition::PrepareRestoredWindow(double now)
