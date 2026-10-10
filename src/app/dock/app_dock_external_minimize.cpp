@@ -20,6 +20,9 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
         dockExternalMinimize_.reset();
         return;
     }
+    // The current target already owns its hook. Process-bitness checks, hook
+    // synchronization and stale-lease recovery can wait for the next idle tick.
+    if (dockWindowTransition_->IsActive()) return;
     const HWND receiver = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
     if (!receiver) return;
     if (!dockExternalMinimize_)

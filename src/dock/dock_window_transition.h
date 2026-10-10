@@ -195,7 +195,8 @@ private:
     bool CreateGenieStrips();
     bool ApplyGenieFrame(double progress, BYTE opacity);
     void ClearGenieStrips();
-    bool StartCompositionTimeline();
+    bool StartCompositionTimeline(bool opacityOnly = false);
+    bool CommitCompositionTimeline(std::span<IDCompositionAnimation* const> animations);
     bool ScheduleAnimationWake();
     bool ApplyFrame(double progress);
     bool ApplyOcclusion(const RECT& hostBounds, int cornerRadius);
@@ -251,6 +252,7 @@ private:
     double collapseFrom_ = 0.0;
     double collapseTo_ = 1.0;
     double lastCollapse_ = 0.0;
+    double lastGenieCollapse_ = -1.0;
     DockWindowTransitionDirection direction_ =
         DockWindowTransitionDirection::Minimize;
     RECT fromRect_{};

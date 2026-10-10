@@ -435,9 +435,25 @@ void CheckRetainedWindowImage()
                         bool waitingWhileHidden = false;
                         int requests = 0;
                         int activations = 0;
+                        int imageFrames = 0;
+                        int preparedFrames = 0;
+                        double preparedAt = 0;
+                        double activatedAt = 0;
                     } shortRestore{&transition, fullRect};
+                    // A slow restored-image rebind must delay the beginning,
+                    // rather than consume part of the visible animation. The
+                    // third image preparation is the full-geometry rebind.
+                    transition.SetOcclusionRectsProvider([&] {
+                        if (++shortRestore.imageFrames == 3) Sleep(120);
+                        if (shortRestore.prepared) ++shortRestore.preparedFrames;
+                        return std::vector<RECT>{};
+                    });
                     transition.SetDiagnosticCallback([&](const wchar_t* message) {
-                        if (std::wstring(message).find(L"Dock restore prepared:") == 0) shortRestore.prepared = true;
+                        if (std::wstring(message).find(L"Dock restore prepared:") == 0)
+                        {
+                            shortRestore.prepared = true;
+                            shortRestore.preparedAt = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                        }
                     });
                     SetWindowLongPtrW(source, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&shortRestore));
                     Check(transition.StartRestore(source, dock,
@@ -479,6 +495,7 @@ void CheckRetainedWindowImage()
                             else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored)
                             {
                                 ++shortRestore.activations;
+                                shortRestore.activatedAt = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
                                 RECT actual{};
                                 GetWindowRect(window, &actual);
                                 Check(EqualRect(&actual, &fullRect) && IsWindowVisible(window) && !appCloaked(window),
@@ -490,6 +507,14 @@ void CheckRetainedWindowImage()
                     Check(shortRestore.hiddenDuringBar && shortRestore.waitingWhileHidden && shortRestore.prepared &&
                         shortRestore.requests == 1 && shortRestore.activations == 1 && !appCloaked(source),
                         "full geometry and visibility are both required before any restore effect starts or retires");
+                    const double visibleDuration = (effect == 3 ? 360.0 : effect == 2 ? 180.0 : 240.0) *
+                        snowdesktop::animation::RuntimeDurationScale();
+                    Check(shortRestore.activatedAt - shortRestore.preparedAt >= visibleDuration - 15.0,
+                        "slow restored-image preparation does not skip the start of the visible animation");
+                    if (effect != 3)
+                        Check(shortRestore.preparedFrames <= 4,
+                            "restore scale and fade advance on the compositor without CPU frame submissions");
+                    transition.SetOcclusionRectsProvider({});
                     KillTimer(source, 2);
                     KillTimer(source, 3);
                     SetWindowLongPtrW(source, GWLP_USERDATA, 0);
@@ -513,32 +538,38 @@ void CheckRetainedWindowImage()
                 // Model a toolkit UI thread which dispatches the native state
                 // change after the visual timeline. The source must remain
                 // cloaked then, otherwise a second native animation can flash.
-                ShowWindow(source, SW_SHOWNOACTIVATE);
-                const BOOL enabled = FALSE;
-                DwmSetWindowAttribute(source, DWMWA_TRANSITIONS_FORCEDISABLED, &enabled, sizeof(enabled));
-                struct LateMinimize { DockWindowTransition* transition; bool retained = false; } late{&transition};
-                SetWindowLongPtrW(source, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&late));
-                const bool delayed = transition.StartMinimize(source, dock);
-                Check(delayed, "Dock minimize begins for a delayed toolkit state change");
-                if (delayed)
+                for (const int effect : {1, 2, 3})
                 {
-                    const UINT delay = static_cast<UINT>(360.0 * snowdesktop::animation::RuntimeDurationScale() + 200.0);
-                    Check(SetTimer(source, 1, delay, [](HWND window, UINT, UINT_PTR timer, DWORD) {
-                        KillTimer(window, timer);
-                        auto* state = reinterpret_cast<LateMinimize*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-                        DWORD flags = 0;
-                        state->retained = state->transition->IsActive() &&
-                            SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags))) &&
-                            (flags & DWM_CLOAKED_APP) != 0;
-                        ShowWindow(window, SW_MINIMIZE);
-                    }) != 0, "owned delayed state change timer is armed");
-                    drain();
-                    Check(late.retained && IsIconic(source),
-                        "minimize timeline retains native suppression until the delayed application commits its minimized state");
-                    Check(!appCloaked(source), "delayed minimize releases its temporary source cloak after handoff");
-                    KillTimer(source, 1);
+                    snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                        2, 0, 60, false, false, effect);
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    const BOOL enabled = FALSE;
+                    DwmSetWindowAttribute(source, DWMWA_TRANSITIONS_FORCEDISABLED, &enabled, sizeof(enabled));
+                    struct LateMinimize { DockWindowTransition* transition; bool retained = false; } late{&transition};
+                    SetWindowLongPtrW(source, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&late));
+                    const bool delayed = transition.StartMinimize(source, dock);
+                    Check(delayed, "Dock minimize begins for a delayed toolkit state change");
+                    if (delayed)
+                    {
+                        const double duration = effect == 3 ? 360.0 : effect == 2 ? 180.0 : 240.0;
+                        const UINT delay = static_cast<UINT>(duration * snowdesktop::animation::RuntimeDurationScale() + 200.0);
+                        Check(SetTimer(source, 1, delay, [](HWND window, UINT, UINT_PTR timer, DWORD) {
+                            KillTimer(window, timer);
+                            auto* state = reinterpret_cast<LateMinimize*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+                            DWORD flags = 0;
+                            state->retained = state->transition->IsActive() &&
+                                SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags))) &&
+                                (flags & DWM_CLOAKED_APP) != 0;
+                            ShowWindow(window, SW_MINIMIZE);
+                        }) != 0, "owned delayed state change timer is armed");
+                        drain();
+                        Check(late.retained && IsIconic(source),
+                            "minimize timeline retains native suppression until the delayed application commits its minimized state");
+                        Check(!appCloaked(source), "delayed minimize releases its temporary source cloak after handoff");
+                        KillTimer(source, 1);
+                    }
+                    SetWindowLongPtrW(source, GWLP_USERDATA, 0);
                 }
-                SetWindowLongPtrW(source, GWLP_USERDATA, 0);
                 ShowWindow(source, SW_SHOWNOACTIVATE);
                 Check(transition.StartMinimize(source, dock), "owned cancel fixture starts its transition");
                 transition.Cancel();

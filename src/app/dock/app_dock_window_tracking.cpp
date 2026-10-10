@@ -377,6 +377,7 @@ void DesktopApp::RefreshDockForegroundState()
 {
     if (!generalSettings_.dockEnabled)
         return;
+    const DWORD observedForegroundTick = dockForegroundChangedTick_.load();
     const HWND foreground = ResolveDockSemanticForegroundWindow();
     const int primaryButton = GetSystemMetrics(SM_SWAPBUTTON)
         ? VK_RBUTTON : VK_LBUTTON;
@@ -409,6 +410,10 @@ void DesktopApp::RefreshDockForegroundState()
             RefreshTrackedDockForegroundState(
                 app, foreground, matchesForeground, isMinimized);
     }
+    // Foreground feedback has already updated the tracked model. Do not turn
+    // this same notification into another process/identity scan on the timer.
+    // Unknown windows and membership changes keep their separate list revision.
+    dockRunningWindowsForegroundTick_ = observedForegroundTick;
     // This path only mutates window state: retained drag wrappers, item order,
     // identities and bitmaps remain owned by the periodic discovery model.
     if (changed)
@@ -459,6 +464,17 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 void DesktopApp::RefreshDockRunningWindows(
     bool invalidateChanged, HWND preferredWindow)
 {
+    if (invalidateChanged && dockWindowTransition_ && dockWindowTransition_->IsActive())
+    {
+        // Background discovery can spend tens of milliseconds in process/Shell queries.
+        // Preserve the dirty revisions for the maintenance timer after handoff;
+        // animation frames and widget drawing share this thread.
+        // Explicit action lookups (invalidateChanged=false) must still resolve
+        // missing targets, rather than launching a duplicate application.
+        RefreshDockForegroundState();
+        snowdesktop::performance::Value("dock", "running.discovery_deferred", {}, 1);
+        return;
+    }
     // Dock slots own the DockEntryItem/DockRunningItem wrappers retained by a
     // DragSession. The OLE nested loop continues to dispatch maintenance
     // timers after capture and mouseDown_ are cleared, so rebuilding the

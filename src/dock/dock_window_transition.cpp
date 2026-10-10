@@ -4,6 +4,7 @@
 #include "dock_window_rules.h"
 #include "settings/animation_settings.h"
 #include "platform/shell_overlay_window.h"
+#include "diagnostics/performance_trace.h"
 
 #include <algorithm>
 #include <array>
@@ -441,6 +442,7 @@ bool DockWindowTransition::Start(
     RestoreCallback restoreCallback,
     HWND keepBelowWindow)
 {
+    snowdesktop::performance::Scope performanceScope("dock.transition", "prepare");
     nativeFallbackRequested_ = false;
     if (!SystemWindowAnimationsEnabled() ||
         !sourceWindow || !IsWindow(sourceWindow) ||
@@ -922,6 +924,7 @@ bool DockWindowTransition::EnsureCompositionVisuals()
 
 bool DockWindowTransition::CreateSharedWindowImage()
 {
+    snowdesktop::performance::Scope performanceScope("dock.transition", "image.bind");
     compositionSharedWindowActive_ = false;
     SIZE size{};
     imageResult_ = snowdesktop::dock_thumbnail::SourceSize(sourceWindow_, size);
@@ -1038,6 +1041,7 @@ bool DockWindowTransition::CreateGenieStrips()
 
 bool DockWindowTransition::ApplyGenieFrame(double collapsed, BYTE opacity)
 {
+    snowdesktop::performance::Scope performanceScope("dock.transition", "genie.submit");
     if (genieStrips_.size() != snowdesktop::dock_genie::StripCount ||
         !compositionDevice_ || !compositionEffect_)
         return false;
@@ -1047,7 +1051,10 @@ bool DockWindowTransition::ApplyGenieFrame(double collapsed, BYTE opacity)
             static_cast<double>(value.right), static_cast<double>(value.bottom)};
     };
     HRESULT hr = S_OK;
-    for (std::size_t i = 0; i < genieStrips_.size() && SUCCEEDED(hr); ++i)
+    const bool geometryChanged = !hasLastFrame_ || lastGenieCollapse_ != collapsed;
+    const bool opacityChanged = !hasLastFrame_ || lastFrameOpacity_ != opacity;
+    if (!geometryChanged && !opacityChanged) return true;
+    for (std::size_t i = 0; geometryChanged && i < genieStrips_.size() && SUCCEEDED(hr); ++i)
     {
         const auto transform = snowdesktop::dock_genie::StripProjectiveMatrix(
             rect(windowRect_), rect(dockRect_), genieEdge_, collapsed,
@@ -1062,13 +1069,42 @@ bool DockWindowTransition::ApplyGenieFrame(double collapsed, BYTE opacity)
             static_cast<float>(transform.dx), static_cast<float>(transform.dy), 0, static_cast<float>(transform.w)};
         hr = genieStrips_[i]->SetTransform(matrix);
     }
-    if (SUCCEEDED(hr)) hr = compositionEffect_->SetOpacity(static_cast<float>(opacity) / 255.0f);
+    if (SUCCEEDED(hr) && opacityChanged)
+        hr = compositionEffect_->SetOpacity(static_cast<float>(opacity) / 255.0f);
     if (SUCCEEDED(hr)) hr = compositionDevice_->Commit();
+    if (SUCCEEDED(hr)) lastGenieCollapse_ = collapsed;
     return SUCCEEDED(hr);
 }
 
-bool DockWindowTransition::StartCompositionTimeline()
+bool DockWindowTransition::CommitCompositionTimeline(
+    std::span<IDCompositionAnimation* const> animations)
 {
+    LARGE_INTEGER begin{}, frequency{};
+    if (!QueryPerformanceCounter(&begin) || !QueryPerformanceFrequency(&frequency) ||
+        frequency.QuadPart <= 0) return false;
+    DCOMPOSITION_FRAME_STATISTICS statistics{};
+    if (SUCCEEDED(compositionDevice_->GetFrameStatistics(&statistics)) &&
+        statistics.nextEstimatedFrameTime.QuadPart > begin.QuadPart &&
+        statistics.nextEstimatedFrameTime.QuadPart - begin.QuadPart < frequency.QuadPart / 10)
+        begin = statistics.nextEstimatedFrameTime;
+    // All properties and the completion wake use the same clock. Building or
+    // rebinding the scene must not consume the beginning of the animation.
+    for (auto* animation : animations)
+        if (FAILED(animation->SetAbsoluteBeginTime(begin))) return false;
+    if (FAILED(compositionDevice_->Commit())) return false;
+    animationStartTimeMs_ = static_cast<double>(begin.QuadPart) * 1000.0 /
+        static_cast<double>(frequency.QuadPart);
+    if (awaitingRestoreVisibility_ && restoreFadeStartTimeMs_ > 0.0)
+        restoreFadeStartTimeMs_ = animationStartTimeMs_;
+    if (direction_ == DockWindowTransitionDirection::Minimize)
+        minimizeCleanupDeadlineMs_ = animationStartTimeMs_ + animationDurationMs_ + kMinimizeCleanupTimeoutMs;
+    compositionTimelineActive_ = true;
+    return true;
+}
+
+bool DockWindowTransition::StartCompositionTimeline(bool opacityOnly)
+{
+    snowdesktop::performance::Scope performanceScope("dock.transition", "timeline.prepare");
     if (!compositionImageActive_ || !compositionDevice_ ||
         !compositionVisual_ || !compositionScaleTransform_ ||
         !compositionEffect_ || !compositionClip_ ||
@@ -1076,6 +1112,18 @@ bool DockWindowTransition::StartCompositionTimeline()
         compositionImageSize_.cy <= 0 ||
         animationDurationMs_ <= 0.0)
         return false;
+
+    if (opacityOnly)
+    {
+        Microsoft::WRL::ComPtr<IDCompositionAnimation> opacity;
+        HRESULT hr = CreateSmoothStepAnimation(compositionDevice_.Get(),
+            static_cast<float>(animationFromOpacity_) / 255.0f,
+            static_cast<float>(animationToOpacity_) / 255.0f,
+            animationDurationMs_, &opacity);
+        if (SUCCEEDED(hr)) hr = compositionEffect_->SetOpacity(opacity.Get());
+        const std::array<IDCompositionAnimation*, 1> animations{opacity.Get()};
+        return SUCCEEDED(hr) && CommitCompositionTimeline(animations);
+    }
 
     const auto width = [](const RECT& rect) {
         return std::max(1L, rect.right - rect.left);
@@ -1165,10 +1213,10 @@ bool DockWindowTransition::StartCompositionTimeline()
         hr = compositionClip_->SetBottomRightRadiusX(radiusX.Get());
     if (SUCCEEDED(hr))
         hr = compositionClip_->SetBottomRightRadiusY(radiusY.Get());
-    if (SUCCEEDED(hr))
-        hr = compositionDevice_->Commit();
-    compositionTimelineActive_ = SUCCEEDED(hr);
-    return compositionTimelineActive_;
+    const std::array<IDCompositionAnimation*, 7> animations{
+        offsetX.Get(), offsetY.Get(), scaleX.Get(), scaleY.Get(),
+        opacity.Get(), radiusX.Get(), radiusY.Get()};
+    return SUCCEEDED(hr) && CommitCompositionTimeline(animations);
 }
 
 bool DockWindowTransition::ScheduleAnimationWake()
@@ -1179,12 +1227,14 @@ bool DockWindowTransition::ScheduleAnimationWake()
         animationScheduler_->Cancel(animationToken_);
     animationToken_ = 0;
 
-    if (UsesCompositionImage() && effect_ != 3 && !preparingRestore_)
+    const bool retiring = awaitingRestoreVisibility_ && restoreFadeStartTimeMs_ > 0.0;
+    if (UsesCompositionImage() && !preparingRestore_ && (effect_ != 3 || retiring))
     {
-        if (!StartCompositionTimeline())
+        if (!StartCompositionTimeline(retiring))
             return false;
         animationToken_ = animationScheduler_->ScheduleOnce(
-            static_cast<UINT>(std::ceil(animationDurationMs_)) + 2,
+            static_cast<UINT>(std::ceil(std::max(1.0,
+                animationStartTimeMs_ + animationDurationMs_ - MonotonicTimeMilliseconds()))) + 2,
             [this](snowdesktop::UiScheduleToken token) {
                 if (animationToken_ != token)
                     return;
@@ -1192,8 +1242,7 @@ bool DockWindowTransition::ScheduleAnimationWake()
                 compositionTimelineActive_ = false;
                 const bool keep = OnAnimationFrame(
                     MonotonicTimeMilliseconds());
-                if (keep && awaitingRestoreVisibility_ &&
-                    animationScheduler_)
+                if (keep && !animationToken_ && animationScheduler_)
                 {
                     animationToken_ =
                         animationScheduler_->StartAnimation(
@@ -1342,6 +1391,7 @@ bool DockWindowTransition::ApplyFrame(double progress)
 bool DockWindowTransition::OnAnimationFrame(
     double nowMilliseconds)
 {
+    snowdesktop::performance::Scope performanceScope("dock.transition", "frame");
     if (!sourceWindow_ || !IsWindow(sourceWindow_))
     {
         Finish();
@@ -1376,8 +1426,22 @@ bool DockWindowTransition::OnAnimationFrame(
     }
 
     const double now = nowMilliseconds;
-    if (preparingRestore_ && !PrepareRestoredWindow(now))
-        return IsActive();
+    if (preparingRestore_)
+    {
+        if (!PrepareRestoredWindow(now)) return IsActive();
+        if (effect_ != 3)
+        {
+            // The preparation poll owns a CPU frame token, but the restored
+            // image now has its final geometry and can run independently.
+            if (!ScheduleAnimationWake())
+            {
+                CompleteRestoreAfterRenderFailure();
+                Finish();
+            }
+            return false;
+        }
+        return true;
+    }
     if (awaitingRestoreVisibility_)
     {
         if (restoreFadeStartTimeMs_ > 0.0)
@@ -1436,7 +1500,8 @@ bool DockWindowTransition::OnAnimationFrame(
                 kRestoreImageFadeDurationMs);
             restoreFadeStartTimeMs_ = now;
             compositionTimelineActive_ = false;
-            return true;
+            if (!ScheduleAnimationWake()) Finish();
+            return false;
         }
 
         // 失败检查：恢复回调已执行，但窗口必须在清理超时内真正退出最小化。
@@ -1533,6 +1598,7 @@ bool DockWindowTransition::RestoreGeometryReady(RECT& frame) const
 
 bool DockWindowTransition::PrepareRestoredWindow(double now)
 {
+    snowdesktop::performance::Scope performanceScope("dock.transition", "restore.prepare");
     RECT frame{};
     if (!RestoreGeometryReady(frame))
     {
@@ -1571,7 +1637,6 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
         }
         hasLastFrame_ = false;
         compositionTimelineActive_ = false;
-        animationStartTimeMs_ = now;
         if (prepared) prepared = ApplyFrame(0.0);
         if (!prepared)
         {
@@ -1581,6 +1646,7 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
             return false;
         }
         DwmFlush();
+        animationStartTimeMs_ = MonotonicTimeMilliseconds();
         preparingRestore_ = false;
         if (diagnosticCallback_) diagnosticCallback_(L"Dock restore prepared: full-geometry before animation");
         return true;
@@ -1741,6 +1807,7 @@ void DockWindowTransition::Finish()
     collapseFrom_ = 0.0;
     collapseTo_ = 1.0;
     lastCollapse_ = 0.0;
+    lastGenieCollapse_ = -1.0;
     restoreCallback_ = {};
 }
 
