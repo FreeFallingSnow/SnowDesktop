@@ -615,6 +615,62 @@ struct FileRoot
     std::wstring path;
     std::vector<std::wstring> types;
 };
+std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
+    HKEY classes, const std::vector<std::wstring> &roots)
+{
+    std::map<std::wstring, std::vector<std::wstring>> types;
+    const auto readAssociation = [classes](const std::wstring &name) {
+        std::map<std::wstring, std::vector<std::wstring>> result;
+        result[Lower(name)].push_back(Lower(name));
+        const auto prog = Read(classes, name); if (!prog.empty()) result[Lower(prog)].push_back(Lower(name));
+        const auto perceived = Read(classes, name, L"PerceivedType");
+        if (!perceived.empty()) result[L"systemfileassociations\\" + Lower(perceived)].push_back(Lower(name));
+        result[L"systemfileassociations\\" + Lower(name)].push_back(Lower(name));
+        for (const auto &progId : Values(classes, name + L"\\OpenWithProgids")) result[Lower(progId)].push_back(Lower(name));
+        if (classes == HKEY_CLASSES_ROOT)
+        {
+            const auto choice = Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + name + L"\\UserChoice", L"ProgId");
+            if (!choice.empty()) result[Lower(choice)].push_back(Lower(name));
+        }
+        return result;
+    };
+    std::vector<std::wstring> fileTypes;
+    for (const auto &name : roots)
+        if (!name.empty() && name.front() == L'.') fileTypes.push_back(name);
+    std::vector<std::map<std::wstring, std::vector<std::wstring>>> associated(fileTypes.size());
+    // Each extension reads independent registration values. Keep results apart
+    // and merge in root order so parallel completion cannot alter associations.
+    if (fileTypes.size() < 64)
+        for (size_t i = 0; i < fileTypes.size(); ++i) associated[i] = readAssociation(fileTypes[i]);
+    else
+    {
+        std::atomic_size_t next = 0;
+        std::vector<std::future<void>> workers;
+        try
+        {
+            for (unsigned i = 0; i < std::clamp(std::thread::hardware_concurrency() / 2u, 2u, 4u); ++i)
+                workers.push_back(std::async(std::launch::async, [&] {
+                    while (true)
+                    {
+                        const auto index = next.fetch_add(1, std::memory_order_relaxed);
+                        if (index >= fileTypes.size()) break;
+                        associated[index] = readAssociation(fileTypes[index]);
+                    }
+                }));
+            for (auto &worker : workers) worker.get();
+        }
+        catch (...)
+        {
+            // Drain writers before a clean serial read replaces every result.
+            workers.clear();
+            for (size_t i = 0; i < fileTypes.size(); ++i) associated[i] = readAssociation(fileTypes[i]);
+        }
+    }
+    for (auto &extension : associated)
+        for (auto &[name, values] : extension)
+            types[name].insert(types[name].end(), values.begin(), values.end());
+    return types;
+}
 void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots)
 {
     const auto files = ContextBit(Context::File);
@@ -664,22 +720,7 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
     scanner.Root(L"Directory\\Background", ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop));
     scanner.Root(L"DesktopBackground", ContextBit(Context::Desktop));
     const auto roots = Children(classes, L"");
-    std::map<std::wstring, std::vector<std::wstring>> types;
-    for (const auto &name : roots)
-        if (!name.empty() && name.front() == L'.')
-        {
-            types[Lower(name)].push_back(Lower(name));
-            const auto prog = Read(classes, name); if (!prog.empty()) types[Lower(prog)].push_back(Lower(name));
-            const auto perceived = Read(classes, name, L"PerceivedType");
-            if (!perceived.empty()) types[L"systemfileassociations\\" + Lower(perceived)].push_back(Lower(name));
-            types[L"systemfileassociations\\" + Lower(name)].push_back(Lower(name));
-            for (const auto &progId : Values(classes, name + L"\\OpenWithProgids")) types[Lower(progId)].push_back(Lower(name));
-            if (classes == HKEY_CLASSES_ROOT)
-            {
-                const auto choice = Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + name + L"\\UserChoice", L"ProgId");
-                if (!choice.empty()) types[Lower(choice)].push_back(Lower(name));
-            }
-        }
+    auto types = ReadTypeAssociations(classes, roots);
     const std::set<std::wstring> special{L"*", L"allfilesystemobjects", L"directory", L"folder", L"drive", L"desktopbackground", L"clsid", L"interface", L"typelib"};
     std::vector<FileRoot> fileRoots;
     for (const auto &name : roots)

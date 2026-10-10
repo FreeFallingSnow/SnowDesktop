@@ -1426,10 +1426,14 @@ void TestParallelRegistryCatalogue()
     {
         const auto number = std::to_wstring(i), path = L"Parallel.Document" + number;
         put(L".parallel" + number, nullptr, path);
+        put(L".parallel" + number, L"PerceivedType", L"parallel-shared");
+        put(L".parallel" + number + L"\\OpenWithProgids", L"Parallel.Alternate", L"");
         put(path + L"\\shell\\inspect", L"MUIVerb", L"独立操作 " + number);
         put(path + L"\\shell\\inspect\\command", nullptr, L"unused.exe /source:" + number + L" %1");
         put(path + L"\\shellex\\ContextMenuHandlers\\Provider " + number, nullptr, clsid);
     }
+    put(L"SystemFileAssociations\\parallel-shared\\shell\\inspect\\command", nullptr, L"unused.exe /perceived %1");
+    put(L"Parallel.Alternate\\shell\\inspect\\command", nullptr, L"unused.exe /alternate %1");
     std::wstring first;
     for (DWORD index = 0; ; ++index)
     {
@@ -1442,7 +1446,7 @@ void TestParallelRegistryCatalogue()
     }
     Expect(!first.empty(), "fixture has an original first handler source");
     auto catalogue = ext::ReadCatalogue(registry.key, false);
-    Expect(catalogue.rows.size() == 81, "parallel file roots retain all unique verbs and merge only the shared CLSID");
+    Expect(catalogue.rows.size() == 83, "parallel file roots retain all unique verbs and merge only the shared CLSID");
     const auto handler = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [](const auto &row) {
         return row.id == "clsid:{b9f35fb4-d6e6-4cce-89db-f20796ed280a}";
     });
@@ -1458,6 +1462,15 @@ void TestParallelRegistryCatalogue()
             row->types == std::vector<std::wstring>{L".parallel" + number} && !row->commandIdentity.empty(),
             "each parallel verb keeps its own caption, execution identity and exact file type");
     }
+    const auto associatedTypes = [](const ext::Catalogue &value, const std::string &id) {
+        const auto found = std::find_if(value.rows.begin(), value.rows.end(), [&](const auto &row) { return row.id == id; });
+        return found == value.rows.end() ? std::vector<std::wstring>{} : found->types;
+    };
+    const std::string perceivedId = "reg:systemfileassociations\\parallel-shared\\shell\\inspect";
+    const std::string alternateId = "reg:parallel.alternate\\shell\\inspect";
+    Expect(associatedTypes(catalogue, perceivedId) == handler->types &&
+        associatedTypes(catalogue, alternateId) == handler->types,
+        "parallel association reads keep every perceived-type and OpenWithProgids extension");
     const auto proof = catalogue.folderRevision;
     Expect(proof == ext::ReadFolderCatalogueRevision(registry.key, false), "file workers cannot contaminate folder proof");
     Expect(snowdesktop::settings_ipc::Pack(catalogue) == snowdesktop::settings_ipc::Pack(ext::ReadCatalogue(registry.key, false)),
@@ -1469,6 +1482,16 @@ void TestParallelRegistryCatalogue()
     });
     Expect(disabled != changed.rows.end() && !disabled->systemEnabled && changed.revision != catalogue.revision &&
         changed.folderRevision == proof, "parallel scans recheck live file policy without invalidating unchanged folder proof");
+    put(L".parallel0", L"PerceivedType", L"other-perceived");
+    Expect(RegDeleteTreeW(registry.key, L".parallel0\\OpenWithProgids") == ERROR_SUCCESS,
+        "remove a private alternate association");
+    const auto reassociated = ext::ReadCatalogue(registry.key, false);
+    auto expectedTypes = handler->types;
+    std::erase(expectedTypes, L".parallel0");
+    Expect(associatedTypes(reassociated, perceivedId) == expectedTypes &&
+        associatedTypes(reassociated, alternateId) == expectedTypes &&
+        reassociated.revision != changed.revision && reassociated.folderRevision == proof,
+        "parallel association scans recheck changed perceived types and removed alternate ProgIDs");
 }
 void TestRegistryCatalogue()
 {
