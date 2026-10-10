@@ -2426,18 +2426,37 @@ void TestOleDropButtonStateEndsWithEachGesture()
 void TestTrayCallbackClassification()
 {
     Check(TrayIconController::ClassifyCallback(
-            MAKELPARAM(WM_CONTEXTMENU, 0)) ==
-            TrayCallbackAction::ShowContextMenu &&
-            TrayIconController::ClassifyCallback(
-                MAKELPARAM(WM_RBUTTONUP, 0)) ==
+            MAKELPARAM(WM_CONTEXTMENU, kTrayIconId), NOTIFYICON_VERSION_4) ==
             TrayCallbackAction::ShowContextMenu,
-        "tray context-menu callbacks must share one application action");
+        "v4 tray semantic context-menu requests must open the application menu");
+    // The status-bar sender emits raw mouse compatibility callbacks before
+    // the semantic request. Opening twice replaces the first visible popup.
+    unsigned contextRequests = 0;
+    for (const UINT action : {WM_RBUTTONDOWN, WM_RBUTTONUP, WM_CONTEXTMENU})
+    {
+        if (TrayIconController::ClassifyCallback(
+                MAKELPARAM(action, kTrayIconId), NOTIFYICON_VERSION_4) ==
+            TrayCallbackAction::ShowContextMenu)
+            ++contextRequests;
+    }
+    Check(contextRequests == 1,
+        "one v4 tray right-click gesture must open only one application menu");
+    for (const UINT version : {UINT{0}, UINT{NOTIFYICON_VERSION}})
+    {
+        Check(TrayIconController::ClassifyCallback(WM_RBUTTONUP, version) ==
+                TrayCallbackAction::ShowContextMenu,
+            "legacy tray versions must retain raw right-button menu activation");
+    }
+    TrayIconController unregistered;
+    Check(unregistered.ClassifyCallback(WM_RBUTTONUP) ==
+            TrayCallbackAction::ShowContextMenu,
+        "a controller without a negotiated v4 version must use legacy callbacks");
     Check(TrayIconController::ClassifyCallback(
-            MAKELPARAM(WM_LBUTTONDBLCLK, 0)) ==
+            MAKELPARAM(WM_LBUTTONDBLCLK, kTrayIconId), NOTIFYICON_VERSION_4) ==
             TrayCallbackAction::ReloadItems,
         "tray double-click must map to the reload action");
     Check(TrayIconController::ClassifyCallback(
-            MAKELPARAM(WM_MOUSEMOVE, 0)) ==
+            MAKELPARAM(WM_MOUSEMOVE, kTrayIconId), NOTIFYICON_VERSION_4) ==
             TrayCallbackAction::None,
         "unhandled tray notifications must not leak into application behavior");
 }
