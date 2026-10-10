@@ -357,11 +357,13 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     };
     const bool intersectsTransition = intersectsPresentation(transitionWindow);
     const bool intersectsNavigation = intersectsPresentation(navigationWindow);
-    if ((intersectsTransition || intersectsNavigation) && ShouldShowPersistentDockHost(host) &&
-        IsWindowVisible(host.hwnd))
+    if ((intersectsTransition || intersectsNavigation) &&
+        IsPersistentDockHostEffectivelyFloating(host) &&
+        ShouldShowPersistentDockHost(host) && IsWindowVisible(host.hwnd))
     {
-        // Borrow the presentation band without changing the Dock's summon,
-        // input or focus state. Always move the content/backdrop as a pair.
+        // Only the Dock's interaction state owns its band. A presentation may
+        // lower its target below this pair, but cannot re-promote a Dock already
+        // dismissed by an outside click.
         if (!merged) host.backdrop.SetPopupWindowPairZOrder(
             host.hwnd, HWND_TOPMOST, true);
         if (!wasTopmost)
