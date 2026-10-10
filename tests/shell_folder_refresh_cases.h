@@ -1,6 +1,123 @@
 // Included inside the slot runtime test namespace. Exercise the production
 // subscription, event routing and read-selection boundaries without a desktop
 // host or real user data. The filesystem reader is replaced only in scope tests.
+// A Shell content update arriving during restore must not invalidate the item
+// pointers used by the Dock, or temporarily turn an application into a link.
+void TestDesktopContentRefreshKeepsLiveItems()
+{
+    using namespace snowdesktop::shell_refresh;
+    std::vector<DesktopItem> items(2);
+    auto& app = items[0];
+    app.layoutKey = L"C:\\DESKTOP\\VIDEO.LNK";
+    app.parsingName = L"C:\\Desktop\\Video.lnk";
+    app.name = L"Video";
+    app.sysIconIndex = 7;
+    app.modifiedTime = FILETIME{1, 0};
+    app.fileSize = 40;
+    app.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    app.iconState = IconState::FullQuality;
+    app.isShortcut = app.isApplicationShortcut = true;
+    app.shortcutTarget.classified = app.shortcutTarget.application = true;
+    app.gridCell = {L"saved", 3, 2};
+    app.slot = 17;
+    app.selected = app.isCut = true;
+    items[1].layoutKey = L"C:\\DESKTOP\\NOTES.TXT";
+    items[1].parsingName = L"C:\\Desktop\\Notes.txt";
+    items[1].name = L"Notes.txt";
+    items[1].iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    items[1].iconState = IconState::FullQuality;
+    const auto* appAddress = &app;
+    const HBITMAP bitmap = app.iconBitmap;
+    Check(bitmap && items[1].iconBitmap, "content refresh fixture owns its visible bitmaps");
+    Snapshot snapshot;
+    snapshot.desktopComplete = true;
+    // Enumeration order is allowed to differ from the live collection order.
+    snapshot.desktopItems.push_back(CloneReadItem(items[1]));
+    snapshot.desktopItems.push_back(CloneReadItem(app));
+    snapshot.desktopItems[1].modifiedTime = FILETIME{2, 0};
+    snapshot.desktopItems[1].sysIconIndex = 9;
+    int queued = 0;
+    Check(ApplyDesktopContentRefresh(items, snapshot, [&](const DesktopItem& item) {
+        ++queued;
+        Check(&item == appAddress && item.modifiedTime->dwLowDateTime == 2,
+            "only the changed live item is queued with its new source version");
+    }), "an unchanged desktop membership takes the content path instead of full reload");
+    Check(queued == 1 && &items[0] == appAddress && app.iconBitmap == bitmap &&
+        app.gridCell.pageId == L"saved" && app.gridCell.column == 3 && app.slot == 17 &&
+        app.selected && app.isCut && app.sysIconIndex == 9 && app.iconState == IconState::Loading,
+        "content refresh preserves order, object addresses, bitmap ownership, selection and layout");
+    Check(app.isShortcut && app.isApplicationShortcut && !app.shortcutArrow &&
+        !app.shortcutTarget.classified,
+        "pending content classification keeps the confirmed application badge and invalidates the old target");
+    snowdesktop::shell_icon_request::ApplyPresentation(app,
+        snowdesktop::shell_icon_request::Phase::Phase2, false, false);
+    Check(app.isApplicationShortcut && !app.shortcutArrow,
+        "bitmap refinement cannot turn the retained application into a shortcut badge");
+    snowdesktop::shell_icon_request::ApplyPresentation(app,
+        snowdesktop::shell_icon_request::Phase::Shortcut, true, false);
+    Check(!app.isApplicationShortcut && app.shortcutArrow,
+        "a confirmed changed target still replaces the previous application classification");
+    auto reject = [&](Snapshot& read, const char* name) {
+        const auto before = app.modifiedTime;
+        int calls = 0;
+        Check(!ApplyDesktopContentRefresh(items, read, [&](const auto&) { ++calls; }) &&
+            calls == 0 && SameTime(app.modifiedTime, before) && &items[0] == appAddress,
+            name);
+    };
+    Snapshot structural;
+    structural.desktopComplete = true;
+    structural.desktopItems.push_back(CloneReadItem(app));
+    reject(structural, "deleted membership requires a full reload without partial mutation");
+    structural.desktopItems.push_back(CloneReadItem(items[1]));
+    structural.desktopItems[0].modifiedTime = FILETIME{99, 0};
+    structural.desktopItems[1].name = L"Renamed.txt";
+    reject(structural, "renamed membership validates the entire snapshot before changing any item");
+    structural.desktopItems[1] = CloneReadItem(app);
+    reject(structural, "duplicate identities cannot use the content-only path");
+    structural.desktopItems[1] = CloneReadItem(items[1]);
+    structural.desktopComplete = false;
+    reject(structural, "failed reads cannot update desktop content or membership");
+    structural.desktopComplete = true;
+    structural.desktopIncremental = true;
+    reject(structural, "partial startup reads retain the existing startup merge path");
+    structural.desktopIncremental = false;
+    structural.folders.emplace(L"C:\\MAPPED", FolderSnapshot{});
+    reject(structural, "a desktop snapshot carrying folder changes retains the full reconciliation path");
+}
+
+void TestShortcutBadgeSurvivesSourceRefresh()
+{
+    using namespace snowdesktop::shell_refresh;
+    DesktopItem previous;
+    previous.sysIconIndex = 7;
+    previous.modifiedTime = FILETIME{1, 0};
+    previous.isShortcut = previous.isApplicationShortcut = true;
+    previous.shortcutTarget.classified = previous.shortcutTarget.application = true;
+    previous.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    previous.iconState = IconState::FullQuality;
+    DesktopItem refreshed;
+    refreshed.sysIconIndex = 7;
+    refreshed.modifiedTime = FILETIME{2, 0};
+    PreserveRuntime(refreshed, previous);
+    Check(refreshed.iconBitmap && !previous.iconBitmap && refreshed.isApplicationShortcut &&
+        !refreshed.shortcutArrow && !refreshed.shortcutTarget.classified &&
+        refreshed.iconState == IconState::Loading,
+        "full desktop reconciliation keeps the confirmed badge while refreshing changed shortcut content");
+    FolderEntry oldEntry;
+    oldEntry.sysIconIndex = 7;
+    oldEntry.lastWriteTime = FILETIME{1, 0};
+    oldEntry.isShortcut = oldEntry.isApplicationShortcut = true;
+    oldEntry.shortcutTarget.classified = true;
+    oldEntry.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    FolderEntry newEntry;
+    newEntry.sysIconIndex = 7;
+    newEntry.lastWriteTime = FILETIME{2, 0};
+    PreserveRuntime(newEntry, oldEntry);
+    Check(newEntry.iconBitmap && !oldEntry.iconBitmap && newEntry.isApplicationShortcut &&
+        !newEntry.shortcutArrow && !newEntry.shortcutTarget.classified,
+        "mapped-folder aliases also retain their badge independently of pending target resolution");
+}
+
 void TestPopupTargetRebinding()
 {
     using namespace snowdesktop::dock_folder_popup_read;

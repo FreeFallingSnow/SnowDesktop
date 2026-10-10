@@ -4,6 +4,7 @@
 #include "app/shell/shell_icon_request.h"
 #include "app/shell/initial_icon_bitmap.h"
 #include "shell/shell_call_diagnostics.h"
+#include "diagnostics/performance_trace.h"
 
 #include "layout/popup_icon_load_rules.h"
 #include "shell/shortcut_application_rules.h"
@@ -257,8 +258,10 @@ void DesktopApp::DrainBackgroundShellWork()
 {
     if (exitRequested_ || compositionPaintInProgress_ || floatingPopupCompositionPaintInProgress_ || reloading_ ||
         HasActiveContextMenuSession() || renameController_.IsActive() ||
-        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty())
+        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
+        (dockWindowTransition_ && dockWindowTransition_->IsActive()))
         return; // The maintenance timer retries after the interaction fence.
+    snowdesktop::performance::Scope deliveryScope("shell.refresh", "delivery");
     // Directory results can fill a newly opened drop destination while the
     // pointer is still held. The delivery mailbox defers all source/model edits.
     folderReadWork_.Drain();

@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "platform/pending_window_message.h"
 #include "app/lifecycle/startup_diagnostics.h"
+#include "diagnostics/performance_trace.h"
 
 #include <atomic>
 #include <new>
@@ -636,6 +637,15 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
 
 void DesktopApp::RefreshShellItemsAsync()
 {
+    if (dockWindowTransition_ && dockWindowTransition_->IsActive())
+    {
+        // A completed filesystem read may otherwise rebuild and save the
+        // entire desktop in the middle of a restore animation.
+        if (hwnd_) SetTimer(hwnd_, kShellChangeTimerId, kShellChangeDebounceMs, nullptr);
+        snowdesktop::performance::Value("shell.refresh", "animation_deferred", {}, 1);
+        return;
+    }
+    snowdesktop::performance::Scope refreshScope("shell.refresh", "dispatch");
     if (initialShellReadPending_)
     {
         StartInitialShellRead();
@@ -663,7 +673,33 @@ void DesktopApp::RefreshShellItemsAsync()
         const size_t metadataHits = snapshot->metadata.hits;
         const size_t metadataQueries = snapshot->metadata.queries;
         shellMetadataCache_ = std::move(snapshot->metadata);
-        ReloadItems(false, snapshot.get());
+        const bool contentOnly = desktopItemsReady_ && !layoutReload_.Pending() &&
+            snowdesktop::shell_refresh::ApplyDesktopContentRefresh(items_, *snapshot,
+                [this](const DesktopItem& item) {
+                    IconLoadTask task;
+                    task.sourceStamp = snowdesktop::shell_icon_request::Stamp(item);
+                    task.serial = iconLoadSerial_;
+                    task.layoutKey = item.layoutKey;
+                    task.absolutePidl.reset(ILCloneFull(item.absolutePidl.get()));
+                    task.sysIconIndex = item.sysIconIndex;
+                    task.parsingName = item.parsingName;
+                    task.isDesktopItem = true;
+                    task.phase = item.iconState == IconState::IconReady
+                        ? IconLoadPhase::Phase2 : IconLoadPhase::Phase1;
+                    EnqueueIconLoad(std::move(task));
+                });
+        if (contentOnly)
+        {
+            shellReloadPending_ = false;
+            shellRefreshScope_.Full();
+            InvalidateDragStaticScene();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            InvalidateDockRects();
+            if (widgetEngine_) widgetEngine_->NotifyDesktopChanged("reload");
+        }
+        else
+            ReloadItems(false, snapshot.get());
+        snowdesktop::performance::Value("shell.refresh", "content_only", {}, contentOnly ? 1 : 0);
         if (dockFolderPopupOpen_)
         {
             const auto folder = snapshot->folders.find(
@@ -676,10 +712,10 @@ void DesktopApp::RefreshShellItemsAsync()
         InvalidateFloatingPopupWindow(false);
         InvalidateQuickNavigationWindow();
         wchar_t timing[512]{};
-        swprintf_s(timing, L"Shell refresh async: items=%zu readMs=%llu applyMs=%llu "
+        swprintf_s(timing, L"Shell refresh async: items=%zu readMs=%llu applyMs=%llu contentOnly=%d "
             L"desktopMs=%llu foldersMs=%llu metadataHits=%zu metadataQueries=%zu "
             L"modelMs=%llu layoutMs=%llu saveMs=%llu rebuildMs=%llu notifyMs=%llu",
-            count, snapshot->readMs, GetTickCount64() - started,
+            count, snapshot->readMs, GetTickCount64() - started, contentOnly ? 1 : 0,
             snapshot->desktopReadMs, snapshot->folderReadMs,
             metadataHits, metadataQueries, snapshot->modelMs, snapshot->layoutMs,
             snapshot->saveMs, snapshot->rebuildMs, snapshot->notifyMs);

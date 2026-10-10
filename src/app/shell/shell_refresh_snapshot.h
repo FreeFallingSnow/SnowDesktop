@@ -185,7 +185,8 @@ inline void PreserveRuntime(DesktopItem& item, DesktopItem& previous)
         {
             item.iconState = IconState::Loading;
             item.shortcutTarget = {};
-            item.isApplicationShortcut = false;
+            // Keep the last confirmed badge while classification is pending.
+            // The old target is invalidated independently of presentation.
         }
     }
 }
@@ -216,8 +217,59 @@ inline void PreserveRuntime(FolderEntry& item, FolderEntry& previous)
         {
             item.iconState = IconState::Loading;
             item.shortcutTarget = {};
-            item.isApplicationShortcut = false;
         }
     }
+}
+
+// Content notifications do not invalidate slots or containers. Validate the
+// complete membership first, then update existing objects without moving the
+// vector or replacing the item pointers retained by collections and the Dock.
+// Structural changes and incomplete reads still use the full reload path.
+template<class QueueIcon>
+bool ApplyDesktopContentRefresh(std::vector<DesktopItem>& items,
+    Snapshot& snapshot, QueueIcon queueIcon)
+{
+    if (!snapshot.desktopComplete || snapshot.desktopIncremental ||
+        snapshot.foldersOnly || !snapshot.folders.empty() ||
+        items.size() != snapshot.desktopItems.size())
+        return false;
+    std::unordered_map<std::wstring, DesktopItem*> existing;
+    existing.reserve(items.size());
+    for (auto& item : items)
+        if (item.layoutKey.empty() || !existing.emplace(item.layoutKey, &item).second)
+            return false;
+    std::unordered_set<std::wstring> observed;
+    for (const auto& fresh : snapshot.desktopItems)
+    {
+        const auto found = existing.find(fresh.layoutKey);
+        if (found == existing.end() || !observed.insert(fresh.layoutKey).second)
+            return false;
+        const auto& item = *found->second;
+        if (item.name != fresh.name || item.parsingName != fresh.parsingName ||
+            item.desktopIconClsid != fresh.desktopIconClsid ||
+            (!item.typeName.empty() && !fresh.typeName.empty() && item.typeName != fresh.typeName))
+            return false;
+    }
+    for (auto& fresh : snapshot.desktopItems)
+    {
+        auto& item = *existing.at(fresh.layoutKey);
+        const bool changed = item.fileSize != fresh.fileSize ||
+            !SameTime(item.modifiedTime, fresh.modifiedTime) ||
+            (fresh.sysIconIndex >= 0 && fresh.sysIconIndex != item.sysIconIndex);
+        item.fileSize = fresh.fileSize;
+        item.modifiedTime = fresh.modifiedTime;
+        if (fresh.sysIconIndex >= 0) item.sysIconIndex = fresh.sysIconIndex;
+        if (!fresh.typeName.empty()) item.typeName = std::move(fresh.typeName);
+        if (fresh.absolutePidl.get()) item.absolutePidl = std::move(fresh.absolutePidl);
+        if (fresh.childPidl.get()) item.childPidl = std::move(fresh.childPidl);
+        if (changed)
+        {
+            item.iconState = IconState::Loading;
+            item.shortcutTarget = {};
+        }
+        if (!item.iconBitmap || item.iconState != IconState::FullQuality)
+            queueIcon(item);
+    }
+    return true;
 }
 } // namespace snowdesktop::shell_refresh

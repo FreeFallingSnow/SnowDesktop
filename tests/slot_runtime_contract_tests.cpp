@@ -3607,6 +3607,8 @@ int wmain(int argc, wchar_t** argv)
     TestIncrementalDesktopPreservesUnobservedItems();
     TestShellMetadataCacheRejectsChangedFiles();
     TestShellRefreshPreservesCurrentItemState();
+    TestDesktopContentRefreshKeepsLiveItems();
+    TestShortcutBadgeSurvivesSourceRefresh();
     TestLayoutReloadReplacesLargeIconState();
     TestRenameNotificationsPreserveUnrelatedChanges();
     TestRenameUpdatesOnlyMatchingModels();
