@@ -485,7 +485,7 @@
   "app.settings.icon_size": "Tamaño de los iconos",
   "app.settings.icon_size_hint": "Se aplica a los iconos normales del escritorio y de los componentes.",
   "app.settings.title_font_size": "Tamaño de fuente de los títulos de iconos",
-  "app.settings.list_font_size": "Tamaño de fuente de la lista",
+  "app.settings.list_font_size": "Tamaño de fuente de los títulos de lista",
   "app.settings.title_font_weight": "Grosor de la fuente del título",
   "app.settings.shortcut_arrow": "Flecha de acceso directo",
   "app.settings.arrow_default": "Predeterminado (controlado por aplicación)",
@@ -753,7 +753,7 @@
   "app.menu.inc_spacing": "Aumentar el espaciado (+10 %)",
   "app.menu.dec_spacing": "Disminuir espaciado (-10%)",
   "app.menu.title_font_size_cu": "Tamaño de fuente de los títulos de iconos: {0} cu",
-  "app.menu.list_font_size_cu": "Tamaño de fuente de la lista: {0} cu",
+  "app.menu.list_font_size_cu": "Tamaño de fuente de los títulos de lista: {0} cu",
   "app.menu.font_small": "Pequeño (12 cu)",
   "app.menu.font_medium": "Medio (18 cu)",
   "app.menu.font_large": "Grande (24 cu)",
@@ -2581,5 +2581,6 @@
   "settings.dock.fullscreenExceptions.description": "Se aplica a todas las ventanas en pantalla completa del ejecutable seleccionado, incluidos los juegos del navegador.",
   "settings.dock.fullscreenExceptionAdd": "Añadir aplicación",
   "settings.dock.fullscreenFromRunning": "Elegir una aplicación en ejecución",
-  "settings.dock.fullscreenDefaultPolicy": "Protección predeterminada"
+  "settings.dock.fullscreenDefaultPolicy": "Protección predeterminada",
+  "app.settings.fan_title_font_size": "Tamaño de fuente de los títulos del despliegue en abanico"
 }

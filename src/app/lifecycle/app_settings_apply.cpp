@@ -746,6 +746,7 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     desktop.itemIconSizeScale = itemIconSizeScale_;
     desktop.itemFontSizeCu = itemFontSizeCu_;
     desktop.listItemFontSizeCu = listItemFontSizeCu_;
+    desktop.fanTitleFontSizeCu = fanTitleFontSizeCu_;
     desktop.itemFontWeight = static_cast<int>(itemFontWeight_);
     desktop.desktopTitleLines = desktopTitleLines_;
     desktop.largeFolderTitleLines = largeFolderTitleLines_;
@@ -1040,6 +1041,8 @@ public:
                 snapshot.values.desktop.itemFontSizeCu);
             app_.PreviewListItemFontSize(
                 snapshot.values.desktop.listItemFontSizeCu);
+            app_.PreviewFanTitleFontSize(
+                snapshot.values.desktop.fanTitleFontSizeCu);
             app_.PreviewItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
                 snapshot.values.desktop.itemFontWeight));
             app_.SetIconBeautifySettings(
@@ -1272,6 +1275,7 @@ public:
             app_.SetItemIconSize(desktop.itemIconSizeScale);
             app_.SetItemFontSize(desktop.itemFontSizeCu);
             app_.SetListItemFontSize(desktop.listItemFontSizeCu);
+            app_.SetFanTitleFontSize(desktop.fanTitleFontSizeCu);
             app_.SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
                 desktop.itemFontWeight));
             app_.SetShortcutArrowMode(desktop.shortcutArrowMode);

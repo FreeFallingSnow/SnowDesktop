@@ -93,6 +93,7 @@ bool DesktopApp::InitGraphics()
     if (FAILED(hr)) return false;
     RecreateItemTextFormat();
     RecreateComponentListTextFormat();
+    RecreateFanTitleTextFormat();
 
     snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", DWRITE_FONT_WEIGHT_NORMAL,
         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 13.0f, L"", &listItemTextFormat_);
@@ -197,6 +198,21 @@ void DesktopApp::RecreateComponentListTextFormat()
     componentListTextFormat_->SetLineSpacing(
         DWRITE_LINE_SPACING_METHOD_UNIFORM,
         lineHeight, baseline);
+}
+
+void DesktopApp::RecreateFanTitleTextFormat()
+{
+    if (!dwriteFactory_) return;
+    fanTitleTextFormat_.Reset();
+    snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI", itemFontWeight_,
+        DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+        fanTitleFontSizeCu_, L"", &fanTitleTextFormat_);
+    if (!fanTitleTextFormat_) return;
+    fanTitleTextFormat_->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    fanTitleTextFormat_->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    fanTitleTextFormat_->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    fanTitleTextFormat_->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+        fanTitleFontSizeCu_ * 7.0f / 6.0f, fanTitleFontSizeCu_ * 5.0f / 6.0f);
 }
 
 void DesktopApp::ResetCompositionRenderCaches()

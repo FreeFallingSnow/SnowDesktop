@@ -565,6 +565,7 @@ struct DesktopPagePresenter::Impl
     std::unique_ptr<NumericEditor> iconSize;
     std::unique_ptr<NumericEditor> itemFontSize;
     std::unique_ptr<NumericEditor> listFontSize;
+    std::unique_ptr<NumericEditor> fanTitleFontSize;
     std::unique_ptr<NumericEditor> itemFontWeight;
     muxc::TextBlock shortcutArrowLabel{nullptr};
     muxc::ComboBox shortcutArrow{nullptr};
@@ -779,6 +780,11 @@ struct DesktopPagePresenter::Impl
             [](DesktopDisplaySettings& settings, double value) {
                 settings.listItemFontSizeCu = static_cast<float>(value);
             }, 16.0);
+        fanTitleFontSize = MakeDesktopNumber(
+            kMinimumItemFontSizeCu, kMaximumItemFontSizeCu, 0.5, 1,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.fanTitleFontSizeCu = static_cast<float>(value);
+            }, kDefaultItemFontSizeCu);
         itemFontWeight = MakeDesktopNumber(
             font_weight_rules::ToPercent(font_weight_rules::kMinimumWeight),
             font_weight_rules::ToPercent(font_weight_rules::kMaximumWeight),
@@ -793,9 +799,10 @@ struct DesktopPagePresenter::Impl
         iconSize->SetUnit(L"%");
         itemFontSize->SetUnit(L"cu");
         listFontSize->SetUnit(L"cu");
+        fanTitleFontSize->SetUnit(L"cu");
         itemFontWeight->SetUnit(L"%");
         for (const auto* editor : {iconSize.get(),
-                 itemFontSize.get(), listFontSize.get(), itemFontWeight.get()})
+                 itemFontSize.get(), listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get()})
         {
             displayCard.content.Children().Append(editor->root);
         }
@@ -1569,6 +1576,7 @@ struct DesktopPagePresenter::Impl
         iconSize->SetValue(settings.itemIconSizeScale * 100.0);
         itemFontSize->SetValue(settings.itemFontSizeCu);
         listFontSize->SetValue(settings.listItemFontSizeCu);
+        fanTitleFontSize->SetValue(settings.fanTitleFontSizeCu);
         itemFontWeight->SetValue(font_weight_rules::ToPercent(settings.itemFontWeight));
         shortcutArrow.SelectedIndex(
             std::clamp(settings.shortcutArrowMode, 0, 2));
@@ -1620,7 +1628,7 @@ struct DesktopPagePresenter::Impl
     {
         for (const NumericEditor* editor : {
                  iconSpacing.get(), iconSize.get(), itemFontSize.get(),
-                 listFontSize.get(), itemFontWeight.get(),
+                 listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get(),
                  backgroundOpacity.get(), glassBlurRadius.get(), reflectionWidth.get(), reflectionStrength.get(), contentScale.get(),
                  highlightStrength.get(), highlightSize.get(),
                  highlightAngle.get(), shadeStrength.get(),
@@ -1654,7 +1662,7 @@ struct DesktopPagePresenter::Impl
     {
         return {
             iconSpacing.get(), iconSize.get(), itemFontSize.get(),
-            listFontSize.get(), itemFontWeight.get(),
+            listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get(),
             backgroundOpacity.get(), glassBlurRadius.get(), reflectionWidth.get(), reflectionStrength.get(), contentScale.get(),
             highlightStrength.get(), highlightSize.get(),
             highlightAngle.get(), shadeStrength.get(), edgeHighlight.get(),
@@ -1767,7 +1775,9 @@ struct DesktopPagePresenter::Impl
         itemFontSize->SetLabel(L(
             "app.settings.title_font_size", L"Title font size"));
         listFontSize->SetLabel(L(
-            "app.settings.list_font_size", L"List font size"));
+            "app.settings.list_font_size", L"List title font size"));
+        fanTitleFontSize->SetLabel(L(
+            "app.settings.fan_title_font_size", L"Fan expansion title font size"));
         const std::array<const char*, 3> lineKeys{"titleLines.desktop", "titleLines.largeFolder", "titleLines.scrolling"};
         for (std::size_t i = 0; i < titleLineCombos.size(); ++i)
         {
@@ -1785,7 +1795,7 @@ struct DesktopPagePresenter::Impl
         itemFontWeight->SetLabel(L(
             "app.settings.title_font_weight", L"Title font weight"));
         for (NumericEditor* editor : {iconSpacing.get(), iconSize.get(),
-                 itemFontSize.get(), listFontSize.get(),
+                 itemFontSize.get(), listFontSize.get(), fanTitleFontSize.get(),
                  itemFontWeight.get()})
         {
             editor->SetResetText(
@@ -1948,6 +1958,7 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.iconSize") return iconSize->slider;
         if (id == "desktop.itemFontSize") return itemFontSize->number;
         if (id == "desktop.listFontSize") return listFontSize->number;
+        if (id == "desktop.fanTitleFontSize") return fanTitleFontSize->number;
         if (id == "desktop.titleLines") return titleLineCombos[0];
         if (id == "desktop.largeFolderTitleLines") return titleLineCombos[1];
         if (id == "desktop.scrollingTitleLines") return titleLineCombos[2];
@@ -2015,6 +2026,7 @@ struct DesktopPagePresenter::Impl
         iconSize->Close();
         itemFontSize->Close();
         listFontSize->Close();
+        fanTitleFontSize->Close();
         itemFontWeight->Close();
         for (std::size_t i = 0; i < titleLineCombos.size(); ++i) titleLineCombos[i].SelectionChanged(titleLineTokens[i]);
         titleOverflow.SelectionChanged(titleOverflowToken);

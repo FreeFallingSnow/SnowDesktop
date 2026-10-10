@@ -538,6 +538,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktopSettings.itemIconSizeScale = itemIconSizeScale_;
         desktopSettings.itemFontSizeCu = itemFontSizeCu_;
         desktopSettings.listItemFontSizeCu = listItemFontSizeCu_;
+        desktopSettings.fanTitleFontSizeCu = fanTitleFontSizeCu_;
         desktopSettings.itemFontWeight = static_cast<int>(itemFontWeight_);
         desktopSettings.desktopTitleLines = desktopTitleLines_;
         desktopSettings.largeFolderTitleLines = largeFolderTitleLines_;
@@ -889,6 +890,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktop.itemIconSizeScale = itemIconSizeScale_;
         desktop.itemFontSizeCu = itemFontSizeCu_;
         desktop.listItemFontSizeCu = listItemFontSizeCu_;
+        desktop.fanTitleFontSizeCu = fanTitleFontSizeCu_;
         desktop.itemFontWeight = static_cast<int>(itemFontWeight_);
         desktop.desktopTitleLines = desktopTitleLines_;
         desktop.largeFolderTitleLines = largeFolderTitleLines_;

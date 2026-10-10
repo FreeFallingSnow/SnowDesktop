@@ -15,6 +15,7 @@ struct DesktopDisplaySettings
     float itemIconSizeScale = kDefaultItemIconSizeScale;
     float itemFontSizeCu = kDefaultItemFontSizeCu;
     float listItemFontSizeCu = kDefaultItemFontSizeCu;
+    float fanTitleFontSizeCu = kDefaultItemFontSizeCu;
     int itemFontWeight = font_weight_rules::kDefaultWeight;
     int desktopTitleLines = 2;
     int largeFolderTitleLines = 2;

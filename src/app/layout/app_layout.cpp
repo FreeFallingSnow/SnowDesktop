@@ -47,6 +47,7 @@ void DesktopApp::ReloadLayoutStateFromDisk()
     LoadLayoutSlots();
     RecreateItemTextFormat();
     RecreateComponentListTextFormat();
+    RecreateFanTitleTextFormat();
     // Preserve the page dimensions just restored from disk rather than the
     // pre-reload runtime grid. Both asynchronous read paths use this boundary.
     UpdateLayoutWorkArea(false);
@@ -162,6 +163,9 @@ void DesktopApp::LoadLayoutSlots()
             document.listItemFontSizeCu, document.listItemFontSize);
     listItemFontSizeCu_ = savedListFontSizeCu.value_or(
         itemFontSizeCu_);
+
+    fanTitleFontSizeCu_ = snowdesktop::font_cu_rules::ResolveStoredSize(
+        document.fanTitleFontSizeCu, std::nullopt).value_or(itemFontSizeCu_);
 
     if (document.desktopTitleLines) desktopTitleLines_ = std::clamp(*document.desktopTitleLines, 1, 2);
     if (document.largeFolderTitleLines) largeFolderTitleLines_ = std::clamp(*document.largeFolderTitleLines, 1, 2);
@@ -1029,6 +1033,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"dockLayout\": " << snowdesktop::layout_storage::SerializeDockLayout(dockSettings_)
          << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
+         << ",\n  \"fanTitleFontSizeCu\": " << fanTitleFontSizeCu_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
          << ",\n  \"desktopTitleLines\": " << desktopTitleLines_
          << ",\n  \"largeFolderTitleLines\": " << largeFolderTitleLines_

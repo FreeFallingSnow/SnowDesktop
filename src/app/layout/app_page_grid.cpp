@@ -1103,6 +1103,40 @@ void DesktopApp::PreviewListItemFontSize(float valueCu)
     InvalidateFloatingDockWindow(false);
 }
 
+void DesktopApp::SetFanTitleFontSize(float valueCu)
+{
+    valueCu = std::clamp(valueCu,
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
+    if (valueCu == fanTitleFontSizeCu_ && !fanTitleFontSizePreviewActive_) return;
+    fanTitleFontSizeCu_ = valueCu;
+    RecreateFanTitleTextFormat();
+    InvalidateCollectionPopupContent();
+    InvalidateDragStaticScene();
+    SaveLayoutSlots();
+    fanTitleFontSizePreviewActive_ = false;
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateFloatingPopupWindow(false);
+}
+
+void DesktopApp::PreviewFanTitleFontSize(float valueCu)
+{
+    valueCu = std::clamp(valueCu,
+        kMinimumItemFontSizeCu, kMaximumItemFontSizeCu);
+    if (valueCu == fanTitleFontSizeCu_) return;
+    fanTitleFontSizeCu_ = valueCu;
+    fanTitleFontSizePreviewActive_ = true;
+    RecreateFanTitleTextFormat();
+    InvalidateCollectionPopupContent();
+    InvalidateDragStaticScene();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, TRUE);
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
+    InvalidateFloatingPopupWindow(false);
+}
+
 DWRITE_FONT_WEIGHT DesktopApp::GetItemFontWeight() const
 {
     return itemFontWeight_;
@@ -1115,6 +1149,8 @@ void DesktopApp::SetItemFontWeight(DWRITE_FONT_WEIGHT weight)
     itemFontWeight_ = weight;
     RecreateItemTextFormat();
     RecreateComponentListTextFormat();
+    RecreateFanTitleTextFormat();
+    InvalidateCollectionPopupContent();
     InvalidateDragStaticScene();
     SaveLayoutSlots();
     itemFontWeightPreviewActive_ = false;
@@ -1130,6 +1166,8 @@ void DesktopApp::PreviewItemFontWeight(DWRITE_FONT_WEIGHT weight)
     itemFontWeightPreviewActive_ = true;
     RecreateItemTextFormat();
     RecreateComponentListTextFormat();
+    RecreateFanTitleTextFormat();
+    InvalidateCollectionPopupContent();
     InvalidateDragStaticScene();
     if (hwnd_)
     {

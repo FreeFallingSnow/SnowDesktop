@@ -845,6 +845,8 @@ int main()
             "itemFontSizeCu" },
         { "cu list font size type", "{\"listItemFontSizeCu\":\"15\"}",
             "listItemFontSizeCu" },
+        { "cu fan title font size type", "{\"fanTitleFontSizeCu\":\"15\"}",
+            "fanTitleFontSizeCu" },
         { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
             "componentSpacing" },
         { "icon size scale type", "{\"iconSizeScale\":\"1.1\"}",
@@ -1195,7 +1197,7 @@ int main()
     const std::string detailsLayoutText =
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"
-        "\"itemFontSizeCu\":18,\"listItemFontSizeCu\":16,"
+        "\"itemFontSizeCu\":18,\"listItemFontSizeCu\":16,\"fanTitleFontSizeCu\":20,"
         "\"iconSizeScale\":1.2,"
         "\"collectionLargeFolderTitleless\":false,"
         "\"widgets\":[{\"id\":\"details-widget\",\"page\":\"page-a\","
@@ -1213,6 +1215,7 @@ int main()
             detailsLayout.widgetContentOptionsSchemaVersion.value_or(0) == 4 &&
             detailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
             detailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
+            detailsLayout.fanTitleFontSizeCu.value_or(0.0f) == 20.0f &&
             detailsLayout.iconSizeScale.value_or(0.0f) == 1.2f &&
             detailsLayout.collectionLargeFolderTitleless.has_value() &&
             !*detailsLayout.collectionLargeFolderTitleless &&
@@ -1244,6 +1247,7 @@ int main()
             snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
             loadedDetailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
             loadedDetailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
+            loadedDetailsLayout.fanTitleFontSizeCu.value_or(0.0f) == 20.0f &&
             loadedDetailsLayout.iconSizeScale.value_or(0.0f) == 1.2f &&
             loadedDetailsLayout.collectionLargeFolderTitleless.has_value() &&
             !*loadedDetailsLayout.collectionLargeFolderTitleless &&

@@ -944,6 +944,7 @@ private:
     void RecreateItemTextFormat();
     /** @brief 重建组件列表文本格式。 */
     void RecreateComponentListTextFormat();
+    void RecreateFanTitleTextFormat();
     /** @brief 创建或调整 DirectComposition 表面的大小。 @return S_OK 成功，否则为 HRESULT 错误码 */
     HRESULT CreateOrResizeCompositionSurface();
     /** @brief 创建或调整位于组件层之上的透明桌面前景表面。 */
@@ -2324,6 +2325,10 @@ private:
     /** @brief 实时预览组件列表字号，不保存布局。 */
     void PreviewListItemFontSize(float valueCu);
     float GetListItemFontSize() const { return listItemFontSizeCu_; }
+    /** @brief 设置扇形展开标题字号（cu）。 */
+    void SetFanTitleFontSize(float valueCu);
+    /** @brief 实时预览扇形展开标题字号，不保存布局。 */
+    void PreviewFanTitleFontSize(float valueCu);
     /** @brief 设置图标标题字体粗细。 @param weight 未经深色文字补偿的 DWRITE_FONT_WEIGHT */
     void SetItemFontWeight(DWRITE_FONT_WEIGHT weight);
     /** @brief 实时预览标题字体粗细，不保存布局。 */
@@ -3546,6 +3551,7 @@ private:
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
     ComPtr<IDWriteTextFormat> componentListTextFormat_;
+    ComPtr<IDWriteTextFormat> fanTitleTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;
     ComPtr<IDWriteTextFormat> navTabTextFormat_;
     ComPtr<IDWriteTextFormat> fileCategoryTabTextFormat_;
@@ -3894,6 +3900,8 @@ private:
     bool itemFontSizePreviewActive_ = false;
     float listItemFontSizeCu_ = kDefaultItemFontSizeCu;
     bool listItemFontSizePreviewActive_ = false;
+    float fanTitleFontSizeCu_ = kDefaultItemFontSizeCu;
+    bool fanTitleFontSizePreviewActive_ = false;
     DWRITE_FONT_WEIGHT itemFontWeight_ = static_cast<DWRITE_FONT_WEIGHT>(
         snowdesktop::font_weight_rules::kDefaultWeight);
     bool itemFontWeightPreviewActive_ = false;

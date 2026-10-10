@@ -485,7 +485,7 @@
     "app.settings.icon_size": "Icon Size",
     "app.settings.icon_size_hint": "Applies to standard icons on the desktop and inside widgets.",
     "app.settings.title_font_size": "Icon Title Font Size",
-    "app.settings.list_font_size": "List Font Size",
+    "app.settings.list_font_size": "List Title Font Size",
     "app.settings.title_font_weight": "Title Font Weight",
     "app.settings.shortcut_arrow": "Shortcut Arrow",
     "app.settings.arrow_default": "Default (App-controlled)",
@@ -753,7 +753,7 @@
     "app.menu.inc_spacing": "Increase Spacing (+10%)",
     "app.menu.dec_spacing": "Decrease Spacing (-10%)",
     "app.menu.title_font_size_cu": "Icon Title Font Size: {0} cu",
-    "app.menu.list_font_size_cu": "List Font Size: {0} cu",
+    "app.menu.list_font_size_cu": "List Title Font Size: {0} cu",
     "app.menu.font_small": "Small (12 cu)",
     "app.menu.font_medium": "Medium (18 cu)",
     "app.menu.font_large": "Large (24 cu)",
@@ -2581,5 +2581,6 @@
   "settings.dock.fullscreenExceptions.description": "Applies to every fullscreen window of the selected executable, including browser games.",
   "settings.dock.fullscreenExceptionAdd": "Add application",
   "settings.dock.fullscreenFromRunning": "Choose from running apps",
-  "settings.dock.fullscreenDefaultPolicy": "Default protection"
+  "settings.dock.fullscreenDefaultPolicy": "Default protection",
+  "app.settings.fan_title_font_size": "Fan Expansion Title Font Size"
 }

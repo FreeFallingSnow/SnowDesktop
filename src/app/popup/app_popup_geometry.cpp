@@ -283,8 +283,8 @@ DesktopApp::GetCollectionPopupFanItem(const RECT& popup, size_t index) const
         CollectionPopupFanRootAbove(), mirrored);
     const std::wstring text = GetCollectionPopupFanLabel(index);
     ComPtr<IDWriteTextLayout> textLayout;
-    if (dwriteFactory_ && itemTextFormat_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
-            text.c_str(), static_cast<UINT32>(text.size()), itemTextFormat_.Get(),
+    if (dwriteFactory_ && fanTitleTextFormat_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
+            text.c_str(), static_cast<UINT32>(text.size()), fanTitleTextFormat_.Get(),
             10000.0f, 1000.0f, &textLayout)))
     {
         textLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);

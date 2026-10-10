@@ -485,7 +485,7 @@
     "app.settings.icon_size": "图标大小",
     "app.settings.icon_size_hint": "适用于桌面和组件内的普通图标。",
     "app.settings.title_font_size": "图标标题字号",
-    "app.settings.list_font_size": "列表字号",
+    "app.settings.list_font_size": "列表标题字号",
     "app.settings.title_font_weight": "标题粗细",
     "app.settings.shortcut_arrow": "快捷方式角标",
     "app.settings.arrow_default": "默认（应用隐藏）",
@@ -753,7 +753,7 @@
     "app.menu.inc_spacing": "增加间距 (+10%)",
     "app.menu.dec_spacing": "减少间距 (-10%)",
     "app.menu.title_font_size_cu": "图标标题字号：{0} cu",
-    "app.menu.list_font_size_cu": "列表字号：{0} cu",
+    "app.menu.list_font_size_cu": "列表标题字号：{0} cu",
     "app.menu.font_small": "小 (12 cu)",
     "app.menu.font_medium": "中 (18 cu)",
     "app.menu.font_large": "大 (24 cu)",
@@ -2581,5 +2581,6 @@
   "settings.dock.fullscreenExceptions.description": "所选程序的所有全屏窗口均使用例外设置，包括网页游戏。",
   "settings.dock.fullscreenExceptionAdd": "添加应用",
   "settings.dock.fullscreenFromRunning": "从运行区选择",
-  "settings.dock.fullscreenDefaultPolicy": "默认保护"
+  "settings.dock.fullscreenDefaultPolicy": "默认保护",
+  "app.settings.fan_title_font_size": "扇形展开标题字号"
 }

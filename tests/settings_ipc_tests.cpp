@@ -286,6 +286,7 @@ void TestCodec()
     settings.values.general.font = {"user-package", "中文 Family"};
     settings.values.general.tooltipFontSize = 22;
     settings.values.desktop.itemFontWeight = 600;
+    settings.values.desktop.fanTitleFontSizeCu = 20.5f;
     settings.values.desktop.desktopTitleLines = 1;
     settings.values.desktop.largeFolderTitleLines = 2;
     settings.values.desktop.scrollingTitleLines = 1;
@@ -294,6 +295,7 @@ void TestCodec()
     Check(restored.values.general.font == settings.values.general.font &&
         restored.values.general.tooltipFontSize == 22 &&
         restored.values.desktop.itemFontWeight == 600.f &&
+        restored.values.desktop.fanTitleFontSizeCu == 20.5f &&
         restored.values.desktop.desktopTitleLines == 1 &&
         restored.values.desktop.largeFolderTitleLines == 2 &&
         restored.values.desktop.scrollingTitleLines == 1 && !restored.values.desktop.titleEllipsis,

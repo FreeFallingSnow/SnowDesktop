@@ -485,7 +485,7 @@
   "app.settings.icon_size": "Symbolgröße",
   "app.settings.icon_size_hint": "Gilt für normale Symbole auf dem Desktop und in Widgets.",
   "app.settings.title_font_size": "Schriftgröße der Symboltitel",
-  "app.settings.list_font_size": "Schriftgröße der Liste",
+  "app.settings.list_font_size": "Schriftgröße der Listentitel",
   "app.settings.title_font_weight": "Schriftstärke des Titels",
   "app.settings.shortcut_arrow": "Verknüpfungspfeil",
   "app.settings.arrow_default": "Standard (App-gesteuert)",
@@ -753,7 +753,7 @@
   "app.menu.inc_spacing": "Abstand erhöhen (+10 %)",
   "app.menu.dec_spacing": "Abstand verringern (-10 %)",
   "app.menu.title_font_size_cu": "Schriftgröße der Symboltitel: {0} cu",
-  "app.menu.list_font_size_cu": "Schriftgröße der Liste: {0} cu",
+  "app.menu.list_font_size_cu": "Schriftgröße der Listentitel: {0} cu",
   "app.menu.font_small": "Klein (12 cu)",
   "app.menu.font_medium": "Mittel (18 cu)",
   "app.menu.font_large": "Groß (24 cu)",
@@ -2581,5 +2581,6 @@
   "settings.dock.fullscreenExceptions.description": "Gilt für alle Vollbildfenster der ausgewählten Programmdatei, einschließlich Browserspielen.",
   "settings.dock.fullscreenExceptionAdd": "App hinzufügen",
   "settings.dock.fullscreenFromRunning": "Laufende App auswählen",
-  "settings.dock.fullscreenDefaultPolicy": "Standardschutz"
+  "settings.dock.fullscreenDefaultPolicy": "Standardschutz",
+  "app.settings.fan_title_font_size": "Schriftgröße der Titel in der Fächeransicht"
 }

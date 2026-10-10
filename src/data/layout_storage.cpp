@@ -661,6 +661,8 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.itemFontSizeCu, error) ||
         !ReadOptionalFloat(root, "listItemFontSizeCu", "listItemFontSizeCu",
             decoded.listItemFontSizeCu, error) ||
+        !ReadOptionalFloat(root, "fanTitleFontSizeCu", "fanTitleFontSizeCu",
+            decoded.fanTitleFontSizeCu, error) ||
         !ReadOptionalFloat(root, "itemFontSize", "itemFontSize",
             decoded.itemFontSize, error) ||
         !ReadOptionalFloat(root, "listItemFontSize", "listItemFontSize",

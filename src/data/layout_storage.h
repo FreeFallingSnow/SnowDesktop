@@ -126,6 +126,8 @@ struct Document
     // values that are converted once when older layouts are loaded.
     std::optional<float> itemFontSizeCu;
     std::optional<float> listItemFontSizeCu;
+    // Older layouts use the icon title size for fan labels.
+    std::optional<float> fanTitleFontSizeCu;
     std::optional<float> itemFontSize;
     std::optional<float> listItemFontSize;
     std::optional<float> itemFontWeight;
