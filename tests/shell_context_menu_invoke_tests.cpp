@@ -552,7 +552,7 @@ void TestPopupMaterializationOnPrivateDesktop()
         HWND window = nullptr;
         unsigned calls = 0, commands = 0;
         bool activeMenu = false, correctPosition = false;
-        bool leaveDeferred = false;
+        bool leaveDeferred = false, viewRequired = false, viewReady = false;
         ~Fixture()
         {
             if (window) DestroyWindow(window);
@@ -574,7 +574,7 @@ void TestPopupMaterializationOnPrivateDesktop()
                     (info.flags & GUI_INMENUMODE) && info.hwndMenuOwner &&
                     GetWindowThreadProcessId(info.hwndMenuOwner, nullptr) == GetCurrentThreadId();
                 self->correctPosition = LOWORD(lp) == 3 && HIWORD(lp) == FALSE;
-                if (self->activeMenu && !self->leaveDeferred)
+                if (self->activeMenu && !self->leaveDeferred && (!self->viewRequired || self->viewReady))
                 {
                     DeleteMenu(self->menu, 0, MF_BYPOSITION);
                     AppendMenuW(self->menu, MF_STRING, 51, L"Add to archive");
@@ -606,27 +606,48 @@ void TestPopupMaterializationOnPrivateDesktop()
     HHOOK observer = SetWindowsHookExW(WH_CALLWNDPROC, ObservePreparedPopup, nullptr, GetCurrentThreadId());
     Expect(observer != nullptr, "observe actual native popup visibility during preparation");
     const HWND foreground = GetForegroundWindow();
-    const bool ready = ext::TryMaterializePopup(fixture.menu, fixture.window, 3);
+    unsigned viewPreparations = 0;
+    auto prepareView = [&] { ++viewPreparations; fixture.viewReady = true; return true; };
+    const bool ready = ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView);
     UnhookWindowsHookEx(observer);
     Expect(ready && fixture.activeMenu && fixture.correctPosition && GetMenuItemCount(fixture.menu) == 2,
         "DEFERRED_ARCHIVE_MUST_MATERIALIZE: the real same-STA menu state generates both children at the original parent position");
     Expect(preparedPopupShows == 0 && GetForegroundWindow() == foreground && fixture.commands == 0,
         "background preparation displays no native popup, changes no foreground and invokes no command");
+    Expect(viewPreparations == 0,
+        "DEFERRED_ARCHIVE_AVOIDS_VIEW: a menu-only handler must not initialize a network-enumerating ShellView");
     Expect(GetMenuState(fixture.menu, 52, MF_BYCOMMAND) & MF_GRAYED,
         "materialization retains the extension's disabled command state");
     const auto calls = fixture.calls;
-    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3) && fixture.calls == calls,
+    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView) && fixture.calls == calls && viewPreparations == 0,
         "already readable cascades such as 7-Zip never initialize a second time");
 
     while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
     AppendMenuW(fixture.menu, MF_OWNERDRAW, 50, nullptr);
-    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3) && fixture.calls == calls &&
+    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView) && fixture.calls == calls && viewPreparations == 0 &&
         ext::RequiresNativePopup(fixture.menu), "owner-drawn popups retain native rendering without being probed");
     ModifyMenuW(fixture.menu, 0, MF_BYPOSITION | MF_STRING, 50, L"...");
     fixture.leaveDeferred = true;
     Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3) && ext::RequiresNativePopup(fixture.menu),
         "an extension that still returns placeholders retains its native fallback");
-    Expect(!ext::TryMaterializePopup(fixture.menu, nullptr, 3), "an invalid callback owner cannot prepare a popup");
+    Expect(!ext::TryMaterializePopup(fixture.menu, nullptr, 3, prepareView) && viewPreparations == 0,
+        "an invalid callback owner cannot prepare a popup or create a view");
+
+    // The production User32 loop stays real; only the optional view dependency
+    // is substituted. Providers that require a site still get a second attempt.
+    fixture.leaveDeferred = false; fixture.viewRequired = true;
+    const auto beforeView = fixture.calls;
+    Expect(ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView) && viewPreparations == 1 &&
+        fixture.calls == beforeView + 2 && GetMenuItemCount(fixture.menu) == 2,
+        "a genuinely view-dependent popup prepares its site once and retains both children");
+    while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
+    AppendMenuW(fixture.menu, MF_STRING, 50, L"...");
+    fixture.viewReady = false;
+    const auto beforeFailure = fixture.calls;
+    unsigned failedViews = 0;
+    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3, [&] { ++failedViews; return false; }) &&
+        fixture.calls == beforeFailure + 1 && failedViews == 1 && ext::RequiresNativePopup(fixture.menu) && fixture.commands == 0,
+        "failed view preparation retains native fallback without invoking a placeholder command");
 }
 
 void TestNativeCascadeOwnerThread()

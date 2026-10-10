@@ -160,4 +160,16 @@ inline bool TryMaterializePopup(HMENU menu, HWND forwardingOwner, UINT parentInd
     DestroyWindow(window);
     return context.initialized && !RequiresNativePopup(menu);
 }
+// Most deferred handlers only need the STA menu loop. Creating a ShellView
+// first can enumerate unavailable network resources even for a local file.
+// Retain the live-view fallback exclusively for a popup that remains deferred.
+template <class PrepareSite>
+inline bool TryMaterializePopup(HMENU menu, HWND forwardingOwner, UINT parentIndex, PrepareSite &&prepareSite)
+{
+    if (InspectPopup(menu) != PopupContents::Deferred || !IsWindow(forwardingOwner) ||
+        GetWindowThreadProcessId(forwardingOwner, nullptr) != GetCurrentThreadId()) return false;
+    if (TryMaterializePopup(menu, forwardingOwner, parentIndex)) return true;
+    if (InspectPopup(menu) != PopupContents::Deferred || !prepareSite()) return false;
+    return TryMaterializePopup(menu, forwardingOwner, parentIndex);
+}
 } // namespace snowdesktop::shell_extensions

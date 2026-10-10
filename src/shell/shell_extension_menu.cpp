@@ -612,11 +612,15 @@ struct Host
                     if (depth == 0)
                         entry.provider = "menu:" + Utf8(Lower(entry.label)) + ":" + std::to_string(kMenuSignatureSeed);
                     progress("initialize deferred popup: " + Utf8(entry.label));
-                    if (!source.shortcutObjects && !source.site.HostWindow() && source.site.Initialize(source.folder.Get(), window))
-                        source.site.Attach(source.context.Get());
                     auto *previous = tracking;
                     tracking = &source;
-                    TryMaterializePopup(item.hSubMenu, window, static_cast<UINT>(i));
+                    TryMaterializePopup(item.hSubMenu, window, static_cast<UINT>(i), [&] {
+                        if (source.shortcutObjects || source.site.HostWindow()) return false;
+                        progress("prepare deferred popup view: " + Utf8(entry.label));
+                        if (!source.site.Initialize(source.folder.Get(), window)) return false;
+                        source.site.Attach(source.context.Get());
+                        return true;
+                    });
                     tracking = previous;
                 }
                 if (!RequiresNativePopup(item.hSubMenu))
