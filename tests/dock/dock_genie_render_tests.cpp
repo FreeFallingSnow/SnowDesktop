@@ -85,6 +85,7 @@ void CheckRetainedWindowImage()
 {
     using Microsoft::WRL::ComPtr;
     using snowdesktop::dock_thumbnail::SharedVisual;
+    const auto previousDpi = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     WNDCLASSW type{};
     type.hInstance = GetModuleHandleW(nullptr);
     type.lpszClassName = L"SnowDesktopGenieImageFixture";
@@ -120,7 +121,9 @@ void CheckRetainedWindowImage()
             ShowWindow(source, SW_SHOWNOACTIVATE);
             DwmFlush();
             SIZE visible{};
-            Check(SUCCEEDED(snowdesktop::dock_thumbnail::SourceSize(source, visible)) &&
+            hr = snowdesktop::dock_thumbnail::SourceSize(source, visible);
+            std::cout << "DWM source size: " << visible.cx << 'x' << visible.cy << " hr=" << std::hex << hr << std::dec << '\n';
+            Check(SUCCEEDED(hr) &&
                 visible.cx == 320 && visible.cy == 200, "DWM supplies the current source image geometry");
             ShowWindow(source, SW_MINIMIZE);
             DwmFlush();
@@ -141,6 +144,7 @@ void CheckRetainedWindowImage()
                 if (SUCCEEDED(hr)) hr = image.visual->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
                 if (SUCCEEDED(hr)) hr = composition->Commit();
                 if (SUCCEEDED(hr)) hr = composition->WaitForCommitCompletion();
+                std::cout << "Shared image composition: hr=" << std::hex << hr << std::dec << '\n';
                 Check(SUCCEEDED(hr), "shared source accepts projective transforms and soft edge rendering");
                 if (target) target->SetRoot(nullptr);
                 composition->Commit();
@@ -168,6 +172,9 @@ void CheckRetainedWindowImage()
                     if (std::wstring(message).find(L"Dock transition:") == 0) presentation = message;
                 });
                 const BOOL alreadyDisabled = TRUE;
+                BOOL priorPolicy = TRUE;
+                Check(snowdesktop::dock_thumbnail::ReadNativeTransitionPolicy(source, priorPolicy) && !priorPolicy,
+                    "native transition query reads the fixture's enabled default policy");
                 DwmSetWindowAttribute(source, DWMWA_TRANSITIONS_FORCEDISABLED,
                     &alreadyDisabled, sizeof(alreadyDisabled));
                 const RECT dock{-19720, -19720, -19656, -19656};
@@ -180,6 +187,7 @@ void CheckRetainedWindowImage()
                             ShowWindow(window, SW_SHOWNOACTIVATE);
                         }
                     });
+                std::wcout << presentation << L'\n';
                 Check(restoring && presentation.find(L"effective=3") != std::wstring::npos &&
                     presentation.find(L"snapshot=dwm-shared-window") != std::wstring::npos,
                     "first restore uses Genie and a DWM image without a prior minimize animation");
@@ -203,8 +211,7 @@ void CheckRetainedWindowImage()
                 if (restoring) drain();
                 Check(restores == 1 && !IsIconic(source), "restore handoff runs exactly once");
                 BOOL originalPolicy = FALSE;
-                Check(SUCCEEDED(DwmGetWindowAttribute(source, DWMWA_TRANSITIONS_FORCEDISABLED,
-                    &originalPolicy, sizeof(originalPolicy))) && originalPolicy,
+                Check(snowdesktop::dock_thumbnail::ReadNativeTransitionPolicy(source, originalPolicy) && originalPolicy,
                     "animation preserves an already disabled native transition policy");
                 const DWORD preparationStart = GetTickCount();
                 const bool minimizing = transition.StartExternalMinimize(source, dock,
@@ -218,12 +225,43 @@ void CheckRetainedWindowImage()
                     drain();
                     Check(IsIconic(source), "minimize remains committed after scene retirement");
                 }
+                // Model a toolkit UI thread which dispatches the native state
+                // change after the visual timeline. The policy must still be
+                // held then, otherwise a second native animation can flash.
+                ShowWindow(source, SW_SHOWNOACTIVATE);
+                const BOOL enabled = FALSE;
+                DwmSetWindowAttribute(source, DWMWA_TRANSITIONS_FORCEDISABLED, &enabled, sizeof(enabled));
+                struct LateMinimize { DockWindowTransition* transition; bool retained = false; } late{&transition};
+                SetWindowLongPtrW(source, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(&late));
+                const bool delayed = transition.StartMinimize(source, dock);
+                Check(delayed, "Dock minimize begins for a delayed toolkit state change");
+                if (delayed)
+                {
+                    const UINT delay = static_cast<UINT>(360.0 * snowdesktop::animation::RuntimeDurationScale() + 200.0);
+                    Check(SetTimer(source, 1, delay, [](HWND window, UINT, UINT_PTR timer, DWORD) {
+                        KillTimer(window, timer);
+                        auto* state = reinterpret_cast<LateMinimize*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+                        BOOL disabled = FALSE;
+                        state->retained = state->transition->IsActive() &&
+                            snowdesktop::dock_thumbnail::ReadNativeTransitionPolicy(window, disabled) && disabled;
+                        ShowWindow(window, SW_MINIMIZE);
+                    }) != 0, "owned delayed state change timer is armed");
+                    drain();
+                    Check(late.retained && IsIconic(source),
+                        "minimize timeline retains native suppression until the delayed application commits its minimized state");
+                    BOOL policy = TRUE;
+                    Check(snowdesktop::dock_thumbnail::ReadNativeTransitionPolicy(source, policy) && !policy,
+                        "delayed minimize restores the fixture's enabled policy after handoff");
+                    KillTimer(source, 1);
+                }
+                SetWindowLongPtrW(source, GWLP_USERDATA, 0);
             }
         }
     }
     if (source) DestroyWindow(source);
     if (destination) DestroyWindow(destination);
     UnregisterClassW(type.lpszClassName, type.hInstance);
+    if (previousDpi) SetThreadDpiAwarenessContext(previousDpi);
 }
 }
 

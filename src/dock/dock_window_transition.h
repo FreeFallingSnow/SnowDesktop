@@ -241,6 +241,7 @@ private:
     static constexpr ULONGLONG
         kPrimedSnapshotLifetimeMs = 500;
     static constexpr ULONGLONG kRestoreCleanupTimeoutMs = 240;
+    static constexpr ULONGLONG kMinimizeCleanupTimeoutMs = 1000;
     static constexpr ULONGLONG
         kRestorePresentationDelayMs = 16;
     static constexpr ULONGLONG
@@ -372,6 +373,8 @@ private:
     bool externalMinimize_ = false;
     bool externalMinimizeObserved_ = false;
     DWORD externalMinimizeDeadline_ = 0;
+    bool minimizeObserved_ = false;
+    double minimizeCleanupDeadlineMs_ = 0.0;
     RECT snapshotHostRect_{};
     RECT lastFrameRect_{};
     BYTE lastFrameOpacity_ = 0;

@@ -17,6 +17,14 @@ enum class DockAppIdentityKind
 namespace snowdesktop::dock_app_identity_rules
 {
 
+inline bool IsPackagedAppId(std::wstring_view id)
+{
+    const auto separator = id.find(L'!');
+    return separator != std::wstring_view::npos && separator > 0 && separator + 1 < id.size() &&
+        id.find_first_of(L"\\/: \t\r\n") == std::wstring_view::npos &&
+        id.find(L'!', separator + 1) == std::wstring_view::npos;
+}
+
 // Missing process metadata must not remove a protected broker's task window.
 inline std::wstring RunningWindowIdentity(const std::wstring& executable,
     const std::wstring& appId, std::uintptr_t window, unsigned long process, unsigned long thread)
@@ -117,7 +125,8 @@ inline bool MatchesRunningApp(
     switch (kind)
     {
     case DockAppIdentityKind::Executable:
-        return MatchesExecutableProcessFamily(
+        return (!identityAppUserModelId.empty() && identityAppUserModelId == runningAppUserModelId) ||
+            MatchesExecutableProcessFamily(
             identityExecutablePath,
             runningExecutablePath,
             ancestorExecutablePaths) ||

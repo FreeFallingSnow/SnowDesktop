@@ -281,6 +281,7 @@ void DesktopApp::DrainBackgroundShellWork()
         [this](auto& snapshot) { ApplyFolderRefresh(snapshot); });
     iconWork_.Drain();
     dockIconWork_.Drain();
+    dockIdentityWork_.Drain();
     shellVisualWork_.Drain();
     shellModelWork_.Drain();
     appIndexWork_.Drain();
@@ -649,6 +650,7 @@ void DesktopApp::StopIconLoader()
 {
     iconWork_.Stop();
     dockIconWork_.Stop();
+    dockIdentityWork_.Stop();
     shellVisualWork_.Stop();
     shellModelWork_.Stop();
     folderReadWork_.Stop();

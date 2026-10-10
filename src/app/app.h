@@ -4736,6 +4736,8 @@ private:
     snowdesktop::shell_icon_request::Work iconWork_;
     snowdesktop::dock_icon_work::Work dockIconWork_;
     mutable snowdesktop::BackgroundWork shellVisualWork_{4};
+    // Fixed application identity must not queue behind Shell artwork/providers.
+    snowdesktop::BackgroundWork dockIdentityWork_{2};
     snowdesktop::BackgroundWork shellModelWork_{4};
     snowdesktop::BackgroundWork appIndexWork_{1};
     snowdesktop::BackgroundWork folderReadWork_{4};

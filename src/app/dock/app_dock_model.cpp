@@ -119,7 +119,7 @@ void DesktopApp::InvalidateDockShellMetadata()
     dockFolderTargetCache_.Invalidate();
     dockFolderBitmapCache_.Invalidate();
     dockIconWork_.Cancel(L"dock-folder:");
-    shellVisualWork_.Cancel(L"dock-identity:");
+    dockIdentityWork_.Cancel();
     shellVisualWork_.Cancel(L"dock-target:");
 }
 

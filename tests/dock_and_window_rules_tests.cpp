@@ -6266,6 +6266,20 @@ int main(int argc, char** argv)
                 L"C:\\APPS\\EDITOR.EXE", L"", L"",
                 L"C:\\APPS\\OTHER.EXE", L""),
         "running executable identities must match only the same normalized executable path");
+    Check(identityRules::IsPackagedAppId(L"OPENAI.CODEX_123!APP") &&
+            !identityRules::IsPackagedAppId(L"MSEDGE") &&
+            !identityRules::IsPackagedAppId(L"C:\\APPS\\EDITOR!APP.EXE") &&
+            !identityRules::IsPackagedAppId(L"APP!") &&
+            !identityRules::IsPackagedAppId(L"!APP") &&
+            !identityRules::IsPackagedAppId(L"APP!APP!OTHER"),
+        "packaged shortcut fast identity accepts an exact app ID without interpreting executable paths as IDs");
+    Check(identityRules::MatchesRunningApp(DockAppIdentityKind::Executable,
+            L"C:\\PROGRAM FILES\\WINDOWSAPPS\\OPENAI_1\\APP.EXE", L"OPENAI_123!APP", L"",
+            L"C:\\PROGRAM FILES\\WINDOWSAPPS\\OPENAI_2\\APP.EXE", L"OPENAI_123!APP") &&
+            !identityRules::MatchesRunningApp(DockAppIdentityKind::Executable,
+                L"C:\\PROGRAM FILES\\WINDOWSAPPS\\OPENAI_1\\APP.EXE", L"OPENAI_123!APP", L"",
+                L"C:\\PROGRAM FILES\\WINDOWSAPPS\\OTHER_2\\APP.EXE", L"OTHER_123!APP"),
+        "an explicit application identity matches a versioned EXE pin before Shell artwork refinement without absorbing a different app");
     const std::vector<std::wstring> launcherAncestors{
         L"C:\\PROGRAMS\\SUITE\\LAUNCHER.EXE",
         L"C:\\WINDOWS\\EXPLORER.EXE",

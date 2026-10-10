@@ -8,6 +8,19 @@
 
 namespace snowdesktop::dock_thumbnail
 {
+// DWMWA_TRANSITIONS_FORCEDISABLED is a setter-only DWM attribute. Query the
+// underlying window composition policy before temporarily changing it.
+inline bool ReadNativeTransitionPolicy(HWND window, BOOL& disabled) noexcept
+{
+    struct AttributeData { int attribute; void* data; SIZE_T size; };
+    using Query = BOOL(WINAPI*)(HWND, AttributeData*);
+    static const auto query = reinterpret_cast<Query>(GetProcAddress(
+        GetModuleHandleW(L"user32.dll"), "GetWindowCompositionAttribute"));
+    disabled = FALSE;
+    AttributeData data{3, &disabled, sizeof(disabled)};
+    return query && query(window, &data);
+}
+
 // Optional Windows 10/11 DWM ABI, illustrated by ADeltaX's shared-visual demo:
 // https://gist.github.com/ADeltaX/aea6aac248604d0cb7d423a61b06e247
 // Resolve only on the known platform family. Failure leaves the documented
@@ -28,7 +41,10 @@ struct Api
         OSVERSIONINFOW info{sizeof(info)};
         if (!version || version(&info) < 0 || info.dwMajorVersion != 10 ||
             info.dwBuildNumber < 17763) return {};
-        const HMODULE module = GetModuleHandleW(L"dwmapi.dll");
+        HMODULE module = GetModuleHandleW(L"dwmapi.dll");
+        // The API is cached for the process lifetime, so retain the module if
+        // the first warmup check happens before a delay-loaded DWM call.
+        if (!module) module = LoadLibraryExW(L"dwmapi.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
         if (!module) return {};
         Api api;
         api.create = reinterpret_cast<Create>(GetProcAddress(module, MAKEINTRESOURCEA(147)));
@@ -60,13 +76,15 @@ public:
     SharedVisual(const SharedVisual&) = delete;
     SharedVisual& operator=(const SharedVisual&) = delete;
     SharedVisual(SharedVisual&& other) noexcept
-        : visual(std::move(other.visual)), thumbnail_(std::exchange(other.thumbnail_, nullptr)) {}
+        : visual(std::move(other.visual)), image_(std::move(other.image_)),
+          thumbnail_(std::exchange(other.thumbnail_, nullptr)) {}
     SharedVisual& operator=(SharedVisual&& other) noexcept
     {
         if (this != &other)
         {
             Reset();
             visual = std::move(other.visual);
+            image_ = std::move(other.image_);
             thumbnail_ = std::exchange(other.thumbnail_, nullptr);
         }
         return *this;
@@ -91,20 +109,32 @@ public:
         HRESULT hr = create(destination, source, 2, &properties, device, &raw, &thumbnail_);
         Microsoft::WRL::ComPtr<IUnknown> returned;
         returned.Attach(static_cast<IUnknown*>(raw));
-        if (SUCCEEDED(hr)) hr = returned ? returned.As(&visual) : E_UNEXPECTED;
+        if (SUCCEEDED(hr)) hr = returned ? returned.As(&image_) : E_UNEXPECTED;
+        // DWM returns a shared visual whose transform/clip setters are not
+        // writable on all Windows builds. Animate an ordinary visual owned by
+        // our device, with the DWM visual as its child.
+        Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> composition;
+        Microsoft::WRL::ComPtr<IDCompositionVisual2> wrapper;
+        if (SUCCEEDED(hr)) hr = device->QueryInterface(IID_PPV_ARGS(&composition));
+        if (SUCCEEDED(hr)) hr = composition->CreateVisual(&wrapper);
+        if (SUCCEEDED(hr)) hr = wrapper.As(&visual);
+        if (SUCCEEDED(hr)) hr = visual->AddVisual(image_.Get(), TRUE, nullptr);
         if (FAILED(hr)) Reset();
         return hr;
     }
 
     void Reset() noexcept
     {
+        if (visual) visual->RemoveAllVisuals();
         visual.Reset();
+        image_.Reset();
         if (thumbnail_) DwmUnregisterThumbnail(std::exchange(thumbnail_, nullptr));
     }
 
     Microsoft::WRL::ComPtr<IDCompositionVisual3> visual;
 
 private:
+    Microsoft::WRL::ComPtr<IDCompositionVisual2> image_;
     HTHUMBNAIL thumbnail_ = nullptr;
 };
 }

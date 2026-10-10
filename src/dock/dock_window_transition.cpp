@@ -677,6 +677,12 @@ bool DockWindowTransition::Start(
 
     bool snapshotAvailable = false;
     const bool sharedWindowAvailable = CreateSharedWindowImage();
+    if (!sharedWindowAvailable && diagnosticCallback_)
+    {
+        wchar_t diagnostic[128]{};
+        swprintf_s(diagnostic, L"Dock shared window unavailable: hr=0x%08X", static_cast<unsigned>(snapshotResult_));
+        diagnosticCallback_(diagnostic);
+    }
     const wchar_t* fallbackStage = sharedWindowAvailable ? L"shared-window" : L"none";
     const CachedSnapshot* snapshot = nullptr;
     if (!sharedWindowAvailable &&
@@ -774,9 +780,12 @@ bool DockWindowTransition::Start(
     }
 
     const BOOL disableTransitions = TRUE;
-    originalNativeTransitionsDisabled_ = FALSE;
-    DwmGetWindowAttribute(sourceWindow_, DWMWA_TRANSITIONS_FORCEDISABLED,
-        &originalNativeTransitionsDisabled_, sizeof(originalNativeTransitionsDisabled_));
+    if (!snowdesktop::dock_thumbnail::ReadNativeTransitionPolicy(sourceWindow_, originalNativeTransitionsDisabled_))
+    {
+        Cancel();
+        nativeFallbackRequested_ = true;
+        return false;
+    }
     if (FAILED(DwmSetWindowAttribute(
             sourceWindow_,
             DWMWA_TRANSITIONS_FORCEDISABLED,
@@ -816,6 +825,8 @@ bool DockWindowTransition::Start(
 
     animationStartTimeMs_ =
         MonotonicTimeMilliseconds();
+    minimizeObserved_ = false;
+    minimizeCleanupDeadlineMs_ = animationStartTimeMs_ + animationDurationMs_ + kMinimizeCleanupTimeoutMs;
     awaitingRestoreVisibility_ = false;
     restoreCleanupDeadlineMs_ = 0.0;
     restoreVisibleTimeMs_ = 0.0;
@@ -951,6 +962,8 @@ bool DockWindowTransition::Reverse(
         std::move(restoreCallback);
     animationStartTimeMs_ =
         MonotonicTimeMilliseconds();
+    minimizeObserved_ = false;
+    minimizeCleanupDeadlineMs_ = animationStartTimeMs_ + animationDurationMs_ + kMinimizeCleanupTimeoutMs;
     restoreCleanupDeadlineMs_ = 0.0;
     restoreVisibleTimeMs_ = 0.0;
     restoreFadeStartTimeMs_ = 0.0;
@@ -1930,6 +1943,16 @@ bool DockWindowTransition::OnAnimationFrame(
             return false;
         }
     }
+    if (direction_ == DockWindowTransitionDirection::Minimize)
+    {
+        if (IsIconic(sourceWindow_)) minimizeObserved_ = true;
+        else if (minimizeObserved_)
+        {
+            // The app was restored while the minimize image was in flight.
+            Finish();
+            return false;
+        }
+    }
     if (!snowdesktop::animation::RuntimeAnimationsEnabled())
     {
         CompleteImmediately();
@@ -2029,6 +2052,15 @@ bool DockWindowTransition::OnAnimationFrame(
     if (progress < 1.0)
         return true;
 
+    if (direction_ == DockWindowTransitionDirection::Minimize && !IsIconic(sourceWindow_) &&
+        now < minimizeCleanupDeadlineMs_)
+    {
+        // Posting SC_MINIMIZE acknowledges dispatch, not the application's
+        // state change. Keep native transitions disabled until that handoff
+        // completes; some browser/toolkit UI threads process it late.
+        return true;
+    }
+
     if (direction_ == DockWindowTransitionDirection::Restore &&
         restoreCallback_)
     {
@@ -2101,6 +2133,8 @@ void DockWindowTransition::Finish()
     externalMinimize_ = false;
     externalMinimizeObserved_ = false;
     externalMinimizeDeadline_ = 0;
+    minimizeObserved_ = false;
+    minimizeCleanupDeadlineMs_ = 0.0;
     if (animationScheduler_ && animationToken_)
         animationScheduler_->Cancel(animationToken_);
     animationToken_ = 0;

@@ -532,7 +532,7 @@ void DesktopApp::RefreshDockRunningWindows(
     std::vector<RunningWindowCandidate> runningCandidates;
     std::unordered_map<std::wstring, size_t> runningCandidateIndices;
     const bool hasApplicationPins = std::any_of(fixedIdentities.begin(), fixedIdentities.end(),
-        [](const auto& identity) { return identity.kind == DockAppIdentityKind::Applications; });
+        [](const auto& identity) { return !identity.appUserModelId.empty(); });
 
     const HWND preferredRoot = preferredWindow && IsWindow(preferredWindow)
         ? GetAncestor(preferredWindow, GA_ROOT) : nullptr;
