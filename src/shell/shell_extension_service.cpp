@@ -129,7 +129,8 @@ struct MenuService::Impl
         std::uint64_t due = 0, used = 0, completed = 0, retryAt = 0, sequence = 0, dependency = 0, bytes = 0;
         unsigned failures = 0;
         Key identity, snapshotIdentity;
-        std::uint64_t snapshotSignature = 0; bool snapshotTargetChecked = false;
+        std::uint64_t snapshotSignature = 0, snapshotDependency = 0;
+        bool snapshotTargetChecked = false, registryInvalid = false;
         std::uint64_t expires = 0; bool checkRequested = false, checkInspection = false;
         bool queued = false, force = false, invalid = false, inspection = false;
         std::vector<Click> clicks;
@@ -296,6 +297,23 @@ struct MenuService::Impl
         return row.invalid && !row.force && scope > 0 && row.snapshotTargetChecked &&
             row.snapshotSignature && row.snapshotSignature == VerificationSignature(scope) &&
             (checkedRegistryRevision >= registryRevision || ScopeChecked(row.view.contexts, registryRevision));
+    }
+    bool RestoreRegistrySnapshot(Row &row, const MenuSnapshotCache::Ticket &ticket)
+    {
+        // A Classes notification is a request to verify, not proof that this
+        // object's menu changed. Reuse only after the live inventory and exact
+        // target both confirm the snapshot's original dependencies.
+        if (!row.registryInvalid || !row.view.snapshot || row.force || !row.clicks.empty() ||
+            !row.view.error.empty() || row.expires <= MenuSnapshotCache::Now() ||
+            checkedRegistryRevision < registryRevision || !ticket ||
+            row.snapshotIdentity != ticket.identity || !row.snapshotDependency ||
+            row.snapshotDependency != ticket.dependency) return false;
+        row.invalid = row.registryInvalid = false;
+        row.snapshotTargetChecked = true;
+        if (row.queued) row.queued = row.view.pending = row.inspection = false;
+        ++row.view.revision;
+        MenuTrace("schedule", "registry_snapshot_reused");
+        return true;
     }
     Key PopupKey(const Request &request, bool retainPublished = false) const
     {
@@ -520,6 +538,7 @@ struct MenuService::Impl
         row.bytes = settings_ipc::Pack(reply).size();
         if (row.bytes > 2 * 1024 * 1024) { row.bytes = 0; return; }
         row.snapshotIdentity = row.identity;
+        row.snapshotDependency = Dependency(catalogue, row.request, contexts);
         const int scope = VerificationIndex(contexts);
         row.snapshotSignature = scope > 0 ? VerificationSignature(scope) : 0;
         row.snapshotTargetChecked = !row.snapshotIdentity.empty();
@@ -626,7 +645,8 @@ struct MenuService::Impl
                     const auto associations = catalogue.associations.size();
                     Associate(catalogue, resolved, reply);
                     catalogueDirty |= associations != catalogue.associations.size();
-                    row.failures = 0; row.retryAt = 0; row.completed = GetTickCount64(); row.invalid = false;
+                    row.failures = 0; row.retryAt = 0; row.completed = GetTickCount64();
+                    row.invalid = row.registryInvalid = false;
                     // Completion and display publication are one observable state.
                     // Settings must not stop polling before the snapshot appears.
                     Publish(job.key, reply, contexts);
@@ -835,6 +855,8 @@ struct MenuService::Impl
                     RebuildAvailable();
                     MenuTrace("catalogue", changed.empty() ? "unchanged" : "dependencies_changed", 0, static_cast<unsigned>(affected.size()));
                 }
+                for (auto &[key, row] : rows)
+                    if (row.registryInvalid && row.view.snapshot) row.checkRequested = true;
             }
             for (const auto &request : affected) cache.Erase(request);
             if (retirePreparation)
@@ -1005,8 +1027,12 @@ struct MenuService::Impl
                 scanRequested |= prepared;
                 for (auto &[key, row] : rows)
                 {
+                    row.registryInvalid = row.view.snapshot && (!row.invalid || row.registryInvalid);
                     row.invalid = true; row.snapshotTargetChecked = false; ++row.view.revision;
-                    if (row.view.snapshot && VerificationIndex(row.view.contexts) > 0) row.checkRequested = true;
+                    if (row.view.snapshot) row.checkRequested = true;
+                    // Verify while idle so a later file/shortcut popup need not
+                    // discover that an unrelated notification left it stale.
+                    scanRequested |= row.registryInvalid && !row.request.startPinOnly;
                     // Classes includes Shell caches written by the query itself.
                     // Verify registration changes before retiring in-flight work;
                     // otherwise every successful reply can trigger another query.
@@ -1137,6 +1163,23 @@ struct MenuService::Impl
                     }
                     ticket.dependency = Dependency(catalogue, request, contexts);
                     row.snapshotTargetChecked = ticket && row.snapshotIdentity == ticket.identity;
+                    if (RestoreRegistrySnapshot(row, ticket))
+                    {
+                        row.view.pending = row.inspection = false;
+                        continue;
+                    }
+                    if (contexts >= 1 && contexts <= 3 && row.registryInvalid &&
+                        !row.force && row.view.snapshot && row.snapshotTargetChecked &&
+                        checkedRegistryRevision < registryRevision &&
+                        failedRegistryRevision < registryRevision &&
+                        (!scanning || GetTickCount64() - scanStarted < kInventoryWaitMs))
+                    {
+                        // Wait for the already-requested inventory rather than
+                        // launching an extension process just to discard it.
+                        row.queued = true; row.due = GetTickCount64() + 20;
+                        scanRequested |= catalogueStale;
+                        break;
+                    }
                     const int scope = VerificationIndex(contexts);
                     if (row.invalid && !row.force && row.view.snapshot && row.snapshotTargetChecked && scope > 0 &&
                         row.snapshotSignature && row.snapshotSignature == VerificationSignature(scope))
@@ -1219,18 +1262,20 @@ struct MenuService::Impl
             }
             for (const auto &[key, request, inspection] : checks)
             {
-                const auto ticket = cache.Capture(request);
+                auto ticket = cache.Capture(request);
                 unsigned verifyContexts = 0; std::uint64_t verifyRevision = 0;
                 {
                     std::lock_guard lock(mutex);
                     const auto found = rows.find(key); if (found == rows.end()) continue;
                     auto &row = found->second;
+                    ticket.dependency = Dependency(catalogue, request, row.view.contexts);
                     if (row.view.snapshot && row.identity != ticket.identity)
                     {
                         row.view.snapshot.reset(); row.bytes = 0; row.invalid = true; ++row.dependency; ++row.view.revision;
                         RebuildAvailable();
                         Queue(request, inspection ? QueryPriority::Inspect : QueryPriority::Menu, true);
                     }
+                    RestoreRegistrySnapshot(row, ticket);
                     const int scope = VerificationIndex(row.view.contexts);
                     if (row.invalid && !row.force && row.view.snapshot && scope > 0)
                     {
