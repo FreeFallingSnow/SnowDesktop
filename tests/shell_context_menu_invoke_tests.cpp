@@ -1479,6 +1479,9 @@ void TestRegistryCatalogue()
                 changedBackgrounds[index] == ext::ReadBackgroundCatalogueRevision(context, registry.key, false),
                 "shared background action, applicability and policy changes invalidate both scopes");
         }
+        if (std::wstring_view(name) == L"LegacyDisable" || std::wstring_view(name) == L"ProgrammaticAccessOnly")
+            Expect(RegDeleteKeyValueW(registry.key, L"Directory\\Background\\shell\\background-proof", name) == ERROR_SUCCESS,
+                "restore enabled background state before checking the next disable policy");
     }
 
 }
