@@ -227,17 +227,27 @@ void DesktopApp::ShowItemContextMenu(
             namespaceSnapshot.reset(ILCloneFull(items_[itemIndex].childPidl.get()));
         PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(namespaceSnapshot.get());
         namespaceNative.value = CreatePopupMenu();
-        if (child && namespaceNative.value && SUCCEEDED(namespaceSite.BuildNamespaceMenu(
-            owner, namespaceNative.value, 1, 0x7fff, CMF_NORMAL | CMF_SYNCCASCADEMENU,
-            [&](HWND bindOwner, IContextMenu** target) {
+        if (child && namespaceNative.value)
+        {
+            const auto bindNamespace = [&](HWND bindOwner, IContextMenu** target) {
                 return namespaceFolder->GetUIObjectOf(bindOwner, 1, &child, IID_IContextMenu,
                     nullptr, reinterpret_cast<void**>(target));
-            }, namespaceContext.GetAddressOf())))
-        {
-            const wchar_t* verbs[] = {L"manage", L"empty", L"connectNetworkDrive", L"disconnectNetworkDrive", L"properties"};
-            for (size_t i = 0; i < std::size(verbs); ++i)
-                if (auto action = snowdesktop::namespace_menu_actions::Find(namespaceContext.Get(), namespaceNative.value, verbs[i]))
-                    namespaceActions.emplace_back(i == 4 ? kContextPropertiesCommand : kContextNamespaceActionFirst + static_cast<UINT>(i), std::move(*action));
+            };
+            const std::wstring clsid = !items_[itemIndex].desktopIconClsid.empty()
+                ? items_[itemIndex].desktopIconClsid : ExtractClsidText(items_[itemIndex].parsingName);
+            constexpr UINT flags = CMF_NORMAL | CMF_SYNCCASCADEMENU;
+            const HRESULT result = snowdesktop::namespace_menu_actions::CanQueryWithoutFileProviders(clsid)
+                ? namespaceSite.BuildNamespaceMenu(owner, namespaceNative.value, 1, 0x7fff, flags,
+                    bindNamespace, namespaceContext.GetAddressOf())
+                : namespaceSite.BuildMenu(namespaceFolder.Get(), owner, namespaceNative.value, 1, 0x7fff, flags,
+                    bindNamespace, namespaceContext.GetAddressOf());
+            if (SUCCEEDED(result))
+            {
+                const wchar_t* verbs[] = {L"manage", L"empty", L"connectNetworkDrive", L"disconnectNetworkDrive", L"properties"};
+                for (size_t i = 0; i < std::size(verbs); ++i)
+                    if (auto action = snowdesktop::namespace_menu_actions::Find(namespaceContext.Get(), namespaceNative.value, verbs[i]))
+                        namespaceActions.emplace_back(i == 4 ? kContextPropertiesCommand : kContextNamespaceActionFirst + static_cast<UINT>(i), std::move(*action));
+            }
         }
     }
     const auto namespaceProperty = std::find_if(namespaceActions.begin(), namespaceActions.end(), [](const auto& entry) { return entry.first == kContextPropertiesCommand; });

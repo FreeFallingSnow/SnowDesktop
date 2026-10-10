@@ -4,9 +4,21 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include "common/constants.h"
 
 namespace snowdesktop::namespace_menu_actions
 {
+inline bool CanQueryWithoutFileProviders(std::wstring_view clsid)
+{
+    // User Files and third-party namespace items can delegate to filesystem
+    // handlers. Only these known virtual roots avoid that loader dependency.
+    for (const auto *known : {kDesktopIconClsidThisPC, kDesktopIconClsidRecycleBin,
+        kDesktopIconClsidControlPanel, kDesktopIconClsidNetwork})
+        if (CompareStringOrdinal(clsid.data(), static_cast<int>(clsid.size()), known, -1, TRUE) == CSTR_EQUAL)
+            return true;
+    return false;
+}
+
 struct Command
 {
     UINT offset = 0;

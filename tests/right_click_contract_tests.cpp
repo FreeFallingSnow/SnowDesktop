@@ -167,6 +167,17 @@ void TestSlotItemMenuMatrix()
 
 void TestNamespaceCommonActions()
 {
+    for (const auto *virtualRoot : {kDesktopIconClsidThisPC, kDesktopIconClsidRecycleBin,
+        kDesktopIconClsidControlPanel, kDesktopIconClsidNetwork})
+        Check(snowdesktop::namespace_menu_actions::CanQueryWithoutFileProviders(virtualRoot),
+            "known virtual namespace verbs avoid filesystem provider initialization");
+    Check(snowdesktop::namespace_menu_actions::CanQueryWithoutFileProviders(L"{20d04fe0-3aea-1069-a2d8-08002b30309d}"),
+        "virtual namespace classification ignores CLSID text casing");
+    Check(!snowdesktop::namespace_menu_actions::CanQueryWithoutFileProviders(kDesktopIconClsidUserFiles),
+        "USER_FILES_BOOTSTRAP: User Files retains filesystem handler initialization");
+    Check(!snowdesktop::namespace_menu_actions::CanQueryWithoutFileProviders(L"{00000000-0000-0000-0000-000000000000}") &&
+        !snowdesktop::namespace_menu_actions::CanQueryWithoutFileProviders(L""),
+        "unknown namespace objects retain filesystem compatibility instead of assuming a virtual menu");
     class Context final : public IContextMenu
     {
     public:
