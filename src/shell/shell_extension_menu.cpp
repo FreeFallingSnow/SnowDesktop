@@ -620,7 +620,7 @@ struct Host
                         if (!source.site.Initialize(source.folder.Get(), window)) return false;
                         source.site.Attach(source.context.Get());
                         return true;
-                    });
+                    }, PopupNeedsInitialView(verb));
                     tracking = previous;
                 }
                 if (!RequiresNativePopup(item.hSubMenu))

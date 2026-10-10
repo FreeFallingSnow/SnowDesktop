@@ -172,13 +172,22 @@ inline bool TryMaterializePopup(HMENU menu, HWND forwardingOwner, UINT parentInd
 // first can enumerate unavailable network resources even for a local file.
 // Retain the live-view fallback for a popup that remains deferred or only
 // partially materializes. Initially readable/owner-drawn menus are never probed.
+// PowerShell's registered background adapters cache the first empty-folder
+// result if initialized before their view site. Keep that narrow compatibility
+// requirement; ordinary archive handlers need no view before materialization.
+inline bool PopupNeedsInitialView(std::wstring_view verb)
+{
+    return verb == L"PowerShell7x64" || verb == L"PowerShell7x86";
+}
 template <class PrepareSite>
-inline bool TryMaterializePopup(HMENU menu, HWND forwardingOwner, UINT parentIndex, PrepareSite &&prepareSite)
+inline bool TryMaterializePopup(HMENU menu, HWND forwardingOwner, UINT parentIndex, PrepareSite &&prepareSite,
+    bool prepareInitially = false)
 {
     if (InspectPopup(menu) != PopupContents::Deferred || !IsWindow(forwardingOwner) ||
         GetWindowThreadProcessId(forwardingOwner, nullptr) != GetCurrentThreadId()) return false;
+    if (prepareInitially) prepareSite();
     if (TryMaterializePopup(menu, forwardingOwner, parentIndex)) return true;
-    if (!RequiresNativePopup(menu) || !prepareSite()) return false;
+    if (prepareInitially || !RequiresNativePopup(menu) || !prepareSite()) return false;
     return popup_reader_detail::MaterializePopup(menu, forwardingOwner, parentIndex, true);
 }
 } // namespace snowdesktop::shell_extensions

@@ -656,6 +656,16 @@ void TestPopupMaterializationOnPrivateDesktop()
     while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
     AppendMenuW(fixture.menu, MF_STRING, 50, L"...");
     fixture.viewReady = false; fixture.partialWithoutView = false;
+    const auto beforeInitialView = fixture.calls;
+    Expect(ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView, ext::PopupNeedsInitialView(L"PowerShell7x64")) &&
+        fixture.calls == beforeInitialView + 1 && viewPreparations == 3 && GetMenuItemCount(fixture.menu) == 2,
+        "the known PowerShell adapter receives its view before the first initialization callback");
+    Expect(ext::PopupNeedsInitialView(L"PowerShell7x86") && !ext::PopupNeedsInitialView(L"SevenZip") &&
+        !ext::PopupNeedsInitialView(L"{B41DB860-64E4-11D2-9906-E49FADC173CA}") && !ext::PopupNeedsInitialView(L"OtherCommand"),
+        "ordinary archives and unknown providers never inherit the PowerShell view requirement");
+    while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
+    AppendMenuW(fixture.menu, MF_STRING, 50, L"...");
+    fixture.viewReady = false;
     const auto beforeFailure = fixture.calls;
     unsigned failedViews = 0;
     Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3, [&] { ++failedViews; return false; }) &&
