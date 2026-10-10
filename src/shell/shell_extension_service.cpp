@@ -106,7 +106,9 @@ struct MenuService::Impl
         QueryPriority priority = QueryPriority::Inspect;
         std::uint64_t due = 0, used = 0, completed = 0, retryAt = 0, sequence = 0, dependency = 0, bytes = 0;
         unsigned failures = 0;
-        Key identity; std::uint64_t expires = 0; bool checkRequested = false, checkInspection = false;
+        Key identity, snapshotIdentity;
+        std::uint64_t snapshotSignature = 0; bool snapshotTargetChecked = false;
+        std::uint64_t expires = 0; bool checkRequested = false, checkInspection = false;
         bool queued = false, force = false, invalid = false, inspection = false;
         std::vector<Click> clicks;
     };
@@ -424,6 +426,10 @@ struct MenuService::Impl
         sanitize(reply.entries);
         row.bytes = settings_ipc::Pack(reply).size();
         if (row.bytes > 2 * 1024 * 1024) { row.bytes = 0; return; }
+        row.snapshotIdentity = row.identity;
+        const int scope = VerificationIndex(contexts);
+        row.snapshotSignature = scope > 0 ? VerificationSignature(scope) : 0;
+        row.snapshotTargetChecked = !row.snapshotIdentity.empty();
         row.expires = written + MenuSnapshotCache::LifetimeMs;
         row.view.snapshot = std::move(reply); row.view.contexts = contexts; ++row.view.revision;
         row.used = ++clock;
@@ -891,7 +897,8 @@ struct MenuService::Impl
                 ++registryRevision;
                 for (auto &[key, row] : rows)
                 {
-                    row.invalid = true; ++row.view.revision;
+                    row.invalid = true; row.snapshotTargetChecked = false; ++row.view.revision;
+                    if (row.view.snapshot && VerificationIndex(row.view.contexts) > 0) row.checkRequested = true;
                     // Classes includes Shell caches written by the query itself.
                     // Verify registration changes before retiring in-flight work;
                     // otherwise every successful reply can trigger another query.
@@ -1004,6 +1011,7 @@ struct MenuService::Impl
                 }
                 auto ticket = cache.Capture(request);
                 const auto contexts = Contexts(request);
+                std::uint64_t verifyCachedRevision = 0;
                 {
                     std::lock_guard lock(mutex);
                     auto &row = rows[key];
@@ -1013,8 +1021,18 @@ struct MenuService::Impl
                         MenuTrace("schedule", "no_enabled_items"); continue;
                     }
                     ticket.dependency = Dependency(catalogue, request, contexts);
-                    rows[key].identity = ticket.identity; rows[key].checkRequested = rows[key].checkInspection = false;
+                    row.snapshotTargetChecked = ticket && row.snapshotIdentity == ticket.identity;
+                    const int scope = VerificationIndex(contexts);
+                    if (row.invalid && !row.force && row.view.snapshot && row.snapshotTargetChecked && scope > 0 &&
+                        row.snapshotSignature && row.snapshotSignature == VerificationSignature(scope))
+                        verifyCachedRevision = registryRevision;
+                    row.identity = ticket.identity; row.checkRequested = row.checkInspection = false;
                 }
+                // A previous background snapshot can be verified while the new
+                // Shell query is still running, including a stalled extension.
+                // Target identity and the snapshot's own live scope proof must
+                // both match; full/explicit invalidation never retains this data.
+                if (verifyCachedRevision) StartScopeVerification(contexts, verifyCachedRevision);
                 if (invalid) cache.Erase(request);
                 if (auto disk = cache.Find(ticket))
                 {
@@ -1043,7 +1061,8 @@ struct MenuService::Impl
             std::vector<std::tuple<Key, Request, bool>> checks;
             {
                 std::lock_guard lock(mutex);
-                for (auto &[key, row] : rows) if (row.checkRequested && !row.view.pending)
+                for (auto &[key, row] : rows) if (row.checkRequested &&
+                    (!row.view.pending || (row.invalid && row.view.snapshot && VerificationIndex(row.view.contexts) > 0)))
                 {
                     checks.emplace_back(key, row.request, row.checkInspection);
                     row.checkRequested = row.checkInspection = false;
@@ -1053,22 +1072,36 @@ struct MenuService::Impl
             for (const auto &[key, request, inspection] : checks)
             {
                 const auto ticket = cache.Capture(request);
-                std::lock_guard lock(mutex);
-                const auto found = rows.find(key); if (found == rows.end()) continue;
-                auto &row = found->second;
-                if (row.view.snapshot && row.identity != ticket.identity)
+                unsigned verifyContexts = 0; std::uint64_t verifyRevision = 0;
                 {
-                    row.view.snapshot.reset(); row.bytes = 0; row.invalid = true; ++row.dependency; ++row.view.revision;
-                    RebuildAvailable();
-                    Queue(request, inspection ? QueryPriority::Inspect : QueryPriority::Menu, true);
+                    std::lock_guard lock(mutex);
+                    const auto found = rows.find(key); if (found == rows.end()) continue;
+                    auto &row = found->second;
+                    if (row.view.snapshot && row.identity != ticket.identity)
+                    {
+                        row.view.snapshot.reset(); row.bytes = 0; row.invalid = true; ++row.dependency; ++row.view.revision;
+                        RebuildAvailable();
+                        Queue(request, inspection ? QueryPriority::Inspect : QueryPriority::Menu, true);
+                    }
+                    const int scope = VerificationIndex(row.view.contexts);
+                    if (row.invalid && !row.force && row.view.snapshot && scope > 0)
+                    {
+                        row.snapshotTargetChecked = ticket && row.snapshotIdentity == ticket.identity;
+                        if (row.snapshotTargetChecked && row.snapshotSignature && row.snapshotSignature == VerificationSignature(scope))
+                        { verifyContexts = row.view.contexts; verifyRevision = registryRevision; }
+                    }
                 }
+                // Later notifications must also be verified while the original
+                // refresh is still pending, without restarting that query.
+                if (verifyRevision) StartScopeVerification(verifyContexts, verifyRevision);
             }
             SaveObserved(cache);
             bool watchesComplete = false;
             auto handles = MenuRegistryWaitHandles(watchesComplete);
             handles.insert(handles.begin(), wake);
             DWORD wait = watchesComplete ? INFINITE : 1000;
-            if (!running.empty() || sourceJob || scan.valid()) wait = 20;
+            if (!running.empty() || sourceJob || scan.valid() ||
+                std::any_of(scopedVerification.begin(), scopedVerification.end(), [](const auto &scope) { return scope.scan.valid(); })) wait = 20;
             {
                 std::lock_guard lock(mutex);
                 const auto now = GetTickCount64();
@@ -1119,7 +1152,18 @@ MenuView MenuService::MenuDisplay(const Request &request, const Preferences &fal
     auto &row = it->second; row.used = ++impl_->clock;
     auto view = row.view;
     view.attributionPending = impl_->AttributionPending(request, fallback);
-    if (row.expires <= MenuSnapshotCache::Now() || (row.invalid && (!retainPublished || !view.error.empty()))) view.snapshot.reset();
+    const int scope = Impl::VerificationIndex(view.contexts);
+    const bool verifiedBackground = row.invalid && !row.force && scope > 0 && row.snapshotTargetChecked &&
+        row.snapshotSignature && row.snapshotSignature == impl_->VerificationSignature(scope) &&
+        (impl_->checkedRegistryRevision >= impl_->registryRevision || impl_->ScopeChecked(view.contexts, impl_->registryRevision));
+    if (row.expires <= MenuSnapshotCache::Now() ||
+        (row.invalid && !verifiedBackground && (!retainPublished || !view.error.empty()))) view.snapshot.reset();
+    if (view.snapshot && verifiedBackground)
+    {
+        // Only the display projection is ready. Service/management state keeps
+        // supervising the fresh query, and execution always resolves new tokens.
+        view.pending = false; view.error.clear();
+    }
     if (view.snapshot)
     {
         // Snapshots created before attribution still use provider IDs. Apply

@@ -1451,7 +1451,7 @@ void TestRegistryCatalogue()
     put(L"Directory\\Background\\shell\\background-proof\\command", nullptr, L"unused.exe /background");
     put(L"DesktopBackground\\shell\\desktop-proof\\command", nullptr, L"unused.exe /desktop");
     auto backgroundProofs = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
-    for (const auto context : {ext::Context::FolderBackground, ext::Context::Desktop})
+    for (const auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
         Expect(backgroundProofs[context == ext::Context::Desktop ? 1 : 0] == ext::ReadBackgroundCatalogueRevision(context, registry.key, false),
             "full inventory and each background-only verification read identical inputs");
     put(L"*\\shell\\metadata-case", L"MUIVerb", L"Another unrelated file caption");
@@ -1472,7 +1472,7 @@ void TestRegistryCatalogue()
         backgroundProofs = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
         put(L"Directory\\Background\\shell\\background-proof", name, value);
         changedBackgrounds = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
-        for (const auto context : {ext::Context::FolderBackground, ext::Context::Desktop})
+        for (const auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
         {
             const auto index = context == ext::Context::Desktop ? 1 : 0;
             Expect(changedBackgrounds[index] != backgroundProofs[index] &&
@@ -3579,6 +3579,189 @@ void TestFolderRegistrationVerification(int mode = 0, snowdesktop::shell_extensi
     Expect(queries == (mode == 1 ? 2u : 1u), "changed folder registration re-queries exactly once");
 }
 
+void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Context context = snowdesktop::shell_extensions::Context::Desktop)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct Registry
+    {
+        HKEY key = nullptr;
+        std::wstring path;
+        bool owned = false;
+        explicit Registry(std::wstring value) : path(std::move(value))
+        {
+            DWORD disposition = 0;
+            Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                                   nullptr, &key, &disposition) == ERROR_SUCCESS, "create pending-cache registry");
+            owned = disposition == REG_CREATED_NEW_KEY;
+            Expect(owned, "pending-cache fixture is privately owned");
+        }
+        ~Registry()
+        {
+            if (key) RegCloseKey(key);
+            if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+        }
+    } registry(L"Software\\SnowDesktopPendingBackgroundCache\\" + temp.path.filename().wstring()),
+      noise(L"Software\\Classes\\Local Settings\\SnowDesktopPendingBackgroundCache-" + temp.path.filename().wstring());
+    const auto actionPath = context == ext::Context::Desktop ? L"DesktopBackground\\shell\\cache-proof" : L"Directory\\Background\\shell\\cache-proof";
+    const auto registration = context == ext::Context::Desktop ? "reg:desktopbackground\\shell\\cache-proof" : "reg:directory\\background\\shell\\cache-proof";
+    auto caption = std::wstring(L"Verified cached action");
+    auto writeCaption = [&](const std::wstring &value)
+    {
+        HKEY action = nullptr;
+        Expect(RegCreateKeyExW(registry.key, actionPath, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &action, nullptr) == ERROR_SUCCESS,
+               "create private background action");
+        const auto status = RegSetValueExW(action, L"MUIVerb", 0, REG_SZ, reinterpret_cast<const BYTE *>(value.c_str()),
+                                          static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(action);
+        Expect(status == ERROR_SUCCESS, "write private background action caption");
+    };
+    writeCaption(caption);
+    ext::Request selected;
+    const auto target = temp.path / L"selected";
+    std::filesystem::create_directory(target);
+    selected.paths = {target.wstring()}; selected.background = true; selected.context = context;
+    struct Attributes { std::filesystem::path path; ~Attributes() { SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL); } } attributes{target};
+    std::atomic<unsigned> queries = 0, scans = 0, scopes = 0, scopeFinished = 0;
+    std::atomic<bool> blocked = false;
+    std::atomic<UINT> invoked = 0;
+    std::mutex mutex; std::condition_variable gate; bool release = false;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &request)
+        {
+            if (request.paths != selected.paths) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+            const auto query = ++queries;
+            return ext::QueryWork{
+                [&, query]() -> std::optional<ext::Reply>
+                {
+                    if (query > 1) { std::lock_guard lock(mutex); if (!release) return {}; }
+                    if (mode == 0 && query == 2) return ext::Reply{false, {}, "controlled refresh failure"};
+                    ext::Entry entry;
+                    entry.key = "cache-proof"; entry.provider = "verb:cache-proof"; entry.registration = registration;
+                    entry.label = mode == 1 && query > 1 ? L"Changed registration" : caption;
+                    entry.token = 40 + query;
+                    return ext::Reply{true, {entry}, {}};
+                },
+                [&](UINT token, POINT) { invoked = token; }};
+        },
+        [&]
+        {
+            if (++scans > 1)
+            {
+                blocked = true;
+                std::unique_lock lock(mutex);
+                if (!gate.wait_for(lock, std::chrono::seconds(20), [&] { return release; }))
+                    throw std::runtime_error("pending-cache full scan gate bound");
+            }
+            auto value = ext::ReadCatalogue(registry.key, false);
+            if (mode == 3) value.backgroundRevisions.fill(0); // No live baseline after a disk-only catalogue.
+            return value;
+        }, {},
+        [&](ext::Context scope)
+        {
+            ++scopes;
+            const auto signature = mode == 2 ? 0 : ext::ReadBackgroundCatalogueRevision(scope, registry.key, false);
+            ++scopeFinished;
+            return signature;
+        });
+    struct Release
+    {
+        std::mutex &mutex; std::condition_variable &gate; bool &release;
+        void Now() { { std::lock_guard lock(mutex); release = true; } gate.notify_all(); }
+        ~Release() { Now(); }
+    } cleanup{mutex, gate, release};
+    ext::Preferences preferences;
+    ext::SetCommon(preferences, registration, ext::Category::Background, true);
+    service.Configure(preferences); service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; }, "initial background inventory establishes live proof");
+    service.Query(selected);
+    PumpUntil([&] { auto view = service.View(selected); return !view.pending && view.snapshot.has_value(); },
+              "previous native snapshot is ready");
+    auto before = service.View(selected).revision;
+    if (mode == 1) writeCaption(L"Changed registration");
+    if (mode == 4) Expect(SetFileAttributesW(target.c_str(), FILE_ATTRIBUTE_HIDDEN) != FALSE, "change target attributes");
+    DWORD sequence = 1;
+    auto notify = [&]
+    {
+        Expect(RegSetValueExW(noise.key, L"Sequence", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&sequence), sizeof(sequence)) == ERROR_SUCCESS,
+               "emit real unrelated Classes notification");
+        ++sequence;
+    };
+    notify();
+    PumpUntil([&] { return service.View(selected).revision > before; }, "registry notification marks previous cache stale");
+    auto opened = selected;
+    if (mode == 5) service.Invalidate(selected);
+    if (mode == 7) opened.extended = true;
+    service.Query(opened);
+    PumpUntil([&] { return queries >= 2 && blocked; }, "new native query and full scan are independently held");
+    if (mode == 0 || mode == 1 || mode == 2 || mode == 6)
+        PumpUntil([&] { return scopeFinished > 0; }, "background proof runs before stalled native reply");
+    if (mode == 6)
+    {
+        ext::SetCommon(preferences, registration, ext::Category::Background, false);
+        service.Configure(preferences);
+    }
+    ext::Presentation presentation(opened, preferences, L"", L"", service);
+    std::vector<snowdesktop::modern_menu::Item> items;
+    snowdesktop::modern_menu::Options options;
+    presentation.Attach(items, options, 7);
+    auto poll = [&]
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+        if (options.pollItems) if (auto next = options.pollItems(items, true)) items = std::move(*next);
+    };
+    if (mode == 0)
+    {
+        const auto deadline = GetTickCount64() + 2000;
+        while (items.empty() && GetTickCount64() < deadline)
+        { poll(); if (items.empty()) MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE); }
+        Expect(items.size() == 1 && items.front().label == caption,
+               "verified background cache appears while native refresh is stalled");
+        Expect(service.View(selected).pending && queries == 2,
+               "display readiness does not complete or restart supervised native work");
+        const auto previousProof = scopeFinished.load();
+        before = service.View(selected).revision;
+        notify();
+        PumpUntil([&] { return service.View(selected).revision > before; }, "later notification arrives during the same pending query");
+        PumpUntil([&] { return scopeFinished > previousProof && !service.MenuDisplay(selected, preferences).pending; },
+                  "later notification obtains independent proof without waiting for native reply");
+        Expect(queries == 2, "repeated unrelated notifications do not restart pending native refresh");
+    }
+    else
+    {
+        poll();
+        Expect(items.empty(), "changed, unverified, explicitly invalidated or disabled background cache remains hidden");
+        if (mode == 3) Expect(scopes == 0, "a missing live baseline cannot be promoted by scoped cache verification");
+        if (mode == 6)
+        {
+            const auto display = service.MenuDisplay(selected, preferences);
+            Expect(display.snapshot && display.snapshot->entries.empty(), "current visibility rules filter proven cached rows");
+        }
+    }
+    std::cout << "pending-cache context=" << static_cast<int>(context) << " mode=" << mode << " scopes=" << scopes
+              << " queries=" << queries << " visible=" << items.size() << std::endl;
+    cleanup.Now();
+    PumpUntil([&] { return !service.View(opened).pending; }, "supervised native refresh reaches completion after release");
+    if (mode == 1)
+    {
+        const auto view = service.MenuDisplay(opened, preferences);
+        Expect(view.snapshot && view.snapshot->entries.front().label == L"Changed registration",
+               "real registration change replaces the old background snapshot");
+    }
+    if (mode == 0)
+    {
+        const auto display = service.MenuDisplay(selected, preferences);
+        Expect(display.snapshot && !display.pending && display.error.empty(), "verified cache survives failed native refresh");
+        std::atomic<bool> acknowledged = false;
+        const auto reference = ext::AppendReference({}, display.snapshot->entries.front());
+        service.Execute(selected, reference, {}, [&](bool ok) { Expect(ok, "fresh background invocation succeeds"); acknowledged = true; });
+        PumpUntil([&] { return acknowledged.load(); }, "background invocation acknowledges its fresh query");
+        Expect(queries == 3 && invoked == 43, "cached display never invokes a retained command token");
+    }
+}
+
 void TestWarmFailureRecovery(bool permanent)
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -4720,6 +4903,9 @@ int wmain(int argc, wchar_t **argv)
             TestLateInitialRegistrationAttribution(false, false, false, true);
             TestRegistrationVerificationBeforePopupPublication(true);
         }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-pending-background-cache")
+        { for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+            for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-folder-registration-verification")
         { TestRegistryCatalogue(); for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
             for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
@@ -4740,6 +4926,8 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(true, false);
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
+            for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+                for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context);
             TestWarmFailureRecovery(false);
             TestWarmFailureRecovery(true);
             TestShortcutQueryRecovery();
@@ -4798,6 +4986,8 @@ int wmain(int argc, wchar_t **argv)
             TestPopupQueryFailureRecovery(true, false);
             TestPopupQueryFailureRecovery(false, true);
             TestPopupQueryFailureRecovery(true, true);
+            for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+                for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context);
             TestWarmFailureRecovery(false);
             TestWarmFailureRecovery(true);
             TestShortcutQueryRecovery();
