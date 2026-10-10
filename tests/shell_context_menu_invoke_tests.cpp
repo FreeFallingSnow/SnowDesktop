@@ -2093,6 +2093,8 @@ void TestExtensionSessions()
         {
             ext::Session session(sample,2500); auto reply=wait(session);
             Expect(reply.ok,"owned catalogue sample query completes");
+            Expect(session.SelectionContexts() == ext::ContextBit(ext::Context::File),
+                "the real helper publishes its original sample context before the successful reply");
             samplePath=reply.entries[0].label; sampleWorker=session.ProcessId();
             sampleHelper.process = OpenProcess(SYNCHRONIZE, FALSE, sampleWorker);
             Expect(GetFileAttributesW(samplePath.c_str())!=INVALID_FILE_ATTRIBUTES,"sample lives through its menu session");
@@ -4545,6 +4547,49 @@ void TestDisabledQueuedQueries()
     Expect(starts == 6 && !service.View(next).snapshot, "only the subscribed inspection survives the replacement prewarm");
 }
 
+void TestNetworkSelectionScheduling()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    for (unsigned remoteContexts : {1u, 2u, 3u, 0u, 16u})
+    {
+        TemporaryDirectory temp;
+        ext::Request remote, local;
+        remote.paths = {L"\\\\127.0.0.1\\SnowDesktopMissingMenuShare\\selection"};
+        local.paths = {(temp.path / L"local.txt").wstring()};
+        std::ofstream(local.paths[0]) << "private scheduler fixture";
+        std::atomic<bool> remoteStarted = false, localStarted = false, release = false;
+        ext::MenuService service(temp.path / L"cache", [&](const ext::Request &request) {
+            const bool network = request.paths == remote.paths;
+            if (network) remoteStarted = true; else localStarted = true;
+            return ext::QueryWork{[&, network]() -> std::optional<ext::Reply> {
+                if (network && !release) return {};
+                ext::Entry entry; entry.provider = "network-action"; entry.label = L"Command";
+                return ext::Reply{true, {entry}, {}};
+            }, {}, {}, [remoteContexts] { return remoteContexts; }};
+        }, [] { ext::Catalogue value; value.revision = 1; return value; });
+        service.Query(remote);
+        service.Query(local);
+        PumpUntil([&] { return remoteStarted && localStarted && service.View(local).snapshot.has_value(); },
+            "NETWORK_METADATA_ISOLATED: a pending network selection cannot block an independent local menu");
+        Expect(service.View(remote).pending, "network completion remains supervised while the local reply publishes");
+        release = true;
+        PumpUntil([&] { return !service.View(remote).pending; }, "network metadata reply finishes its original request");
+        const auto view = service.View(remote);
+        if (remoteContexts >= 1 && remoteContexts <= 3)
+        {
+            Expect(view.snapshot && view.contexts == remoteContexts,
+                "file, folder and mixed network contexts come from the completed helper rather than suffix inference");
+            ext::Preferences prefs;
+            ext::SetHidden(prefs, "network-action", ext::Context::File, false);
+            ext::SetHidden(prefs, "network-action", ext::Context::Folder, true);
+            Expect(ext::VisibleSnapshot(prefs, *view.snapshot, view.contexts).empty() == (remoteContexts != 1),
+                "resolved network folders and mixed selections still obey the current folder hiding rule");
+        }
+        else Expect(!view.snapshot && !view.error.empty(),
+            "missing or invalid helper metadata cannot publish a successful network menu with guessed scope");
+    }
+}
+
 void TestKnownScopeQueryPolicy()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -5155,6 +5200,8 @@ int wmain(int argc, wchar_t **argv)
         { TestMenuDisplayAttributionSnapshot(); TestLateInitialRegistrationAttribution(); TestLateInitialRegistrationAttribution(true); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-package-manifest-refresh")
             TestPackageManifestRefresh();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-network-selection-scheduling")
+            TestNetworkSelectionScheduling();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-native-catalogue-prime")
             TestAggregateCataloguePriming();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
@@ -5192,6 +5239,7 @@ int wmain(int argc, wchar_t **argv)
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
+            TestNetworkSelectionScheduling();
             TestRegistryCatalogue();
             for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
             for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
@@ -5253,6 +5301,7 @@ int wmain(int argc, wchar_t **argv)
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
+            TestNetworkSelectionScheduling();
             TestSourceScheduler();
             TestSourceDeduplication();
             TestSelectionScopes();

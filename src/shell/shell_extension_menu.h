@@ -57,6 +57,8 @@ class Session
     Session &operator=(const Session &) = delete;
     std::optional<Reply> Poll();
     DWORD ProcessId() const noexcept;
+    // Metadata resolved inside the supervised helper, never on the scheduler.
+    unsigned SelectionContexts() const noexcept;
     static void ReleaseIdleWorker();
     // Transfers ownership to a bounded invocation monitor; modeless dialogs
     // remain alive after the custom popup closes.

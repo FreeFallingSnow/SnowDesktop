@@ -1184,6 +1184,7 @@ struct Session::Impl
     settings_ipc::Channel channel;
     std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
     std::optional<Reply> reply;
+    unsigned selectionContexts = 0;
     std::set<UINT> statefulTokens;
     std::string stage;
     std::filesystem::path sampleDirectory;
@@ -1245,10 +1246,14 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
         impl_->delivered = impl_->succeeded = false;
         impl_->statefulTokens.clear();
         impl_->reply.reset();
+        impl_->selectionContexts = 0;
         impl_->stage = "start helper";
         impl_->timeout = std::clamp<DWORD>(queryTimeoutMs, 100, 8000);
         impl_->channel.Bind<void, std::string>("menu.progress", [p = impl_.get()](std::string stage) {
             p->stage = std::move(stage);
+        });
+        impl_->channel.Bind<void, unsigned>("menu.selection_contexts", [p = impl_.get()](unsigned contexts) {
+            p->selectionContexts = contexts;
         });
         impl_->channel.Bind<void, Reply>("menu.reply", [p = impl_.get()](Reply result) {
             if (!result.ok && result.error.empty()) result.error = "query failed at " + p->stage;
@@ -1301,6 +1306,7 @@ Session::~Session()
     (startPinOnly ? startPinSessions : sessions).fetch_sub(1);
 }
 void Session::ReleaseIdleWorker() { Impl::idle.clear(); }
+unsigned Session::SelectionContexts() const noexcept { return impl_->selectionContexts; }
 DWORD Session::ProcessId() const noexcept { return impl_->process->ProcessId(); }
 std::optional<Reply> Session::Poll()
 {
@@ -1381,7 +1387,23 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
         channel.Bind<void, Request>("menu.query", [&](Request request) {
             if (invocationQueued) return;
             lastQuery = GetTickCount64();
-            channel.Notify("menu.reply", query ? query(request) : host.Query(request));
+            auto reply = query ? query(request) : host.Query(request);
+            if (reply.ok)
+            {
+                unsigned contexts = 0;
+                if (request.background || request.context == Context::Desktop)
+                    contexts = ContextBit(ResolveContext(request));
+                else for (const auto &path : request.paths)
+                {
+                    const auto attributes = GetFileAttributesW(path.c_str());
+                    if (attributes == INVALID_FILE_ATTRIBUTES) { contexts = 0; break; }
+                    contexts |= ContextBit(attributes & FILE_ATTRIBUTE_DIRECTORY ? Context::Folder : Context::File);
+                }
+                // This separate notification leaves persisted Reply data intact.
+                // Network/reconnect waits stay within the helper's query deadline.
+                channel.Notify("menu.selection_contexts", contexts);
+            }
+            channel.Notify("menu.reply", std::move(reply));
         });
         channel.Bind<void>("menu.release", [&] {
             if (invocationQueued) return;

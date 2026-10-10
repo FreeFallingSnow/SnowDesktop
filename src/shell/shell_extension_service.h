@@ -29,6 +29,7 @@ struct QueryWork
     std::function<std::optional<Reply>()> poll;
     std::function<void(UINT, POINT)> invoke;
     std::function<void(UINT, POINT, HWND)> invokeWithOwner;
+    std::function<unsigned()> selectionContexts;
 };
 class MenuService
 {

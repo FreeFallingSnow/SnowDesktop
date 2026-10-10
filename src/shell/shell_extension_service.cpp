@@ -26,9 +26,23 @@ Key SelectionKey(Request request)
     for (auto &p : request.paths) p = std::filesystem::path(p).lexically_normal().wstring();
     return settings_ipc::Pack(request);
 }
+bool NetworkSelection(const Request &request)
+{
+    return std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
+        if (PathIsNetworkPathW(path.c_str())) return true;
+        const std::filesystem::path file(path);
+        auto drive = file.root_path().wstring();
+        if (drive.empty()) return false;
+        if (file.has_root_name() && !file.has_root_directory()) drive += L"\\";
+        return GetDriveTypeW(drive.c_str()) == DRIVE_REMOTE;
+    });
+}
 unsigned Contexts(const Request &request)
 {
     if (request.background || request.context == Context::Desktop) return ContextBit(ResolveContext(request));
+    // An offline mapped drive can block even GetFileAttributes indefinitely.
+    // Unknown network selections are classified by the supervised helper.
+    if (NetworkSelection(request)) return 0;
     unsigned contexts = 0;
     for (const auto &path : request.paths)
     {
@@ -173,7 +187,8 @@ struct MenuService::Impl
         if (!factory) factory = [](const Request &request) {
             auto session = std::make_shared<Session>(request, request.startPinOnly ? 2000 : 8000);
             return QueryWork{[session] { return session->Poll(); }, [session](UINT token, POINT p) { session->Invoke(token, p); },
-                [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); }};
+                [session](UINT token, POINT p, HWND owner) { session->Invoke(token, p, owner); },
+                [session] { return session->SelectionContexts(); }};
         };
         if (!readCatalogue)
         {
@@ -500,8 +515,11 @@ struct MenuService::Impl
     {
         Request request;
         { std::lock_guard lock(mutex); const auto it = rows.find(job.key); if (it == rows.end()) return; request = it->second.request; }
-        const auto contexts = Contexts(request);
-        auto resolved = request; resolved.context = ResolveContext(request);
+        const auto contexts = job.contexts ? job.contexts : Contexts(request);
+        auto resolved = request;
+        resolved.context = request.background || request.context == Context::Desktop ?
+            (request.context == Context::Desktop ? Context::Desktop : Context::FolderBackground) :
+            contexts == ContextBit(Context::Folder) ? Context::Folder : Context::File;
         const bool targetCurrent = !job.ticket || cache.Capture(request).identity == job.ticket.identity;
         std::vector<Click> clicks; bool current = false;
         Preferences latestPreferences; bool enforcePreferences = false;
@@ -934,6 +952,13 @@ struct MenuService::Impl
                 if (!job.reply)
                 {
                     try { job.reply = job.work.poll(); } catch (...) { job.reply = Reply{false, {}, "query exception"}; }
+                    if (job.reply && job.reply->ok && !job.contexts)
+                    {
+                        unsigned contexts = 0;
+                        try { if (job.work.selectionContexts) contexts = job.work.selectionContexts(); } catch (...) {}
+                        if (contexts >= 1 && contexts <= 3) job.contexts = contexts;
+                        else job.reply = Reply{false, {}, "selection context unavailable"};
+                    }
                     if (job.reply && job.reply->ok)
                     {
                         std::lock_guard lock(mutex);
