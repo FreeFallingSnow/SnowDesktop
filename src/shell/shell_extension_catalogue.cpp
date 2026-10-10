@@ -616,13 +616,17 @@ struct FileRoot
     std::vector<std::wstring> types;
 };
 std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
-    HKEY classes, const std::vector<std::wstring> &roots)
+    HKEY classes, const std::vector<std::wstring> &roots,
+    std::map<std::wstring, std::vector<std::wstring>> &sourceValues)
 {
     std::map<std::wstring, std::vector<std::wstring>> types;
     const auto readAssociation = [classes](const std::wstring &name) {
         std::map<std::wstring, std::vector<std::wstring>> result;
         result[Lower(name)].push_back(Lower(name));
         const auto prog = Read(classes, name); if (!prog.empty()) result[Lower(prog)].push_back(Lower(name));
+        // Preserve the original values used by row fingerprints in this scan.
+        // A new Scanner reads fresh values; this does not cache associations across scans.
+        std::vector<std::wstring> values{prog};
         const auto perceived = Read(classes, name, L"PerceivedType");
         if (!perceived.empty()) result[L"systemfileassociations\\" + Lower(perceived)].push_back(Lower(name));
         result[L"systemfileassociations\\" + Lower(name)].push_back(Lower(name));
@@ -631,13 +635,15 @@ std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
         {
             const auto choice = Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + name + L"\\UserChoice", L"ProgId");
             if (!choice.empty()) result[Lower(choice)].push_back(Lower(name));
+            values.push_back(choice);
         }
-        return result;
+        return std::pair{std::move(result), std::move(values)};
     };
     std::vector<std::wstring> fileTypes;
     for (const auto &name : roots)
         if (!name.empty() && name.front() == L'.') fileTypes.push_back(name);
-    std::vector<std::map<std::wstring, std::vector<std::wstring>>> associated(fileTypes.size());
+    using Associated = std::pair<std::map<std::wstring, std::vector<std::wstring>>, std::vector<std::wstring>>;
+    std::vector<Associated> associated(fileTypes.size());
     // Each extension reads independent registration values. Keep results apart
     // and merge in root order so parallel completion cannot alter associations.
     if (fileTypes.size() < 64)
@@ -666,9 +672,12 @@ std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
             for (size_t i = 0; i < fileTypes.size(); ++i) associated[i] = readAssociation(fileTypes[i]);
         }
     }
-    for (auto &extension : associated)
-        for (auto &[name, values] : extension)
+    for (size_t i = 0; i < associated.size(); ++i)
+    {
+        for (auto &[name, values] : associated[i].first)
             types[name].insert(types[name].end(), values.begin(), values.end());
+        sourceValues[Lower(fileTypes[i])] = std::move(associated[i].second);
+    }
     return types;
 }
 void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots)
@@ -720,7 +729,7 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
     scanner.Root(L"Directory\\Background", ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop));
     scanner.Root(L"DesktopBackground", ContextBit(Context::Desktop));
     const auto roots = Children(classes, L"");
-    auto types = ReadTypeAssociations(classes, roots);
+    auto types = ReadTypeAssociations(classes, roots, scanner.associations);
     const std::set<std::wstring> special{L"*", L"allfilesystemobjects", L"directory", L"folder", L"drive", L"desktopbackground", L"clsid", L"interface", L"typelib"};
     std::vector<FileRoot> fileRoots;
     for (const auto &name : roots)

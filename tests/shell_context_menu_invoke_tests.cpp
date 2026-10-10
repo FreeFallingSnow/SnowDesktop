@@ -1524,6 +1524,24 @@ void TestParallelRegistryCatalogue()
         associatedTypes(reassociated, alternateId) == expectedTypes &&
         reassociated.revision != changed.revision && reassociated.folderRevision == proof,
         "parallel association scans recheck changed perceived types and removed alternate ProgIDs");
+    const auto rowRevision = [](const ext::Catalogue &value, const std::string &id) {
+        const auto found = std::find_if(value.rows.begin(), value.rows.end(), [&](const auto &row) { return row.id == id; });
+        Expect(found != value.rows.end(), "association fingerprint source exists");
+        return found->revision;
+    };
+    const std::string originalId = "reg:parallel.document0\\shell\\inspect";
+    put(L".parallel0", nullptr, L"PARALLEL.DOCUMENT0");
+    const auto recased = ext::ReadCatalogue(registry.key, false);
+    Expect(associatedTypes(recased, originalId) == associatedTypes(reassociated, originalId) &&
+        rowRevision(recased, originalId) != rowRevision(reassociated, originalId) && recased.folderRevision == proof,
+        "a fresh scan preserves original association values in row fingerprints without changing case-insensitive membership");
+    put(L".parallel0", nullptr, L"Parallel.Document1");
+    const auto redirected = ext::ReadCatalogue(registry.key, false);
+    Expect(associatedTypes(redirected, originalId) == std::vector<std::wstring>{L"progid:parallel.document0"} &&
+        associatedTypes(redirected, "reg:parallel.document1\\shell\\inspect") ==
+            std::vector<std::wstring>{L".parallel0", L".parallel1"} &&
+        rowRevision(redirected, originalId) != rowRevision(recased, originalId) && redirected.folderRevision == proof,
+        "a new scan follows a changed default ProgID and removes the old type without disturbing folder proof");
 }
 void TestRegistryCatalogue()
 {
