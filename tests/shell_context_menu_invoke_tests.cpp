@@ -576,7 +576,7 @@ void TestPopupMaterializationOnPrivateDesktop()
                 self->correctPosition = LOWORD(lp) == 3 && HIWORD(lp) == FALSE;
                 if (self->activeMenu && !self->leaveDeferred && (!self->viewRequired || self->viewReady))
                 {
-                    DeleteMenu(self->menu, 0, MF_BYPOSITION);
+                    while (GetMenuItemCount(self->menu) > 0) DeleteMenu(self->menu, 0, MF_BYPOSITION);
                     AppendMenuW(self->menu, MF_STRING, 51, L"Add to archive");
                     AppendMenuW(self->menu, MF_STRING | MF_GRAYED, 52, L"Extract files");
                 }
