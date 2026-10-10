@@ -3033,6 +3033,8 @@ void TestFileSnapshotNotificationReuse()
         ~Registry() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
     } registry(L"Software\\SnowDesktopFileCacheReuse\\" + temp.path.filename().wstring()),
       noise(L"Software\\Classes\\Local Settings\\SnowDesktopFileCacheReuse-" + temp.path.filename().wstring());
+    const auto commandAsset = temp.path / L"command.exe";
+    std::ofstream(commandAsset) << "private command asset";
     auto caption = [&](const wchar_t *value) {
         for (const wchar_t *root : {L"*", L"Directory"}) {
             HKEY action = nullptr;
@@ -3047,9 +3049,10 @@ void TestFileSnapshotNotificationReuse()
             const auto commandPath = path + L"\\command";
             Expect(RegCreateKeyExW(registry.key, commandPath.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
                 nullptr, &command, nullptr) == ERROR_SUCCESS, "create private cache reuse command");
-            constexpr wchar_t commandValue[] = L"unused.exe %1";
+            const std::wstring commandValue = L"\"" + commandAsset.wstring() + L"\" %1";
             const auto commandStatus = RegSetValueExW(command, nullptr, 0, REG_SZ,
-                reinterpret_cast<const BYTE *>(commandValue), sizeof(commandValue));
+                reinterpret_cast<const BYTE *>(commandValue.c_str()),
+                static_cast<DWORD>((commandValue.size() + 1) * sizeof(wchar_t)));
             RegCloseKey(command);
             Expect(commandStatus == ERROR_SUCCESS, "write private cache reuse command");
         }
@@ -3069,6 +3072,7 @@ void TestFileSnapshotNotificationReuse()
     };
     saveLink(text);
     std::atomic<unsigned> scans = 0, queries = 0;
+    std::atomic<bool> decodedIcon = false;
     ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
         if (target.paths.empty() || std::filesystem::path(target.paths.front()).parent_path() != temp.path)
             return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
@@ -3076,7 +3080,23 @@ void TestFileSnapshotNotificationReuse()
         ext::Entry entry; entry.key = "cache-reuse"; entry.provider = "verb:cache-reuse";
         entry.label = L"Cached action"; entry.token = 42;
         return ext::QueryWork{[entry] { return ext::Reply{true, {entry}, {}}; }, {}};
-    }, [&] { ++scans; return ext::ReadCatalogue(registry.key, false); });
+    }, [&] {
+        ++scans;
+        auto catalogue = ext::ReadCatalogue(registry.key, false);
+        // Model the observed real scanner failure: an unchanged provider icon
+        // sometimes decodes only on a later scan. Only presentation data varies.
+        if (decodedIcon)
+        {
+            for (auto &row : catalogue.rows)
+            {
+                row.display.width = row.display.height = 1;
+                row.display.pixels = {0, 0, 0, 255};
+                row.revision ^= 0x35ab42ull;
+            }
+            catalogue.revision ^= 0x35ab42ull;
+        }
+        return catalogue;
+    });
     ext::Preferences preferences;
     ext::SetCommon(preferences, "verb:cache-reuse", ext::Category::Objects, true);
     service.Configure(preferences); service.Inspect();
@@ -3114,6 +3134,16 @@ void TestFileSnapshotNotificationReuse()
             !service.Inspect().scanning && view.snapshot && !view.pending; }, "verify unchanged registrations before reusing file cache");
         Expect(queries == before + 1 && service.MenuDisplay(selected, preferences).snapshot.has_value(),
             "unrelated Classes noise never launches another file or shortcut query");
+        const auto visualRevision = service.View(selected).revision;
+        const auto visualScans = scans.load();
+        decodedIcon = !decodedIcon.load();
+        notify();
+        PumpUntil([&] { return service.View(selected).revision > visualRevision; }, "observe an icon-only catalogue update");
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return scans > visualScans &&
+            !service.Inspect().scanning && view.snapshot && !view.pending; }, "verify icon-only changes without another native query");
+        Expect(queries == before + 1,
+            "ICON_ONLY_COMMAND_PROOF: decoded icon fluctuations cannot discard file or shortcut commands");
         caption((++caseNumber % 2) ? L"Changed action A" : L"Changed action B");
         const auto currentRevision = service.View(selected).revision;
         notify();
@@ -3145,6 +3175,20 @@ void TestFileSnapshotNotificationReuse()
             !service.Inspect().scanning && view.snapshot && !view.pending; }, "verified snapshots remain reusable after an explicit refresh");
         Expect(queries == before + 4, "a completed forced refresh cannot permanently disable notification cache reuse");
     }
+    ext::Request assetSelection; assetSelection.paths = {text.wstring()};
+    service.Query(assetSelection);
+    PumpUntil([&] { auto view = service.View(assetSelection); return view.snapshot && !view.pending; },
+        "warm a command whose local executable can change without a registry write");
+    const auto assetQueries = queries.load();
+    const auto assetRevision = service.View(assetSelection).revision;
+    std::ofstream(commandAsset, std::ios::app) << " changed";
+    notify();
+    PumpUntil([&] { return service.View(assetSelection).revision > assetRevision; }, "observe local command asset verification");
+    service.Query(assetSelection);
+    PumpUntil([&] { auto view = service.View(assetSelection); return !service.Inspect().scanning && view.snapshot && !view.pending; },
+        "refresh a command after its executable changes with unchanged registration text");
+    Expect(queries == assetQueries + 1,
+        "a real local executable mutation still invalidates command proof when decoded icons are ignored");
     const auto beforeTargetChange = queries.load();
     saveLink(text);
     ext::Request linked; linked.paths = {shortcut.wstring()};
@@ -3237,9 +3281,11 @@ void TestUnchangedCataloguePersistence()
     snowdesktop::settings_ipc::Bytes updated(static_cast<size_t>(length));
     Expect(static_cast<bool>(input.read(reinterpret_cast<char*>(updated.data()), updated.size())),
         "read refreshed catalogue");
-    const auto [schema, value] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t, ext::Catalogue>>(updated);
-    Expect(schema == 4 && value.revision == 18 && value.rows[0].display.label == L"Changed",
-        "changed catalogue preserves schema and publishes new registration metadata");
+    const auto [schema, value, proof] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t,
+        ext::Catalogue, std::vector<std::pair<std::string, std::uint64_t>>>>(updated);
+    Expect(schema == 5 && value.revision == 18 && value.rows[0].display.label == L"Changed" &&
+        proof.size() == value.rows.size() && proof[0].first == value.rows[0].id,
+        "a legacy catalogue upgrades with separate command proof and new registration metadata");
     Expect(value.rows[0].linked && value.associations.size() == 1,
         "unchanged scans retain associations for subsequent changed registration scans");
 }
@@ -3313,8 +3359,10 @@ void TestIdleCatalogueInvalidation()
     const auto length = input.tellg(); Expect(length > 0, "refreshed catalogue was persisted"); input.seekg(0);
     snowdesktop::settings_ipc::Bytes bytes(static_cast<size_t>(length));
     Expect(static_cast<bool>(input.read(reinterpret_cast<char *>(bytes.data()), bytes.size())), "read refreshed persisted catalogue");
-    const auto [schema, catalogue] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t, ext::Catalogue>>(bytes);
-    Expect(schema == 4 && catalogue.revision == 3 && catalogue.rows.front().display.label == L"3",
+    const auto [schema, catalogue, proof] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t,
+        ext::Catalogue, std::vector<std::pair<std::string, std::uint64_t>>>>(bytes);
+    Expect(schema == 5 && catalogue.revision == 3 && catalogue.rows.front().display.label == L"3" &&
+        proof.size() == catalogue.rows.size() && proof.front().first == catalogue.rows.front().id,
         "lazy refresh still publishes and persists changed registration metadata");
 }
 

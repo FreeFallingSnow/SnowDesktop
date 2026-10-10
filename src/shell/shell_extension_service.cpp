@@ -84,19 +84,34 @@ bool DependsOn(const Registration &row, const Request &request, unsigned context
         return std::find(row.types.begin(), row.types.end(), extension) != row.types.end();
     });
 }
+std::uint64_t MenuRevision(const Registration &row)
+{
+    return row.menuRevision ? row.menuRevision : row.revision;
+}
+std::uint64_t InventoryDependency(const Catalogue &catalogue)
+{
+    if (!catalogue.revision) return 0;
+    std::uint64_t hash = 14695981039346656037ull;
+    for (const auto &row : catalogue.rows)
+    {
+        for (unsigned char c : row.id) { hash ^= c; hash *= 1099511628211ull; }
+        hash ^= MenuRevision(row); hash *= 1099511628211ull;
+    }
+    return hash;
+}
 std::uint64_t Dependency(const Catalogue &catalogue, const Request &request, unsigned contexts)
 {
     if (!catalogue.revision) return 0;
     // ShellLink can expose commands belonging to its target's type. The .lnk
     // suffix alone cannot prove those dependencies without resolving targets
     // (which may be offline), so shortcuts retain the full inventory proof.
-    if (ShortcutSelection(request)) return catalogue.revision;
+    if (ShortcutSelection(request)) return InventoryDependency(catalogue);
     std::uint64_t hash = 14695981039346656037ull;
     for (const auto &row : catalogue.rows)
         if (DependsOn(row, request, contexts))
         {
             for (unsigned char c : row.id) { hash ^= c; hash *= 1099511628211ull; }
-            hash ^= row.revision; hash *= 1099511628211ull;
+            hash ^= MenuRevision(row); hash *= 1099511628211ull;
         }
     return hash;
 }
@@ -780,7 +795,9 @@ struct MenuService::Impl
         { std::lock_guard lock(mutex); if (!catalogueDirty) return; value = catalogue; catalogueDirty = false; }
         try
         {
-            const auto bytes = settings_ipc::Pack(std::uint32_t(4), value);
+            std::vector<std::pair<std::string, std::uint64_t>> menuProof;
+            for (const auto &row : value.rows) menuProof.emplace_back(row.id, row.menuRevision);
+            const auto bytes = settings_ipc::Pack(std::uint32_t(5), value, menuProof);
             if (bytes.size() > 32 * 1024 * 1024) return;
             std::error_code ignored; std::filesystem::create_directories(cache.Directory(), ignored);
             const auto temporary = cache.Directory() / L"catalogue.tmp";
@@ -798,8 +815,21 @@ struct MenuService::Impl
             const auto size = std::filesystem::file_size(file, error); if (error || size > 32 * 1024 * 1024) return;
             settings_ipc::Bytes bytes(static_cast<size_t>(size)); std::ifstream in(file, std::ios::binary);
             if (!in.read(reinterpret_cast<char *>(bytes.data()), bytes.size())) return;
-            auto [schema, value] = settings_ipc::Unpack<std::tuple<std::uint32_t, Catalogue>>(bytes);
-            if (schema != 4) return;
+            std::uint32_t schema = 0; Catalogue value;
+            settings_ipc::Reader reader(bytes); reader(schema, value);
+            if (schema == 5)
+            {
+                std::vector<std::pair<std::string, std::uint64_t>> menuProof;
+                reader(menuProof);
+                if (menuProof.size() != value.rows.size()) return;
+                for (size_t i = 0; i < menuProof.size(); ++i)
+                {
+                    if (menuProof[i].first != value.rows[i].id) return;
+                    value.rows[i].menuRevision = menuProof[i].second;
+                }
+            }
+            else if (schema != 4) return;
+            reader.Finish();
             std::lock_guard lock(mutex); catalogue = std::move(value);
         }
         catch (...) {}
@@ -819,7 +849,9 @@ struct MenuService::Impl
                 std::lock_guard lock(mutex);
                 checkedRegistryRevision = std::max(checkedRegistryRevision, scanRegistryRevision);
                 const bool initial = !catalogue.revision;
-                if (!initial && value.revision == catalogue.revision)
+                const bool commandInventoryChanged = initial ||
+                    InventoryDependency(value) != InventoryDependency(catalogue);
+                if (!initial && value.revision == catalogue.revision && !commandInventoryChanged)
                 {
                     // The scanner hashes the complete registration inventory.
                     // Keep existing associations and observed icons when only a
@@ -835,12 +867,12 @@ struct MenuService::Impl
                 {
                     // Preparation contains registrations for unseen selections
                     // too; retiring it cannot depend on existing affected rows.
-                    retirePreparation = true;
+                    retirePreparation = commandInventoryChanged;
                     std::vector<Registration> changed;
                     for (const auto &old : catalogue.rows)
-                        if (std::none_of(value.rows.begin(), value.rows.end(), [&](const auto &r) { return r.id == old.id && r.revision == old.revision; })) changed.push_back(old);
+                        if (std::none_of(value.rows.begin(), value.rows.end(), [&](const auto &r) { return r.id == old.id && MenuRevision(r) == MenuRevision(old); })) changed.push_back(old);
                     for (const auto &next : value.rows)
-                        if (std::none_of(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &r) { return r.id == next.id && r.revision == next.revision; })) changed.push_back(next);
+                        if (std::none_of(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &r) { return r.id == next.id && MenuRevision(r) == MenuRevision(next); })) changed.push_back(next);
                     for (const auto &a : catalogue.associations)
                         if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
                     catalogue = std::move(value); scanning = false; catalogueDirty = true;

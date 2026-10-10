@@ -410,7 +410,24 @@ struct Scanner
     std::map<std::wstring, std::wstring> labels;
     std::map<std::wstring, bool> policies;
     std::map<std::wstring, Entry> images;
+    std::map<std::wstring, std::uint64_t> assets;
     std::map<std::wstring, std::vector<std::wstring>> associations;
+    std::uint64_t AssetRevision(const std::wstring &location)
+    {
+        if (location.empty()) return 0;
+        const auto [it, inserted] = assets.try_emplace(location);
+        if (!inserted) return it->second;
+        wchar_t path[32768]{};
+        wcsncpy_s(path, location.c_str(), _TRUNCATE);
+        PathParseIconLocationW(path);
+        auto module = LocalModule(path[0] == L'@' ? path + 1 : path);
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        if (!module.empty() && GetFileAttributesExW(module.c_str(), GetFileExInfoStandard, &data))
+            it->second = Hash(settings_ipc::Pack(module, data.dwFileAttributes,
+                data.ftLastWriteTime.dwHighDateTime, data.ftLastWriteTime.dwLowDateTime,
+                data.nFileSizeHigh, data.nFileSizeLow));
+        return it->second;
+    }
     const std::vector<std::wstring> &Associations(const std::wstring &type)
     {
         const auto [it, inserted] = associations.try_emplace(type);
@@ -497,6 +514,8 @@ struct Scanner
         // Workers keep individual sources; the caller applies the original
         // scan order and global identity/row limit before loading images.
         if (capture) { captured.emplace_back(std::move(row), icon); return; }
+        row.menuRevision = Hash(settings_ipc::Pack(row.menuRevision ? row.menuRevision : row.revision,
+            icon, AssetRevision(icon)));
         if (row.types.empty()) row.types.push_back(L"*");
         if (row.id.empty() || result.rows.size() >= 16384) return;
         row.display.provider = row.id;
@@ -568,6 +587,9 @@ struct Scanner
             }
             // Include values that affect applicability, not volatile registry write times.
             row.revision = Hash(settings_ipc::Pack(command, handler, values.String(L"AppliesTo"), values.String(L"MultiSelectModel"), Has(key.value, L"", L"Extended"), subCommands));
+            const auto module = !handler.empty() ? Handler(handler).module :
+                !delegate.empty() ? Handler(delegate).module : CommandModule(command);
+            row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(module)));
             Add(std::move(row), icon);
         }
         for (const auto &name : Children(classes, root + L"\\shellex\\ContextMenuHandlers"))
@@ -585,6 +607,7 @@ struct Scanner
             row.display.label = Label(info.label.empty() ? name : info.label);
             row.application = info.application;
             row.revision = Hash(settings_ipc::Pack(info.module));
+            row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(info.module)));
             Add(std::move(row), info.icon.empty() ? info.module : info.icon);
         }
     }
@@ -769,6 +792,9 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
                 associations.insert(associations.end(), values.begin(), values.end());
             }
         row.revision = Hash(settings_ipc::Pack(row.revision, associations));
+        row.menuRevision = Hash(settings_ipc::Pack(row.menuRevision, associations,
+            row.sources, row.types, row.verbs, row.contexts, row.systemEnabled,
+            row.display.label, row.commandIdentity, row.application));
         row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels, row.commandIdentity, row.application));
     }
     std::sort(scanner.result.rows.begin(), scanner.result.rows.end(), [](const auto &a, const auto &b) { return a.id < b.id; });

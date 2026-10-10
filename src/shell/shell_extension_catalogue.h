@@ -22,6 +22,9 @@ struct Registration
     unsigned contexts = 0;
     bool systemEnabled = true, linked = false;
     std::uint64_t revision = 0;
+    // Live command and asset proof excludes decoded icon pixels. Persisted
+    // catalogues store this separately; the settings IPC contract is unchanged.
+    std::uint64_t menuRevision = 0;
     // Exact execution identity for grouping equivalent static registrations in
     // settings. Original IDs remain the persisted visibility/command authority.
     std::string commandIdentity;
