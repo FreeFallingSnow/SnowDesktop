@@ -2582,5 +2582,6 @@
   "settings.dock.fullscreenExceptionAdd": "Agregar aplicación",
   "settings.dock.fullscreenFromRunning": "Elegir una aplicación en ejecución",
   "settings.dock.fullscreenDefaultPolicy": "Protección predeterminada",
-  "app.settings.fan_title_font_size": "Tamaño de fuente de los títulos del despliegue en abanico"
+  "app.settings.fan_title_font_size": "Tamaño de fuente de los títulos del despliegue en abanico",
+  "settings.dock.fullscreenExceptionManage": "Administrar excepciones de aplicaciones"
 }

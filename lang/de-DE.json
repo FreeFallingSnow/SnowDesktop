@@ -2582,5 +2582,6 @@
   "settings.dock.fullscreenExceptionAdd": "App hinzufügen",
   "settings.dock.fullscreenFromRunning": "Laufende App auswählen",
   "settings.dock.fullscreenDefaultPolicy": "Standardschutz",
-  "app.settings.fan_title_font_size": "Schriftgröße der Titel in der Fächeransicht"
+  "app.settings.fan_title_font_size": "Schriftgröße der Titel in der Fächeransicht",
+  "settings.dock.fullscreenExceptionManage": "Anwendungsausnahmen verwalten"
 }

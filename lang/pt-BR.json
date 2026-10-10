@@ -2582,5 +2582,6 @@
   "settings.dock.fullscreenExceptionAdd": "Adicionar aplicativo",
   "settings.dock.fullscreenFromRunning": "Escolher um aplicativo em execução",
   "settings.dock.fullscreenDefaultPolicy": "Proteção padrão",
-  "app.settings.fan_title_font_size": "Tamanho da fonte dos títulos da expansão em leque"
+  "app.settings.fan_title_font_size": "Tamanho da fonte dos títulos da expansão em leque",
+  "settings.dock.fullscreenExceptionManage": "Gerenciar exceções de aplicativos"
 }

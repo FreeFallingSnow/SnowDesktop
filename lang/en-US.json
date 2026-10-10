@@ -2582,5 +2582,6 @@
   "settings.dock.fullscreenExceptionAdd": "Add application",
   "settings.dock.fullscreenFromRunning": "Choose from running apps",
   "settings.dock.fullscreenDefaultPolicy": "Default protection",
-  "app.settings.fan_title_font_size": "Fan Expansion Title Font Size"
+  "app.settings.fan_title_font_size": "Fan Expansion Title Font Size",
+  "settings.dock.fullscreenExceptionManage": "Manage application exceptions"
 }

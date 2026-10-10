@@ -2582,5 +2582,6 @@
   "settings.dock.fullscreenExceptionAdd": "앱 추가",
   "settings.dock.fullscreenFromRunning": "실행 중인 앱에서 선택",
   "settings.dock.fullscreenDefaultPolicy": "기본 보호",
-  "app.settings.fan_title_font_size": "부채꼴 펼치기 제목 글꼴 크기"
+  "app.settings.fan_title_font_size": "부채꼴 펼치기 제목 글꼴 크기",
+  "settings.dock.fullscreenExceptionManage": "앱 예외 관리"
 }

@@ -1,9 +1,76 @@
 #include "dock/dock_fullscreen_policy.h"
 #include "dock/dock_fullscreen_storage.h"
+#include "dock/dock_running_animation.h"
 #include "platform/foreground_fullscreen.h"
 
 #include <iostream>
+#include <map>
 #include <thread>
+
+namespace
+{
+// The production picker collector consumes Dock caches; replace only the OS
+// window/path reader so fixed entries need no live desktop or installed game.
+void CheckApplicationPicker(const auto& check)
+{
+    namespace policy = snowdesktop::dock_fullscreen;
+    struct Running
+    {
+        snowdesktop::dock_running_animation::Presence presence;
+        HWND window;
+        std::wstring title, executablePath;
+    };
+    struct Pinned
+    {
+        HWND window;
+        bool running;
+        std::vector<HWND> trackedWindows;
+    };
+    const auto window = [](UINT_PTR id) { return reinterpret_cast<HWND>(id); };
+    Running player{{}, window(1), L"Player", L"C:\\Apps\\Player.exe"};
+    player.presence.SetVisible(true, 0, false);
+    Running exiting{{}, window(7), L"Exiting", L"C:\\Apps\\Exiting.exe"};
+    exiting.presence.SetVisible(true, 0, false);
+    exiting.presence.SetVisible(false, 0, true);
+    const std::vector<Running> running{player, exiting};
+    const std::map<std::wstring, Pinned> pinned{
+        {L"game", {window(2), true, {window(2), window(3)}}},
+        {L"helper", {window(4), true, {window(4), window(5)}}},
+        {L"not-running", {window(6), false, {window(6)}}},
+        {L"steam-process-only", {nullptr, true, {}}}};
+    const std::map<HWND, DockFullscreenApplication> live{
+        {window(1), {L"Player", L"C:/Apps/PLAYER.exe"}},
+        {window(2), {L"Game", L"D:\\Games\\game.exe"}},
+        {window(3), {L"Second game window", L"d:/games/GAME.EXE"}},
+        {window(4), {L"Player pinned too", L"C:\\Apps\\Player.exe"}},
+        {window(5), {L"Game child", L"D:\\Games\\bin\\client.exe"}},
+        {window(6), {L"Stopped", L"C:\\Apps\\Stopped.exe"}},
+        {window(7), {L"Exiting", L"C:\\Apps\\Exiting.exe"}}};
+    const auto readWindow = [&](HWND handle, const std::wstring&, const std::wstring&)
+        -> std::optional<DockFullscreenApplication> {
+        const auto found = live.find(handle);
+        return found == live.end() ? std::nullopt : std::optional{found->second};
+    };
+    const auto applications = policy::CollectApplications(running, pinned, readWindow);
+    const std::vector<DockFullscreenApplication> expected{
+        {L"Player", L"C:\\Apps\\PLAYER.exe"},
+        {L"Game", L"D:\\Games\\game.exe"},
+        {L"Game child", L"D:\\Games\\bin\\client.exe"}};
+    check(applications == expected,
+        "picker includes running fixed apps and real child executables, deduplicates windows/paths and excludes stopped/exiting entries");
+    const std::vector<Running> emptyRunning;
+    const std::map<std::wstring, Pinned> onlyPinned{
+        {L"game", {window(2), true, {window(2)}}}};
+    check(policy::CollectApplications(emptyRunning, onlyPinned, readWindow) ==
+        std::vector<DockFullscreenApplication>{{L"Game", L"D:\\Games\\game.exe"}},
+        "pinning the only running app cannot empty the exception picker");
+    auto stalePinned = onlyPinned;
+    stalePinned.begin()->second.window = window(99);
+    stalePinned.begin()->second.trackedWindows = {window(99)};
+    check(policy::CollectApplications(emptyRunning, stalePinned, readWindow).empty(),
+        "closed windows remaining in a Dock cache cannot become exceptions");
+}
+}
 
 int RunFullscreenFocusTests()
 {
@@ -13,6 +80,7 @@ int RunFullscreenFocusTests()
     const auto check = [&](bool value, const char* description) {
         if (!value) { ++failures; std::cerr << "FAILED: " << description << '\n'; }
     };
+    CheckApplicationPicker(check);
     using P = DockFullscreenPolicy;
     using S = DockRevealSource;
     check(policy::LoadPolicy({}, {}) == P::FullProtection,

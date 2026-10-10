@@ -2582,5 +2582,6 @@
   "settings.dock.fullscreenExceptionAdd": "新增應用程式",
   "settings.dock.fullscreenFromRunning": "從執行中的應用程式選取",
   "settings.dock.fullscreenDefaultPolicy": "預設保護",
-  "app.settings.fan_title_font_size": "扇形展開標題字號"
+  "app.settings.fan_title_font_size": "扇形展開標題字號",
+  "settings.dock.fullscreenExceptionManage": "管理應用程式例外"
 }

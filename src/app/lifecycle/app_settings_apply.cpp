@@ -1,5 +1,6 @@
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
+#include "app/dock/dock_platform_helpers.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "platform/single_instance.h"
 #include "data/atomic_file.h"
@@ -1330,18 +1331,22 @@ public:
         case Action::GetDockRunningApplications:
         {
             auto result = snowdesktop::SettingsActionResult::Success();
-            // Reuse the Dock's actual running-zone identities and executable
-            // paths. Do not run a second, differently filtered enumeration.
-            for (const auto& running : app_.dockUnpinnedRunningApps_)
-            {
-                if (running.presence.IsHidden() || !running.window || !IsWindow(running.window)) continue;
-                const auto path = snowdesktop::dock_fullscreen::NormalizeExecutable(running.executablePath);
-                if (path.empty()) continue;
-                const bool duplicate = std::any_of(result.dockApplications.begin(), result.dockApplications.end(),
-                    [&](const auto& item) { return snowdesktop::dock_fullscreen::SameExecutable(item.executable, path); });
-                if (!duplicate && result.dockApplications.size() < 128)
-                    result.dockApplications.push_back({running.title, path});
-            }
+            result.dockApplications = snowdesktop::dock_fullscreen::CollectApplications(
+                app_.dockUnpinnedRunningApps_, app_.dockRunningWindows_,
+                [this](HWND window, const std::wstring& cachedName, const std::wstring& cachedPath)
+                    -> std::optional<DockFullscreenApplication> {
+                    if (!IsWindow(window) || app_.IsDockWindowClosePending(window)) return std::nullopt;
+                    const auto path = cachedPath.empty() ? QueryDockWindowExecutablePath(window) : cachedPath;
+                    std::wstring name = cachedName;
+                    if (name.empty())
+                    {
+                        wchar_t title[512]{};
+                        GetWindowTextW(window, title, static_cast<int>(std::size(title)));
+                        name = title;
+                    }
+                    if (name.empty()) name = std::filesystem::path(path).filename().wstring();
+                    return DockFullscreenApplication{name, path};
+                });
             return result;
         }
         case Action::ApplyTaskbar:
