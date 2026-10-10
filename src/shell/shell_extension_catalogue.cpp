@@ -1,4 +1,7 @@
 #include "shell_extension_catalogue.h"
+#include <atomic>
+#include <future>
+#include <stdexcept>
 #include "shell_extension_diagnostics.h"
 #include "ui/menu/menu_label.h"
 #include <algorithm>
@@ -304,6 +307,8 @@ struct KeyValues
 struct Scanner
 {
     HKEY classes;
+    bool capture = false;
+    std::vector<std::pair<Registration, std::wstring>> captured;
     Catalogue result;
     std::vector<Registration> folderRows;
     std::map<std::string, size_t> ids;
@@ -392,6 +397,9 @@ struct Scanner
     }
     void Add(Registration row, const std::wstring &icon)
     {
+        // Workers keep individual sources; the caller applies the original
+        // scan order and global identity/row limit before loading images.
+        if (capture) { captured.emplace_back(std::move(row), icon); return; }
         if (row.types.empty()) row.types.push_back(L"*");
         if (row.id.empty() || result.rows.size() >= 16384) return;
         row.display.provider = row.id;
@@ -527,6 +535,48 @@ struct Scanner
         }
     }
 };
+struct FileRoot
+{
+    std::wstring path;
+    std::vector<std::wstring> types;
+};
+void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots)
+{
+    const auto files = ContextBit(Context::File);
+    auto serial = [&] { for (const auto &root : roots) scanner.Root(root.path, files, root.types); };
+    // Small/private inventories avoid thread setup. Two workers bound the
+    // extra work while the host and native extension helpers remain active.
+    if (roots.size() < 64) { serial(); return; }
+    std::vector<std::vector<std::pair<Registration, std::wstring>>> results(roots.size());
+    std::atomic_size_t next = 0;
+    std::vector<std::future<void>> workers;
+    try
+    {
+        for (unsigned i = 0; i < 2; ++i)
+            workers.push_back(std::async(std::launch::async, [&] {
+                const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                if (FAILED(initialized)) throw std::runtime_error("metadata COM initialization");
+                struct Cleanup { ~Cleanup() { CoUninitialize(); } } cleanup;
+                Scanner local{scanner.classes}; local.capture = true;
+                while (true)
+                {
+                    const auto index = next.fetch_add(1, std::memory_order_relaxed);
+                    if (index >= roots.size()) break;
+                    local.Root(roots[index].path, files, roots[index].types);
+                    results[index] = std::move(local.captured); local.captured.clear();
+                }
+            }));
+        for (auto &worker : workers) worker.get();
+    }
+    catch (...)
+    {
+        // Futures drain before their inputs/results can be released. No
+        // worker row has entered the inventory, so fallback starts cleanly.
+        workers.clear(); results.clear(); serial(); return;
+    }
+    for (auto &result : results)
+        for (auto &row : result) scanner.Add(std::move(row.first), row.second);
+}
 }
 Catalogue ReadCatalogue(HKEY classes, bool packages)
 {
@@ -555,15 +605,17 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
             }
         }
     const std::set<std::wstring> special{L"*", L"allfilesystemobjects", L"directory", L"folder", L"drive", L"desktopbackground", L"clsid", L"interface", L"typelib"};
+    std::vector<FileRoot> fileRoots;
     for (const auto &name : roots)
         if (!special.contains(Lower(name)))
         {
             auto &extensions = types[Lower(name)];
             if (extensions.empty()) extensions.push_back(L"progid:" + Lower(name));
-            scanner.Root(name, files, extensions);
+            fileRoots.push_back({name, extensions});
         }
     for (const auto &name : Children(classes, L"SystemFileAssociations"))
-        scanner.Root(L"SystemFileAssociations\\" + name, files, types[L"systemfileassociations\\" + Lower(name)]);
+        fileRoots.push_back({L"SystemFileAssociations\\" + name, types[L"systemfileassociations\\" + Lower(name)]});
+    ReadFileRoots(scanner, fileRoots);
     if (packages) scanner.Packages();
     for (auto &row : scanner.result.rows)
     {

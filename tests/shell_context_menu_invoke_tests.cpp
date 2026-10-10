@@ -1191,8 +1191,77 @@ void ProbePowerShellSubmenus()
     }
 }
 
+void TestParallelRegistryCatalogue()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct RegistryFixture
+    {
+        HKEY key = nullptr; std::wstring path;
+        ~RegistryFixture() { if (key) RegCloseKey(key); RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry{nullptr, L"Software\\SnowDesktopCatalogueTests\\" + temp.path.filename().wstring()};
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, registry.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr,
+        &registry.key, nullptr) == ERROR_SUCCESS, "private parallel catalogue fixture");
+    auto put = [&](const std::wstring &path, const wchar_t *name, const std::wstring &value) {
+        HKEY key = nullptr;
+        Expect(RegCreateKeyExW(registry.key, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr,
+            &key, nullptr) == ERROR_SUCCESS, "create parallel registration");
+        const auto status = RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value.c_str()),
+            static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(key); Expect(status == ERROR_SUCCESS, "write parallel registration");
+    };
+    const std::wstring clsid = L"{B9F35FB4-D6E6-4CCE-89DB-F20796ED280A}";
+    for (int i = 0; i < 80; ++i)
+    {
+        const auto number = std::to_wstring(i), path = L"Parallel.Document" + number;
+        put(L".parallel" + number, nullptr, path);
+        put(path + L"\\shell\\inspect", L"MUIVerb", L"独立操作 " + number);
+        put(path + L"\\shell\\inspect\\command", nullptr, L"unused.exe /source:" + number + L" %1");
+        put(path + L"\\shellex\\ContextMenuHandlers\\Provider " + number, nullptr, clsid);
+    }
+    std::wstring first;
+    for (DWORD index = 0; ; ++index)
+    {
+        wchar_t name[1024]; DWORD length = 1024;
+        const auto status = RegEnumKeyExW(registry.key, index, name, &length, nullptr, nullptr, nullptr, nullptr);
+        Expect(status == ERROR_SUCCESS || status == ERROR_NO_MORE_ITEMS, "enumerate expected original root order");
+        if (status == ERROR_NO_MORE_ITEMS) break;
+        if (std::wstring_view(name, length).starts_with(L"Parallel.Document"))
+        { first = std::wstring(name, length).substr(std::wstring_view(L"Parallel.Document").size()); break; }
+    }
+    Expect(!first.empty(), "fixture has an original first handler source");
+    auto catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(catalogue.rows.size() == 81, "parallel file roots retain all unique verbs and merge only the shared CLSID");
+    const auto handler = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [](const auto &row) {
+        return row.id == "clsid:{b9f35fb4-d6e6-4cce-89db-f20796ed280a}";
+    });
+    Expect(handler != catalogue.rows.end() && handler->sources.size() == 80 && handler->types.size() == 80 &&
+        handler->contexts == ext::ContextBit(ext::Context::File) && handler->display.label == L"Provider " + first,
+        "parallel completion cannot change the first handler caption or drop any source/type");
+    for (int i = 0; i < 80; ++i)
+    {
+        const auto number = std::to_wstring(i);
+        const auto id = "reg:parallel.document" + std::to_string(i) + "\\shell\\inspect";
+        const auto row = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &value) { return value.id == id; });
+        Expect(row != catalogue.rows.end() && row->display.label == L"独立操作 " + number && row->systemEnabled &&
+            row->types == std::vector<std::wstring>{L".parallel" + number} && !row->commandIdentity.empty(),
+            "each parallel verb keeps its own caption, execution identity and exact file type");
+    }
+    const auto proof = catalogue.folderRevision;
+    Expect(proof == ext::ReadFolderCatalogueRevision(registry.key, false), "file workers cannot contaminate folder proof");
+    Expect(snowdesktop::settings_ipc::Pack(catalogue) == snowdesktop::settings_ipc::Pack(ext::ReadCatalogue(registry.key, false)),
+        "parallel completion order leaves the complete catalogue deterministic");
+    put(L"Parallel.Document0\\shell\\inspect", L"LegacyDisable", L"");
+    const auto changed = ext::ReadCatalogue(registry.key, false);
+    const auto disabled = std::find_if(changed.rows.begin(), changed.rows.end(), [](const auto &row) {
+        return row.id == "reg:parallel.document0\\shell\\inspect";
+    });
+    Expect(disabled != changed.rows.end() && !disabled->systemEnabled && changed.revision != catalogue.revision &&
+        changed.folderRevision == proof, "parallel scans recheck live file policy without invalidating unchanged folder proof");
+}
 void TestRegistryCatalogue()
 {
+    TestParallelRegistryCatalogue();
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory temp;
     const auto path = L"Software\\SnowDesktopCatalogueTests\\" + temp.path.filename().wstring();
@@ -4605,6 +4674,8 @@ int wmain(int argc, wchar_t **argv)
         }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-folder-registration-verification")
         { TestRegistryCatalogue(); for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-registry-catalogue")
+            TestRegistryCatalogue();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-extension-sessions")
             TestExtensionSessions();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-shortcut-query-recovery")
