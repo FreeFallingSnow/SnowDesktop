@@ -2487,9 +2487,17 @@ void TestNvidiaCompatibilityQueryPolicy(bool olderCompletesFirst)
     {
         holdOmitted = false;
         auto before = request; before.paths = {barrier.wstring()};
-        service.Query(before, ext::QueryPriority::Inspect, true);
+        // A held popup owns one supervised slot. Use the reserved popup lane
+        // for this barrier; a background Inspect must correctly wait behind it.
+        service.Query(before, ext::QueryPriority::Menu, true);
         PumpUntil([&] { auto view = service.View(before); return retiredOmittedCompleted && view.snapshot && !view.pending; },
             "retired omitted query finishes before the replacement full reply");
+        if (!service.View(pendingRequest).pending || service.View(pendingRequest).snapshot)
+        {
+            const auto failed = service.View(pendingRequest);
+            std::cerr << "omission interleave state: pending=" << failed.pending
+                << " snapshot=" << bool(failed.snapshot) << " error=" << failed.error << "\n";
+        }
         Expect(service.View(pendingRequest).pending && !service.View(pendingRequest).snapshot,
             "an older omitted reply cannot clear or replace a newer full query still pending");
         fullReady = true;
