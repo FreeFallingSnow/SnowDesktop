@@ -852,7 +852,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
     }
     {
     const snowdesktop::ScrollContentClip contentClip(ctx.Get(), quickNavScrollFadeCache_, contentApp,
-        quickNavigationScrollOffset_, quickNavigationInitialJumpOpen_ || quickNavigationMenu_ != QuickNavigationMenu::None ? 0 :
+        quickNavigationScrollOffset_, quickNavigationInitialJumpOpen_ || quickNavigationMenu_ == QuickNavigationMenu::Types ? 0 :
             GetQuickNavigationContentHeight(overlay, contentModel), static_cast<float>(QuickNavScale(16)));
     if (quickNavigationMenu_ == QuickNavigationMenu::Types)
     {

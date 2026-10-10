@@ -514,8 +514,12 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
     {
         RECT popup = GetQuickNavigationListRowRect(0); popup.bottom = GetQuickNavigationListRowRect(2).bottom;
         InflateRect(&popup, QuickNavScale(4), QuickNavScale(4));
+        // The menu overlays already-painted items on the same surface. An
+        // opaque backing keeps their icons and labels out of the menu rows.
+        auto popupFill = ToD2DColor(theme.searchBg);
+        popupFill.a = 1.f;
         DrawD2DRoundedRectangle(context, popup, static_cast<float>(QuickNavScale(navigationSettings_.layout.itemRadius)),
-            ToD2DColor(theme.searchBg), ToD2DColor(theme.searchBorder, .45f));
+            popupFill, ToD2DColor(theme.searchBorder, .45f));
     }
     for (size_t i = 0; i < count; ++i)
     {

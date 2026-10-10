@@ -84,7 +84,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
         constexpr const char* scenarios[] = {"expanded-tile", "expanded-source", "expanded-initial", "collapsed-empty", "collapsed-composite",
             "expanded-mixed", "type-menu", "view-menu", "typed-app", "typed-empty", "typed-web", "typed-settings", "typed-run", "typed-calculator",
             "calculator-error", "everything-unavailable", "index-loading", "empty-results",
-            "expanded-scrolled", "expanded-scrolled-tab-hover", "collapsed-scrolled",
+            "expanded-scrolled", "expanded-scrolled-tab-hover", "view-menu-scrolled", "collapsed-scrolled",
             "collapsed-prefix", "expanded-prefix", "engine-prefix", "expanded-calculator",
             "expanded-run", "expanded-web", "expanded-settings", "expanded-calculator-copy",
             "ime-calculator-preedit", "ime-run-preedit",
@@ -94,12 +94,12 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportQuickNavigationP
             if (request.theme && std::string_view(scenario) != "expanded-tile") continue;
             const std::string name(scenario);
             const bool scrolled = name.find("scrolled") != std::string::npos;
-            if (!request.theme) navigationSettings_.layout.maximumHeight = scrolled && name.starts_with("expanded") ? 420 : NavigationSettings{}.layout.maximumHeight;
+            if (!request.theme) navigationSettings_.layout.maximumHeight = scrolled && !name.starts_with("collapsed") ? 420 : NavigationSettings{}.layout.maximumHeight;
             quickNavigationCollapsed_ = name.starts_with("collapsed") || name.starts_with("typed") || name == "calculator-error" || name == "everything-unavailable" || name == "index-loading" || name == "empty-results";
             quickNavigationSearchType_ = QuickNavigationSearchType::All; quickNavigationSearchEngine_.clear();
             quickNavigationSearchCompositionText_.clear();
-            navigationSettings_.desktopViewMode = name == "expanded-source" || (scrolled && name.starts_with("expanded")) ? QuickNavigationDesktopViewMode::Source : name == "expanded-initial" ? QuickNavigationDesktopViewMode::Initial : QuickNavigationDesktopViewMode::Tile;
-            quickNavigationMenu_ = name == "type-menu" ? QuickNavigationMenu::Types : name == "view-menu" ? QuickNavigationMenu::Views : QuickNavigationMenu::None;
+            navigationSettings_.desktopViewMode = name == "expanded-source" || (scrolled && !name.starts_with("collapsed")) ? QuickNavigationDesktopViewMode::Source : name == "expanded-initial" ? QuickNavigationDesktopViewMode::Initial : QuickNavigationDesktopViewMode::Tile;
+            quickNavigationMenu_ = name == "type-menu" ? QuickNavigationMenu::Types : name.starts_with("view-menu") ? QuickNavigationMenu::Views : QuickNavigationMenu::None;
             quickNavigationMenuSelection_ = 1;
             quickNavigationSearchText_ = quickNavigationEffectiveSearchText_ = (name.starts_with("expanded-") && name != "expanded-mixed") || name == "collapsed-empty" || quickNavigationMenu_ != QuickNavigationMenu::None ? L"" : L"e";
             quickNavigationSettingsResults_.clear(); quickNavigationEverythingResults_.clear(); quickNavigationAppResultIndices_.clear();
