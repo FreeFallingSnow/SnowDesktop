@@ -1023,6 +1023,7 @@ struct MenuService::Impl
             row.identity = ticket.identity;
             Publish(key, std::move(*current), contexts, cache.Written(ticket));
         }
+        bool preparedWasReady = false;
         for (;;)
         {
             { std::lock_guard lock(mutex); if (stop) break; }
@@ -1295,11 +1296,20 @@ struct MenuService::Impl
                 if (!enabled) Session::ReleasePreparedMenuWorker();
                 if (prepare)
                 {
-                    // One attempt per idle opportunity; a failed or expired
-                    // bootstrap must not become a perpetual background restart.
+                    // One attempt per idle opportunity; a failed bootstrap
+                    // must not become a perpetual background restart.
                     try { Session::PrepareFirstMenuWorker(); } catch (...) {}
                 }
-                preparing = Session::PollPreparedMenuWorker() == Session::PreparationState::Pending;
+                const auto preparedState = Session::PollPreparedMenuWorker();
+                if (enabled && preparedWasReady && preparedState == Session::PreparationState::Absent)
+                {
+                    std::lock_guard lock(mutex);
+                    preparationRequested = true;
+                    SetEvent(wake);
+                    MenuTrace("preparation", "idle_replenish");
+                }
+                preparedWasReady = preparedState == Session::PreparationState::Ready;
+                preparing = preparedState == Session::PreparationState::Pending;
             }
             std::vector<std::tuple<Key, Request, bool>> checks;
             {
@@ -1345,6 +1355,10 @@ struct MenuService::Impl
             auto handles = MenuRegistryWaitHandles(watchesComplete);
             handles.insert(handles.begin(), wake);
             DWORD wait = watchesComplete ? INFINITE : 1000;
+            // A ready worker can expire without a registry or query event.
+            // Observe its retirement without rescanning metadata or restarting
+            // a failed bootstrap.
+            if (preparedWasReady) wait = std::min(wait, DWORD(1000));
             if (preparing || !running.empty() || sourceJob || scan.valid() ||
                 std::any_of(scopedVerification.begin(), scopedVerification.end(), [](const auto &scope) { return scope.scan.valid(); })) wait = 20;
             {
