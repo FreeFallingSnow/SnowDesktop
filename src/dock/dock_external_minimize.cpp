@@ -1,5 +1,6 @@
 #include "dock_external_minimize.h"
 #include "dock_minimize_protocol.h"
+#include "dock_window_source_cloak.h"
 
 #include <vector>
 #include <utility>
@@ -43,7 +44,12 @@ void DockExternalMinimize::UpdateTargets(std::span<const HWND> windows)
             !OwnsTarget(it->first))
         {
             if (OwnsTarget(it->first))
+            {
+                const auto owner = snowdesktop::dock_source_cloak::ReadOwner(it->first);
+                if (owner.process == ULongToHandle(GetCurrentProcessId()))
+                    snowdesktop::dock_source_cloak::Release(it->first, owner.window);
                 RemovePropW(it->first, snowdesktop::dock_minimize::kTargetProperty);
+            }
             it = targets_.erase(it);
             changed = true;
         }
@@ -78,6 +84,8 @@ void DockExternalMinimize::UpdateTargets(std::span<const HWND> windows)
     if (changed)
         SetPropW(receiver_, snowdesktop::dock_minimize::kRevisionProperty, ULongToHandle(++targetRevision_));
     if (needsHelper) StartHelper();
+    for (const HWND window : windows)
+        if (OwnsTarget(window)) snowdesktop::dock_source_cloak::RecoverStale(window);
 }
 
 void DockExternalMinimize::StartHelper()
@@ -112,6 +120,9 @@ void DockExternalMinimize::Stop() noexcept
         (void)process;
         if (OwnsTarget(window))
         {
+            const auto owner = snowdesktop::dock_source_cloak::ReadOwner(window);
+            if (owner.process == ULongToHandle(GetCurrentProcessId()))
+                snowdesktop::dock_source_cloak::Release(window, owner.window);
             if (GetPropW(window, snowdesktop::dock_minimize::kReadyProperty) == receiver_)
                 RemovePropW(window, snowdesktop::dock_minimize::kReadyProperty);
             RemovePropW(window, snowdesktop::dock_minimize::kTargetProperty);

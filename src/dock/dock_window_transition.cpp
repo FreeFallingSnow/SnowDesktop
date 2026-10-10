@@ -737,7 +737,6 @@ bool DockWindowTransition::Start(
         effect_ = 1;
         fallbackStage = L"genie-strips";
     }
-    LogPresentation(requestedEffect, requestedPolicy, capturePolicy, fallbackStage);
     animationDurationMs_ = TransitionDuration(effect_);
 
     snapshotHostRect_ =
@@ -783,6 +782,7 @@ bool DockWindowTransition::Start(
 
     if (!ApplyFrame(0.0))
     {
+        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=first-frame");
         Cancel();
         return false;
     }
@@ -810,6 +810,7 @@ bool DockWindowTransition::Start(
     }
     if (FAILED(presentationHr))
     {
+        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=presentation-barrier");
         Cancel();
         return false;
     }
@@ -819,15 +820,23 @@ bool DockWindowTransition::Start(
     // the source's setter-only native transition policy, which cannot be read
     // reliably and may already have been disabled by the application.
     bool acquired = false;
-    if (FAILED(snowdesktop::dock_source_cloak::Acquire(sourceWindow_, hwnd_, acquired)))
-    {
-        Cancel();
-        return false;
-    }
+    const HRESULT cloakHr = snowdesktop::dock_source_cloak::Acquire(sourceWindow_, hwnd_, acquired);
     if (acquired)
     {
         sourceCloaked_ = true;
         sourceCloakWindow_ = sourceWindow_;
+    }
+    if (FAILED(cloakHr))
+    {
+        if (diagnosticCallback_)
+        {
+            wchar_t diagnostic[128]{};
+            swprintf_s(diagnostic, L"Dock animation aborted: stage=source-cloak hr=0x%08X",
+                static_cast<unsigned>(cloakHr));
+            diagnosticCallback_(diagnostic);
+        }
+        Cancel();
+        return false;
     }
 
     animationStartTimeMs_ =
@@ -840,9 +849,11 @@ bool DockWindowTransition::Start(
     restoreFadeStartTimeMs_ = 0.0;
     if (!ScheduleAnimationWake())
     {
+        if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=schedule");
         Cancel();
         return false;
     }
+    LogPresentation(requestedEffect, requestedPolicy, capturePolicy, fallbackStage);
     return true;
 }
 

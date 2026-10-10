@@ -24,11 +24,14 @@ public:
         if (!module_) return false;
 #ifdef _WIN64
         constexpr char exportName[] = "SnowDesktopDockMinimizeHook";
+        constexpr char cloakExport[] = "SnowDesktopDockSourceCloakHook";
 #else
         constexpr char exportName[] = "_SnowDesktopDockMinimizeHook@12";
+        constexpr char cloakExport[] = "_SnowDesktopDockSourceCloakHook@12";
 #endif
         procedure_ = reinterpret_cast<HOOKPROC>(GetProcAddress(module_, exportName));
-        if (!procedure_) { Stop(); return false; }
+        cloakProcedure_ = reinterpret_cast<HOOKPROC>(GetProcAddress(module_, cloakExport));
+        if (!procedure_ || !cloakProcedure_) { Stop(); return false; }
         return true;
     }
 
@@ -38,7 +41,8 @@ public:
         {
             if (std::find(threads.begin(), threads.end(), it->first) == threads.end())
             {
-                UnhookWindowsHookEx(it->second);
+                UnhookWindowsHookEx(it->second.minimize);
+                UnhookWindowsHookEx(it->second.cloak);
                 it = hooks_.erase(it);
             }
             else ++it;
@@ -48,8 +52,15 @@ public:
         {
             if (thread && !hooks_.contains(thread))
             {
-                if (const HHOOK hook = SetWindowsHookExW(WH_CBT, procedure_, module_, thread))
-                    hooks_.emplace(thread, hook);
+                const HHOOK minimize = SetWindowsHookExW(WH_CBT, procedure_, module_, thread);
+                const HHOOK cloak = minimize
+                    ? SetWindowsHookExW(WH_CALLWNDPROC, cloakProcedure_, module_, thread) : nullptr;
+                if (minimize && cloak) hooks_.emplace(thread, Hooks{minimize, cloak});
+                else
+                {
+                    if (minimize) UnhookWindowsHookEx(minimize);
+                    if (cloak) UnhookWindowsHookEx(cloak);
+                }
             }
         }
     }
@@ -61,10 +72,12 @@ public:
         for (const auto& [thread, hook] : hooks_)
         {
             (void)thread;
-            UnhookWindowsHookEx(hook);
+            UnhookWindowsHookEx(hook.minimize);
+            UnhookWindowsHookEx(hook.cloak);
         }
         hooks_.clear();
         procedure_ = nullptr;
+        cloakProcedure_ = nullptr;
         if (module_) FreeLibrary(module_);
         module_ = nullptr;
     }
@@ -72,7 +85,9 @@ public:
 private:
     HMODULE module_ = nullptr;
     HOOKPROC procedure_ = nullptr;
-    std::unordered_map<DWORD, HHOOK> hooks_;
+    HOOKPROC cloakProcedure_ = nullptr;
+    struct Hooks { HHOOK minimize; HHOOK cloak; };
+    std::unordered_map<DWORD, Hooks> hooks_;
 };
 
 inline bool Is32BitProcess(DWORD process) noexcept

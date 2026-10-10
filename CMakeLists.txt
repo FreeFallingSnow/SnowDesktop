@@ -934,7 +934,7 @@ add_library(SnowDesktopDockMinimizeHook SHARED src/dock/dock_minimize_hook.cpp)
 target_compile_features(SnowDesktopDockMinimizeHook PRIVATE cxx_std_20)
 target_compile_definitions(SnowDesktopDockMinimizeHook PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
 target_compile_options(SnowDesktopDockMinimizeHook PRIVATE /W4 /permissive- /EHsc /utf-8)
-target_link_libraries(SnowDesktopDockMinimizeHook PRIVATE user32)
+target_link_libraries(SnowDesktopDockMinimizeHook PRIVATE user32 dwmapi)
 set_property(TARGET SnowDesktopDockMinimizeHook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 include(ExternalProject)
 ExternalProject_Add(SnowDesktopDockMinimize32
@@ -2452,8 +2452,9 @@ if (BUILD_TESTING)
         dock_external_minimize
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES tests/dock/dock_external_minimize_tests.cpp src/dock/dock_external_minimize.cpp
+            src/dock/dock_window_transition.cpp src/ui/render/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES user32
+        LINK_LIBRARIES d2d1 d3d11 dxgi dcomp dwmapi ole32 user32 gdi32
         COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopDockMinimizeHook>"
         LABELS integration core dock window)
     add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimizeHook)

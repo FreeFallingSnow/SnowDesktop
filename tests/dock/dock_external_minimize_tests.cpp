@@ -1,5 +1,10 @@
 #include "dock/dock_external_minimize.h"
 #include "dock/dock_minimize_protocol.h"
+#include "dock/dock_window_source_cloak.h"
+#include "dock/dock_window_transition.h"
+#include "settings/animation_settings.h"
+#include <d3d11.h>
+#include <dxgi.h>
 
 #include <array>
 #include <filesystem>
@@ -23,6 +28,8 @@ bool observedBeforeMinimize = false;
 bool slowReceiver = false;
 bool acceptReceiver = false;
 int failures = 0;
+DockWindowTransition* transitionForRequest = nullptr;
+bool nativeGenieStarted = false;
 
 void Check(bool condition, const char* name)
 {
@@ -49,7 +56,12 @@ LRESULT CALLBACK ReceiverProc(HWND window, UINT message, WPARAM wParam, LPARAM l
 {
     if (message == kReady) { fixture = reinterpret_cast<HWND>(wParam); return 0; }
     if (message == kHostReady) { hostReceiver = reinterpret_cast<HWND>(wParam); return 0; }
-    if (observationReceiver && message == kCrashHost) ExitProcess(0);
+    if (observationReceiver && message == kCrashHost)
+    {
+        bool acquired = false;
+        const HRESULT hr = snowdesktop::dock_source_cloak::Acquire(fixture, window, acquired);
+        ExitProcess(SUCCEEDED(hr) && acquired ? 0 : 4);
+    }
     if (observationReceiver && message == WM_DESTROY) { PostQuitMessage(0); return 0; }
     if (observationReceiver && message >= 0xC000 &&
         (message == snowdesktop::dock_minimize::RequestMessage() ||
@@ -65,6 +77,13 @@ LRESULT CALLBACK ReceiverProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         ++requests;
         observedBeforeMinimize = !IsIconic(reinterpret_cast<HWND>(wParam)) &&
             snowdesktop::dock_minimize::RequestIsCurrent(static_cast<DWORD>(lParam), GetTickCount());
+        if (transitionForRequest)
+        {
+            const RECT dock{-19800, -19800, -19736, -19736};
+            nativeGenieStarted = transitionForRequest->StartExternalMinimize(
+                reinterpret_cast<HWND>(wParam), dock, static_cast<DWORD>(lParam));
+            return nativeGenieStarted ? 1 : 0;
+        }
         if (slowReceiver) Sleep(snowdesktop::dock_minimize::kRequestTimeoutMs + 80);
         return acceptReceiver ? 1 : 0;
     }
@@ -106,6 +125,88 @@ HWND WindowArgument(const wchar_t* argument)
     return reinterpret_cast<HWND>(ULongToHandle(wcstoul(argument, nullptr, 10)));
 }
 
+bool AppCloaked(HWND window)
+{
+    DWORD flags = 0;
+    Check(SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags))),
+        "cross-process source cloak state is observable");
+    return (flags & DWM_CLOAKED_APP) != 0;
+}
+
+void CheckCrossProcessGenie()
+{
+    // Same-process image fixtures cannot detect DWMWA_CLOAK's access check.
+    // Exercise the real engine against the child HWND, including the reverse
+    // sent message while its CBT hook is waiting for this receiver.
+    using Microsoft::WRL::ComPtr;
+    const auto previousDpi = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    ComPtr<ID3D11Device> graphics;
+    HRESULT hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &graphics, nullptr, nullptr);
+    if (FAILED(hr)) hr = D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+        D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &graphics, nullptr, nullptr);
+    ComPtr<IDXGIDevice> dxgi;
+    ComPtr<IDCompositionDesktopDevice> composition;
+    ComPtr<ID2D1Factory1> factory;
+    ComPtr<ID2D1Device> d2d;
+    if (SUCCEEDED(hr)) hr = graphics.As(&dxgi);
+    if (SUCCEEDED(hr)) hr = DCompositionCreateDevice3(dxgi.Get(), IID_PPV_ARGS(&composition));
+    if (SUCCEEDED(hr)) hr = D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, IID_PPV_ARGS(&factory));
+    if (SUCCEEDED(hr)) hr = factory->CreateDevice(dxgi.Get(), &d2d);
+    snowdesktop::UiAnimationScheduler scheduler;
+    Check(SUCCEEDED(hr) && scheduler.Initialize(), "cross-process Genie device and scheduler initialize");
+    if (SUCCEEDED(hr) && scheduler.WaitHandle())
+    {
+        snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn, 2, 0, 60, false, false, 3);
+        DockWindowTransition transition;
+        Check(transition.Initialize(GetModuleHandleW(nullptr), &scheduler, d2d.Get(), composition.Get()),
+            "cross-process Genie engine initializes");
+        std::wstring presentation;
+        transition.SetDiagnosticCallback([&](const wchar_t* message) {
+            if (std::wstring(message).find(L"Dock transition:") == 0) presentation = message;
+            if (std::wstring(message).find(L"Dock animation aborted:") == 0) std::wcout << message << L'\n';
+        });
+        const auto drain = [&] {
+            Check(PumpUntil([&] { scheduler.DispatchDue(); return !transition.IsActive(); }),
+                "cross-process Genie finishes within its bounded handoff");
+        };
+        PostMessageW(fixture, kAction, 2, 0);
+        Check(PumpUntil([] { return IsIconic(fixture) != FALSE; }), "child is minimized before its first custom restore");
+        int restores = 0;
+        const RECT dock{-19800, -19800, -19736, -19736};
+        const bool restoring = transition.StartRestore(fixture, dock,
+            [&](HWND target, DockWindowRestoreTransitionPhase phase) {
+                if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                {
+                    ++restores;
+                    PostMessageW(target, kAction, 1, 0);
+                }
+            });
+        std::wcout << L"Cross-process first restore: " << presentation << L'\n';
+        Check(restoring && presentation.find(L"effective=3") != std::wstring::npos &&
+            presentation.find(L"snapshot=dwm-shared-window") != std::wstring::npos && AppCloaked(fixture),
+            "already-minimized child starts Genie with no previous minimize snapshot or native fallback");
+        if (restoring) drain();
+        Check(restores == 1 && !IsIconic(fixture) && !AppCloaked(fixture),
+            "first child restore commits once and releases its source cloak");
+        transitionForRequest = &transition;
+        nativeGenieStarted = false;
+        const ULONGLONG start = GetTickCount64();
+        PostMessageW(fixture, kAction, 0, 0);
+        Check(PumpUntil([] { return IsIconic(fixture) != FALSE; }) && nativeGenieStarted && AppCloaked(fixture),
+            "child minimize button starts Genie and services the source-cloak command during its CBT wait");
+        std::cout << "Cross-process native preparation: " << GetTickCount64() - start << " ms\n";
+        transitionForRequest = nullptr;
+        if (nativeGenieStarted) drain();
+        Check(IsIconic(fixture) && !AppCloaked(fixture), "native Genie finishes with the child minimized and uncloaked");
+        PostMessageW(fixture, kAction, 1, 0);
+        Check(PumpUntil([] { return !IsIconic(fixture); }), "child is restored after the cross-process regression");
+        requests = 0;
+        cancellations = 0;
+    }
+    if (previousDpi) SetThreadDpiAwarenessContext(previousDpi);
+}
+
 void CheckHostRestart(HWND receiver, const std::wstring& executable,
     const std::filesystem::path& dll, const std::wstring& helper, const std::wstring& helperDll,
     const std::filesystem::path& copyDirectory, bool crash)
@@ -140,6 +241,7 @@ void CheckHostRestart(HWND receiver, const std::wstring& executable,
     Check(ready && hostReceiver, "replacement host attaches the already running application");
     if (hostReceiver)
     {
+        Check(!AppCloaked(fixture), "replacement host recovers an existing cross-process source cloak");
         const int before = requests;
         PostMessageW(fixture, kAction, 1, 0);
         Check(PumpUntil([] { return !IsIconic(fixture); }), "existing fixture is restored before restart regression");
@@ -160,9 +262,14 @@ void CheckHostRestart(HWND receiver, const std::wstring& executable,
     Check(exitCode == 0, "replacement host reports successful setup and shutdown");
     CloseHandle(child.hProcess);
     if (hostReceiver)
+    {
         Check(crash ? GetPropW(fixture, snowdesktop::dock_minimize::kTargetProperty) == hostReceiver :
                 GetPropW(fixture, snowdesktop::dock_minimize::kTargetProperty) == nullptr,
             crash ? "abrupt host exit leaves a stale marker for recovery" : "normal host exit removes its marker");
+        if (crash) Check(AppCloaked(fixture) &&
+            snowdesktop::dock_source_cloak::TaskWindowCloakFlags(fixture, DWM_CLOAKED_APP) == 0,
+            "an interrupted child-process cloak stays discoverable for a replacement host");
+    }
 }
 }
 
@@ -172,13 +279,16 @@ int wmain(int argc, wchar_t** argv)
     {
         observationReceiver = WindowArgument(argv[2]);
         const HWND target = WindowArgument(argv[3]);
+        fixture = target;
         const HWND receiver = CreateFixtureWindow(L"SnowDesktopMinimizeHostReceiver", ReceiverProc);
+        if (receiver) snowdesktop::dock_source_cloak::RegisterOwner(receiver);
         DockExternalMinimize monitor;
         if (!receiver || !monitor.Start(receiver, argv[4], argv[5], argv[6])) return 2;
         monitor.UpdateTargets(std::array<HWND, 1>{target});
         if (!monitor.OwnsTarget(target) || (*argv[5] &&
             !PumpUntil([&] { return GetPropW(target, snowdesktop::dock_minimize::kReadyProperty) == receiver; })))
             return 3;
+        monitor.UpdateTargets(std::array<HWND, 1>{target});
         PostMessageW(observationReceiver, kHostReady, reinterpret_cast<WPARAM>(receiver), 0);
         MSG message{};
         while (GetMessageW(&message, nullptr, 0, 0) > 0)
@@ -254,6 +364,8 @@ int wmain(int argc, wchar_t** argv)
             Check(PumpUntil([&] { return GetPropW(fixture, kReadyProperty) == receiver; }),
                 "32-bit helper installs the matching in-process hook");
         Check(monitor.OwnsTarget(fixture), "tracked window is marked with validated process identity");
+
+        CheckCrossProcessGenie();
 
         PostMessageW(fixture, kAction, 0, 0);
         Check(PumpUntil([] { return IsIconic(fixture) != FALSE; }), "system-menu minimize completes after declined animation");
