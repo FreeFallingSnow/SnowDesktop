@@ -9,6 +9,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <memory>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -163,6 +164,9 @@ public:
     DockWindowTransitionDirection GetDirection() const;
 
 private:
+    friend struct DockWindowTransitionTestAccess;
+    struct PresentationBarrier;
+    enum class RestorePresentationPhase { None, PreparedImage, ExposedSource, TransparentOverlay };
     static constexpr ULONGLONG kAnimationDurationMs = 240;
     static constexpr ULONGLONG
         kMinimumReverseDurationMs = 80;
@@ -205,6 +209,9 @@ private:
     bool OnAnimationFrame(double nowMilliseconds);
     void RequestRestoreForAnimation();
     bool PrepareRestoredWindow(double nowMilliseconds);
+    bool BeginPresentationBarrier(RestorePresentationPhase phase);
+    std::optional<HRESULT> PresentationBarrierResult(double nowMilliseconds) const;
+    static void CALLBACK RunPresentationBarrier(PTP_CALLBACK_INSTANCE instance, void* context);
     bool RestoreGeometryReady(RECT& frame) const;
     void Finish();
     void CompleteRestoreAfterRenderFailure();
@@ -282,6 +289,11 @@ private:
     bool preparingRestore_ = false;
     bool restoreRequested_ = false;
     bool restoreActivated_ = false;
+    std::shared_ptr<PresentationBarrier> presentationBarrier_;
+    RestorePresentationPhase restorePresentationPhase_ = RestorePresentationPhase::None;
+    double presentationBarrierDeadlineMs_ = 0.0;
+    bool restorePresentationAcknowledged_ = false;
+    std::function<HRESULT(IDCompositionDesktopDevice*)> presentationWait_;
     double restoreGeometryStableTimeMs_ = 0.0;
     RECT restoreGeometryRect_{};
     bool sourceCloaked_ = false;

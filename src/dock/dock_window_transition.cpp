@@ -8,14 +8,17 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cwchar>
+#include <new>
 
 namespace
 {
 
 constexpr wchar_t kDockWindowTransitionClassName[] =
     L"SnowDesktopDockWindowTransition";
+std::atomic<unsigned> presentationWaitJobs{0};
 
 BOOL CALLBACK CollectAnimationMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM parameter)
 {
@@ -86,6 +89,90 @@ HRGN CreateDockWindowTransitionRegion(
 }
 
 } // namespace
+
+struct DockWindowTransition::PresentationBarrier
+{
+    Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> device;
+    std::function<HRESULT(IDCompositionDesktopDevice*)> wait;
+    std::atomic<bool> completed{false};
+    HRESULT result = E_PENDING;
+};
+
+void CALLBACK DockWindowTransition::RunPresentationBarrier(
+    PTP_CALLBACK_INSTANCE instance, void* context)
+{
+    if (instance) CallbackMayRunLong(instance);
+    std::unique_ptr<std::shared_ptr<PresentationBarrier>> work(
+        static_cast<std::shared_ptr<PresentationBarrier>*>(context));
+    auto& state = **work;
+    {
+        snowdesktop::performance::Scope performanceScope("dock.transition", "presentation.wait");
+        try
+        {
+            if (state.wait) state.result = state.wait(state.device.Get());
+            else
+            {
+                state.result = state.device->WaitForCommitCompletion();
+                if (SUCCEEDED(state.result)) state.result = DwmFlush();
+            }
+        }
+        catch (...) { state.result = E_FAIL; }
+    }
+    // This work owns the device and result only. Cancellation or destruction
+    // never leaves a worker with a transition, HWND or host callback to touch.
+    state.completed.store(true, std::memory_order_release);
+    presentationWaitJobs.fetch_sub(1, std::memory_order_relaxed);
+}
+
+bool DockWindowTransition::BeginPresentationBarrier(RestorePresentationPhase phase)
+{
+    if (!compositionDevice_) return false;
+    // Bound outstanding waits even if DWM stalls and the user cancels/restarts.
+    if (presentationWaitJobs.fetch_add(1, std::memory_order_relaxed) >= 4)
+    {
+        presentationWaitJobs.fetch_sub(1, std::memory_order_relaxed);
+        return false;
+    }
+    std::shared_ptr<PresentationBarrier> state;
+    try
+    {
+        state = std::make_shared<PresentationBarrier>();
+        state->device = compositionDevice_;
+        state->wait = presentationWait_;
+    }
+    catch (...)
+    {
+        presentationWaitJobs.fetch_sub(1, std::memory_order_relaxed);
+        return false;
+    }
+    auto* work = new (std::nothrow) std::shared_ptr<PresentationBarrier>(state);
+    if (!work)
+    {
+        presentationWaitJobs.fetch_sub(1, std::memory_order_relaxed);
+        return false;
+    }
+    const BOOL queued = TrySubmitThreadpoolCallback(RunPresentationBarrier, work, nullptr);
+    if (!queued)
+    {
+        delete work;
+        presentationWaitJobs.fetch_sub(1, std::memory_order_relaxed);
+        return false;
+    }
+    presentationBarrier_ = std::move(state);
+    restorePresentationPhase_ = phase;
+    presentationBarrierDeadlineMs_ = MonotonicTimeMilliseconds() + kRestoreCleanupTimeoutMs;
+    return true;
+}
+
+std::optional<HRESULT> DockWindowTransition::PresentationBarrierResult(double now) const
+{
+    if (!presentationBarrier_) return E_UNEXPECTED;
+    if (presentationBarrier_->completed.load(std::memory_order_acquire))
+        return presentationBarrier_->result;
+    if (now >= presentationBarrierDeadlineMs_)
+        return HRESULT_FROM_WIN32(ERROR_TIMEOUT);
+    return std::nullopt;
+}
 
 HRGN CreateDockWindowTransitionOcclusionRegion(
     const RECT& hostBounds, int cornerRadius,
@@ -321,7 +408,12 @@ bool DockWindowTransition::Initialize(
 {
     instance_ = instance;
     animationScheduler_ = animationScheduler;
-    compositionDevice_ = compositionDevice;
+    // Keep transition transactions and completion waits independent of the
+    // host's widget/desktop device. This scene uses shared visuals only and
+    // needs no additional rendering surface or screenshot resource.
+    compositionDevice_.Reset();
+    if (compositionDevice)
+        DCompositionCreateDevice2(nullptr, IID_PPV_ARGS(&compositionDevice_));
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
     windowClass.lpfnWndProc = WindowProc;
@@ -815,6 +907,9 @@ bool DockWindowTransition::Reverse(
     restoreRequested_ = false;
     restoreActivated_ = false;
     restoreGeometryStableTimeMs_ = 0.0;
+    presentationBarrier_.reset();
+    restorePresentationPhase_ = RestorePresentationPhase::None;
+    restorePresentationAcknowledged_ = false;
     RequestRestoreForAnimation();
     if (!ScheduleAnimationWake())
     {
@@ -1444,6 +1539,23 @@ bool DockWindowTransition::OnAnimationFrame(
     }
     if (awaitingRestoreVisibility_)
     {
+        if (restorePresentationPhase_ == RestorePresentationPhase::ExposedSource ||
+            restorePresentationPhase_ == RestorePresentationPhase::TransparentOverlay)
+        {
+            const auto result = PresentationBarrierResult(now);
+            if (!result) return true;
+            const bool retiring = restorePresentationPhase_ == RestorePresentationPhase::TransparentOverlay;
+            presentationBarrier_.reset();
+            restorePresentationPhase_ = RestorePresentationPhase::None;
+            if (retiring || FAILED(*result))
+            {
+                restorePresentationAcknowledged_ = retiring && SUCCEEDED(*result);
+                Finish();
+                return false;
+            }
+            restoreVisibleTimeMs_ = MonotonicTimeMilliseconds();
+            return true;
+        }
         if (restoreFadeStartTimeMs_ > 0.0)
         {
             const double fadeProgress = std::min(
@@ -1463,16 +1575,10 @@ bool DockWindowTransition::OnAnimationFrame(
             if (fadeProgress < 1.0)
                 return true;
 
-            // Ensure the transparent last frame reaches DWM before destroying
-            // the topmost handoff surface. This prevents a one-frame exposure
-            // of the previously maximized application underneath it.
-            HRESULT presentationHr =
-                compositionImageActive_ && compositionDevice_
-                ? compositionDevice_->WaitForCommitCompletion()
-                : E_NOTIMPL;
-            if (FAILED(presentationHr))
-                DwmFlush();
-            ActivateRestoredWindowForHandoff();
+            // Retain the transparent scene until its presentation is confirmed,
+            // while widgets and the host message loop continue on this thread.
+            if (BeginPresentationBarrier(RestorePresentationPhase::TransparentOverlay))
+                return true;
             Finish();
             return false;
         }
@@ -1490,7 +1596,6 @@ bool DockWindowTransition::OnAnimationFrame(
             // applications. Hold the opaque shared image for one presentation,
             // then retire it without changing its final full-window geometry.
             ActivateRestoredWindowForHandoff();
-            DwmFlush();
             fromRect_ = windowRect_;
             toRect_ = windowRect_;
             animationFromOpacity_ = lastFrameOpacity_;
@@ -1516,8 +1621,11 @@ bool DockWindowTransition::OnAnimationFrame(
             // the only visible image while its source is still cloaked.
             if (!sourceCloaked_)
             {
-                DwmFlush();
-                restoreVisibleTimeMs_ = now;
+                if (!BeginPresentationBarrier(RestorePresentationPhase::ExposedSource))
+                {
+                    Finish();
+                    return false;
+                }
             }
             return true;
         }
@@ -1599,6 +1707,23 @@ bool DockWindowTransition::RestoreGeometryReady(RECT& frame) const
 bool DockWindowTransition::PrepareRestoredWindow(double now)
 {
     snowdesktop::performance::Scope performanceScope("dock.transition", "restore.prepare");
+    if (restorePresentationPhase_ == RestorePresentationPhase::PreparedImage)
+    {
+        const auto result = PresentationBarrierResult(now);
+        if (!result) return false;
+        presentationBarrier_.reset();
+        restorePresentationPhase_ = RestorePresentationPhase::None;
+        if (FAILED(*result))
+        {
+            CompleteRestoreAfterRenderFailure();
+            Finish();
+            return false;
+        }
+        animationStartTimeMs_ = MonotonicTimeMilliseconds();
+        preparingRestore_ = false;
+        if (diagnosticCallback_) diagnosticCallback_(L"Dock restore prepared: full-geometry before animation");
+        return true;
+    }
     RECT frame{};
     if (!RestoreGeometryReady(frame))
     {
@@ -1645,11 +1770,12 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
             Finish();
             return false;
         }
-        DwmFlush();
-        animationStartTimeMs_ = MonotonicTimeMilliseconds();
-        preparingRestore_ = false;
-        if (diagnosticCallback_) diagnosticCallback_(L"Dock restore prepared: full-geometry before animation");
-        return true;
+        if (!BeginPresentationBarrier(RestorePresentationPhase::PreparedImage))
+        {
+            CompleteRestoreAfterRenderFailure();
+            Finish();
+        }
+        return false;
     }
     if (now >= restoreCleanupDeadlineMs_)
     {
@@ -1680,6 +1806,7 @@ CompleteRestoreAfterRenderFailure()
 void DockWindowTransition::
 ActivateRestoredWindowForHandoff()
 {
+    snowdesktop::performance::Scope performanceScope("dock.transition", "source.activate");
     if (!restoreCallback_ || !sourceWindow_ ||
         !IsWindow(sourceWindow_) || IsIconic(sourceWindow_))
         return;
@@ -1693,6 +1820,7 @@ ActivateRestoredWindowForHandoff()
 
 void DockWindowTransition::ReleaseSourceCloak()
 {
+    snowdesktop::performance::Scope performanceScope("dock.transition", "source.expose");
     if (!sourceCloaked_) return;
     if (sourceCloakWindow_ && IsWindow(sourceCloakWindow_))
     {
@@ -1709,6 +1837,13 @@ void DockWindowTransition::ReleaseSourceCloak()
 
 void DockWindowTransition::Finish()
 {
+    snowdesktop::performance::Scope performanceScope("dock.transition", "scene.retire");
+    const bool presentationAlreadyRetired = restorePresentationAcknowledged_ &&
+        direction_ == DockWindowTransitionDirection::Restore && !sourceCloaked_;
+    presentationBarrier_.reset();
+    restorePresentationPhase_ = RestorePresentationPhase::None;
+    presentationBarrierDeadlineMs_ = 0.0;
+    restorePresentationAcknowledged_ = false;
     externalMinimize_ = false;
     externalMinimizeObserved_ = false;
     externalMinimizeDeadline_ = 0;
@@ -1730,10 +1865,10 @@ void DockWindowTransition::Finish()
             compositionVisual_->RemoveAllVisuals();
             compositionVisual_->SetContent(nullptr);
         }
-        if (SUCCEEDED(compositionDevice_->Commit()))
+        if (SUCCEEDED(compositionDevice_->Commit()) && !presentationAlreadyRetired)
             compositionDevice_->WaitForCommitCompletion();
     }
-    if (presenting_ || sourceCloaked_) DwmFlush();
+    if (!presentationAlreadyRetired && (presenting_ || sourceCloaked_)) DwmFlush();
     if (presenting_ && diagnosticCallback_)
         diagnosticCallback_(L"Dock taskbar phase: overlay-before-hide");
     if (transitionWindow)

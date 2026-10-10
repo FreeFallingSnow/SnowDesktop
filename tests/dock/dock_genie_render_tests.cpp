@@ -8,9 +8,19 @@
 #include <d3d11.h>
 #include <dxgi.h>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <iostream>
 #include <string>
+
+struct DockWindowTransitionTestAccess
+{
+    static void SetPresentationWait(DockWindowTransition& transition,
+        std::function<HRESULT(IDCompositionDesktopDevice*)> wait)
+    {
+        transition.presentationWait_ = std::move(wait);
+    }
+};
 
 namespace
 {
@@ -20,6 +30,39 @@ void Check(bool passed, const char* name)
     if (!passed) { ++failures; std::cerr << "FAIL: " << name << '\n'; }
 }
 struct Point { double x, y; };
+
+struct ControlledPresentationWait
+{
+    const DWORD uiThread = GetCurrentThreadId();
+    HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE finished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::atomic<int> calls{0};
+    std::atomic<bool> ranOnUiThread{false};
+    ~ControlledPresentationWait()
+    {
+        if (entered) CloseHandle(entered);
+        if (release) CloseHandle(release);
+        if (finished) CloseHandle(finished);
+    }
+    HRESULT Wait(IDCompositionDesktopDevice* device)
+    {
+        if (GetCurrentThreadId() == uiThread) ranOnUiThread.store(true);
+        const bool first = calls.fetch_add(1) == 0;
+        HRESULT result = S_OK;
+        if (first)
+        {
+            SetEvent(entered);
+            // Simulate a delayed compositor, retaining the real commit/flush.
+            // A blocking UI implementation cannot dispatch the release timer.
+            if (WaitForSingleObject(release, 500) != WAIT_OBJECT_0) result = E_ABORT;
+        }
+        if (SUCCEEDED(result)) result = device->WaitForCommitCompletion();
+        if (SUCCEEDED(result)) result = DwmFlush();
+        if (first) SetEvent(finished);
+        return result;
+    }
+};
 Point Transform(const snowdesktop::dock_genie::ProjectiveMatrix& matrix, double x, double y)
 {
     // Include the float conversion used by DirectComposition in the error bound.
@@ -522,6 +565,108 @@ void CheckRetainedWindowImage()
                         if (std::wstring(message).find(L"Dock transition:") == 0) presentation = message;
                     });
                 }
+                const auto pumpUntil = [&](const auto& predicate, ULONGLONG timeout) {
+                    const ULONGLONG deadline = GetTickCount64() + timeout;
+                    while (!predicate() && GetTickCount64() < deadline)
+                    {
+                        scheduler.DispatchDue();
+                        MSG message{};
+                        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                        {
+                            TranslateMessage(&message);
+                            DispatchMessageW(&message);
+                        }
+                        const HANDLE timer = scheduler.WaitHandle();
+                        MsgWaitForMultipleObjects(1, &timer, FALSE, 10, QS_ALLINPUT);
+                    }
+                    return predicate();
+                };
+                // Real restore entry with a controlled slow presentation wait:
+                // the source stays cloaked while independent UI work progresses.
+                for (const int effect : {1, 2, 3})
+                {
+                    snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                        2, 0, 60, false, false, effect);
+                    ShowWindow(source, SW_MINIMIZE);
+                    DwmFlush();
+                    auto wait = std::make_shared<ControlledPresentationWait>();
+                    Check(wait->entered && wait->release && wait->finished, "controlled presentation events initialize");
+                    DockWindowTransitionTestAccess::SetPresentationWait(transition,
+                        [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
+                    int heartbeats = 0;
+                    const auto heartbeat = scheduler.ScheduleInterval(8, [&](snowdesktop::UiScheduleToken) {
+                        if (WaitForSingleObject(wait->entered, 0) == WAIT_OBJECT_0 &&
+                            WaitForSingleObject(wait->finished, 0) == WAIT_TIMEOUT)
+                        {
+                            ++heartbeats;
+                            composition->Commit(); // Independent desktop/host work remains runnable.
+                        }
+                    });
+                    int requested = 0, activated = 0, fallback = 0;
+                    Check(transition.StartRestore(source, dock,
+                        [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                            if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                            {
+                                ++requested;
+                                ShowWindow(window, SW_SHOWNOACTIVATE);
+                            }
+                            else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) ++activated;
+                            else ++fallback;
+                        }), "slow-presentation restore starts through the production entry");
+                    Check(pumpUntil([&] { return WaitForSingleObject(wait->entered, 0) == WAIT_OBJECT_0; }, 1000),
+                        "restore reaches its controlled compositor wait");
+                    Check(transition.IsActive() && appCloaked(source) && activated == 0,
+                        "pending presentation retains source suppression and the transition");
+                    scheduler.ScheduleOnce(80, [wait](snowdesktop::UiScheduleToken) { SetEvent(wait->release); });
+                    drain();
+                    scheduler.Cancel(heartbeat);
+                    Check(heartbeats >= 3 && !wait->ranOnUiThread.load(),
+                        "UI deadlines advance while all restore presentation waits run off the UI thread");
+                    Check(requested == 1 && activated == 1 && fallback == 0 && !appCloaked(source) &&
+                        wait->calls.load() == 3,
+                        "prepared image, exposed source and transparent overlay are acknowledged before restore retirement");
+                    DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
+                }
+                // Cancel and destroy the owner while a wait is outstanding. Its
+                // worker must own only its device/result, never a host callback.
+                ShowWindow(source, SW_MINIMIZE);
+                DwmFlush();
+                auto cancellationWait = std::make_shared<ControlledPresentationWait>();
+                auto cancelled = std::make_unique<DockWindowTransition>();
+                Check(cancelled->Initialize(type.hInstance, &scheduler, d2d.Get(), composition.Get()),
+                    "owned pending-wait cancellation fixture initializes");
+                DockWindowTransitionTestAccess::SetPresentationWait(*cancelled,
+                    [cancellationWait](IDCompositionDesktopDevice* device) { return cancellationWait->Wait(device); });
+                int cancelledActivations = 0;
+                Check(cancelled->StartRestore(source, dock,
+                    [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                        if (phase == DockWindowRestoreTransitionPhase::RequestRestore) ShowWindow(window, SW_SHOWNOACTIVATE);
+                        else ++cancelledActivations;
+                    }), "owned cancellation restore starts");
+                Check(pumpUntil([&] { return WaitForSingleObject(cancellationWait->entered, 0) == WAIT_OBJECT_0; }, 1000),
+                    "cancellation fixture reaches its pending presentation");
+                cancelled->Cancel();
+                cancelled.reset();
+                Check(!appCloaked(source), "cancelling a pending presentation releases its temporary source cloak");
+                SetEvent(cancellationWait->release);
+                Check(pumpUntil([&] { return WaitForSingleObject(cancellationWait->finished, 0) == WAIT_OBJECT_0; }, 1000) &&
+                    cancelledActivations == 0, "outstanding wait completes safely after owner destruction without activation");
+                ShowWindow(source, SW_MINIMIZE);
+                DwmFlush();
+                DockWindowTransitionTestAccess::SetPresentationWait(transition,
+                    [](IDCompositionDesktopDevice*) { return E_FAIL; });
+                int failedFallback = 0;
+                Check(transition.StartRestore(source, dock,
+                    [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                        if (phase == DockWindowRestoreTransitionPhase::RequestRestore) ShowWindow(window, SW_SHOWNOACTIVATE);
+                        else if (phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation) ++failedFallback;
+                    }), "owned failed-presentation restore starts");
+                drain();
+                Check(failedFallback == 1 && !appCloaked(source) && !IsIconic(source),
+                    "failed presentation falls back once without leaving a hidden source or stale overlay");
+                DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
+                snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                    2, 0, 60, false, false, 3);
                 const DWORD preparationStart = GetTickCount();
                 const bool minimizing = transition.StartExternalMinimize(source, dock,
                     preparationStart + snowdesktop::dock_minimize::kRequestTimeoutMs, destination);
