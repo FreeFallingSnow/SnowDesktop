@@ -862,6 +862,10 @@ struct Host
             FAILED(SHCreateItemFromIDList(folderId.value, IID_PPV_ARGS(&folderItem))) ||
             FAILED(folderItem->BindToHandler(nullptr, BHID_SFObject, IID_PPV_ARGS(&folder))))
             return {};
+        // Desktop menus bind the virtual root below, but their view site must
+        // retain the requested filesystem directory rather than enumerate the
+        // desktop namespace and its network/application children.
+        const auto viewFolder = folder;
         auto native = std::make_unique<Native>();
         native->directory = directory;
         native->paths = request.paths;
@@ -984,7 +988,7 @@ struct Host
         // Ordinary aggregate enumeration does not. Attach only after loading
         // handlers: an earlier view can make Shell window hooks re-enter item
         // binding from a handler's DllMain.
-        native->folder = folder;
+        native->folder = request.background ? viewFolder : folder;
         progress("query context menu");
         if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
                                                      CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
@@ -1003,7 +1007,9 @@ struct Host
             });
         if (!request.startPinOnly && request.sourceClsid.empty())
             for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
+        progress("resolve NVIDIA compatibility application");
         NvidiaCompatibility(request, reply);
+        progress("NVIDIA compatibility finished");
         if (count >= kMaximumEntries)
             return {};
         IdentifyEntries(reply.entries);
