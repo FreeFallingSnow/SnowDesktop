@@ -1,6 +1,7 @@
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_start_pin.h"
 #include "shell/shell_extension_menu.h"
+#include "shell/shell_extension_menu_query.h"
 #include "shell/shell_extension_catalogue.h"
 #include "shell/shell_extension_attribution.h"
 #include "shell/shell_extension_management.h"
@@ -38,6 +39,67 @@ void Expect(bool condition, const char* message)
     {
         throw std::runtime_error(message);
     }
+}
+
+void TestAggregateCataloguePriming()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    ext::Request request; request.context = ext::Context::File; request.paths = {L"C:\\Private\\sample.txt"};
+    bool backgroundReady = false, filesReady = false;
+    unsigned calls = 0;
+    auto bind = [&](const ext::Request &target) {
+        Expect(target == request, "priming preserves the original selection and request flags");
+        ext::Entry item;
+        item.key = ++calls == 1 ? "partial" : "ModernArchive";
+        item.label = calls == 1 ? L"Unprimed placeholder" : L"Modern archive";
+        item.token = calls == 1 ? 31u : 43u;
+        return ext::Reply{true, {item}, {}};
+    };
+    auto reply = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(calls == 2 && filesReady && !backgroundReady && reply.ok && reply.entries.size() == 1 &&
+        reply.entries.front().key == "ModernArchive" && reply.entries.front().token == 43,
+        "COLD_FILE_MUST_REBIND: a successful cold partial aggregate is never published with its first tokens");
+    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(calls == 3, "a primed file catalogue is not rebound again");
+    request.background = true; request.context = ext::Context::Desktop;
+    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(calls == 5 && backgroundReady, "file priming cannot suppress independent background priming");
+    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(calls == 6, "a primed background still queries once");
+
+    request.background = false; request.context = ext::Context::File; request.extended = true;
+    filesReady = false;
+    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(calls == 8 && filesReady, "Shift is preserved through both file bindings");
+    for (int mode = 0; mode < 7; ++mode)
+    {
+        auto special = request;
+        if (mode == 0) special.startPinOnly = true;
+        if (mode == 1) special.originalShortcutOnly = true;
+        if (mode == 2) special.sourceClsid = L"{12345678-1234-1234-1234-123456789ABC}";
+        if (mode == 3) special.paths = {L"C:\\Private\\original.LNK"};
+        if (mode == 4) special.context = ext::Context::Folder;
+        if (mode == 5) special.paths.push_back(L"C:\\Private\\original.lnk");
+        if (mode == 6) special.context = ext::Context::FolderBackground;
+        bool bg = false, file = false; unsigned count = 0;
+        auto result = ext::QueryWithCataloguePriming(special, bg, file, [&](const ext::Request &target) {
+            Expect(target == special, "special query identity is preserved"); ++count; return ext::Reply{true, {}, {}};
+        });
+        Expect(result.ok && count == 1 && !file, "metadata, Start, shortcut and folder paths keep their existing warmup rules");
+    }
+    unsigned failures = 0; filesReady = false;
+    auto failed = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, [&](const ext::Request &) {
+        ++failures; return ext::Reply{false, {}, "first binding failed"};
+    });
+    Expect(!failed.ok && failures == 1 && !filesReady && failed.error == "first binding failed",
+        "a failed first binding is not retried or disguised as priming success");
+    unsigned finalCalls = 0;
+    auto finalFailure = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, [&](const ext::Request &) {
+        if (++finalCalls == 2) return ext::Reply{false, {}, "final binding failed"};
+        ext::Entry item; item.token = 31; return ext::Reply{true, {item}, {}};
+    });
+    Expect(!finalFailure.ok && finalFailure.entries.empty() && finalCalls == 2 && !filesReady &&
+        finalFailure.error == "final binding failed", "failed rebind cannot publish the previous menu or mark the catalogue ready");
 }
 
 void TestStartPinRouting()
@@ -4962,8 +5024,11 @@ int wmain(int argc, wchar_t **argv)
         { TestShortcutQueryRecovery(); TestShortcutQueryRecovery(true); TestSourceScheduler(true); TestSlowShortcutQueryRecovery(); TestSlowShortcutQueryRecovery(true); TestSlowShortcutQueryRecovery(false, true); TestSlowShortcutQueryRecovery(true, true); }
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-attribution-snapshot")
         { TestMenuDisplayAttributionSnapshot(); TestLateInitialRegistrationAttribution(); TestLateInitialRegistrationAttribution(true); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-native-catalogue-prime")
+            TestAggregateCataloguePriming();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
+            TestAggregateCataloguePriming();
             TestUnchangedCataloguePersistence();
             TestIdleCatalogueInvalidation();
             TestPopupQueryFailureRecovery(false, false);
@@ -5004,6 +5069,7 @@ int wmain(int argc, wchar_t **argv)
         }
         else
         {
+            TestAggregateCataloguePriming();
             TestUnchangedCataloguePersistence();
             TestIdleCatalogueInvalidation();
             TestCatalogueShutdown();

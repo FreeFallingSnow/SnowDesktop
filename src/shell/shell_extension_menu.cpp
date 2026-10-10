@@ -1,4 +1,5 @@
 #include "shell_extension_menu.h"
+#include "shell_extension_menu_query.h"
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_cache.h"
@@ -680,7 +681,7 @@ struct Host
         count = 0;
         invoked = false;
     }
-    bool catalogueInitialized = false;
+    bool catalogueInitialized = false, fileCatalogueInitialized = false;
     void NvidiaCompatibility(const Request &request, Reply &reply)
     {
         if (!request.background || ResolveContext(request) != Context::Desktop || !request.sourceClsid.empty() ||
@@ -727,19 +728,8 @@ struct Host
     }
     Reply Query(const Request &request)
     {
-        auto reply = QueryOnce(request);
-        if (request.background && request.sourceClsid.empty() && !catalogueInitialized && reply.ok)
-        {
-            // The first background aggregate primes Windows' packaged extension catalogue.
-            // On a cold process it can return success before Terminal and other
-            // IExplorerCommand registrations become visible. Rebind once before
-            // publishing that first menu; all tokens belong to this final query.
-            // This stays inside the same supervised deadline without sleeps.
-            // Warm requests query once.
-            reply = QueryOnce(request);
-            catalogueInitialized = reply.ok;
-        }
-        return reply;
+        return QueryWithCataloguePriming(request, catalogueInitialized, fileCatalogueInitialized,
+            [&](const Request &target) { return QueryOnce(target); });
     }
     Reply QueryShortcutObjects(const Request &request, Native &delegated,
         IShellFolder *selectionFolder, PCIDLIST_ABSOLUTE folderId,

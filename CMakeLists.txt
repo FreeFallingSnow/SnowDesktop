@@ -266,6 +266,7 @@ set(SNOWDESKTOP_SOURCES
     src/shell/shell_launch_worker.cpp
     src/shell/shell_launch_process.cpp
     src/shell/shell_extension_menu.cpp
+    src/shell/shell_extension_menu_query.h
     src/shell/shell_extension_menu_cache.cpp
     src/shell/shell_extension_catalogue.cpp
     src/shell/shell_extension_service.cpp
