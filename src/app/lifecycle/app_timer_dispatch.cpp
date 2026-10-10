@@ -612,6 +612,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (generalSettings_.dockEnabled &&
             (dockStateChanged || fallbackRefreshDue))
             RefreshDockRunningWindows();
+        UpdateDockExternalMinimizeTargets();
         if (dockWindowTransition_)
         {
             const HWND foreground = GetForegroundWindow();

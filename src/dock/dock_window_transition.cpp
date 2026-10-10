@@ -1,4 +1,5 @@
 #include "dock_window_transition.h"
+#include "dock_minimize_protocol.h"
 #include "dock_window_rules.h"
 #include "settings/animation_settings.h"
 #include "dock_window_capture_isolation.h"
@@ -441,6 +442,34 @@ bool DockWindowTransition::PrimeMinimizeSnapshot(
         false) != nullptr;
 }
 
+bool DockWindowTransition::StartExternalMinimize(HWND sourceWindow, RECT dockRect,
+    DWORD deadline, HWND keepBelowWindow)
+{
+    if (IsActive() || !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
+        return false;
+    if (!StartMinimize(sourceWindow, dockRect,
+            DockWindowTransitionCapturePolicy::SnapshotPreferred, keepBelowWindow))
+        return false;
+    // A timeout releases the target UI thread even while capture/composition
+    // is still running here. Never retain an overlay prepared after that point.
+    if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
+        IsIconic(sourceWindow))
+    {
+        Cancel();
+        return false;
+    }
+    externalMinimize_ = true;
+    externalMinimizeObserved_ = false;
+    externalMinimizeDeadline_ = deadline;
+    return true;
+}
+
+void DockWindowTransition::CancelExternalMinimize(HWND sourceWindow, DWORD deadline)
+{
+    if (externalMinimize_ && sourceWindow_ == sourceWindow && externalMinimizeDeadline_ == deadline)
+        Cancel();
+}
+
 void DockWindowTransition::UpdateSnapshotWarmup(
     HWND foregroundWindow, DWORD foregroundAge)
 {
@@ -834,6 +863,10 @@ bool DockWindowTransition::Reverse(
         !hasLastFrame_ ||
         awaitingRestoreVisibility_)
         return false;
+
+    externalMinimize_ = false;
+    externalMinimizeObserved_ = false;
+    externalMinimizeDeadline_ = 0;
 
     if (!awaitingRestoreVisibility_)
     {
@@ -1820,6 +1853,18 @@ bool DockWindowTransition::OnAnimationFrame(
         Finish();
         return false;
     }
+    if (externalMinimize_)
+    {
+        if (IsIconic(sourceWindow_)) externalMinimizeObserved_ = true;
+        else if (externalMinimizeObserved_ ||
+            !snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeDeadline_, GetTickCount()))
+        {
+            // Another hook can veto the original action; a restore can also
+            // arrive before our image reaches the Dock. Do not cover it.
+            Finish();
+            return false;
+        }
+    }
     if (!snowdesktop::animation::RuntimeAnimationsEnabled())
     {
         CompleteImmediately();
@@ -1988,6 +2033,9 @@ void DockWindowTransition::UnregisterThumbnail()
 
 void DockWindowTransition::Finish()
 {
+    externalMinimize_ = false;
+    externalMinimizeObserved_ = false;
+    externalMinimizeDeadline_ = 0;
     if (animationScheduler_ && animationToken_)
         animationScheduler_->Cancel(animationToken_);
     animationToken_ = 0;

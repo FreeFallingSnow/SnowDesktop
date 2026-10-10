@@ -6,6 +6,7 @@
 #include "desktop/desktop_source.h"
 #include "drag_drop/drag_input_rules.h"
 #include "diagnostics/performance_trace.h"
+#include "dock/dock_minimize_protocol.h"
 
 #include <imm.h>
 #include <shldisp.h>
@@ -74,6 +75,14 @@ bool DesktopApp::HandleShellContextMenuMessage(
 
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::RequestMessage())
+        return HandleDockExternalMinimize(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp)) ? 1 : 0;
+    if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::CancelMessage())
+    {
+        if (dockWindowTransition_)
+            dockWindowTransition_->CancelExternalMinimize(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
+        return 0;
+    }
     struct NativeMenuPresentationScope final
     {
         DesktopApp& app;

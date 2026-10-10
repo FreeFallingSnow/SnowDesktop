@@ -31,6 +31,7 @@
 #include "app/shell/shell_icon_request.h"
 #include "dock/dock_refresh_cache.h"
 #include "dock/dock_running_animation.h"
+#include "dock/dock_external_minimize.h"
 #include "common/bounded_lru_cache.h"
 #include "icons/icon_row_index.h"
 #include "app/dock/dock_icon_work.h"
@@ -1450,6 +1451,8 @@ private:
             snowdesktop::desktop_hover_rules::ReconcileMode::DeactivateOnly);
     void StartDockForegroundMonitor();
     void StopDockForegroundMonitor();
+    void UpdateDockExternalMinimizeTargets();
+    bool HandleDockExternalMinimize(HWND window, DWORD deadline);
     void HandleDockForegroundInteractionChanged();
     void UpdateSystemShowDesktopDockLayerGuard();
     bool IsShellDesktopForegroundWindow(HWND window) const;
@@ -3777,6 +3780,7 @@ private:
     std::unique_ptr<DockWindowPreview> dockWindowPreview_;
     std::unique_ptr<DockWindowTransition>
         dockWindowTransition_;
+    std::unique_ptr<DockExternalMinimize> dockExternalMinimize_;
     bool dockWindowTransitionLayerUpdateActive_ = false;
     struct DockLaunchBounceState
     {

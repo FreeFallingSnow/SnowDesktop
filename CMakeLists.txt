@@ -212,6 +212,11 @@ set(SNOWDESKTOP_SOURCES
     src/app/dock/app_dock_model.cpp
     src/app/dock/app_dock_render.cpp
     src/app/dock/app_dock_window_control.cpp
+    src/app/dock/app_dock_external_minimize.cpp
+    src/dock/dock_external_minimize.cpp
+    src/dock/dock_external_minimize.h
+    src/dock/dock_minimize_protocol.h
+    src/dock/dock_minimize_hook_threads.h
     src/app/dock/app_dock_window_tracking.cpp
     src/app/drag_drop/app_drag_hint_window.cpp
     src/app/drag_drop/app_drag_lifecycle.cpp
@@ -923,6 +928,25 @@ if (TARGET SnowDesktopWallpaperHook)
     target_compile_definitions(SnowDesktop PRIVATE
         SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE=1)
 endif()
+
+add_library(SnowDesktopDockMinimizeHook SHARED src/dock/dock_minimize_hook.cpp)
+target_compile_features(SnowDesktopDockMinimizeHook PRIVATE cxx_std_20)
+target_compile_definitions(SnowDesktopDockMinimizeHook PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(SnowDesktopDockMinimizeHook PRIVATE /W4 /permissive- /EHsc /utf-8)
+target_link_libraries(SnowDesktopDockMinimizeHook PRIVATE user32)
+set_property(TARGET SnowDesktopDockMinimizeHook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+include(ExternalProject)
+ExternalProject_Add(SnowDesktopDockMinimize32
+    SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/dock"
+    BINARY_DIR "${CMAKE_BINARY_DIR}/dock_minimize32"
+    CMAKE_GENERATOR "${CMAKE_GENERATOR}"
+    CMAKE_GENERATOR_PLATFORM Win32
+    CMAKE_ARGS "-DSNOWDESKTOP_OUTPUT_DIR=${CMAKE_BINARY_DIR}/$<CONFIG>"
+        "-DSNOWDESKTOP_BUILD_HOOK_FIXTURE=${BUILD_TESTING}"
+    BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --config $<CONFIG>
+    BUILD_ALWAYS TRUE
+    INSTALL_COMMAND "")
+add_dependencies(SnowDesktop SnowDesktopDockMinimizeHook SnowDesktopDockMinimize32)
 
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
 target_include_directories(SnowDesktop PRIVATE
@@ -2422,6 +2446,26 @@ if (BUILD_TESTING)
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
+    snowdesktop_add_test(
+        SnowDesktopDockExternalMinimizeTests
+        dock_external_minimize
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/dock/dock_external_minimize_tests.cpp src/dock/dock_external_minimize.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopDockMinimizeHook>"
+        LABELS integration core dock window)
+    add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimizeHook)
+    add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimize32)
+    add_test(NAME dock_external_minimize32
+        COMMAND SnowDesktopDockExternalMinimizeTests
+            "$<TARGET_FILE:SnowDesktopDockMinimizeHook>"
+            "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopDockMinimizeFixture32.exe"
+            "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopDockMinimizeHost32.exe"
+            "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopDockMinimizeHook32.dll")
+    set_tests_properties(dock_external_minimize32 PROPERTIES
+        LABELS "integration;core;dock;window" TIMEOUT 30
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDockExternalMinimizeTests>")
     add_dependencies(SnowDesktopDockAndWindowRulesTests SnowDesktopTaskbarHook)
     # Explicit opt-in: this real-Shell diagnostic registers only its own fixture
     # icon and broadcasts TaskbarCreated, never launching the desktop host.

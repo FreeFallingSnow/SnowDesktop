@@ -952,6 +952,7 @@ void DesktopApp::RefreshDockRunningWindows(
         dockForegroundChangedTick_.load();
     dockRunningWindowsStateTick_ = observedWindowStateTick;
     dockRunningWindowsRefreshTick_ = GetTickCount();
+    UpdateDockExternalMinimizeTargets();
 }
 
 bool DesktopApp::ActivateOrToggleDockItem(

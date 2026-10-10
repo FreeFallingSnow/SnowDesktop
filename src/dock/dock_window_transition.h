@@ -203,6 +203,9 @@ public:
         HWND sourceWindow, RECT dockRect,
         RestoreCallback restoreCallback,
         HWND keepBelowWindow = nullptr);
+    bool StartExternalMinimize(HWND sourceWindow, RECT dockRect, DWORD deadline,
+        HWND keepBelowWindow = nullptr);
+    void CancelExternalMinimize(HWND sourceWindow, DWORD deadline);
     void SetPresentationCallback(std::function<void(HWND)> callback)
     {
         presentationCallback_ = std::move(callback);
@@ -357,6 +360,9 @@ private:
     RECT dockRect_{};
     std::vector<RECT> animationMonitorRects_;
     bool nativeFallbackRequested_ = false;
+    bool externalMinimize_ = false;
+    bool externalMinimizeObserved_ = false;
+    DWORD externalMinimizeDeadline_ = 0;
     RECT snapshotHostRect_{};
     RECT lastFrameRect_{};
     BYTE lastFrameOpacity_ = 0;

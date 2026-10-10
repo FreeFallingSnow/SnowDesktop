@@ -54,6 +54,7 @@ void DesktopApp::RestartSystemTaskbarShellVisibilityDetectors()
 
 void DesktopApp::StopDockForegroundMonitor()
 {
+    dockExternalMinimize_.reset();
     snowdesktop::dock_taskbar_diagnostics::Stop();
     dockForegroundNotificationWindow_.store(nullptr);
     if (dockForegroundEventHook_)

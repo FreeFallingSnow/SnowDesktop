@@ -6,6 +6,7 @@
 #include "diagnostics/performance_trace.h"
 #include "drag_drop/drag_input_rules.h"
 #include "layout/popup_icon_load_rules.h"
+#include "dock/dock_minimize_protocol.h"
 
 // SID 字符串格式化（S-1-5-21-...），直接按 SID 内存布局解析，
 // 不依赖 sddl.h/ntsecapi，避免 PCH 环境下安全 API 声明不可用的问题。
@@ -420,6 +421,12 @@ LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
  */
 LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    // The stable control HWND receives cross-process minimize preparation even
+    // while Explorer reparents/recreates the desktop surface.
+    if (msg >= 0xC000 &&
+        (msg == snowdesktop::dock_minimize::RequestMessage() ||
+         msg == snowdesktop::dock_minimize::CancelMessage()))
+        return HandleMessage(hwnd, msg, wp, lp);
     static const UINT menuUnavailable = RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable");
     if (menuUnavailable && msg == menuUnavailable)
     {

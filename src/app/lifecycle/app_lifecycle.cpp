@@ -16,6 +16,7 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    dockExternalMinimize_.reset();
     snowdesktop::SoftwareDesktopHotkey().Unregister();
     dataCleanupWorker_.Stop();
     if(systemDataProvider_)systemDataProvider_->Controls()->SetWake({});
