@@ -2,6 +2,7 @@
 #include "single_instance.h"
 
 #include "common/constants.h"
+#include "application_restart_policy.h"
 #include "steam/steam_runtime_context.h"
 
 #include <algorithm>
@@ -13,6 +14,7 @@
 #include <vector>
 
 #include <appmodel.h>
+#include <shellapi.h>
 #include <shlobj.h>
 #include <winver.h>
 
@@ -356,6 +358,36 @@ DWORD PreparedRestart::Resume()
     return ERROR_SUCCESS;
 }
 
+LaunchIntent ParseLaunchIntent(std::wstring_view commandLine)
+{
+    if (commandLine.empty())
+        return LaunchIntent::Interactive;
+    const std::wstring command(commandLine);
+    int count = 0;
+    wchar_t** arguments = CommandLineToArgvW(command.c_str(), &count);
+    if (!arguments)
+        return LaunchIntent::Interactive;
+
+    LaunchIntent intent = LaunchIntent::Interactive;
+    for (int index = 1; index < count; ++index)
+    {
+        const std::wstring_view argument(arguments[index]);
+        if (argument == application_restart_policy::kRecoveryArgument)
+        {
+            intent = LaunchIntent::ApplicationRecovery;
+            break;
+        }
+        if (argument == L"--snowdesktop-autostart-owner=portable" ||
+            argument == L"--snowdesktop-autostart-owner=packaged" ||
+            argument == L"--snowdesktop-autostart-owner=steam")
+        {
+            intent = LaunchIntent::AutoStart;
+        }
+    }
+    LocalFree(arguments);
+    return intent;
+}
+
 DWORD ParseRestartPredecessorProcessId(std::wstring_view commandLine)
 {
     constexpr std::wstring_view prefix = L"--wait-for-pid=";
@@ -487,6 +519,33 @@ bool IsManagedSteamRuntimeReplacement(
                 .parent_path().wstring()) !=
             NormalizePath(std::filesystem::path(requested.executablePath)
                 .parent_path().wstring());
+}
+
+ExistingLaunchAction HandleExistingInstanceLaunch(
+    const InstanceInfo& running, const InstanceInfo& requested,
+    LaunchIntent intent)
+{
+    // Windows can restore yesterday's immutable runtime after the launcher
+    // has already started the current build. Never replace it from recovery.
+    if (intent == LaunchIntent::ApplicationRecovery)
+        return ExistingLaunchAction::ExitNewInstance;
+    if (IsManagedSteamRuntimeReplacement(running, requested))
+        return ExistingLaunchAction::ReplaceManagedRuntime;
+    if (intent == LaunchIntent::AutoStart)
+        return ExistingLaunchAction::ExitNewInstance;
+
+    const bool versionsMatch =
+        running.version.empty() || requested.version.empty() ||
+        VersionsMatch(running.version, requested.version);
+    const bool knownDataDirectoriesDiffer =
+        !running.dataDirectory.empty() && !requested.dataDirectory.empty() &&
+        !DataDirectoriesMatch(running.dataDirectory, requested.dataDirectory);
+    if (versionsMatch && !knownDataDirectoriesDiffer)
+    {
+        NotifyExistingInstance(running);
+        return ExistingLaunchAction::ExitNewInstance;
+    }
+    return ExistingLaunchAction::PromptVersionConflict;
 }
 
 bool NotifyExistingInstance(const InstanceInfo& instance)

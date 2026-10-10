@@ -1,4 +1,6 @@
 #include "platform/single_instance.h"
+#include "platform/application_restart_policy.h"
+#include "common/constants.h"
 #include "steam/steam_runtime_context.h"
 #include "platform/pending_window_message.h"
 
@@ -7,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -154,8 +157,11 @@ void TestDeploymentDataResolution(const std::filesystem::path& root)
 
 void TestManagedSteamRuntimeReplacement(const std::filesystem::path& root)
 {
+    using snowdesktop::single_instance::ExistingLaunchAction;
+    using snowdesktop::single_instance::HandleExistingInstanceLaunch;
     using snowdesktop::single_instance::InstanceInfo;
     using snowdesktop::single_instance::IsManagedSteamRuntimeReplacement;
+    using snowdesktop::single_instance::LaunchIntent;
 
     const auto install = root / L"managed-replacement";
     WriteText(install /
@@ -177,6 +183,15 @@ void TestManagedSteamRuntimeReplacement(const std::filesystem::path& root)
     requested.executablePath = newExecutable.wstring();
     Check(IsManagedSteamRuntimeReplacement(running, requested),
         "different immutable runtimes in one managed Steam install require an automatic handoff");
+    Check(HandleExistingInstanceLaunch(running, requested, LaunchIntent::AutoStart) ==
+            ExistingLaunchAction::ReplaceManagedRuntime,
+        "the startup launcher can replace a restored old runtime with the current build");
+    Check(HandleExistingInstanceLaunch(running, requested, LaunchIntent::Interactive) ==
+            ExistingLaunchAction::ReplaceManagedRuntime,
+        "an interactive Steam runtime update retains the automatic handoff");
+    Check(HandleExistingInstanceLaunch(requested, running, LaunchIntent::ApplicationRecovery) ==
+            ExistingLaunchAction::ExitNewInstance,
+        "late Windows recovery cannot replace the current build with the old runtime");
 
     requested.executablePath = oldExecutable.wstring();
     Check(!IsManagedSteamRuntimeReplacement(running, requested),
@@ -193,6 +208,123 @@ void TestManagedSteamRuntimeReplacement(const std::filesystem::path& root)
     requested.executablePath = otherExecutable.wstring();
     Check(!IsManagedSteamRuntimeReplacement(running, requested),
         "managed Steam runtimes from different installs retain the explicit version-conflict flow");
+    running.version = requested.version = L"1.0.10.0";
+    running.dataDirectory = (install / L"data").wstring();
+    requested.dataDirectory = (otherInstall / L"data").wstring();
+    Check(HandleExistingInstanceLaunch(running, requested, LaunchIntent::AutoStart) ==
+            ExistingLaunchAction::ExitNewInstance,
+        "automatic startup from another installation never requests a user decision");
+    Check(HandleExistingInstanceLaunch(running, requested, LaunchIntent::Interactive) ==
+            ExistingLaunchAction::PromptVersionConflict,
+        "interactive launches from different installations still request a user decision");
+}
+
+void TestLaunchIntent()
+{
+    using namespace snowdesktop::single_instance;
+    Check(ParseLaunchIntent(L"\"C:\\Snow Desktop\\SnowDesktop.exe\"") ==
+            LaunchIntent::Interactive,
+        "ordinary launches keep their settings activation behavior");
+    for (const wchar_t* command : {
+            L"SnowDesktop.exe --snowdesktop-autostart-owner=portable",
+            L"SnowDesktop.exe --snowdesktop-autostart-owner=packaged",
+            L"\"C:\\Snow Desktop\\SnowDesktop.exe\" \"--snowdesktop-autostart-owner=steam\""})
+    {
+        Check(ParseLaunchIntent(command) == LaunchIntent::AutoStart,
+            "scheduled startup markers identify background launches across deployment types");
+    }
+    for (const wchar_t* command : {
+            L"SnowDesktop.exe --snowdesktop-application-recovery",
+            L"SnowDesktop.exe --snowdesktop-autostart-owner=steam --snowdesktop-application-recovery",
+            L"SnowDesktop.exe --snowdesktop-application-recovery --snowdesktop-autostart-owner=steam"})
+    {
+        Check(ParseLaunchIntent(command) == LaunchIntent::ApplicationRecovery,
+            "Windows recovery takes precedence over any retained startup marker");
+    }
+    for (const wchar_t* command : {
+            L"\"C:\\--snowdesktop-application-recovery\\SnowDesktop.exe\"",
+            L"SnowDesktop.exe --profile=--snowdesktop-application-recovery",
+            L"SnowDesktop.exe \"profile --snowdesktop-autostart-owner=steam\"",
+            L"SnowDesktop.exe --snowdesktop-autostart-owner=unknown",
+            L"SnowDesktop.exe --snowdesktop-application-recovery-extra"})
+    {
+        Check(ParseLaunchIntent(command) == LaunchIntent::Interactive,
+            "marker substrings in paths or unrelated arguments cannot silence an interactive launch");
+    }
+}
+
+void TestRecoveryRegistration()
+{
+    using namespace snowdesktop::application_restart_policy;
+    const HRESULT registered = RegisterForCurrentProcess();
+    Check(SUCCEEDED(registered), "the production recovery registration succeeds");
+    if (FAILED(registered)) return;
+    wchar_t arguments[256]{};
+    DWORD length = static_cast<DWORD>(std::size(arguments));
+    DWORD flags = 0;
+    const HRESULT queried = GetApplicationRestartSettings(
+        GetCurrentProcess(), arguments, &length, &flags);
+    Check(SUCCEEDED(queried), "Windows retains the registered restart arguments");
+    if (SUCCEEDED(queried))
+    {
+        Check(snowdesktop::single_instance::ParseLaunchIntent(
+                L"SnowDesktop.exe " + std::wstring(arguments)) ==
+                snowdesktop::single_instance::LaunchIntent::ApplicationRecovery,
+            "the actual Windows restart command is recognized as background recovery");
+        Check(AllowsCrashRestart(flags) && !AllowsHangRestart(flags),
+            "marking recovery preserves crash restart and hang exclusion");
+    }
+    Check(SUCCEEDED(UnregisterApplicationRestart()),
+        "the isolated test process removes its recovery registration");
+}
+
+void TestStartupSettingsActivation()
+{
+    using namespace snowdesktop::single_instance;
+    const HWND window = CreateWindowExW(0, L"STATIC", L"Startup activation test", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Check(window != nullptr, "isolated settings activation receiver is available");
+    if (!window) return;
+    InstanceInfo running;
+    running.controlWindow = window;
+    running.processId = GetCurrentProcessId();
+    running.version = L"1.0.10.0";
+    running.dataDirectory = L"C:\\SnowDesktopActivationTest\\data";
+    InstanceInfo requested = running;
+    requested.version = L"1.0.10";
+
+    // Exercise the production single-instance entry and actual Win32 message.
+    // The receiver substitutes only for the host UI; any activation means the
+    // settings window would open. Both reboot launch orders must stay quiet.
+    auto launch = [&](const wchar_t* command, ExistingLaunchAction expected,
+                      bool activate) {
+        Check(HandleExistingInstanceLaunch(running, requested,
+                ParseLaunchIntent(command)) == expected,
+            "launch resolves to the expected running-instance action");
+        MSG message{};
+        int activations = 0;
+        while (PeekMessageW(&message, window, kActivateExistingInstanceMessage,
+                kActivateExistingInstanceMessage, PM_REMOVE))
+            ++activations;
+        Check(activations == (activate ? 1 : 0),
+            activate ? "manual reopening sends exactly one settings activation" :
+                "background duplicate must not send settings activation");
+    };
+    launch(L"SnowDesktop.exe --snowdesktop-autostart-owner=steam",
+        ExistingLaunchAction::ExitNewInstance, false);
+    launch(L"SnowDesktop.exe --snowdesktop-application-recovery",
+        ExistingLaunchAction::ExitNewInstance, false);
+    launch(L"SnowDesktop.exe",
+        ExistingLaunchAction::ExitNewInstance, true);
+
+    requested.version = L"1.0.7.0";
+    launch(L"SnowDesktop.exe --snowdesktop-application-recovery",
+        ExistingLaunchAction::ExitNewInstance, false);
+    launch(L"SnowDesktop.exe --snowdesktop-autostart-owner=portable",
+        ExistingLaunchAction::ExitNewInstance, false);
+    launch(L"SnowDesktop.exe",
+        ExistingLaunchAction::PromptVersionConflict, false);
+    DestroyWindow(window);
 }
 
 struct Handle
@@ -435,6 +567,9 @@ int wmain(int argc, wchar_t** argv)
     {
         TestDeploymentDataResolution(root);
         TestManagedSteamRuntimeReplacement(root);
+        TestLaunchIntent();
+        TestRecoveryRegistration();
+        TestStartupSettingsActivation();
         TestRestartHandoff();
         TestCleanupPreservesQuit();
     }
