@@ -1,5 +1,6 @@
 #include "dock_window_transition.h"
 #include "dock_minimize_protocol.h"
+#include "dock_window_source_cloak.h"
 #include "dock_window_rules.h"
 #include "settings/animation_settings.h"
 #include "dock_window_capture_isolation.h"
@@ -384,6 +385,12 @@ bool DockWindowTransition::EnsureWindow()
         nullptr, nullptr, instance_, this);
     if (!hwnd_)
         return false;
+    if (!snowdesktop::dock_source_cloak::RegisterOwner(hwnd_))
+    {
+        DestroyWindow(hwnd_);
+        hwnd_ = nullptr;
+        return false;
+    }
 
     const DWM_WINDOW_CORNER_PREFERENCE corner =
         kDockWindowTransitionCornerPreference;
@@ -807,24 +814,18 @@ bool DockWindowTransition::Start(
         return false;
     }
 
-    DWORD cloaked = 0;
-    if (FAILED(DwmGetWindowAttribute(sourceWindow_, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))))
-    {
-        Cancel();
-        return false;
-    }
     // The animation owns only its temporary app-cloak bit. DWM continues to
     // compose this window, so its shared image stays available. Avoid changing
     // the source's setter-only native transition policy, which cannot be read
     // reliably and may already have been disabled by the application.
-    if ((cloaked & DWM_CLOAKED_APP) == 0)
+    bool acquired = false;
+    if (FAILED(snowdesktop::dock_source_cloak::Acquire(sourceWindow_, hwnd_, acquired)))
     {
-        const BOOL cloak = TRUE;
-        if (FAILED(DwmSetWindowAttribute(sourceWindow_, DWMWA_CLOAK, &cloak, sizeof(cloak))))
-        {
-            Cancel();
-            return false;
-        }
+        Cancel();
+        return false;
+    }
+    if (acquired)
+    {
         sourceCloaked_ = true;
         sourceCloakWindow_ = sourceWindow_;
     }
@@ -2117,8 +2118,7 @@ void DockWindowTransition::ReleaseSourceCloak()
     if (!sourceCloaked_) return;
     if (sourceCloakWindow_ && IsWindow(sourceCloakWindow_))
     {
-        const BOOL cloak = FALSE;
-        const HRESULT hr = DwmSetWindowAttribute(sourceCloakWindow_, DWMWA_CLOAK, &cloak, sizeof(cloak));
+        const HRESULT hr = snowdesktop::dock_source_cloak::Release(sourceCloakWindow_, hwnd_);
         if (FAILED(hr))
         {
             if (diagnosticCallback_) diagnosticCallback_(L"Dock source uncloak failed");
@@ -2318,7 +2318,10 @@ LRESULT CALLBACK DockWindowTransition::WindowProc(
     }
     case WM_DESTROY:
         if (self)
+        {
+            self->ReleaseSourceCloak();
             self->hwnd_ = nullptr;
+        }
         break;
     default:
         break;

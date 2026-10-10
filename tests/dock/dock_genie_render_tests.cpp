@@ -1,6 +1,7 @@
 #include "dock/dock_genie_rules.h"
 #include "dock/dock_minimize_protocol.h"
 #include "dock/dock_window_shared_thumbnail.h"
+#include "dock/dock_window_source_cloak.h"
 #include "dock/dock_window_transition.h"
 #include "settings/animation_settings.h"
 
@@ -209,8 +210,9 @@ void CheckRetainedWindowImage()
                 Check(restores == 1 && !IsIconic(source), "restore handoff runs exactly once");
                 const auto appCloaked = [](HWND window) {
                     DWORD flags = 0;
-                    return SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags))) &&
-                        (flags & DWM_CLOAKED_APP) != 0;
+                    const HRESULT query = DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags));
+                    Check(SUCCEEDED(query), "owned source cloak query succeeds");
+                    return (flags & DWM_CLOAKED_APP) != 0;
                 };
                 Check(!appCloaked(source), "restore handoff releases only the animation's temporary source cloak");
                 const DWORD preparationStart = GetTickCount();
@@ -266,6 +268,36 @@ void CheckRetainedWindowImage()
                 Check(appCloaked(source), "animation does not release an application cloak it did not acquire");
                 const BOOL uncloaked = FALSE;
                 DwmSetWindowAttribute(source, DWMWA_CLOAK, &uncloaked, sizeof(uncloaked));
+                bool acquired = false;
+                Check(FAILED(snowdesktop::dock_source_cloak::Acquire(source, nullptr, acquired)) &&
+                    !acquired && !appCloaked(source), "an invalid animation owner cannot leave a hidden source behind");
+                const HWND leaseOwner = makeWindow();
+                Check(leaseOwner && snowdesktop::dock_source_cloak::RegisterOwner(leaseOwner),
+                    "owned crash recovery fixture establishes its owner generation");
+                Check(SUCCEEDED(snowdesktop::dock_source_cloak::Acquire(source, leaseOwner, acquired)) && acquired,
+                    "source cloak records ownership before hiding the window");
+                Check(!snowdesktop::dock_source_cloak::RecoverStale(source) && appCloaked(source),
+                    "discovery preserves a live animation owner");
+                Check(snowdesktop::dock_source_cloak::TaskWindowCloakFlags(source, DWM_CLOAKED_APP) == 0 &&
+                    snowdesktop::dock_source_cloak::TaskWindowCloakFlags(source,
+                        DWM_CLOAKED_APP | DWM_CLOAKED_SHELL) == DWM_CLOAKED_SHELL &&
+                    snowdesktop::dock_source_cloak::TaskWindowCloakFlags(source,
+                        DWM_CLOAKED_APP | DWM_CLOAKED_INHERITED) == DWM_CLOAKED_INHERITED,
+                    "task discovery retains an animating app while preserving other desktop and inherited exclusions");
+                DestroyWindow(leaseOwner);
+                Check(snowdesktop::dock_source_cloak::RecoverStale(source) && !appCloaked(source),
+                    "discovery reveals an existing app after its animation owner disappears");
+                const HWND reusedOwner = makeWindow();
+                Check(reusedOwner && snowdesktop::dock_source_cloak::RegisterOwner(reusedOwner),
+                    "reused owner fixture establishes a new generation");
+                Check(SUCCEEDED(snowdesktop::dock_source_cloak::Acquire(source, reusedOwner, acquired)) && acquired,
+                    "second recovery fixture acquires its source");
+                Check(snowdesktop::dock_source_cloak::RegisterOwner(reusedOwner) &&
+                    snowdesktop::dock_source_cloak::RecoverStale(source) && !appCloaked(source),
+                    "a different owner generation cannot retain a stale source cloak despite a live recycled handle");
+                DestroyWindow(reusedOwner);
+                Check(snowdesktop::dock_source_cloak::TaskWindowCloakFlags(source, DWM_CLOAKED_APP) == DWM_CLOAKED_APP,
+                    "an application's own unmarked cloak still excludes it from Dock task discovery");
             }
         }
     }

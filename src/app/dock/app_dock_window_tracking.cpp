@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "dock/dock_window_source_cloak.h"
 #include "dock_platform_helpers.h"
 #include "dock_taskbar_diagnostics.h"
 #include "app/shell/initial_icon_bitmap.h"
@@ -572,6 +573,7 @@ void DesktopApp::RefreshDockRunningWindows(
     {
         EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
             auto* context = reinterpret_cast<EnumContext*>(parameter);
+            snowdesktop::dock_source_cloak::RecoverStale(window);
             if (!IsDockTaskWindow(window) ||
                 (context->pendingCloseWindows &&
                  context->pendingCloseWindows->contains(window)))

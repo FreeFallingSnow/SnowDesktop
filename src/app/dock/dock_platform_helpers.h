@@ -6,6 +6,7 @@
 #include <numeric>
 #include <tlhelp32.h>
 #include "dock/dock_process_snapshot.h"
+#include "dock/dock_window_source_cloak.h"
 
 inline std::wstring NormalizeDockExecutablePath(std::wstring path)
 {
@@ -564,7 +565,8 @@ inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
     DWORD cloaked = 0;
     const bool isCloaked = !includeCloaked &&
         SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
-            &cloaked, sizeof(cloaked))) && cloaked != 0;
+            &cloaked, sizeof(cloaked))) &&
+        snowdesktop::dock_source_cloak::TaskWindowCloakFlags(window, cloaked) != 0;
     if (!snowdesktop::dock_window_rules::
             IsTaskWindowPresentationEligible(
                 IsWindowVisible(window) != FALSE,
