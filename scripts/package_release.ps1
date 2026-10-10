@@ -126,6 +126,9 @@ function Copy-Payload {
         Out-Null
     foreach ($name in @(
             "SnowDesktopTaskbarHook.dll",
+            "SnowDesktopDockMinimizeHook.dll",
+            "SnowDesktopDockMinimizeHook32.dll",
+            "SnowDesktopDockMinimizeHost32.exe",
             "SnowDesktopWallpaperHook.dll",
             "SnowDesktopWallpaperHook32.dll",
             "SnowDesktopWallpaperInjector32.exe")) {
