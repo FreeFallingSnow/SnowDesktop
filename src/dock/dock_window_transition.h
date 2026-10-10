@@ -9,7 +9,6 @@
 
 #include <cstdint>
 #include <functional>
-#include <memory>
 #include <optional>
 #include <span>
 #include <unordered_map>
@@ -19,11 +18,6 @@
 #include "ui/render/ui_animation_scheduler.h"
 #include "dock_genie_rules.h"
 #include "dock_window_shared_thumbnail.h"
-
-namespace snowdesktop::dock_snapshot_warmup
-{
-struct Request;
-}
 
 enum class DockWindowTransitionDirection
 {
@@ -79,17 +73,13 @@ int ResolveDockWindowTransitionCornerRadius(
     const RECT& dockRect) noexcept;
 RECT InterpolateDockWindowTransitionRect(
     const RECT& from, const RECT& to, double progress) noexcept;
-RECT ResolveDockWindowSnapshotHostRect(
+RECT ResolveDockWindowImageHostRect(
     const RECT& from, const RECT& to) noexcept;
 // Keep temporary animation HWNDs from covering any complete monitor. At most
 // one physical pixel may be clipped; unsafe spanning layouts use native fallback.
 std::optional<RECT> ResolveDockWindowNonFullscreenHostRect(
     RECT host, std::span<const RECT> monitors) noexcept;
 
-inline constexpr LONG kDockWindowSnapshotMaxWidth = 4096;
-inline constexpr LONG kDockWindowSnapshotMaxHeight = 4096;
-inline constexpr FLOAT kDockWindowSnapshotRenderDpi = 96.0f;
-inline constexpr bool kDockWindowSnapshotUsesComposition = true;
 inline constexpr DWORD kDockWindowTransitionExStyle =
     WS_EX_TOOLWINDOW | WS_EX_TOPMOST |
     WS_EX_NOACTIVATE | WS_EX_TRANSPARENT |
@@ -104,74 +94,17 @@ inline constexpr COLORREF
     kDockWindowTransitionBorderColor =
         DWMWA_COLOR_NONE;
 
-SIZE ConstrainDockWindowSnapshotSize(
-    SIZE source,
-    LONG maximumWidth = kDockWindowSnapshotMaxWidth,
-    LONG maximumHeight = kDockWindowSnapshotMaxHeight) noexcept;
-
-enum class DockWindowTransitionSurface
-{
-    None,
-    Snapshot,
-    LiveThumbnail,
-    SharedWindow,
-};
-
-enum class DockWindowTransitionCapturePolicy
-{
-    SnapshotPreferred,
-    LiveThumbnailOnly,
-};
-
-// Genie requires a deformable surface. CaptureSnapshot isolates our own
-// overlaid windows, so a floating Dock no longer forces it to use DWM scale.
-constexpr DockWindowTransitionCapturePolicy ResolveDockWindowCapturePolicy(
-    int effect, DockWindowTransitionCapturePolicy requested) noexcept
-{
-    return effect == 3
-        ? DockWindowTransitionCapturePolicy::SnapshotPreferred : requested;
-}
-
-constexpr bool PreferDockSnapshotEviction(
-    bool candidateMinimized, ULONGLONG candidateLastUsed,
-    bool oldestMinimized, ULONGLONG oldestLastUsed) noexcept
-{
-    return candidateMinimized != oldestMinimized
-        ? !candidateMinimized : candidateLastUsed < oldestLastUsed;
-}
-
 // Coordinates are physical screen pixels; the returned region belongs to the
 // caller and is local to hostBounds. This also handles negative monitor origins.
 HRGN CreateDockWindowTransitionOcclusionRegion(
     const RECT& hostBounds, int cornerRadius,
     const std::vector<RECT>& occluders);
 
-constexpr DockWindowTransitionSurface ResolveDockWindowTransitionSurface(
-    bool snapshotAvailable,
-    bool liveThumbnailAvailable,
-    DockWindowTransitionCapturePolicy capturePolicy =
-        DockWindowTransitionCapturePolicy::SnapshotPreferred) noexcept
-{
-    if (capturePolicy ==
-        DockWindowTransitionCapturePolicy::LiveThumbnailOnly)
-    {
-        return liveThumbnailAvailable
-            ? DockWindowTransitionSurface::LiveThumbnail
-            : DockWindowTransitionSurface::None;
-    }
-    return snapshotAvailable
-        ? DockWindowTransitionSurface::Snapshot
-        : (liveThumbnailAvailable
-            ? DockWindowTransitionSurface::LiveThumbnail
-            : DockWindowTransitionSurface::None);
-}
-
 /**
- * @brief 使用静态窗口快照在应用窗口与 Dock 图标之间播放过渡。
+ * @brief 使用 DWM 共享窗口图像在应用窗口与 Dock 图标之间播放过渡。
  *
- * 优先直接变换 DWM 保留的窗口画面，恢复不要求此前完成一次最小化截图。
- * 共享画面不可用时使用已有快照或公开 DWM 缩略图回退。抓取期间临时
- * 排除自身上层窗口；呈现窗口不抢焦点且鼠标穿透，由宿主维护 Dock 层级。
+ * 不采集或缓存窗口截图。共享图像不可用时由调用方执行系统窗口操作。
+ * 呈现窗口不抢焦点且鼠标穿透，由宿主维护 Dock 层级。
  */
 class DockWindowTransition
 {
@@ -190,13 +123,8 @@ public:
         snowdesktop::UiAnimationScheduler* animationScheduler,
         ID2D1Device* d2dDevice,
         IDCompositionDesktopDevice* compositionDevice);
-    bool PrimeMinimizeSnapshot(HWND sourceWindow);
-    // Called by the existing maintenance timer, never by an animation frame.
-    void UpdateSnapshotWarmup(HWND foregroundWindow, DWORD foregroundAge);
     bool StartMinimize(
         HWND sourceWindow, RECT dockRect,
-        DockWindowTransitionCapturePolicy capturePolicy =
-            DockWindowTransitionCapturePolicy::SnapshotPreferred,
         HWND keepBelowWindow = nullptr);
     bool StartRestore(
         HWND sourceWindow, RECT dockRect,
@@ -238,32 +166,12 @@ private:
     static constexpr ULONGLONG kAnimationDurationMs = 240;
     static constexpr ULONGLONG
         kMinimumReverseDurationMs = 80;
-    static constexpr ULONGLONG
-        kPrimedSnapshotLifetimeMs = 500;
     static constexpr ULONGLONG kRestoreCleanupTimeoutMs = 1000;
     static constexpr ULONGLONG kMinimizeCleanupTimeoutMs = 1000;
     static constexpr ULONGLONG
         kRestorePresentationDelayMs = 16;
     static constexpr ULONGLONG
-        kRestoreSnapshotFadeDurationMs = 56;
-    static constexpr std::size_t kMaximumCachedSnapshots = 16;
-    static constexpr std::size_t
-        kMaximumCachedSnapshotBytes =
-            96ULL * 1024ULL * 1024ULL;
-
-    struct CachedSnapshot
-    {
-        DWORD processId = 0;
-        DWORD threadId = 0;
-        SIZE pixelSize{};
-        RECT sourceRect{};
-        WINDOWPLACEMENT placement{};
-        bool background = false;
-        ULONGLONG capturedTick = 0;
-        ULONGLONG lastUsedTick = 0;
-        std::vector<std::uint32_t> pixels;
-    };
-
+        kRestoreImageFadeDurationMs = 56;
     static LRESULT CALLBACK WindowProc(
         HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
@@ -272,31 +180,17 @@ private:
         HWND sourceWindow, RECT dockRect,
         DockWindowTransitionDirection direction,
         RestoreCallback restoreCallback,
-        DockWindowTransitionCapturePolicy capturePolicy,
         HWND keepBelowWindow);
     bool Reverse(
         DockWindowTransitionDirection direction,
         RestoreCallback restoreCallback);
     bool ResolveVisibleWindowRect(HWND window, RECT& rect) const;
     bool ResolveRestoreWindowRect(HWND window, RECT& rect) const;
-    bool CaptureSnapshot(
-        HWND window, const RECT& sourceRect,
-        CachedSnapshot& snapshot);
-    const CachedSnapshot* PrepareSnapshot(
-        HWND window, const RECT& sourceRect,
-        DockWindowTransitionDirection direction,
-        bool allowFreshMinimizeSnapshot);
-    void PurgeSnapshotCache();
-    void CollectSnapshotWarmup();
-    const CachedSnapshot* StoreSnapshot(HWND window, CachedSnapshot snapshot);
-    bool CreateCompositionSnapshot(
-        const CachedSnapshot& snapshot);
     bool EnsureCompositionVisuals();
     bool CreateSharedWindowImage();
     bool UsesCompositionImage() const noexcept
     {
-        return surface_ == DockWindowTransitionSurface::Snapshot ||
-            surface_ == DockWindowTransitionSurface::SharedWindow;
+        return compositionSharedWindowActive_;
     }
     bool CreateGenieStrips();
     bool ApplyGenieFrame(double progress, BYTE opacity);
@@ -306,8 +200,6 @@ private:
     bool ApplyFrame(double progress);
     bool ApplyOcclusion(const RECT& hostBounds, int cornerRadius);
     void LogPresentation(int requestedEffect,
-        DockWindowTransitionCapturePolicy requestedPolicy,
-        DockWindowTransitionCapturePolicy actualPolicy,
         const wchar_t* fallbackStage);
     bool OnAnimationFrame(double nowMilliseconds);
     void RequestRestoreForAnimation();
@@ -317,7 +209,6 @@ private:
     void CompleteRestoreAfterRenderFailure();
     void ActivateRestoredWindowForHandoff();
     void ReleaseSourceCloak();
-    void UnregisterThumbnail();
 
     HINSTANCE instance_ = nullptr;
     snowdesktop::UiAnimationScheduler* animationScheduler_ = nullptr;
@@ -331,13 +222,9 @@ private:
     int occlusionCornerRadius_ = 0;
     std::vector<RECT> occlusionRects_;
     bool hasOcclusionRegion_ = false;
-    const wchar_t* snapshotSource_ = L"none";
-    HRESULT snapshotResult_ = S_OK;
+    const wchar_t* imageSource_ = L"none";
+    HRESULT imageResult_ = S_OK;
     HWND sourceWindow_ = nullptr;
-    HTHUMBNAIL thumbnail_ = nullptr;
-    DockWindowTransitionSurface surface_ =
-        DockWindowTransitionSurface::None;
-    Microsoft::WRL::ComPtr<ID2D1Device> d2dDevice_;
     Microsoft::WRL::ComPtr<IDCompositionDesktopDevice>
         compositionDevice_;
     Microsoft::WRL::ComPtr<IDCompositionTarget>
@@ -350,11 +237,9 @@ private:
         compositionEffect_;
     Microsoft::WRL::ComPtr<IDCompositionRectangleClip>
         compositionClip_;
-    Microsoft::WRL::ComPtr<IDCompositionSurface>
-        compositionSurface_;
-    SIZE compositionSnapshotSize_{};
+    SIZE compositionImageSize_{};
     RECT compositionSourceRegion_{};
-    bool compositionSnapshotActive_ = false;
+    bool compositionImageActive_ = false;
     bool compositionTimelineActive_ = false;
     std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual3>> genieStrips_;
     snowdesktop::dock_thumbnail::SharedVisual compositionWindowImage_;
@@ -379,7 +264,7 @@ private:
     DWORD externalMinimizeDeadline_ = 0;
     bool minimizeObserved_ = false;
     double minimizeCleanupDeadlineMs_ = 0.0;
-    RECT snapshotHostRect_{};
+    RECT imageHostRect_{};
     RECT lastFrameRect_{};
     BYTE lastFrameOpacity_ = 0;
     bool hasLastFrame_ = false;
@@ -401,8 +286,4 @@ private:
     HWND sourceCloakWindow_ = nullptr;
     RestoreCallback restoreCallback_;
     std::unordered_map<HWND, RECT> lastVisibleRects_;
-    std::unordered_map<HWND, CachedSnapshot>
-        snapshotCache_;
-    std::shared_ptr<snowdesktop::dock_snapshot_warmup::Request> snapshotWarmup_;
-    ULONGLONG lastSnapshotWarmupAttempt_ = 0;
 };

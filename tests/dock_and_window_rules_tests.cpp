@@ -32,8 +32,6 @@
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_transition.h"
 #include "dock/dock_genie_rules.h"
-#include "dock/dock_snapshot_warmup.h"
-#include "dock/dock_snapshot_warmup_rules.h"
 #include "dock/dock_app_identity_rules.h"
 #include "../src/app/dock/dock_running_app_pin_rules.h"
 #include "../src/app/dock/dock_explorer_pin.h"
@@ -6640,18 +6638,6 @@ int main(int argc, char** argv)
             true, false, true, false, true, false, false) ==
             ObservationAction::Stop,
         "a visible-window activation request must not wait forever if the window becomes minimized");
-    Check(rules::RequiresFloatingDockMinimizeCaptureIsolation(
-            true, rules::DockClickAction::Minimize),
-        "floating minimize animations must exclude the top-level Dock");
-    Check(!rules::RequiresFloatingDockMinimizeCaptureIsolation(
-            false, rules::DockClickAction::Minimize) &&
-            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
-                true, rules::DockClickAction::Activate) &&
-            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
-                true, rules::DockClickAction::Restore) &&
-            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
-                true, rules::DockClickAction::Launch),
-        "desktop-layer Docks, restore, foreground activation and launches must keep the floating Dock visible");
     Check(rules::ResolveDockRestoreShowCommand(
             WPF_RESTORETOMAXIMIZED,
             SW_SHOWMINIMIZED) == SW_SHOWMAXIMIZED,
@@ -6729,62 +6715,13 @@ int main(int argc, char** argv)
             &transitionEnd, &transitionTo),
         "window transition must end at the Dock icon rectangle");
     const RECT snapshotHost =
-        ResolveDockWindowSnapshotHostRect(
+        ResolveDockWindowImageHostRect(
             transitionFrom, transitionTo);
     Check(snapshotHost.left == 100 &&
             snapshotHost.top == 100 &&
             snapshotHost.right == 900 &&
             snapshotHost.bottom == 1080,
         "snapshot animation must use one fixed host surface covering both endpoints");
-    const SIZE fullHdSnapshot =
-        ConstrainDockWindowSnapshotSize(
-            { 1920, 1080 });
-    Check(fullHdSnapshot.cx == 1920 &&
-            fullHdSnapshot.cy == 1080,
-        "ordinary high-resolution windows must retain native snapshot detail");
-    const SIZE portraitSnapshot =
-        ConstrainDockWindowSnapshotSize(
-            { 2160, 3840 });
-    Check(portraitSnapshot.cx == 2160 &&
-            portraitSnapshot.cy == 3840,
-        "portrait windows up to 4K must retain native snapshot detail");
-    const SIZE eightKSnapshot =
-        ConstrainDockWindowSnapshotSize(
-            { 7680, 4320 });
-    Check(eightKSnapshot.cx == 4096 &&
-            eightKSnapshot.cy == 2304,
-        "extreme snapshots must remain bounded while preserving aspect ratio");
-    const SIZE compactSnapshot =
-        ConstrainDockWindowSnapshotSize(
-            { 800, 600 });
-    Check(compactSnapshot.cx == 800 &&
-            compactSnapshot.cy == 600,
-        "small window snapshots must not be enlarged");
-    const RECT largeWarmupWindows[] = {
-        {0, 0, 7680, 4320}, {0, 0, 4320, 32000}, {0, 0, 32000, 32000}};
-    for (const auto& bounds : largeWarmupWindows)
-    {
-        const SIZE pixels = snowdesktop::dock_snapshot_warmup::detail::PixelSize(bounds);
-        Check(pixels.cx > 0 && pixels.cy > 0 && pixels.cx <= 1600 && pixels.cy <= 1600 &&
-                static_cast<std::uint64_t>(pixels.cx) * pixels.cy <= 1600000,
-            "background capture must bound both the longest edge and allocated pixel count for huge windows");
-    }
-    const SIZE smallWarmup = snowdesktop::dock_snapshot_warmup::detail::PixelSize(
-        {-300, -200, 500, 400});
-    Check(smallWarmup.cx == 800 && smallWarmup.cy == 600,
-        "background capture must preserve small-window dimensions without enlargement");
-    const RECT invalidWarmupWindows[] = {
-        {}, {10, 0, 0, 20}, {0, 20, 10, 0}, {LONG_MIN, 0, LONG_MAX, 10}};
-    for (const auto& bounds : invalidWarmupWindows)
-    {
-        const SIZE pixels = snowdesktop::dock_snapshot_warmup::detail::PixelSize(bounds);
-        Check(pixels.cx == 0 && pixels.cy == 0,
-            "invalid or overflowing source bounds must not allocate a background snapshot");
-    }
-    Check(kDockWindowSnapshotRenderDpi == 96.0f,
-        "snapshot render coordinates must remain physical pixels at every monitor DPI");
-    Check(kDockWindowSnapshotUsesComposition,
-        "normal snapshot frames must use the composition visual path");
     Check(kDockWindowTransitionCornerPreference ==
                 DWMWCP_DONOTROUND &&
             kDockWindowTransitionNcRenderingPolicy ==
@@ -6801,122 +6738,6 @@ int main(int argc, char** argv)
             (kDockWindowTransitionExStyle &
                 WS_EX_NOACTIVATE) != 0,
         "the transition host must use a transparent no-redirection composition surface without a DWM shadow");
-    Check(ResolveDockWindowTransitionSurface(
-            true, true) ==
-            DockWindowTransitionSurface::Snapshot,
-        "a captured frame must be preferred over a live DWM thumbnail");
-    Check(ResolveDockWindowTransitionSurface(
-            false, true) ==
-            DockWindowTransitionSurface::LiveThumbnail,
-        "live DWM rendering must remain available when no snapshot exists");
-    Check(ResolveDockWindowTransitionSurface(
-            false, false) ==
-            DockWindowTransitionSurface::None,
-        "a transition must stop safely when neither rendering surface is available");
-    Check(ResolveDockWindowTransitionSurface(
-            true, true,
-            DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
-            DockWindowTransitionSurface::LiveThumbnail,
-        "floating minimize must prefer the target-only DWM thumbnail over a screen snapshot");
-    Check(ResolveDockWindowTransitionSurface(
-            true, false,
-            DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
-            DockWindowTransitionSurface::None,
-        "floating minimize must reject a screen snapshot when no DWM thumbnail is available");
-    const auto genieCapture = ResolveDockWindowCapturePolicy(
-        3, DockWindowTransitionCapturePolicy::LiveThumbnailOnly);
-    Check(genieCapture == DockWindowTransitionCapturePolicy::SnapshotPreferred &&
-            ResolveDockWindowTransitionSurface(true, true, genieCapture) ==
-                DockWindowTransitionSurface::Snapshot,
-        "floating Genie must try an isolated snapshot instead of silently selecting DWM scale");
-    Check(ResolveDockWindowTransitionSurface(false, true, genieCapture) ==
-            DockWindowTransitionSurface::LiveThumbnail &&
-            snowdesktop::dock_genie::EffectiveEffect(3, false) == 1 &&
-            ResolveDockWindowTransitionSurface(false, false, genieCapture) ==
-                DockWindowTransitionSurface::None,
-        "real snapshot failure must retain live scale and native-operation fallbacks");
-    Check(ResolveDockWindowCapturePolicy(
-            1, DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
-                DockWindowTransitionCapturePolicy::LiveThumbnailOnly &&
-            ResolveDockWindowCapturePolicy(
-                2, DockWindowTransitionCapturePolicy::SnapshotPreferred) ==
-                DockWindowTransitionCapturePolicy::SnapshotPreferred,
-        "non-deforming effects must retain their requested capture policy");
-    Check(PreferDockSnapshotEviction(false, 300, true, 100) &&
-            !PreferDockSnapshotEviction(true, 100, false, 300) &&
-            PreferDockSnapshotEviction(true, 100, true, 200),
-        "cache pressure must evict recapturable windows before minimized ones, then use LRU");
-    namespace warmup = snowdesktop::dock_snapshot_warmup_rules;
-    Check(warmup::CanOfferForeground(true, true, false, false),
-        "visible eligible Dock presentation may offer its tracked foreground");
-    Check(!warmup::CanOfferForeground(true, false, false, false) &&
-            !warmup::CanOfferForeground(false, true, false, false) &&
-            !warmup::CanOfferForeground(true, true, true, false) &&
-            !warmup::CanOfferForeground(true, true, false, true),
-        "hidden/disabled Dock, drag or active panel must not offer new warmup work");
-    Check(warmup::ShouldStart(true, false, true, false, 1000, 0, 250),
-        "the first eligible warmup may start after foreground has settled");
-    Check(!warmup::ShouldStart(false, false, true, false, 5000, 3000, 250) &&
-            !warmup::ShouldStart(true, true, true, false, 5000, 3000, 250) &&
-            !warmup::ShouldStart(true, false, false, false, 5000, 3000, 250) &&
-            !warmup::ShouldStart(true, false, true, true, 5000, 3000, 250),
-        "disabled, active-transition, ineligible or already-pending states must not start background capture");
-    Check(!warmup::ShouldStart(true, false, true, false, 5000, 3000, 249) &&
-            warmup::ShouldStart(true, false, true, false, 5000, 3000, 250),
-        "foreground must settle for the complete 250ms before warmup");
-    Check(!warmup::ShouldStart(true, false, true, false, 4999, 3000, 250) &&
-            warmup::ShouldStart(true, false, true, false, 5000, 3000, 250) &&
-            !warmup::ShouldStart(true, false, true, false, 2999, 3000, 250),
-        "warmup attempts must stay at least 2000ms apart and reject clock rollback");
-    constexpr auto maximumTick = std::numeric_limits<std::uint64_t>::max();
-    Check(!warmup::ShouldStart(true, false, true, false, maximumTick, maximumTick - 1999, 250) &&
-            warmup::ShouldStart(true, false, true, false, maximumTick, maximumTick - 2000, 250),
-        "warmup throttling must not overflow when the monotonic timestamp is near its limit");
-    Check(warmup::ShouldAccept(1000, 1000, false, 0) &&
-            warmup::ShouldAccept(1000, 4000, false, 0) &&
-            !warmup::ShouldAccept(1000, 4001, false, 0) &&
-            !warmup::ShouldAccept(1000, 999, false, 0),
-        "asynchronous captures may be accepted for at most 3000ms and never from a future timestamp");
-    Check(!warmup::ShouldAccept(1000, 2000, true, 1001) &&
-            !warmup::ShouldAccept(1000, 2000, true, 1000) &&
-            warmup::ShouldAccept(1001, 2000, true, 1000) &&
-            warmup::ShouldAccept(1000, 2000, false, 1001),
-        "late or duplicate background results must not replace a newer Dock capture");
-    Check(!warmup::CanEvict(true, true) && warmup::CanEvict(false, true) &&
-            warmup::CanEvict(true, false) && warmup::CanEvict(false, false),
-        "background warmup must preserve minimized windows' only restore images without blocking foreground cache eviction");
-    WINDOWPLACEMENT capturedPlacement{};
-    capturedPlacement.length = sizeof(WINDOWPLACEMENT);
-    capturedPlacement.showCmd = SW_SHOWNORMAL;
-    capturedPlacement.rcNormalPosition = {100, 200, 900, 700};
-    WINDOWPLACEMENT minimizedPlacement = capturedPlacement;
-    minimizedPlacement.showCmd = SW_SHOWMINIMIZED;
-    Check(warmup::HasSameRestorePlacement(capturedPlacement, minimizedPlacement),
-        "minimizing a normal window must retain its matching cached restore placement");
-    WINDOWPLACEMENT maximizedPlacement = capturedPlacement;
-    maximizedPlacement.showCmd = SW_SHOWMAXIMIZED;
-    WINDOWPLACEMENT restoreMaximizedPlacement = minimizedPlacement;
-    restoreMaximizedPlacement.flags = WPF_RESTORETOMAXIMIZED;
-    Check(warmup::HasSameRestorePlacement(maximizedPlacement, restoreMaximizedPlacement),
-        "a minimized window that will restore maximized must match its maximized capture");
-    Check(!warmup::HasSameRestorePlacement(capturedPlacement, restoreMaximizedPlacement) &&
-            !warmup::HasSameRestorePlacement(maximizedPlacement, minimizedPlacement),
-        "a change in the effective maximized restore state must invalidate cached placement");
-    const RECT changedBounds[] = {
-        {120, 200, 920, 700}, {100, 220, 900, 720}, // Moved without resizing.
-        {120, 200, 900, 700}, {100, 220, 900, 700}, // Resized from left or top.
-        {100, 200, 920, 700}, {100, 200, 900, 720}}; // Resized from right or bottom.
-    for (const auto& bounds : changedBounds)
-    {
-        WINDOWPLACEMENT changedPlacement = minimizedPlacement;
-        changedPlacement.rcNormalPosition = bounds;
-        Check(!warmup::HasSameRestorePlacement(capturedPlacement, changedPlacement),
-            "moving or resizing any window edge must invalidate the old snapshot endpoint");
-    }
-    const WINDOWPLACEMENT missingPlacement{};
-    Check(!warmup::HasSameRestorePlacement(missingPlacement, minimizedPlacement) &&
-            !warmup::HasSameRestorePlacement(capturedPlacement, missingPlacement),
-        "missing captured or current placement must never validate an old snapshot");
     const RECT occlusionHost{-1920, -200, 0, 880};
     const std::vector<RECT> dockOccluders{
         {-1600, 760, -320, 850}, // panel
@@ -6958,10 +6779,10 @@ int main(int argc, char** argv)
         "icon resolution must fail safely when no source is available");
     Check(RequiresDockWindowTransitionCompositionBarrier(
             DockWindowTransitionDirection::Minimize),
-        "snapshot minimize must commit disabled native transitions before changing window state");
+        "minimize commits the shared presentation before changing source visibility");
     Check(!RequiresDockWindowTransitionCompositionBarrier(
             DockWindowTransitionDirection::Restore),
-        "snapshot restore changes the native window state only after its custom animation");
+        "restore requests the native state before its visual timeline and prepares it asynchronously");
     Check(ResolveDockWindowTransitionStartAction(
             false, false, false) ==
             DockWindowTransitionStartAction::StartNew &&

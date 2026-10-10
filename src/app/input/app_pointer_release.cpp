@@ -730,42 +730,6 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         return true;
     }
 
-    const auto dispatchWindowCommand =
-        [this, pressedWindowAction](
-            std::function<bool(
-                DockWindowTransitionCapturePolicy)> command) {
-            if (!command)
-                return;
-            const bool requiresFloatingDockClose =
-                snowdesktop::dock_window_rules::
-                    RequiresFloatingDockMinimizeCaptureIsolation(
-                        IsSelectedPersistentDockHostPromoted(),
-                        pressedWindowAction);
-            if (!requiresFloatingDockClose)
-            {
-                command(DockWindowTransitionCapturePolicy::
-                    SnapshotPreferred);
-                return;
-            }
-
-            // A DWM thumbnail contains only the target HWND, so it can animate
-            // minimize without hiding the floating Dock. If registration is
-            // unavailable, retain the proven close-and-snapshot path.
-            if (requiresFloatingDockClose &&
-                command(DockWindowTransitionCapturePolicy::
-                    LiveThumbnailOnly))
-            {
-                return;
-            }
-
-            CloseFloatingDockThen(
-                [command = std::move(command)]() mutable {
-                    command(DockWindowTransitionCapturePolicy::
-                        SnapshotPreferred);
-                },
-                FloatingDockCloseFocusPolicy::PreserveCurrent);
-        };
-
     if (!runningAppKey.empty())
     {
         const auto running = std::find_if(dockUnpinnedRunningApps_.begin(),
@@ -775,30 +739,16 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         if (running != dockUnpinnedRunningApps_.end())
         {
             const HWND runningWindow = running->window;
-            dispatchWindowCommand(
-                [this, runningWindow, pressedWindowAction,
-                    pressedTargetWindow, pressedAnchorScreen](
-                    DockWindowTransitionCapturePolicy capturePolicy) {
-                    return ActivateOrToggleDockWindow(
-                        runningWindow, pressedWindowAction,
-                        pressedTargetWindow,
-                        pressedAnchorScreen,
-                        capturePolicy);
-                });
+            ActivateOrToggleDockWindow(
+                runningWindow, pressedWindowAction,
+                pressedTargetWindow, pressedAnchorScreen);
         }
     }
     else if (frequentItemIndex < items_.size())
     {
-        dispatchWindowCommand(
-            [this, frequentItemIndex, pressedWindowAction,
-                pressedTargetWindow, pressedAnchorScreen](
-                DockWindowTransitionCapturePolicy capturePolicy) {
-                return ActivateOrToggleDockItem(
-                    frequentItemIndex, pressedWindowAction,
-                    pressedTargetWindow,
-                    pressedAnchorScreen,
-                    capturePolicy);
-            });
+        ActivateOrToggleDockItem(
+            frequentItemIndex, pressedWindowAction,
+            pressedTargetWindow, pressedAnchorScreen);
     }
     else if (IsLogicalDockEntryType(entryType))
     {
@@ -842,16 +792,9 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         const size_t itemIndex = FindItemIndexByKey(reference);
         if (itemIndex < items_.size())
         {
-            dispatchWindowCommand(
-                [this, itemIndex, pressedWindowAction,
-                    pressedTargetWindow, pressedAnchorScreen](
-                    DockWindowTransitionCapturePolicy capturePolicy) {
-                    return ActivateOrToggleDockItem(
-                        itemIndex, pressedWindowAction,
-                        pressedTargetWindow,
-                        pressedAnchorScreen,
-                        capturePolicy);
-                });
+            ActivateOrToggleDockItem(
+                itemIndex, pressedWindowAction,
+                pressedTargetWindow, pressedAnchorScreen);
         }
     }
     return true;

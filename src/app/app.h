@@ -1244,6 +1244,7 @@ private:
     bool FullscreenBlocksDockReveal(DockRevealSource source, HMONITOR monitor) const;
     bool EnsureFloatingDockVisibleForAssociatedSurface(
         POINT anchorScreen);
+    HWND KeepDockTopmostForAction(const RECT& anchorScreen);
     void CloseFloatingDock(
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);
@@ -1377,17 +1378,13 @@ private:
             pressedAction = std::nullopt,
         HWND pressedTarget = nullptr,
         std::optional<RECT> pressedAnchorScreen =
-            std::nullopt,
-        DockWindowTransitionCapturePolicy minimizeCapturePolicy =
-            DockWindowTransitionCapturePolicy::SnapshotPreferred);
+            std::nullopt);
     bool ActivateOrToggleDockWindow(HWND window,
         std::optional<snowdesktop::dock_window_rules::DockClickAction>
             pressedAction = std::nullopt,
         HWND pressedTarget = nullptr,
         std::optional<RECT> pressedAnchorScreen =
-            std::nullopt,
-        DockWindowTransitionCapturePolicy minimizeCapturePolicy =
-            DockWindowTransitionCapturePolicy::SnapshotPreferred);
+            std::nullopt);
     void ActivateDockWindowFromPreview(HWND window);
     void ActivateDockWindowFromPreviewAnimated(HWND window);
     struct DockWindowActivationOutcome

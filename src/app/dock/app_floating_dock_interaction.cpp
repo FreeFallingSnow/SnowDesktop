@@ -174,6 +174,39 @@ EnsureFloatingDockVisibleForAssociatedSurface(
             *floatingDockHost_);
 }
 
+// Window/search animations own their target, while the Dock keeps its own
+// promotion until the existing outside-pointer dismissal ends this session.
+HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen)
+{
+    if (!generalSettings_.dockEnabled || desktopPassthroughActive_ ||
+        IsRectEmpty(&anchorScreen)) return nullptr;
+    const HMONITOR monitor = MonitorFromRect(&anchorScreen, MONITOR_DEFAULTTONEAREST);
+    for (const auto& ownedHost : persistentDockHosts_)
+    {
+        if (!ownedHost || !ownedHost->active || ownedHost->monitor != monitor ||
+            !ownedHost->hwnd || !IsWindowVisible(ownedHost->hwnd)) continue;
+        auto& host = *ownedHost;
+        // The native minimize button belongs to the action that opened this
+        // session. Consume that press before the outside-click timer samples it.
+        floatingDockPointerButtonsDown_ |=
+            ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
+            ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
+            ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u);
+        if (!host.promoted)
+        {
+            host.promoted = true;
+            host.mergedCloseAfterInteraction = false;
+            host.passivelyRevealed = false;
+            host.passiveRevealTick = 0;
+            host.passiveLeaveStartTick = 0;
+            RefreshFloatingDockVisibilityState();
+            UpdatePersistentDockHostVisibility(host);
+        }
+        return host.hwnd;
+    }
+    return nullptr;
+}
+
 void DesktopApp::CloseFloatingDock(
     FloatingDockCloseFocusPolicy focusPolicy)
 {

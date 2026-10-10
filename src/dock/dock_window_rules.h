@@ -471,22 +471,6 @@ ResolveDockWindowActivationObservationAction(
 }
 
 /**
- * @brief 判断最小化动画是否必须与顶层浮动 Dock 隔离。
- *
- * 最小化会立即捕获目标窗口所在的屏幕区域。如果浮动 Dock 仍在顶层，
- * 它会作为覆盖层被写入屏幕快照。调用方应先尝试只包含目标 HWND 的
- * DWM 缩略图；不可用时再关闭并同步 Dock 后执行屏幕抓取。恢复复用
- * 已有窗口快照或 DWM 缩略图，不需要隔离。
- */
-constexpr bool RequiresFloatingDockMinimizeCaptureIsolation(
-    bool floatingDockVisible,
-    DockClickAction action) noexcept
-{
-    return floatingDockVisible &&
-        action == DockClickAction::Minimize;
-}
-
-/**
  * @brief 判断最小化窗口是否应恢复到最大化状态。
  */
 constexpr bool ShouldRestoreDockWindowMaximized(
@@ -623,14 +607,6 @@ constexpr bool ShouldAnimateDockWindowRestore(
     bool anchorAvailable) noexcept
 {
     return minimized && transitionAvailable && anchorAvailable;
-}
-
-// A failed mandatory live capture must not hide its source. An intentional
-// fullscreen-geometry fallback can still execute the normal minimize command.
-constexpr bool ShouldAbortDockMinimizeOnAnimationFailure(
-    bool liveThumbnailOnly, bool transitionStarted, bool nativeFallbackRequested) noexcept
-{
-    return liveThumbnailOnly && !transitionStarted && !nativeFallbackRequested;
 }
 
 /**

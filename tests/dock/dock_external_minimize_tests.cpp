@@ -19,6 +19,7 @@ constexpr UINT kReady = WM_APP + 1;
 constexpr UINT kAction = WM_APP + 2;
 constexpr UINT kHostReady = WM_APP + 3;
 constexpr UINT kCrashHost = WM_APP + 4;
+constexpr UINT kSetSlowReceiver = WM_APP + 5;
 HWND fixture = nullptr;
 HWND hostReceiver = nullptr;
 HWND observationReceiver = nullptr;
@@ -56,6 +57,7 @@ LRESULT CALLBACK ReceiverProc(HWND window, UINT message, WPARAM wParam, LPARAM l
 {
     if (message == kReady) { fixture = reinterpret_cast<HWND>(wParam); return 0; }
     if (message == kHostReady) { hostReceiver = reinterpret_cast<HWND>(wParam); return 0; }
+    if (message == kSetSlowReceiver) { slowReceiver = wParam != 0; return 1; }
     if (observationReceiver && message == kCrashHost)
     {
         bool acquired = false;
@@ -67,6 +69,11 @@ LRESULT CALLBACK ReceiverProc(HWND window, UINT message, WPARAM wParam, LPARAM l
         (message == snowdesktop::dock_minimize::RequestMessage() ||
          message == snowdesktop::dock_minimize::CancelMessage()))
     {
+        // Delay the actual hooked receiver, rather than only its observer.
+        // Nested x86 forwarding timeouts can otherwise finish just before the
+        // outer timeout and validly return rejection without a cancel message.
+        if (slowReceiver && message == snowdesktop::dock_minimize::RequestMessage())
+            Sleep(snowdesktop::dock_minimize::kRequestTimeoutMs + 80);
         DWORD_PTR result = 0;
         SendMessageTimeoutW(observationReceiver, message, wParam, lParam,
             SMTO_ABORTIFHUNG | SMTO_BLOCK, snowdesktop::dock_minimize::kRequestTimeoutMs, &result);
@@ -84,7 +91,7 @@ LRESULT CALLBACK ReceiverProc(HWND window, UINT message, WPARAM wParam, LPARAM l
                 reinterpret_cast<HWND>(wParam), dock, static_cast<DWORD>(lParam));
             return nativeGenieStarted ? 1 : 0;
         }
-        if (slowReceiver) Sleep(snowdesktop::dock_minimize::kRequestTimeoutMs + 80);
+        if (slowReceiver && !hostReceiver) Sleep(snowdesktop::dock_minimize::kRequestTimeoutMs + 80);
         return acceptReceiver ? 1 : 0;
     }
     if (message >= 0xC000 && message == snowdesktop::dock_minimize::CancelMessage())
@@ -184,7 +191,7 @@ void CheckCrossProcessGenie()
             });
         std::wcout << L"Cross-process first restore: " << presentation << L'\n';
         Check(restoring && presentation.find(L"effective=3") != std::wstring::npos &&
-            presentation.find(L"snapshot=dwm-shared-window") != std::wstring::npos && AppCloaked(fixture),
+            presentation.find(L"image=dwm-shared-window") != std::wstring::npos && AppCloaked(fixture),
             "already-minimized child starts Genie with no previous minimize snapshot or native fallback");
         Check(restores == 1, "cross-process native restore is submitted before the Genie timeline starts");
         if (restoring) drain();
@@ -383,12 +390,26 @@ int wmain(int argc, wchar_t** argv)
         PostMessageW(fixture, kAction, 1, 0);
         Check(PumpUntil([] { return !IsIconic(fixture); }), "accepted minimize can be restored");
 
+        if (hostReceiver)
+        {
+            DWORD_PTR acknowledged = 0;
+            Check(SendMessageTimeoutW(hostReceiver, kSetSlowReceiver, 1, 0,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &acknowledged) && acknowledged == 1,
+                "x86 receiver itself is delayed beyond the outer preparation timeout");
+        }
         slowReceiver = true;
         PostMessageW(fixture, kAction, 2, 0);
         Check(PumpUntil([] { return IsIconic(fixture) != FALSE && cancellations > 0; }),
             "timed-out preparation sends cancellation and preserves minimize");
         Check(requests == 3, "ShowWindow minimize is intercepted once");
         slowReceiver = false;
+        if (hostReceiver)
+        {
+            DWORD_PTR acknowledged = 0;
+            Check(SendMessageTimeoutW(hostReceiver, kSetSlowReceiver, 0, 0,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &acknowledged) && acknowledged == 1,
+                "x86 receiver delay is removed after cancellation");
+        }
         PostMessageW(fixture, kAction, 1, 0);
         Check(PumpUntil([] { return !IsIconic(fixture); }), "fixture restores after timeout");
 

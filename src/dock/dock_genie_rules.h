@@ -31,11 +31,6 @@ inline double Opacity(double collapsed) noexcept
 {
     return 1.0 - Smooth((collapsed - 0.85) / 0.15);
 }
-inline int EffectiveEffect(int requested, bool snapshotAvailable) noexcept
-{
-    return requested == 3 && !snapshotAvailable ? 1 : requested;
-}
-
 // Collapsed=0 is exactly the window; collapsed=1 is exactly the Dock target.
 // The near edge reaches the mouth first. Cross-sections progressively narrow
 // toward it, then the far edge is pulled in. This is a spatial deformation,

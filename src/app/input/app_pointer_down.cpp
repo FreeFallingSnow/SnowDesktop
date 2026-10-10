@@ -631,27 +631,6 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     {
         if (dock->ContainsInteractivePoint(pt))
         {
-            const auto primeDockMinimizeSnapshot =
-                [this, dock]() {
-                    if ((IsDockContainerEffectivelyFloating(dock) &&
-                            snowdesktop::animation::RuntimeWindowEffect() != 3) ||
-                        dockPressedWindowAction_ !=
-                            snowdesktop::dock_window_rules::
-                                DockClickAction::Minimize ||
-                        !dockPressedTargetWindow_ ||
-                        !dockWindowTransition_)
-                        return;
-
-                    // Paint the pressed state before snapshot capture blocks
-                    // this UI thread, then overlap capture with the natural
-                    // button-down/button-up interval.
-                    snowdesktop::dock_taskbar_diagnostics::Begin(
-                        dockPressedTargetWindow_, L"dock-snapshot-prime");
-                    UpdateWindow(hwnd_);
-                    dockWindowTransition_->
-                        PrimeMinimizeSnapshot(
-                            dockPressedTargetWindow_);
-                };
             if (dock->IsWindowsButtonPoint(pt))
             {
                 mouseDown_ = false;
@@ -724,7 +703,6 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = dockItem;
                 SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                primeDockMinimizeSnapshot();
                 return;
             }
             if (DockRunningItem* runningItem = dock->RunningItemAtPoint(pt))
@@ -759,7 +737,6 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = runningItem;
                 SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                primeDockMinimizeSnapshot();
                 return;
             }
             if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
@@ -790,7 +767,6 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = frequentItem;
                 SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                primeDockMinimizeSnapshot();
                 return;
             }
             if (!ctrl) ClearSelection();

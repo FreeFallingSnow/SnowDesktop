@@ -144,7 +144,7 @@ int CheckDockTransitionShellExclusion()
         check(GetClientRect(query.window, &client) && client.right == 1 && client.bottom == 1,
             "the Dock animation window starts as the production hidden 1x1 surface");
         const RECT source{0, 0, 1280, 720}, dock{600, 660, 680, 720};
-        const RECT originalHost = ResolveDockWindowSnapshotHostRect(source, dock);
+        const RECT originalHost = ResolveDockWindowImageHostRect(source, dock);
         const auto protectedHost = ResolveDockWindowNonFullscreenHostRect(originalHost, singleMonitor);
         if (!check(covers(originalHost, monitor) && protectedHost && !covers(*protectedHost, monitor),
                 "the original minimize union covers a monitor and its protected geometry cannot")) continue;

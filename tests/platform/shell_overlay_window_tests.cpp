@@ -162,14 +162,6 @@ void CheckOnPrivateDesktop()
 
 int main()
 {
-    using snowdesktop::dock_window_rules::ShouldAbortDockMinimizeOnAnimationFailure;
-    Check(ShouldAbortDockMinimizeOnAnimationFailure(true, false, false),
-        "mandatory live-capture failure keeps its source window visible");
-    Check(!ShouldAbortDockMinimizeOnAnimationFailure(true, false, true),
-        "intentional fullscreen fallback still allows the native minimize command");
-    Check(!ShouldAbortDockMinimizeOnAnimationFailure(true, true, false) &&
-            !ShouldAbortDockMinimizeOnAnimationFailure(false, false, false),
-        "started transitions and ordinary native minimize retain their existing routes");
     const std::wstring desktopName = L"SnowDesktop.ShellOverlay." +
         std::to_wstring(GetCurrentProcessId());
     const HDESK desktop = CreateDesktopW(desktopName.c_str(), nullptr, nullptr,

@@ -11,7 +11,7 @@ namespace snowdesktop::dock_thumbnail
 // Optional Windows 10/11 DWM ABI, illustrated by ADeltaX's shared-visual demo:
 // https://gist.github.com/ADeltaX/aea6aac248604d0cb7d423a61b06e247
 // Resolve only on the known platform family. Failure leaves the documented
-// thumbnail/snapshot path available; no private API is a hard dependency.
+// system window-operation path available; no private API is a hard dependency.
 struct Api
 {
     using Create = HRESULT(WINAPI*)(HWND, HWND, DWORD,

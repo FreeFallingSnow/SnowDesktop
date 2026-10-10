@@ -913,6 +913,13 @@ void DesktopApp::OpenQuickNavigation(
         }
     }
 
+    if (source == QuickNavigationInvocationSource::DockSearch && requestedDockHost)
+    {
+        RECT dockScreen = requestedDockHost->dockRect;
+        OffsetRect(&dockScreen, virtualLeft_, virtualTop_);
+        KeepDockTopmostForAction(dockScreen);
+    }
+
     if (quickNavigationOpen_)
     {
         if (source != QuickNavigationInvocationSource::DockSearch) return;

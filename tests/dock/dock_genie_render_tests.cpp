@@ -315,6 +315,41 @@ void CheckRetainedWindowImage()
             {
                 snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                     2, 0, 60, false, false, 3);
+                for (const int effect : {1, 2, 3})
+                {
+                    snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                        2, 0, 60, false, false, effect);
+                    DockWindowTransition unavailable;
+                    Check(unavailable.Initialize(type.hInstance, &scheduler, nullptr, nullptr),
+                        "a missing shared-image device still leaves native window operations available");
+                    std::wstring failurePresentation;
+                    unavailable.SetDiagnosticCallback([&](const wchar_t* message) {
+                        if (std::wstring(message).find(L"Dock transition:") == 0) failurePresentation = message;
+                    });
+                    const RECT fallbackDock{-19720, -19720, -19656, -19656};
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    Check(!unavailable.StartMinimize(source, fallbackDock) &&
+                        unavailable.RequiresNativeAnimationFallback() && !unavailable.IsActive() &&
+                        !unavailable.GetPresentationWindow() && !IsIconic(source) &&
+                        failurePresentation.find(L"fallback=native-system-animation") != std::wstring::npos,
+                        "shared-image failure requests native fallback for every selected effect");
+                    DWORD cloakFlags = 0;
+                    Check(SUCCEEDED(DwmGetWindowAttribute(source, DWMWA_CLOAKED, &cloakFlags, sizeof(cloakFlags))) &&
+                        !(cloakFlags & DWM_CLOAKED_APP), "failed animation leaves no source cloak or overlay");
+                    ShowWindow(source, SW_MINIMIZE);
+                    Check(IsIconic(source) != FALSE, "the original native minimize remains operational");
+                    int unexpectedRestore = 0;
+                    Check(!unavailable.StartRestore(source, fallbackDock,
+                        [&](HWND, DockWindowRestoreTransitionPhase) { ++unexpectedRestore; }) &&
+                        unavailable.RequiresNativeAnimationFallback() && !unavailable.IsActive() &&
+                        unexpectedRestore == 0, "unavailable restore uses no previous minimize image or synthetic callback");
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    Check(!IsIconic(source), "native restore remains operational after shared-image failure");
+                }
+                snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                    2, 0, 60, false, false, 3);
+                ShowWindow(source, SW_MINIMIZE);
+                DwmFlush();
                 DockWindowTransition transition;
                 Check(transition.Initialize(type.hInstance, &scheduler, d2d.Get(), composition.Get()),
                     "fresh transition engine initializes without window snapshots");
@@ -326,6 +361,9 @@ void CheckRetainedWindowImage()
                 DwmSetWindowAttribute(source, DWMWA_TRANSITIONS_FORCEDISABLED,
                     &alreadyDisabled, sizeof(alreadyDisabled));
                 const RECT dock{-19720, -19720, -19656, -19656};
+                Check(SetWindowPos(destination, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW) != FALSE,
+                    "owned Dock fixture starts its independently promoted session");
                 int restores = 0;
                 int activations = 0;
                 bool requestedWhileCloaked = false;
@@ -340,10 +378,10 @@ void CheckRetainedWindowImage()
                             ShowWindow(window, SW_SHOWNOACTIVATE);
                         }
                         else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) ++activations;
-                    });
+                    }, destination);
                 std::wcout << presentation << L'\n';
                 Check(restoring && presentation.find(L"effective=3") != std::wstring::npos &&
-                    presentation.find(L"snapshot=dwm-shared-window") != std::wstring::npos,
+                    presentation.find(L"image=dwm-shared-window") != std::wstring::npos,
                     "first restore uses Genie and a DWM image without a prior minimize animation");
                 Check(restores == 1 && requestedWhileCloaked,
                     "restore is requested under the source cloak before the visual timeline, not after it");
@@ -363,6 +401,8 @@ void CheckRetainedWindowImage()
                     }
                     Check(!transition.IsActive() && !transition.GetPresentationWindow(),
                         "animation completes and retires its entire presentation");
+                    Check((GetWindowLongPtrW(destination, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0,
+                        "retiring a target animation keeps the independently promoted Dock topmost");
                 };
                 if (restoring) drain();
                 Check(restores == 1 && !IsIconic(source), "restore handoff runs exactly once");
@@ -459,8 +499,8 @@ void CheckRetainedWindowImage()
                 }
                 const DWORD preparationStart = GetTickCount();
                 const bool minimizing = transition.StartExternalMinimize(source, dock,
-                    preparationStart + snowdesktop::dock_minimize::kRequestTimeoutMs);
-                Check(minimizing && presentation.find(L"snapshot=dwm-shared-window") != std::wstring::npos,
+                    preparationStart + snowdesktop::dock_minimize::kRequestTimeoutMs, destination);
+                Check(minimizing && presentation.find(L"image=dwm-shared-window") != std::wstring::npos,
                     "native minimize prepares a shared Genie image within the hook deadline");
                 std::cout << "Shared Genie preparation: " << GetTickCount() - preparationStart << " ms\n";
                 if (minimizing)

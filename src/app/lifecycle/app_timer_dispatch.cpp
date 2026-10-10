@@ -3,7 +3,6 @@
 #include "theme/theme_library_settings.h"
 #include "steam/steam_workshop_cache.h"
 #include "steam/steam_app_identity.h"
-#include "dock/dock_snapshot_warmup_rules.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "drag_drop/drag_input_rules.h"
@@ -613,30 +612,6 @@ void DesktopApp::OnTimer(WPARAM timerId)
             (dockStateChanged || fallbackRefreshDue))
             RefreshDockRunningWindows();
         UpdateDockExternalMinimizeTargets();
-        if (dockWindowTransition_)
-        {
-            const HWND foreground = GetForegroundWindow();
-            const bool presentationVisible = std::any_of(containers_.begin(), containers_.end(),
-                [this](const auto& container) {
-                    const auto* dock = dynamic_cast<const DockContainer*>(container.get());
-                    if (!dock || !IsDockContainerInteractionVisible(dock)) return false;
-                    const auto* host = FindPersistentDockHost(dock);
-                    // Active persistent/merged hosts use their existing visibility
-                    // policy. A fallback desktop surface also requires visible icons.
-                    return (host && host->active) || (customDesktopVisible_ && !desktopIconsHidden_);
-                });
-            const bool tracked = snowdesktop::dock_snapshot_warmup_rules::CanOfferForeground(
-                generalSettings_.dockEnabled, presentationVisible,
-                dragSession_.HasContext(), quickNavigationAnimation_.IsAnimating()) &&
-                (std::any_of(dockRunningWindows_.begin(), dockRunningWindows_.end(),
-                    [foreground](const auto& entry) {
-                        return entry.second.running && entry.second.window == foreground;
-                    }) ||
-                 std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
-                    [foreground](const auto& entry) { return entry.window == foreground; }));
-            dockWindowTransition_->UpdateSnapshotWarmup(
-                tracked ? foreground : nullptr, now - foregroundTick);
-        }
     }
     else if (timerId == kDockWindowPreviewHoverTimerId)
     {
