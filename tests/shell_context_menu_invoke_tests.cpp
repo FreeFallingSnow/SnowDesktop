@@ -3043,10 +3043,12 @@ void TestFileSnapshotNotificationReuse()
             !service.Inspect().scanning && view.snapshot && !view.pending; }, "verified snapshots remain reusable after an explicit refresh");
         Expect(queries == before + 4, "a completed forced refresh cannot permanently disable notification cache reuse");
     }
+    const auto beforeTargetChange = queries.load();
     saveLink(text);
     ext::Request linked; linked.paths = {shortcut.wstring()};
     service.Query(linked);
-    PumpUntil([&] { auto view = service.View(linked); return view.snapshot && !view.pending; }, "warm a shortcut to a specific file type");
+    PumpUntil([&] { auto view = service.View(linked); return queries > beforeTargetChange && view.snapshot && !view.pending; },
+        "warm the changed shortcut target before changing its registrations");
     const auto shortcutQueries = queries.load();
     const auto shortcutRevision = service.View(linked).revision;
     HKEY targetAction = nullptr;
@@ -3070,6 +3072,7 @@ void TestFileSnapshotNotificationReuse()
     service.Query(linked);
     PumpUntil([&] { auto view = service.View(linked); return !service.Inspect().scanning && view.snapshot && !view.pending; },
         "resolve registrations affecting the shortcut target");
+    std::cout << "Shortcut target registration: before=" << shortcutQueries << " after=" << queries.load() << std::endl;
     Expect(queries == shortcutQueries + 1, "a shortcut cannot reuse a snapshot after its target type gains a command");
     service.Shutdown();
 }
