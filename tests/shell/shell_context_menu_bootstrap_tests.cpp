@@ -19,7 +19,7 @@ void Require(bool condition, const char* message)
 // BuildMenu, HWND creation, file bootstrap, lifetime and rebind all run.
 struct State
 {
-    bool loaded = false, viewExists = false;
+    bool loaded = false, viewExists = false, namespaceOnly = false;
     unsigned bindings = 0, coldLoads = 0, viewCreates = 0, warmAlive = 0, invocations = 0;
     UINT expectedFlags = 0, first = 7, last = 103;
     int failure = 0;
@@ -104,6 +104,14 @@ public:
     {
         if (queried_) return E_UNEXPECTED; // A provider need not support re-querying one mutable aggregate.
         queried_ = true;
+        if (state_->namespaceOnly)
+        {
+            if (binding_ != 1 || state_->viewExists || site_ || flags != state_->expectedFlags ||
+                first != state_->first || last != state_->last || index != 0) return E_UNEXPECTED;
+            if (state_->failure == 2) return E_ACCESSDENIED;
+            return InsertMenuW(menu, 0, MF_BYPOSITION | MF_STRING, first + 11, L"Namespace command") ?
+                MAKE_HRESULT(SEVERITY_SUCCESS, 0, 12) : E_FAIL;
+        }
         if (binding_ == 1) state_->initialPopup = menu;
         if (first != state_->first || last != state_->last || index != 0) return E_INVALIDARG;
         if (!state_->loaded)
@@ -138,7 +146,8 @@ public:
     }
     IFACEMETHODIMP InvokeCommand(LPCMINVOKECOMMANDINFO info) override
     {
-        if (binding_ != 2 || reinterpret_cast<ULONG_PTR>(info->lpVerb) != 11) return E_UNEXPECTED;
+        if (binding_ != (state_->namespaceOnly ? 1u : 2u) ||
+            reinterpret_cast<ULONG_PTR>(info->lpVerb) != 11) return E_UNEXPECTED;
         ++state_->invocations; return S_OK;
     }
     IFACEMETHODIMP GetCommandString(UINT_PTR, UINT, UINT*, LPSTR, UINT) override { return E_NOTIMPL; }
@@ -150,6 +159,44 @@ private:
     bool queried_ = false;
     ComPtr<IUnknown> site_;
 };
+
+void RunNamespaceCase(int failure)
+{
+    auto state = std::make_shared<State>();
+    state->namespaceOnly = true; state->failure = failure;
+    state->expectedFlags = CMF_NORMAL | CMF_SYNCCASCADEMENU;
+    state->owner = CreateWindowExW(0, L"STATIC", L"Private namespace owner", WS_POPUP,
+        0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    const HMENU popup = CreatePopupMenu();
+    Require(state->owner && popup, "namespace owner and menu");
+    {
+        snowdesktop::ShellContextMenuSite site;
+        ComPtr<IContextMenu> actual;
+        const auto bind = [&](HWND owner, IContextMenu** target) -> HRESULT {
+            ++state->bindings;
+            if (state->bindings != 1 || owner != state->owner) return E_UNEXPECTED;
+            if (failure == 1) return E_ACCESSDENIED;
+            auto provider = Microsoft::WRL::Make<Menu>(state, state->bindings);
+            return provider.CopyTo(target);
+        };
+        const HRESULT hr = site.BuildNamespaceMenu(state->owner, popup, state->first, state->last,
+            state->expectedFlags, bind, actual.GetAddressOf());
+        Require(state->bindings == 1 && state->viewCreates == 0 && !site.HostWindow(),
+            "namespace verb discovery binds once without a filesystem bootstrap or Shell view");
+        if (failure)
+            Require(hr == E_ACCESSDENIED && !actual, "failed namespace queries expose no command aggregate");
+        else
+        {
+            Require(SUCCEEDED(hr) && actual && GetMenuItemCount(popup) == 1 &&
+                GetMenuItemID(popup, 0) == state->first + 11, "namespace commands retain their actual IDs");
+            CMINVOKECOMMANDINFO info{sizeof(info)}; info.hwnd = state->owner; info.lpVerb = MAKEINTRESOURCEA(11);
+            Require(SUCCEEDED(actual->InvokeCommand(&info)) && state->invocations == 1,
+                "a namespace command executes once from the retained aggregate");
+        }
+    }
+    Require(state->warmAlive == 0, "namespace aggregate retires after invocation");
+    DestroyMenu(popup); DestroyWindow(state->owner);
+}
 
 void RunCase(UINT flags, int failure)
 {
@@ -200,6 +247,7 @@ void RunCase(UINT flags, int failure)
 
 void TestShellContextMenuBootstrap()
 {
+    for (int failure = 0; failure <= 2; ++failure) RunNamespaceCase(failure);
     // Negative control of the prior production ordering, using the same COM
     // provider: a first load after view creation fails for the loader reason.
     auto state = std::make_shared<State>(); state->viewExists = true;

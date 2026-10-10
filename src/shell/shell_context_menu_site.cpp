@@ -308,6 +308,24 @@ HRESULT ShellContextMenuSite::BuildMenu(IShellFolder* folder, HWND owner, HMENU 
     return hr;
 }
 
+HRESULT ShellContextMenuSite::BuildNamespaceMenu(HWND owner, HMENU menu,
+    UINT firstCommand, UINT lastCommand, UINT flags,
+    const MenuFactory& bind, IContextMenu** contextMenu)
+{
+    if (!contextMenu) return E_POINTER;
+    *contextMenu = nullptr;
+    impl_->Reset();
+    if (!IsWindow(owner) || !menu || !bind || firstCommand > lastCommand)
+        return E_INVALIDARG;
+    ComPtr<IContextMenu> actual;
+    HRESULT hr = bind(owner, actual.GetAddressOf());
+    if (FAILED(hr) || !actual) return FAILED(hr) ? hr : E_FAIL;
+    hr = actual->QueryContextMenu(menu, 0, firstCommand, lastCommand, flags);
+    if (FAILED(hr)) return hr;
+    actual.CopyTo(contextMenu);
+    return hr;
+}
+
 HWND ShellContextMenuSite::HostWindow() const
 {
     return impl_->hostWindow;

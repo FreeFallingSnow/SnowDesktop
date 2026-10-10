@@ -115,8 +115,8 @@ int main(int argc, char** argv)
         Forbid(facade, token, "settings facade rendering ownership");
     Forbid(presenter, "RequestSystemTaskbar", "presenter must use typed host actions");
     Forbid(settingsHost, "SendMessageTimeoutW", "WinUI host Shell broadcast boundary");
-    // Native entry points must use the shared loader bootstrap. Its COM/view
-    // ordering and fresh final command tokens have separate behavioral tests.
+    // Filesystem native menus use the loader bootstrap. Built-in namespace
+    // verb discovery uses the single-query boundary, with separate behavior tests.
     Forbid(itemMenus, "menuSite.Initialize(", "native item menu loader boundary");
     Forbid(itemMenus, "namespaceSite.Initialize(", "namespace menu loader boundary");
     Forbid(shellMenus, "menuSite.Initialize(", "native background/mapped item menu loader boundary");

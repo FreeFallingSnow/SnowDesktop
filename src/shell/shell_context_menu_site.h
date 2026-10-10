@@ -57,6 +57,11 @@ public:
     HRESULT BuildMenu(IShellFolder* folder, HWND owner, HMENU menu,
         UINT firstCommand, UINT lastCommand, UINT flags,
         const MenuFactory& bind, IContextMenu** contextMenu);
+    // Read built-in namespace verbs for a custom popup. These commands do not
+    // need filesystem providers or a folder view; bind their aggregate once.
+    HRESULT BuildNamespaceMenu(HWND owner, HMENU menu,
+        UINT firstCommand, UINT lastCommand, UINT flags,
+        const MenuFactory& bind, IContextMenu** contextMenu);
     HWND HostWindow() const;
     // Verb dialogs must use the same persistent, activatable owner as the
     // invocation structure, rather than the hidden view used to build menus.

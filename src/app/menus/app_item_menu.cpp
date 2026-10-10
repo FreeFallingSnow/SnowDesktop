@@ -211,8 +211,8 @@ void DesktopApp::ShowItemContextMenu(
     const bool protectedDesktopIcon = selectedCount == 1 && IsProtectedDesktopIcon(items_[itemIndex]);
     const bool namespaceItem = selectedCount == 1 &&
         (!items_[itemIndex].desktopIconClsid.empty() || protectedDesktopIcon);
-    // Query supported verbs without displaying the native popup. Keep its site,
-    // menu and COM object alive until a selected command has been invoked.
+    // Query only built-in namespace verbs before displaying the custom popup.
+    // Retain the selection and aggregate until its original token is invoked.
     Pidl namespaceSnapshot;
     ComPtr<IShellFolder> namespaceFolder;
     snowdesktop::ShellContextMenuSite namespaceSite;
@@ -227,8 +227,8 @@ void DesktopApp::ShowItemContextMenu(
             namespaceSnapshot.reset(ILCloneFull(items_[itemIndex].childPidl.get()));
         PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(namespaceSnapshot.get());
         namespaceNative.value = CreatePopupMenu();
-        if (child && namespaceNative.value && SUCCEEDED(namespaceSite.BuildMenu(
-            namespaceFolder.Get(), owner, namespaceNative.value, 1, 0x7fff, CMF_NORMAL | CMF_SYNCCASCADEMENU,
+        if (child && namespaceNative.value && SUCCEEDED(namespaceSite.BuildNamespaceMenu(
+            owner, namespaceNative.value, 1, 0x7fff, CMF_NORMAL | CMF_SYNCCASCADEMENU,
             [&](HWND bindOwner, IContextMenu** target) {
                 return namespaceFolder->GetUIObjectOf(bindOwner, 1, &child, IID_IContextMenu,
                     nullptr, reinterpret_cast<void**>(target));
