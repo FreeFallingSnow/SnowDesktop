@@ -862,8 +862,6 @@ struct MenuService::Impl
                     RebuildAvailable();
                     MenuTrace("catalogue", changed.empty() ? "unchanged" : "dependencies_changed", 0, static_cast<unsigned>(affected.size()));
                 }
-                for (auto &[key, row] : rows)
-                    if (row.registryInvalid && row.view.snapshot) row.checkRequested = true;
             }
             for (const auto &request : affected) cache.Erase(request);
             if (retirePreparation)
@@ -1036,7 +1034,7 @@ struct MenuService::Impl
                 {
                     row.registryInvalid = row.view.snapshot && (!row.invalid || row.registryInvalid);
                     row.invalid = true; row.snapshotTargetChecked = false; ++row.view.revision;
-                    if (row.view.snapshot) row.checkRequested = true;
+                    if (row.view.snapshot && VerificationIndex(row.view.contexts) > 0) row.checkRequested = true;
                     // Classes includes Shell caches written by the query itself.
                     // Verify registration changes before retiring in-flight work;
                     // otherwise every successful reply can trigger another query.

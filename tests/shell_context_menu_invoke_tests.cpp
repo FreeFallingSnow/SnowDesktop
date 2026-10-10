@@ -4513,6 +4513,7 @@ void TestWarmFailureRecovery(bool permanent)
     request.paths = {(temp.path / L"target.txt").wstring()};
     std::ofstream(request.paths.front()) << "private";
     std::atomic<unsigned> queries = 0;
+    std::atomic<std::uint64_t> registrationRevision = 17;
     ext::MenuService service(
         temp.path / L"cache",
         [&](const ext::Request &target)
@@ -4538,10 +4539,12 @@ void TestWarmFailureRecovery(bool permanent)
                                   },
                                   {}};
         },
-        []
+        [&]
         {
-            ext::Catalogue c;
-            c.revision = 17;
+            ext::Catalogue c; c.revision = registrationRevision.load();
+            ext::Registration row; row.id = "reg:warm-failure"; row.types = {L"*"};
+            row.contexts = ext::ContextBit(ext::Context::File); row.verbs = {"warm-failure"};
+            row.revision = c.revision; c.rows = {row};
             return c;
         });
     ext::Preferences prefs;
@@ -4553,6 +4556,7 @@ void TestWarmFailureRecovery(bool permanent)
     service.Inspect();
     PumpUntil([&] { return !service.Inspect().scanning; }, "settle initial inventory before warm-cache notification");
     auto before = service.View(request).revision;
+    registrationRevision = 18; // A real dependency change still exercises failed refresh recovery.
     DWORD value = 1;
     Expect(RegSetValueExW(fixture.key, L"Cache", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value), sizeof(value)) ==
                ERROR_SUCCESS,

@@ -1450,7 +1450,7 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
         settings_ipc::Channel channel;
         settings_ipc::OpenInheritedSettingsChannel(channel, L"--shell-menu-helper");
         Host host(std::move(startPin));
-        host.progress = [&](const auto &stage) { channel.Notify("menu.progress", stage); };
+        host.progress = [&](const auto &stage) { MenuTrace("helper.stage", stage); channel.Notify("menu.progress", stage); };
         // Retain bootstrap objects until process retirement: extensions can keep
         // window/timer callbacks referring to their menu even after QCM returns.
         std::unique_ptr<TemporaryMenuFile> preparationSample;
@@ -1482,6 +1482,10 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                         backgroundPreparation->QueryOnce(background, true).ok;
                 }
             }
+            // The retained private file aggregate has already initialized file
+            // associations. Keep real catalogue priming enabled, but avoid a
+            // second temporary association menu for folders and ShellLinks.
+            if (prepared) host.fileAssociationsReady = true;
             channel.Notify("menu.prepared", prepared);
         });
         channel.Bind<void, Request>("menu.query", [&](Request request) {
