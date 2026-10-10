@@ -1373,8 +1373,10 @@ void TestPackageManifestRefresh()
         memcmp(previousId.FileId.Identifier, replacementId.FileId.Identifier, sizeof(previousId.FileId.Identifier)) != 0,
         "replacement fixture is a distinct file object");
     CloseHandle(replacementFile);
-    Expect(MoveFileExW(replacement.c_str(), manifest.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE, "replace private manifest");
     CloseHandle(oldFile);
+    const auto moved = MoveFileExW(replacement.c_str(), manifest.c_str(), MOVEFILE_REPLACE_EXISTING);
+    if (!moved) std::cerr << "replace error=" << GetLastError() << " oldattrs=" << GetFileAttributesW(manifest.c_str()) << " newattrs=" << GetFileAttributesW(replacement.c_str()) << std::endl;
+    Expect(moved != FALSE, "replace private manifest");
     check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}");
     Expect(std::filesystem::remove(manifest), "remove private manifest");
     Expect(ext::ReadCatalogue(registry.key, true).rows.empty(), "a removed manifest cannot retain old commands");
