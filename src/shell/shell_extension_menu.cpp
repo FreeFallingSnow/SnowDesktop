@@ -1455,10 +1455,11 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, Star
                         backgroundPreparation->QueryOnce(background, true).ok;
                 }
             }
-            // The retained private file aggregate has already initialized file
-            // associations. Keep real catalogue priming enabled, but avoid a
-            // second temporary association menu for folders and ShellLinks.
-            if (prepared) host.fileAssociationsReady = true;
+            // Successful retained aggregates initialize file providers before
+            // the real selection arrives. Its fresh aggregate owns all published
+            // tokens; it need not repeat the unpublished file priming pass.
+            if (prepared)
+                host.fileAssociationsReady = host.fileCatalogueInitialized = true;
             channel.Notify("menu.prepared", prepared);
         });
         channel.Bind<void, Request>("menu.query", [&](Request request) {
