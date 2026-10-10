@@ -729,7 +729,7 @@ struct Host
     Reply Query(const Request &request)
     {
         return QueryWithCataloguePriming(request, catalogueInitialized, fileCatalogueInitialized,
-            [&](const Request &target) { return QueryOnce(target); });
+            [&](const Request &target, bool priming) { return QueryOnce(target, priming); });
     }
     Reply QueryShortcutObjects(const Request &request, Native &delegated,
         IShellFolder *selectionFolder, PCIDLIST_ABSOLUTE folderId,
@@ -825,7 +825,7 @@ struct Host
         IdentifyEntries(reply.entries); reply.ok = true;
         return reply;
     }
-    Reply QueryOnce(const Request &request)
+    Reply QueryOnce(const Request &request, bool priming = false)
     {
         ReleaseMenu();
         progress("validate paths");
@@ -994,6 +994,14 @@ struct Host
                                                      CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
                                                          (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
+        if (priming)
+        {
+            // Retain loaded association providers until the final rebind, but
+            // do not initialize cascades, read icons or resolve optional apps
+            // for the first catalogue that will never be published.
+            menus.push_back(std::move(native));
+            return Reply{true, {}, {}};
+        }
         if (shortcutSelection && !request.startPinOnly && request.sourceClsid.empty())
             return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
         Reply reply;

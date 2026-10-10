@@ -46,8 +46,9 @@ void TestAggregateCataloguePriming()
     namespace ext = snowdesktop::shell_extensions;
     ext::Request request; request.context = ext::Context::File; request.paths = {L"C:\\Private\\sample.txt"};
     bool backgroundReady = false, filesReady = false;
-    unsigned calls = 0;
-    auto bind = [&](const ext::Request &target) {
+    unsigned calls = 0, materializations = 0;
+    auto bind = [&](const ext::Request &target, bool priming) {
+        if (!priming) ++materializations;
         Expect(target == request, "priming preserves the original selection and request flags");
         ext::Entry item;
         item.key = ++calls == 1 ? "partial" : "ModernArchive";
@@ -56,10 +57,12 @@ void TestAggregateCataloguePriming()
         return ext::Reply{true, {item}, {}};
     };
     auto reply = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(materializations == 1, "cold priming does not duplicate submenu or icon work");
     Expect(calls == 2 && filesReady && !backgroundReady && reply.ok && reply.entries.size() == 1 &&
         reply.entries.front().key == "ModernArchive" && reply.entries.front().token == 43,
         "COLD_FILE_MUST_REBIND: a successful cold partial aggregate is never published with its first tokens");
     ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(materializations == 2, "a warm query still materializes its final menu");
     Expect(calls == 3, "a primed file catalogue is not rebound again");
     request.background = true; request.context = ext::Context::Desktop;
     ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
@@ -82,19 +85,20 @@ void TestAggregateCataloguePriming()
         if (mode == 5) special.paths.push_back(L"C:\\Private\\original.lnk");
         if (mode == 6) special.context = ext::Context::FolderBackground;
         bool bg = false, file = false; unsigned count = 0;
-        auto result = ext::QueryWithCataloguePriming(special, bg, file, [&](const ext::Request &target) {
+        auto result = ext::QueryWithCataloguePriming(special, bg, file, [&](const ext::Request &target, bool priming) {
+            Expect(!priming, "special queries are complete rather than priming passes");
             Expect(target == special, "special query identity is preserved"); ++count; return ext::Reply{true, {}, {}};
         });
         Expect(result.ok && count == 1 && !file, "metadata, Start, shortcut and folder paths keep their existing warmup rules");
     }
     unsigned failures = 0; filesReady = false;
-    auto failed = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, [&](const ext::Request &) {
+    auto failed = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, [&](const ext::Request &, bool) {
         ++failures; return ext::Reply{false, {}, "first binding failed"};
     });
     Expect(!failed.ok && failures == 1 && !filesReady && failed.error == "first binding failed",
         "a failed first binding is not retried or disguised as priming success");
     unsigned finalCalls = 0;
-    auto finalFailure = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, [&](const ext::Request &) {
+    auto finalFailure = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, [&](const ext::Request &, bool) {
         if (++finalCalls == 2) return ext::Reply{false, {}, "final binding failed"};
         ext::Entry item; item.token = 31; return ext::Reply{true, {item}, {}};
     });

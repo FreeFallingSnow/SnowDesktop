@@ -16,19 +16,22 @@ inline bool NeedsFileCataloguePriming(const Request &request)
 
 // A cold aggregate can report success before packaged command providers become
 // visible. Rebind once in the same supervised STA; never publish its first
-// partial menu or retain that menu's tokens. Shortcut/folder association warmup
+// partial menu or retain that menu's tokens. The priming pass binds and queries
+// only; submenu materialization and icons belong to the final pass.
+// Shortcut/folder association warmup
 // and provider-specific metadata/Start queries keep their existing paths.
 template <class QueryOnce>
 Reply QueryWithCataloguePriming(const Request &request, bool &backgroundReady, bool &filesReady, QueryOnce &&queryOnce)
 {
-    auto reply = queryOnce(request);
-    if (!reply.ok) return reply;
     const bool background = request.background && request.sourceClsid.empty();
-    if (!background && !NeedsFileCataloguePriming(request)) return reply;
+    const bool file = NeedsFileCataloguePriming(request);
     bool &ready = background ? backgroundReady : filesReady;
-    if (!ready)
+    const bool priming = (background || file) && !ready;
+    auto reply = queryOnce(request, priming);
+    if (!reply.ok) return reply;
+    if (priming)
     {
-        reply = queryOnce(request);
+        reply = queryOnce(request, false);
         ready = reply.ok;
     }
     return reply;

@@ -619,8 +619,8 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots)
 {
     const auto files = ContextBit(Context::File);
     auto serial = [&] { for (const auto &root : roots) scanner.Root(root.path, files, root.types); };
-    // Small/private inventories avoid thread setup. Use at most half the
-    // reported cores and four workers while native menu helpers remain active.
+    // Small/private inventories avoid thread setup. Two to four workers bound
+    // additional CPU work while native menu helpers remain active.
     if (roots.size() < 64) { serial(); return; }
     std::vector<std::vector<std::pair<Registration, std::wstring>>> results(roots.size());
     std::atomic_size_t next = 0;
