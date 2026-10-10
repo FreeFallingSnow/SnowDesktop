@@ -81,6 +81,12 @@ bool DependsOn(const Registration &row, const Request &request, unsigned context
 std::uint64_t Dependency(const Catalogue &catalogue, const Request &request, unsigned contexts)
 {
     if (!catalogue.revision) return 0;
+    // ShellLink can expose commands belonging to its target's type. The .lnk
+    // suffix alone cannot prove those dependencies without resolving targets
+    // (which may be offline), so shortcuts retain the full inventory proof.
+    if (!request.background && std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
+        return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+    })) return catalogue.revision;
     std::uint64_t hash = 14695981039346656037ull;
     for (const auto &row : catalogue.rows)
         if (DependsOn(row, request, contexts))
@@ -1031,9 +1037,6 @@ struct MenuService::Impl
                     row.registryInvalid = row.view.snapshot && (!row.invalid || row.registryInvalid);
                     row.invalid = true; row.snapshotTargetChecked = false; ++row.view.revision;
                     if (row.view.snapshot) row.checkRequested = true;
-                    // Verify while idle so a later file/shortcut popup need not
-                    // discover that an unrelated notification left it stale.
-                    scanRequested |= row.registryInvalid && !row.request.startPinOnly;
                     // Classes includes Shell caches written by the query itself.
                     // Verify registration changes before retiring in-flight work;
                     // otherwise every successful reply can trigger another query.

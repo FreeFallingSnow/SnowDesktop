@@ -3043,6 +3043,34 @@ void TestFileSnapshotNotificationReuse()
             !service.Inspect().scanning && view.snapshot && !view.pending; }, "verified snapshots remain reusable after an explicit refresh");
         Expect(queries == before + 4, "a completed forced refresh cannot permanently disable notification cache reuse");
     }
+    saveLink(text);
+    ext::Request linked; linked.paths = {shortcut.wstring()};
+    service.Query(linked);
+    PumpUntil([&] { auto view = service.View(linked); return view.snapshot && !view.pending; }, "warm a shortcut to a specific file type");
+    const auto shortcutQueries = queries.load();
+    const auto shortcutRevision = service.View(linked).revision;
+    HKEY targetAction = nullptr;
+    Expect(RegCreateKeyExW(registry.key, L".txt\\shell\\target-proof", 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &targetAction, nullptr) == ERROR_SUCCESS, "create a command specific to the shortcut target type");
+    constexpr wchar_t targetCaption[] = L"Changed target action";
+    const auto targetStatus = RegSetValueExW(targetAction, L"MUIVerb", 0, REG_SZ,
+        reinterpret_cast<const BYTE *>(targetCaption), sizeof(targetCaption));
+    RegCloseKey(targetAction);
+    Expect(targetStatus == ERROR_SUCCESS, "change the shortcut target type registration");
+    HKEY targetCommand = nullptr;
+    Expect(RegCreateKeyExW(registry.key, L".txt\\shell\\target-proof\\command", 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &targetCommand, nullptr) == ERROR_SUCCESS, "create the shortcut target command");
+    constexpr wchar_t targetExecutable[] = L"unused.exe %1";
+    const auto targetCommandStatus = RegSetValueExW(targetCommand, nullptr, 0, REG_SZ,
+        reinterpret_cast<const BYTE *>(targetExecutable), sizeof(targetExecutable));
+    RegCloseKey(targetCommand);
+    Expect(targetCommandStatus == ERROR_SUCCESS, "write the shortcut target command");
+    notify();
+    PumpUntil([&] { return service.View(linked).revision > shortcutRevision; }, "observe a registration change outside the .lnk type");
+    service.Query(linked);
+    PumpUntil([&] { auto view = service.View(linked); return !service.Inspect().scanning && view.snapshot && !view.pending; },
+        "resolve registrations affecting the shortcut target");
+    Expect(queries == shortcutQueries + 1, "a shortcut cannot reuse a snapshot after its target type gains a command");
     service.Shutdown();
 }
 
