@@ -12,7 +12,11 @@ namespace
 {
 constexpr UINT kReady = WM_APP + 1;
 constexpr UINT kAction = WM_APP + 2;
+constexpr UINT kHostReady = WM_APP + 3;
+constexpr UINT kCrashHost = WM_APP + 4;
 HWND fixture = nullptr;
+HWND hostReceiver = nullptr;
+HWND observationReceiver = nullptr;
 int requests = 0;
 int cancellations = 0;
 bool observedBeforeMinimize = false;
@@ -44,6 +48,18 @@ bool PumpUntil(const std::function<bool()>& predicate, DWORD timeout = 3000)
 LRESULT CALLBACK ReceiverProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
     if (message == kReady) { fixture = reinterpret_cast<HWND>(wParam); return 0; }
+    if (message == kHostReady) { hostReceiver = reinterpret_cast<HWND>(wParam); return 0; }
+    if (observationReceiver && message == kCrashHost) ExitProcess(0);
+    if (observationReceiver && message == WM_DESTROY) { PostQuitMessage(0); return 0; }
+    if (observationReceiver && message >= 0xC000 &&
+        (message == snowdesktop::dock_minimize::RequestMessage() ||
+         message == snowdesktop::dock_minimize::CancelMessage()))
+    {
+        DWORD_PTR result = 0;
+        SendMessageTimeoutW(observationReceiver, message, wParam, lParam,
+            SMTO_ABORTIFHUNG | SMTO_BLOCK, snowdesktop::dock_minimize::kRequestTimeoutMs, &result);
+        return static_cast<LRESULT>(result);
+    }
     if (message >= 0xC000 && message == snowdesktop::dock_minimize::RequestMessage())
     {
         ++requests;
@@ -80,14 +96,99 @@ HWND CreateFixtureWindow(const wchar_t* name, WNDPROC procedure)
     type.hInstance = GetModuleHandleW(nullptr);
     type.lpszClassName = name;
     type.lpfnWndProc = procedure;
-    if (!RegisterClassW(&type)) return nullptr;
+    if (!RegisterClassW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return nullptr;
     return CreateWindowExW(WS_EX_TOOLWINDOW, name, name, WS_OVERLAPPEDWINDOW,
         -20000, -20000, 240, 160, nullptr, nullptr, type.hInstance, nullptr);
+}
+
+HWND WindowArgument(const wchar_t* argument)
+{
+    return reinterpret_cast<HWND>(ULongToHandle(wcstoul(argument, nullptr, 10)));
+}
+
+void CheckHostRestart(HWND receiver, const std::wstring& executable,
+    const std::filesystem::path& dll, const std::wstring& helper, const std::wstring& helperDll,
+    const std::filesystem::path& copyDirectory, bool crash)
+{
+    std::error_code error;
+    std::filesystem::create_directories(copyDirectory, error);
+    Check(!error, "private restart runtime directory is created");
+    const auto copy = [&](const std::filesystem::path& source) {
+        if (source.empty()) return std::wstring{};
+        const auto target = copyDirectory / source.filename();
+        std::filesystem::copy_file(source, target, std::filesystem::copy_options::overwrite_existing, error);
+        Check(!error, "restart uses a fresh private runtime copy");
+        return target.wstring();
+    };
+    const auto privateDll = copy(dll);
+    const auto privateHelper = copy(helper);
+    const auto privateHelperDll = copy(helperDll);
+    if (error) return;
+    hostReceiver = nullptr;
+    std::wstring command = L"\"" + executable + L"\" --host " +
+        std::to_wstring(HandleToULong(receiver)) + L" " +
+        std::to_wstring(HandleToULong(fixture)) + L" \"" + privateDll +
+        L"\" \"" + privateHelper + L"\" \"" + privateHelperDll + L"\"";
+    STARTUPINFOW startup{sizeof(startup)};
+    PROCESS_INFORMATION child{};
+    const bool started = CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr,
+        FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child) != FALSE;
+    Check(started, "replacement hook host starts in a separate process");
+    if (!started) return;
+    CloseHandle(child.hThread);
+    const bool ready = PumpUntil([&] { return hostReceiver || WaitForSingleObject(child.hProcess, 0) == WAIT_OBJECT_0; });
+    Check(ready && hostReceiver, "replacement host attaches the already running application");
+    if (hostReceiver)
+    {
+        const int before = requests;
+        PostMessageW(fixture, kAction, 1, 0);
+        Check(PumpUntil([] { return !IsIconic(fixture); }), "existing fixture is restored before restart regression");
+        PostMessageW(fixture, kAction, 0, 0);
+        Check(PumpUntil([] { return IsIconic(fixture) != FALSE; }), "existing application minimizes after host replacement");
+        Check(requests == before + 1 && observedBeforeMinimize,
+            "fresh private hook reports existing application's minimize exactly once after restart");
+        PostMessageW(hostReceiver, crash ? kCrashHost : WM_CLOSE, 0, 0);
+    }
+    if (!PumpUntil([&] { return WaitForSingleObject(child.hProcess, 0) == WAIT_OBJECT_0; }))
+    {
+        Check(false, "owned replacement host exits");
+        TerminateProcess(child.hProcess, 1);
+        WaitForSingleObject(child.hProcess, 1000);
+    }
+    DWORD exitCode = 1;
+    GetExitCodeProcess(child.hProcess, &exitCode);
+    Check(exitCode == 0, "replacement host reports successful setup and shutdown");
+    CloseHandle(child.hProcess);
+    if (hostReceiver)
+        Check(crash ? GetPropW(fixture, snowdesktop::dock_minimize::kTargetProperty) == hostReceiver :
+                GetPropW(fixture, snowdesktop::dock_minimize::kTargetProperty) == nullptr,
+            crash ? "abrupt host exit leaves a stale marker for recovery" : "normal host exit removes its marker");
 }
 }
 
 int wmain(int argc, wchar_t** argv)
 {
+    if (argc == 7 && std::wstring(argv[1]) == L"--host")
+    {
+        observationReceiver = WindowArgument(argv[2]);
+        const HWND target = WindowArgument(argv[3]);
+        const HWND receiver = CreateFixtureWindow(L"SnowDesktopMinimizeHostReceiver", ReceiverProc);
+        DockExternalMinimize monitor;
+        if (!receiver || !monitor.Start(receiver, argv[4], argv[5], argv[6])) return 2;
+        monitor.UpdateTargets(std::array<HWND, 1>{target});
+        if (!monitor.OwnsTarget(target) || (*argv[5] &&
+            !PumpUntil([&] { return GetPropW(target, snowdesktop::dock_minimize::kReadyProperty) == receiver; })))
+            return 3;
+        PostMessageW(observationReceiver, kHostReady, reinterpret_cast<WPARAM>(receiver), 0);
+        MSG message{};
+        while (GetMessageW(&message, nullptr, 0, 0) > 0)
+        {
+            TranslateMessage(&message);
+            DispatchMessageW(&message);
+        }
+        monitor.Stop();
+        return 0;
+    }
     if (argc == 3 && std::wstring(argv[1]) == L"--fixture")
     {
         const HWND receiver = reinterpret_cast<HWND>(ULongToHandle(wcstoul(argv[2], nullptr, 10)));
@@ -192,14 +293,38 @@ int wmain(int argc, wchar_t** argv)
         monitor.Stop();
         Check(!GetPropW(fixture, kTargetProperty) && !GetPropW(receiver, kOwnerProperty),
             "host shutdown removes only its installed properties");
-        SetPropW(fixture, kTargetProperty, ULongToHandle(123));
+        const HWND otherReceiver = CreateFixtureWindow(L"SnowDesktopMinimizeOtherReceiver", ReceiverProc);
+        SetPropW(otherReceiver, kOwnerProperty, ULongToHandle(GetCurrentProcessId()));
+        SetPropW(otherReceiver, kRevisionProperty, ULongToHandle(1));
+        SetPropW(fixture, kTargetProperty, otherReceiver);
+        Check(HasLiveOwner(otherReceiver), "matching live owner protocol is recognized");
         Check(monitor.Start(receiver, dll.wstring(), {}, {}), "monitor can restart after shutdown");
         monitor.UpdateTargets(targets);
-        Check(!monitor.OwnsTarget(fixture), "another owner's target property is not adopted");
+        Check(!monitor.OwnsTarget(fixture), "another live owner's target property is not adopted");
         monitor.Stop();
-        Check(GetPropW(fixture, kTargetProperty) == ULongToHandle(123),
-            "cleanup preserves another owner's target property");
-        RemovePropW(fixture, kTargetProperty);
+        Check(GetPropW(fixture, kTargetProperty) == otherReceiver,
+            "cleanup preserves another live owner's target property");
+        // Same HWND is still valid, but no longer belongs to the protocol.
+        RemovePropW(otherReceiver, kOwnerProperty);
+        Check(!HasLiveOwner(otherReceiver), "recycled or detached receiver is not treated as a live owner");
+        SetPropW(fixture, kReadyProperty, otherReceiver);
+        Check(monitor.Start(receiver, dll.wstring(), {}, {}), "new host starts while stale target remains");
+        monitor.UpdateTargets(targets);
+        Check(monitor.OwnsTarget(fixture) && !GetPropW(fixture, kReadyProperty),
+            "stale owner and readiness markers are reclaimed for an existing window");
+        monitor.Stop();
+        DestroyWindow(otherReceiver);
+
+        const auto copies = std::filesystem::temp_directory_path() /
+            (L"SnowDesktopDockMinimizeRestart-" + std::to_wstring(GetCurrentProcessId()) +
+             L"-" + std::to_wstring(GetTickCount64()));
+        const std::wstring helper = argc == 5 ? runtimePath(argv[3]) : L"";
+        const std::wstring helperDll = argc == 5 ? runtimePath(argv[4]) : L"";
+        CheckHostRestart(receiver, executable.data(), dll, helper, helperDll, copies / L"first", false);
+        CheckHostRestart(receiver, executable.data(), dll, helper, helperDll, copies / L"second", true);
+        CheckHostRestart(receiver, executable.data(), dll, helper, helperDll, copies / L"third", false);
+        std::error_code cleanup;
+        std::filesystem::remove_all(copies, cleanup);
     }
     if (fixture) PostMessageW(fixture, WM_CLOSE, 0, 0);
     if (!PumpUntil([&] { return WaitForSingleObject(child.hProcess, 0) == WAIT_OBJECT_0; }))

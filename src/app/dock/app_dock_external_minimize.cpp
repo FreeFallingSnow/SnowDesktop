@@ -120,6 +120,7 @@ bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
     }
     if (IsRectEmpty(&anchor) ||
         !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount())) return false;
+    PrepareDockWindowMinimize(window, L"application-minimize");
     DismissDockWindowPreviewUntilLeave();
     CancelDockWindowActivationObservation(window);
     return dockWindowTransition_->StartExternalMinimize(window, anchor, deadline, keepBelow);

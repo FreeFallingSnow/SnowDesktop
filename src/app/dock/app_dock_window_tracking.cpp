@@ -1081,7 +1081,7 @@ bool DesktopApp::ActivateOrToggleDockItem(
         const bool shouldMinimize =
             !IsIconic(target) || reverseRestore;
         if (shouldMinimize)
-            snowdesktop::dock_taskbar_diagnostics::Begin(target, L"dock-minimize");
+            PrepareDockWindowMinimize(target, L"dock-minimize");
         bool transitionStarted = false;
         bool nativeFallbackRequested = false;
         if (shouldMinimize &&
@@ -1232,7 +1232,7 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         const bool shouldMinimize =
             !minimized || reverseRestore;
         if (shouldMinimize)
-            snowdesktop::dock_taskbar_diagnostics::Begin(target, L"dock-minimize");
+            PrepareDockWindowMinimize(target, L"dock-minimize");
         bool transitionStarted = false;
         bool nativeFallbackRequested = false;
         if (shouldMinimize &&

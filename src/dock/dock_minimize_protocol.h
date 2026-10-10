@@ -12,6 +12,14 @@ inline constexpr wchar_t kRequestMessage[] = L"SnowDesktop.Dock.BeforeMinimize.v
 inline constexpr wchar_t kCancelMessage[] = L"SnowDesktop.Dock.CancelMinimize.v1";
 inline constexpr DWORD kRequestTimeoutMs = 180;
 
+inline bool HasLiveOwner(HWND receiver) noexcept
+{
+    DWORD process = 0;
+    return receiver && GetWindowThreadProcessId(receiver, &process) && process &&
+        GetPropW(receiver, kOwnerProperty) == ULongToHandle(process) &&
+        GetPropW(receiver, kRevisionProperty) != nullptr;
+}
+
 // DWORD ticks are shared by x86/x64 and deliberately wrap at 49.7 days.
 constexpr bool RequestIsCurrent(DWORD deadline, DWORD now) noexcept
 {

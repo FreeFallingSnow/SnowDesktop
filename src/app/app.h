@@ -1453,6 +1453,7 @@ private:
     void StopDockForegroundMonitor();
     void UpdateDockExternalMinimizeTargets();
     bool HandleDockExternalMinimize(HWND window, DWORD deadline);
+    void PrepareDockWindowMinimize(HWND window, const wchar_t* origin);
     void HandleDockForegroundInteractionChanged();
     void UpdateSystemShowDesktopDockLayerGuard();
     bool IsShellDesktopForegroundWindow(HWND window) const;

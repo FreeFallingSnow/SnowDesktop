@@ -58,10 +58,16 @@ void DockExternalMinimize::UpdateTargets(std::span<const HWND> windows)
         if (!thread || !process || process == GetCurrentProcessId() ||
             GetAncestor(window, GA_ROOT) != window) continue;
         const HANDLE previous = GetPropW(window, snowdesktop::dock_minimize::kTargetProperty);
-        if (previous && previous != receiver_) continue;
+        // Window properties outlive a crashed host. A recycled HWND without
+        // the matching owner protocol is stale too; only a live host owns it.
+        if (previous && previous != receiver_ &&
+            snowdesktop::dock_minimize::HasLiveOwner(reinterpret_cast<HWND>(previous))) continue;
         if (!targets_.contains(window))
         {
             if (!SetPropW(window, snowdesktop::dock_minimize::kTargetProperty, receiver_)) continue;
+            if (previous != receiver_ &&
+                GetPropW(window, snowdesktop::dock_minimize::kReadyProperty) == previous)
+                RemovePropW(window, snowdesktop::dock_minimize::kReadyProperty);
             changed = true;
         }
         targets_[window] = process;
@@ -104,7 +110,12 @@ void DockExternalMinimize::Stop() noexcept
     for (const auto& [window, process] : targets_)
     {
         (void)process;
-        if (OwnsTarget(window)) RemovePropW(window, snowdesktop::dock_minimize::kTargetProperty);
+        if (OwnsTarget(window))
+        {
+            if (GetPropW(window, snowdesktop::dock_minimize::kReadyProperty) == receiver_)
+                RemovePropW(window, snowdesktop::dock_minimize::kReadyProperty);
+            RemovePropW(window, snowdesktop::dock_minimize::kTargetProperty);
+        }
     }
     targets_.clear();
     if (receiver_ && GetPropW(receiver_, snowdesktop::dock_minimize::kOwnerProperty) ==

@@ -16,7 +16,8 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockMinimizeHook(
         GetPropW(window, snowdesktop::dock_minimize::kTargetProperty));
     static thread_local bool notifying = false;
     if (!notifying && process == GetCurrentProcessId() &&
-        receiver && IsWindow(receiver) && IsWindowVisible(window) && !IsIconic(window))
+        snowdesktop::dock_minimize::HasLiveOwner(receiver) &&
+        IsWindowVisible(window) && !IsIconic(window))
     {
         notifying = true;
         const UINT message = snowdesktop::dock_minimize::RequestMessage();

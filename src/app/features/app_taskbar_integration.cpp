@@ -5,6 +5,20 @@
 
 // Dock foreground monitoring and Windows taskbar appearance integration.
 
+void DesktopApp::PrepareDockWindowMinimize(HWND window, const wchar_t* origin)
+{
+    snowdesktop::dock_taskbar_diagnostics::Begin(window, origin);
+    // Both Dock clicks and the application's own minimize request must arm
+    // the same per-taskbar suppression before Windows changes foreground.
+    // This also reconciles a recent Explorer/auto-hide change before its timer.
+    if (generalSettings_.dockEnabled &&
+        (dockSettings_.suppressSystemTaskbar ||
+            (!IsClassicSystemTaskbar() && ShouldProtectAutoHideTaskbar(
+                dockSettings_, true, IsSystemTaskbarAutoHideEnabled()))))
+        RefreshSystemTaskbarAppearance(false);
+    snowdesktop::dock_taskbar_diagnostics::Record(L"minimize-taskbar-protection-submitted", window);
+}
+
 void DesktopApp::StartDockForegroundMonitor()
 {
     dockForegroundNotificationWindow_.store(

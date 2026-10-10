@@ -18,6 +18,7 @@
 
 #include "ui/render/ui_animation_scheduler.h"
 #include "dock_genie_rules.h"
+#include "dock_window_shared_thumbnail.h"
 
 namespace snowdesktop::dock_snapshot_warmup
 {
@@ -113,6 +114,7 @@ enum class DockWindowTransitionSurface
     None,
     Snapshot,
     LiveThumbnail,
+    SharedWindow,
 };
 
 enum class DockWindowTransitionCapturePolicy
@@ -167,12 +169,9 @@ constexpr DockWindowTransitionSurface ResolveDockWindowTransitionSurface(
 /**
  * @brief 使用静态窗口快照在应用窗口与 Dock 图标之间播放过渡。
  *
- * 普通桌面 Dock 最小化前仅捕获一次窗口帧，恢复时优先复用缓存帧，
- * 动画期间由 GPU 变换静态位图。抓取期间临时排除自身上层窗口，避免把
- * Dock 写入快照；神奇效果优先快照，其余效果可使用目标 HWND 的 DWM
- * 缩略图。该窗口不抢焦点且鼠标穿透，呈现期由宿主维护 Dock 遮挡层级。
- * 神奇还原也可复用正常前台窗口的低频后台快照，覆盖应用自身最小化入口；
- * 后台捕获不隐藏、激活或重排窗口，缺少可靠画面时仍回退系统缩略图。
+ * 优先直接变换 DWM 保留的窗口画面，恢复不要求此前完成一次最小化截图。
+ * 共享画面不可用时使用已有快照或公开 DWM 缩略图回退。抓取期间临时
+ * 排除自身上层窗口；呈现窗口不抢焦点且鼠标穿透，由宿主维护 Dock 层级。
  */
 class DockWindowTransition
 {
@@ -291,6 +290,13 @@ private:
     const CachedSnapshot* StoreSnapshot(HWND window, CachedSnapshot snapshot);
     bool CreateCompositionSnapshot(
         const CachedSnapshot& snapshot);
+    bool EnsureCompositionVisuals();
+    bool CreateSharedWindowImage();
+    bool UsesCompositionImage() const noexcept
+    {
+        return surface_ == DockWindowTransitionSurface::Snapshot ||
+            surface_ == DockWindowTransitionSurface::SharedWindow;
+    }
     bool CreateGenieStrips();
     bool ApplyGenieFrame(double progress, BYTE opacity);
     void ClearGenieStrips();
@@ -345,7 +351,10 @@ private:
     SIZE compositionSnapshotSize_{};
     bool compositionSnapshotActive_ = false;
     bool compositionTimelineActive_ = false;
-    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual2>> genieStrips_;
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual3>> genieStrips_;
+    snowdesktop::dock_thumbnail::SharedVisual compositionWindowImage_;
+    std::vector<snowdesktop::dock_thumbnail::SharedVisual> genieWindowImages_;
+    bool compositionSharedWindowActive_ = false;
     snowdesktop::dock_genie::Edge genieEdge_ =
         snowdesktop::dock_genie::Edge::Bottom;
     int effect_ = 1;
@@ -377,6 +386,7 @@ private:
     BYTE animationToOpacity_ = 0;
     bool awaitingRestoreVisibility_ = false;
     bool nativeTransitionsDisabled_ = false;
+    BOOL originalNativeTransitionsDisabled_ = FALSE;
     RestoreCallback restoreCallback_;
     std::unordered_map<HWND, RECT> lastVisibleRects_;
     std::unordered_map<HWND, CachedSnapshot>

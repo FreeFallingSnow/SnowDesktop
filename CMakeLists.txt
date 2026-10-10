@@ -2457,6 +2457,15 @@ if (BUILD_TESTING)
         LABELS integration core dock window)
     add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimizeHook)
     add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimize32)
+    snowdesktop_add_test(
+        SnowDesktopDockGenieRenderTests
+        dock_genie_render
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/dock/dock_genie_render_tests.cpp
+            src/dock/dock_window_transition.cpp src/ui/render/ui_animation_scheduler.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES d2d1 d3d11 dxgi dcomp dwmapi ole32 user32 gdi32
+        LABELS integration core dock window)
     add_test(NAME dock_external_minimize32
         COMMAND SnowDesktopDockExternalMinimizeTests
             "$<TARGET_FILE:SnowDesktopDockMinimizeHook>"
