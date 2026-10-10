@@ -614,6 +614,7 @@ bool DockWindowTransition::Start(
     }
 
     Cancel();
+    if (sourceCloaked_) return false;
     sourceWindow_ = sourceWindow;
     direction_ = direction;
     restoreCallback_ = std::move(restoreCallback);
@@ -779,23 +780,6 @@ bool DockWindowTransition::Start(
         return false;
     }
 
-    const BOOL disableTransitions = TRUE;
-    if (!snowdesktop::dock_thumbnail::ReadNativeTransitionPolicy(sourceWindow_, originalNativeTransitionsDisabled_))
-    {
-        Cancel();
-        nativeFallbackRequested_ = true;
-        return false;
-    }
-    if (FAILED(DwmSetWindowAttribute(
-            sourceWindow_,
-            DWMWA_TRANSITIONS_FORCEDISABLED,
-            &disableTransitions,
-            sizeof(disableTransitions))))
-    {
-        Cancel();
-        return false;
-    }
-    nativeTransitionsDisabled_ = true;
     presenting_ = true;
     if (presentationCallback_)
         presentationCallback_(hwnd_);
@@ -821,6 +805,28 @@ bool DockWindowTransition::Start(
     {
         Cancel();
         return false;
+    }
+
+    DWORD cloaked = 0;
+    if (FAILED(DwmGetWindowAttribute(sourceWindow_, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))))
+    {
+        Cancel();
+        return false;
+    }
+    // The animation owns only its temporary app-cloak bit. DWM continues to
+    // compose this window, so its shared image stays available. Avoid changing
+    // the source's setter-only native transition policy, which cannot be read
+    // reliably and may already have been disabled by the application.
+    if ((cloaked & DWM_CLOAKED_APP) == 0)
+    {
+        const BOOL cloak = TRUE;
+        if (FAILED(DwmSetWindowAttribute(sourceWindow_, DWMWA_CLOAK, &cloak, sizeof(cloak))))
+        {
+            Cancel();
+            return false;
+        }
+        sourceCloaked_ = true;
+        sourceCloakWindow_ = sourceWindow_;
     }
 
     animationStartTimeMs_ =
@@ -2056,7 +2062,7 @@ bool DockWindowTransition::OnAnimationFrame(
         now < minimizeCleanupDeadlineMs_)
     {
         // Posting SC_MINIMIZE acknowledges dispatch, not the application's
-        // state change. Keep native transitions disabled until that handoff
+        // state change. Keep the source cloaked until that handoff
         // completes; some browser/toolkit UI threads process it late.
         return true;
     }
@@ -2100,25 +2106,27 @@ ActivateRestoredWindowForHandoff()
     if (!restoreCallback_ || !sourceWindow_ ||
         !IsWindow(sourceWindow_) || IsIconic(sourceWindow_))
         return;
+    ReleaseSourceCloak();
     restoreCallback_(
         sourceWindow_,
         DockWindowRestoreTransitionPhase::ActivateRestored);
 }
 
-void DockWindowTransition::SetNativeTransitionsDisabled(
-    bool disabled)
+void DockWindowTransition::ReleaseSourceCloak()
 {
-    if (!sourceWindow_ || !IsWindow(sourceWindow_))
+    if (!sourceCloaked_) return;
+    if (sourceCloakWindow_ && IsWindow(sourceCloakWindow_))
     {
-        nativeTransitionsDisabled_ = false;
-        return;
+        const BOOL cloak = FALSE;
+        const HRESULT hr = DwmSetWindowAttribute(sourceCloakWindow_, DWMWA_CLOAK, &cloak, sizeof(cloak));
+        if (FAILED(hr))
+        {
+            if (diagnosticCallback_) diagnosticCallback_(L"Dock source uncloak failed");
+            return;
+        }
     }
-    const BOOL value = disabled ? TRUE : originalNativeTransitionsDisabled_;
-    DwmSetWindowAttribute(
-        sourceWindow_,
-        DWMWA_TRANSITIONS_FORCEDISABLED,
-        &value, sizeof(value));
-    nativeTransitionsDisabled_ = disabled;
+    sourceCloaked_ = false;
+    sourceCloakWindow_ = nullptr;
 }
 
 void DockWindowTransition::UnregisterThumbnail()
@@ -2154,7 +2162,7 @@ void DockWindowTransition::Finish()
         if (SUCCEEDED(compositionDevice_->Commit()))
             compositionDevice_->WaitForCommitCompletion();
     }
-    if (presenting_ || nativeTransitionsDisabled_) DwmFlush();
+    if (presenting_ || sourceCloaked_) DwmFlush();
     if (presenting_ && diagnosticCallback_)
         diagnosticCallback_(L"Dock taskbar phase: overlay-before-hide");
     if (transitionWindow)
@@ -2193,17 +2201,13 @@ void DockWindowTransition::Finish()
         compositionDevice_->Commit();
     compositionSnapshotActive_ = false;
     compositionTimelineActive_ = false;
-    if (nativeTransitionsDisabled_)
+    if (sourceCloaked_)
     {
-        // Keep native transitions disabled until DWM has committed the
-        // real minimized/restored state. Re-enabling too early lets the
-        // system animation trail the snapshot as a dark second window.
-        // Our composition commit does not acknowledge the native window's
-        // minimized/restored frame. Flush DWM as well before restoring policy.
+        // Release the real window only after retiring the composition scene
+        // and acknowledging the minimized/restored frame.
         DwmFlush();
-        SetNativeTransitionsDisabled(false);
+        ReleaseSourceCloak();
     }
-    originalNativeTransitionsDisabled_ = FALSE;
     sourceWindow_ = nullptr;
     surface_ =
         DockWindowTransitionSurface::None;

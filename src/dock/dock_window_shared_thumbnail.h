@@ -8,19 +8,6 @@
 
 namespace snowdesktop::dock_thumbnail
 {
-// DWMWA_TRANSITIONS_FORCEDISABLED is a setter-only DWM attribute. Query the
-// underlying window composition policy before temporarily changing it.
-inline bool ReadNativeTransitionPolicy(HWND window, BOOL& disabled) noexcept
-{
-    struct AttributeData { int attribute; void* data; SIZE_T size; };
-    using Query = BOOL(WINAPI*)(HWND, AttributeData*);
-    static const auto query = reinterpret_cast<Query>(GetProcAddress(
-        GetModuleHandleW(L"user32.dll"), "GetWindowCompositionAttribute"));
-    disabled = FALSE;
-    AttributeData data{3, &disabled, sizeof(disabled)};
-    return query && query(window, &data);
-}
-
 // Optional Windows 10/11 DWM ABI, illustrated by ADeltaX's shared-visual demo:
 // https://gist.github.com/ADeltaX/aea6aac248604d0cb7d423a61b06e247
 // Resolve only on the known platform family. Failure leaves the documented

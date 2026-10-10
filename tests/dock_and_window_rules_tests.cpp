@@ -7910,6 +7910,10 @@ int main(int argc, char** argv)
             // turns native foreground activation into an unbounded wait. The
             // injected request tests above do not exercise that Win32 hazard.
             {"src/app/dock/app_dock_window_tracking.cpp", "", "", {"AttachThreadInput("}},
+            // A source's transition policy is setter-only. The overlay may
+            // disable its own policy, but must never overwrite the app's one.
+            {"src/dock/dock_window_transition.cpp", "bool DockWindowTransition::Start(",
+             "HRESULT CreateSmoothStepAnimation(", {"DWMWA_TRANSITIONS_FORCEDISABLED"}},
             {"src/app/widgets/app_widget_placement.cpp", "", "", {"RebuildContainersAndItems("}},
             {"src/app/dock/app_floating_dock_lifecycle.cpp", "", "", {"SetWindowsHookExW("}},
             {"src/app/popup/app_floating_popup_window.cpp", "", "", {"SetWindowsHookExW(", "CloseFloatingDock("}},

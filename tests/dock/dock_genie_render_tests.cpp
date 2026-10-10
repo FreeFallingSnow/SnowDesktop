@@ -172,9 +172,6 @@ void CheckRetainedWindowImage()
                     if (std::wstring(message).find(L"Dock transition:") == 0) presentation = message;
                 });
                 const BOOL alreadyDisabled = TRUE;
-                BOOL priorPolicy = TRUE;
-                Check(snowdesktop::dock_thumbnail::ReadNativeTransitionPolicy(source, priorPolicy) && !priorPolicy,
-                    "native transition query reads the fixture's enabled default policy");
                 DwmSetWindowAttribute(source, DWMWA_TRANSITIONS_FORCEDISABLED,
                     &alreadyDisabled, sizeof(alreadyDisabled));
                 const RECT dock{-19720, -19720, -19656, -19656};
@@ -210,9 +207,12 @@ void CheckRetainedWindowImage()
                 };
                 if (restoring) drain();
                 Check(restores == 1 && !IsIconic(source), "restore handoff runs exactly once");
-                BOOL originalPolicy = FALSE;
-                Check(snowdesktop::dock_thumbnail::ReadNativeTransitionPolicy(source, originalPolicy) && originalPolicy,
-                    "animation preserves an already disabled native transition policy");
+                const auto appCloaked = [](HWND window) {
+                    DWORD flags = 0;
+                    return SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags))) &&
+                        (flags & DWM_CLOAKED_APP) != 0;
+                };
+                Check(!appCloaked(source), "restore handoff releases only the animation's temporary source cloak");
                 const DWORD preparationStart = GetTickCount();
                 const bool minimizing = transition.StartExternalMinimize(source, dock,
                     preparationStart + snowdesktop::dock_minimize::kRequestTimeoutMs);
@@ -221,13 +221,14 @@ void CheckRetainedWindowImage()
                 std::cout << "Shared Genie preparation: " << GetTickCount() - preparationStart << " ms\n";
                 if (minimizing)
                 {
+                    Check(appCloaked(source), "native minimize keeps the real source out of the composition scene");
                     ShowWindow(source, SW_MINIMIZE);
                     drain();
-                    Check(IsIconic(source), "minimize remains committed after scene retirement");
+                    Check(IsIconic(source) && !appCloaked(source), "minimize remains committed after scene retirement and source release");
                 }
                 // Model a toolkit UI thread which dispatches the native state
-                // change after the visual timeline. The policy must still be
-                // held then, otherwise a second native animation can flash.
+                // change after the visual timeline. The source must remain
+                // cloaked then, otherwise a second native animation can flash.
                 ShowWindow(source, SW_SHOWNOACTIVATE);
                 const BOOL enabled = FALSE;
                 DwmSetWindowAttribute(source, DWMWA_TRANSITIONS_FORCEDISABLED, &enabled, sizeof(enabled));
@@ -241,20 +242,30 @@ void CheckRetainedWindowImage()
                     Check(SetTimer(source, 1, delay, [](HWND window, UINT, UINT_PTR timer, DWORD) {
                         KillTimer(window, timer);
                         auto* state = reinterpret_cast<LateMinimize*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-                        BOOL disabled = FALSE;
+                        DWORD flags = 0;
                         state->retained = state->transition->IsActive() &&
-                            snowdesktop::dock_thumbnail::ReadNativeTransitionPolicy(window, disabled) && disabled;
+                            SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags))) &&
+                            (flags & DWM_CLOAKED_APP) != 0;
                         ShowWindow(window, SW_MINIMIZE);
                     }) != 0, "owned delayed state change timer is armed");
                     drain();
                     Check(late.retained && IsIconic(source),
                         "minimize timeline retains native suppression until the delayed application commits its minimized state");
-                    BOOL policy = TRUE;
-                    Check(snowdesktop::dock_thumbnail::ReadNativeTransitionPolicy(source, policy) && !policy,
-                        "delayed minimize restores the fixture's enabled policy after handoff");
+                    Check(!appCloaked(source), "delayed minimize releases its temporary source cloak after handoff");
                     KillTimer(source, 1);
                 }
                 SetWindowLongPtrW(source, GWLP_USERDATA, 0);
+                ShowWindow(source, SW_SHOWNOACTIVATE);
+                Check(transition.StartMinimize(source, dock), "owned cancel fixture starts its transition");
+                transition.Cancel();
+                Check(!appCloaked(source) && !IsIconic(source), "cancelling an animation immediately reveals its unminimized source");
+                const BOOL cloaked = TRUE;
+                DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloaked, sizeof(cloaked));
+                Check(transition.StartMinimize(source, dock), "a precloaked source retains a DWM composition image");
+                transition.Cancel();
+                Check(appCloaked(source), "animation does not release an application cloak it did not acquire");
+                const BOOL uncloaked = FALSE;
+                DwmSetWindowAttribute(source, DWMWA_CLOAK, &uncloaked, sizeof(uncloaked));
             }
         }
     }

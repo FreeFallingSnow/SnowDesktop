@@ -313,7 +313,7 @@ private:
     void Finish();
     void CompleteRestoreAfterRenderFailure();
     void ActivateRestoredWindowForHandoff();
-    void SetNativeTransitionsDisabled(bool disabled);
+    void ReleaseSourceCloak();
     void UnregisterThumbnail();
 
     HINSTANCE instance_ = nullptr;
@@ -388,8 +388,8 @@ private:
     BYTE animationFromOpacity_ = 255;
     BYTE animationToOpacity_ = 0;
     bool awaitingRestoreVisibility_ = false;
-    bool nativeTransitionsDisabled_ = false;
-    BOOL originalNativeTransitionsDisabled_ = FALSE;
+    bool sourceCloaked_ = false;
+    HWND sourceCloakWindow_ = nullptr;
     RestoreCallback restoreCallback_;
     std::unordered_map<HWND, RECT> lastVisibleRects_;
     std::unordered_map<HWND, CachedSnapshot>
