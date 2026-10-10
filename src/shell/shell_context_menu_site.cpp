@@ -173,10 +173,12 @@ bool ShellContextMenuSite::Initialize(IShellFolder* folder, HWND owner)
     }
     impl_->browser->SetView(impl_->view.Get());
 
+    // This hidden view supplies folder services and a real view window.
+    // It does not display file details or icons; menu icons are read separately.
     FOLDERSETTINGS settings{
-        FVM_DETAILS,
+        FVM_LIST,
         static_cast<FOLDERFLAGS>(
-            FWF_NOCLIENTEDGE | FWF_NOBROWSERVIEWSTATE),
+            FWF_NOCLIENTEDGE | FWF_NOBROWSERVIEWSTATE | FWF_NOICONS),
     };
     RECT bounds{ 0, 0, 1, 1 };
     if (FAILED(impl_->view->CreateViewWindow(
