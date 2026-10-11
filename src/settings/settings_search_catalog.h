@@ -13,7 +13,6 @@ struct StaticSearchDefinition
 };
 
 constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
-    {SettingsPage::QuickNavigation,"quickNav.view","quickNav.view","quickNav.description"},
     {SettingsPage::QuickNavigation,"quickNav.defaultEngine","quickNav.defaultEngine","quickNav.description"},
     {SettingsPage::AppearanceTheme,"quickNav.layout.expandedWidth","quickNav.layout.expandedWidth","quickNav.description"},
     {SettingsPage::AppearanceTheme,"quickNav.layout.collapsedWidth","quickNav.layout.collapsedWidth","quickNav.description"},

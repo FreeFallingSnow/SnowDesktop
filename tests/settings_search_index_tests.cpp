@@ -218,7 +218,9 @@ int main()
     Check(find("quickNav.layout.iconSize") != catalog.staticSettings.end() && find("quickNav.color.searchBg") != catalog.staticSettings.end(),"advanced navigation fields are indexed individually");
     Check(find("quickNav.layout.iconSize")->page == SettingsPage::AppearanceTheme && find("quickNav.color.searchBg")->page == SettingsPage::AppearanceTheme,
         "navigation dimensions and colors belong to the original appearance theme page");
-    Check(find("quickNav.prefixes")->page == SettingsPage::QuickNavigation && find("quickNav.defaultCollapsed") == catalog.staticSettings.end(),
+    Check(find("quickNav.prefixes")->page == SettingsPage::QuickNavigation &&
+            find("quickNav.defaultCollapsed") == catalog.staticSettings.end() &&
+            find("quickNav.view") == catalog.staticSettings.end(),
         "functional search settings stay on navigation and the obsolete opening preference is absent");
     Check(!find("general.advancedFeatures")->visible && find("statusBar.controlCenterPanel") == catalog.staticSettings.end(),"shared catalog honors advanced and system capability visibility");
     for (int style = 0; style <= 6; ++style)

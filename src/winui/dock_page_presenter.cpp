@@ -63,6 +63,7 @@ struct SettingsCard
     muxc::Border highlight{nullptr};
     muxc::StackPanel content{nullptr};
     muxc::TextBlock title{nullptr};
+    muxc::Expander section{nullptr};
 };
 
 enum class ContinuousField
@@ -170,10 +171,11 @@ struct ConfirmationGate
 void InitializeCard(
     SettingsCard& card,
     const mux::Style& style,
-    const muxc::StackPanel& page)
+    const muxc::StackPanel& page,
+    bool collapsible = false)
 {
     card.root = muxc::Border{};
-    if (style)
+    if (style && !collapsible)
         card.root.Style(style);
     card.content = muxc::StackPanel{};
     card.content.Spacing(12.0);
@@ -181,8 +183,21 @@ void InitializeCard(
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
-    card.content.Children().Append(card.title);
-    card.root.Child(card.content);
+    if (collapsible)
+    {
+        card.section = muxc::Expander{};
+        card.section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        card.section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        card.section.IsExpanded(false);
+        card.section.Header(card.title);
+        card.section.Content(card.content);
+        card.root.Child(card.section);
+    }
+    else
+    {
+        card.content.Children().Append(card.title);
+        card.root.Child(card.content);
+    }
     page.Children().Append(card.root);
 }
 
@@ -348,6 +363,7 @@ struct DockPagePresenter::Impl
     SettingsCard fullscreenCard;
     SettingsCard layoutCard;
     SettingsCard behaviorCard;
+    SettingsCard itemsCard;
     SettingsCard taskbarCard;
     SettingsCard taskbarAppearanceCard;
     std::unique_ptr<ThemeLibraryControls> taskbarThemes;
@@ -555,10 +571,11 @@ struct DockPagePresenter::Impl
         dockEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         enableCard.content.Children().Append(dockEnabledRow.root);
 
-        InitializeCard(layoutCard, cardStyle, dockRoot);
-        InitializeCard(edgeSwipeCard, cardStyle, dockRoot);
-        InitializeCard(fullscreenCard, cardStyle, dockRoot);
-        InitializeCard(behaviorCard, cardStyle, dockRoot);
+        InitializeCard(layoutCard, cardStyle, dockRoot, true);
+        InitializeCard(itemsCard, cardStyle, dockRoot, true);
+        InitializeCard(behaviorCard, cardStyle, dockRoot, true);
+        InitializeCard(edgeSwipeCard, cardStyle, dockRoot, true);
+        InitializeCard(fullscreenCard, cardStyle, dockRoot, true);
         positionCombo = NewCombo();
         layoutCombo = NewCombo();
         monitorScopeCombo = NewCombo();
@@ -674,19 +691,19 @@ struct DockPagePresenter::Impl
         edgeSwipeCard.content.Children().InsertAt(2, edgeRevealGestureRow.root);
         reserveScreenSpaceRow.Initialize(reserveScreenSpaceToggle);
         reserveScreenSpaceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        behaviorCard.content.Children().Append(reserveScreenSpaceRow.root);
-        behaviorCard.content.Children().Append(allowDesktopContentOverlapRow.root);
+        edgeSwipeCard.content.Children().Append(reserveScreenSpaceRow.root);
+        edgeSwipeCard.content.Children().Append(allowDesktopContentOverlapRow.root);
 
         suppressionStatus = muxc::InfoBar{};
         suppressionStatus.IsClosable(false);
         suppressionStatus.IsOpen(false);
-        behaviorCard.content.Children().Append(suppressionStatus);
-        behaviorCard.content.Children().Append(windowPreviewsRow.root);
+        edgeSwipeCard.content.Children().Append(suppressionStatus);
         behaviorCard.content.Children().Append(singleClickLaunchItemsRow.root);
-        behaviorCard.content.Children().Append(showWindowsButtonRow.root);
-        behaviorCard.content.Children().Append(showFrequentItemsRow.root);
-        behaviorCard.content.Children().Append(frequentItemCount.root);
-        for (auto* card : {&edgeSwipeCard, &fullscreenCard, &behaviorCard})
+        behaviorCard.content.Children().Append(windowPreviewsRow.root);
+        itemsCard.content.Children().Append(showWindowsButtonRow.root);
+        itemsCard.content.Children().Append(showFrequentItemsRow.root);
+        itemsCard.content.Children().Append(frequentItemCount.root);
+        for (auto* card : {&layoutCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
         {
             auto overlay = mux::Markup::XamlReader::Load(
                 LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="8" IsHitTestVisible="False" Opacity="0" />)")
@@ -695,7 +712,7 @@ struct DockPagePresenter::Impl
             overlay.Margin({-padding.Left, -padding.Top, -padding.Right, -padding.Bottom});
             muxc::Grid layer;
             card->root.Child(nullptr);
-            layer.Children().Append(card->content);
+            layer.Children().Append(card->section);
             layer.Children().Append(overlay);
             card->root.Child(layer);
             card->highlight = overlay;
@@ -1102,7 +1119,7 @@ struct DockPagePresenter::Impl
             if (highlightTimer) highlightTimer.Stop();
             if (cardHighlightAnimation) cardHighlightAnimation.Stop();
             cardHighlightAnimation = nullptr;
-            for (auto* card : {&edgeSwipeCard, &fullscreenCard, &behaviorCard})
+            for (auto* card : {&layoutCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
                 if (card->highlight) card->highlight.Opacity(0);
         }
         catch (...) {}
@@ -1115,7 +1132,7 @@ struct DockPagePresenter::Impl
         namespace animation = mux::Media::Animation;
         const bool animate = winrt::Windows::UI::ViewManagement::UISettings{}.AnimationsEnabled();
         cardHighlightAnimation = animation::Storyboard{};
-        for (auto* card : {&edgeSwipeCard, &fullscreenCard, &behaviorCard})
+        for (auto* card : {&layoutCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
         {
             if (!animate) { card->highlight.Opacity(1); continue; }
             animation::DoubleAnimation pulse;
@@ -1964,10 +1981,12 @@ struct DockPagePresenter::Impl
         fullscreenCard.root.IsHitTestVisible(dockEnabled);
         layoutCard.root.IsHitTestVisible(dockEnabled);
         behaviorCard.root.IsHitTestVisible(dockEnabled);
+        itemsCard.root.IsHitTestVisible(dockEnabled);
         edgeSwipeCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         fullscreenCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         layoutCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         behaviorCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
+        itemsCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         frequentItemCount.slider.IsEnabled(
             dockEnabled && showFrequentItemsToggle.IsOn());
         frequentItemCount.number.IsEnabled(
@@ -2137,6 +2156,8 @@ struct DockPagePresenter::Impl
     {
         card.title.Text(std::move(text));
         muxa::AutomationProperties::SetName(card.root, card.title.Text());
+        if (card.section)
+            muxa::AutomationProperties::SetName(card.section, card.title.Text());
     }
 
     void SetContinuousText(
@@ -2566,13 +2587,15 @@ struct DockPagePresenter::Impl
         SetCardText(enableCard,
             "app.settings.dock_bar", L"Dock and Taskbar");
         SetCardText(edgeSwipeCard,
-            "settings.dock.edgeSwipe", L"Floating Dock edge gesture");
+            "settings.dock.visibilityAndSummon", L"Visibility and summon");
         SetCardText(fullscreenCard,
             "settings.dock.fullscreenPolicy", L"Fullscreen protection");
         SetCardText(layoutCard,
             "settings.dock.layoutAndPosition", L"Position and layout");
         SetCardText(behaviorCard,
-            "settings.dock.itemsAndBehavior", L"Items and behavior");
+            "settings.dock.launchAndWindows", L"Launch and windows");
+        SetCardText(itemsCard,
+            "settings.dock.visibleItems", L"Visible items");
         SetCardText(taskbarCard,
             "settings.taskbar.behavior", L"Behavior");
         SetCardText(taskbarAppearanceCard,

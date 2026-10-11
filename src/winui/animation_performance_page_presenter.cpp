@@ -25,10 +25,11 @@ struct Card
     muxc::StackPanel content{nullptr};
     muxc::Grid header{nullptr};
     muxc::TextBlock title{nullptr};
-    void Initialize(const mux::Style& style, const muxc::StackPanel& parent)
+    void Initialize(const mux::Style& style, const muxc::StackPanel& parent,
+        bool collapsible = false)
     {
         root = muxc::Border{};
-        root.Style(style);
+        if (!collapsible) root.Style(style);
         content = muxc::StackPanel{};
         content.Spacing(16);
         header = muxc::Grid{};
@@ -44,8 +45,21 @@ struct Card
         title.TextWrapping(mux::TextWrapping::Wrap);
         title.VerticalAlignment(mux::VerticalAlignment::Center);
         header.Children().Append(title);
-        content.Children().Append(header);
-        root.Child(content);
+        if (collapsible)
+        {
+            muxc::Expander section;
+            section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+            section.IsExpanded(false);
+            section.Header(header);
+            section.Content(content);
+            root.Child(section);
+        }
+        else
+        {
+            content.Children().Append(header);
+            root.Child(content);
+        }
         parent.Children().Append(root);
     }
 };
@@ -99,7 +113,7 @@ struct AnimationPerformancePagePresenter::Impl
         root = muxc::StackPanel{};
         root.Spacing(8);
         generalCard.Initialize(style, root);
-        dockCard.Initialize(style, dockRoot);
+        dockCard.Initialize(style, dockRoot, true);
         performanceCard.Initialize(style, root);
         AddChoice(mode, generalCard, "mode", "animation.mode", 0,
             {L10N_KEY("settings.animation.option.followSystem"),

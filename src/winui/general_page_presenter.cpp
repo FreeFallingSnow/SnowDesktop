@@ -47,18 +47,32 @@ struct SettingsCard
 void InitializeCard(
     SettingsCard& card,
     const mux::Style& style,
-    const muxc::StackPanel& page)
+    const muxc::StackPanel& page,
+    bool collapsible = false)
 {
     card.root = muxc::Border{};
-    card.root.Style(style);
+    if (!collapsible) card.root.Style(style);
     card.content = muxc::StackPanel{};
     card.content.Spacing(12.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
-    card.content.Children().Append(card.title);
-    card.root.Child(card.content);
+    if (collapsible)
+    {
+        muxc::Expander section;
+        section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        section.IsExpanded(false);
+        section.Header(card.title);
+        section.Content(card.content);
+        card.root.Child(section);
+    }
+    else
+    {
+        card.content.Children().Append(card.title);
+        card.root.Child(card.content);
+    }
     page.Children().Append(card.root);
 }
 
@@ -525,7 +539,7 @@ struct GeneralPagePresenter::Impl
         desktopPassthroughHotkeyRow.Initialize(desktopPassthroughHotkey);
         desktopPassthroughCard.content.Children().Append(
             desktopPassthroughHotkeyRow.row.root);
-        InitializeCard(floatingDockCard, cardStyle, dockShortcutRoot);
+        InitializeCard(floatingDockCard, cardStyle, dockShortcutRoot, true);
         floatingDockToggle = muxc::ToggleSwitch{};
         floatingDockToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);

@@ -714,8 +714,20 @@ struct WidgetsPagePresenter::Impl
         ApplyAccentButtonStyle(publishWorkspaceButton);
         publishWorkspaceButton.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
-        developerPublishCard.content.Children().Append(
-            publishWorkspaceButton);
+        publishWorkspaceButton.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid publishHeading;
+        publishHeading.ColumnSpacing(16);
+        muxc::ColumnDefinition publishTitleColumn, publishActionColumn;
+        publishTitleColumn.Width({1, mux::GridUnitType::Star});
+        publishActionColumn.Width({1, mux::GridUnitType::Auto});
+        publishHeading.ColumnDefinitions().Append(publishTitleColumn);
+        publishHeading.ColumnDefinitions().Append(publishActionColumn);
+        developerPublishCard.content.Children().RemoveAt(0);
+        developerPublishCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
+        publishHeading.Children().Append(developerPublishCard.title);
+        muxc::Grid::SetColumn(publishWorkspaceButton, 1);
+        publishHeading.Children().Append(publishWorkspaceButton);
+        developerPublishCard.content.Children().InsertAt(0, publishHeading);
 
         InitializeCard(developerReferenceCard, cardStyle, developerRoot);
         iconReferenceTitle = muxc::TextBlock{};

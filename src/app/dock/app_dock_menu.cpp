@@ -20,10 +20,12 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     HMENU menu = CreatePopupMenu();
     HMENU positionMenu = CreatePopupMenu();
     HMENU layoutMenu = CreatePopupMenu();
-    if (!menu || !positionMenu || !layoutMenu)
+    HMENU quickMenu = CreatePopupMenu();
+    if (!menu || !positionMenu || !layoutMenu || !quickMenu)
     {
         if (positionMenu) DestroyMenu(positionMenu);
         if (layoutMenu) DestroyMenu(layoutMenu);
+        if (quickMenu) DestroyMenu(quickMenu);
         if (menu) DestroyMenu(menu);
         return nullptr;
     }
@@ -46,7 +48,7 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
 
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(positionMenu), _LW("app.dock.position"));
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(quickMenu), _LW("app.dock.quick_operations"));
     auto toggleLabel = [](const wchar_t* title, bool enabled) {
         std::wstring label = title;
         label += L"\t";
@@ -58,7 +60,20 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     const std::wstring frequentLabel = toggleLabel(
         _LW("app.dock.show_frequent"),
         dockSettings_.showFrequentItems);
-    AppendMenuW(menu, MF_STRING,
+    const auto addToggle = [&](UINT command, const wchar_t* title, bool enabled,
+                               const wchar_t* glyph) {
+        const auto label = toggleLabel(title, enabled);
+        AppendMenuW(quickMenu, MF_STRING, command, label.c_str());
+        SetMenuItemIcon(quickMenu, command, glyph, MenuIconFont::FluentRegular);
+    };
+    addToggle(kContextDockSingleClickLaunch, _LW("app.dock.single_click_launch"),
+        dockSettings_.singleClickLaunchItems, L"\uE445"); // cursor_click_20
+    addToggle(kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
+        dockSettings_.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
+    addToggle(kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
+        dockSettings_.showWindowPreviews, L"\uF8B5"); // window_20
+    AppendMenuW(quickMenu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(quickMenu, MF_STRING,
         kContextDockShowFrequentItems, frequentLabel.c_str());
 
     const UINT keepToggleCommand =
@@ -68,7 +83,7 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     const std::wstring keepLabel = toggleLabel(
         _LW("app.dock.keep_when_hidden"),
         dockSettings_.keepWhenDesktopHidden);
-    AppendMenuW(menu, MF_STRING,
+    AppendMenuW(quickMenu, MF_STRING,
         keepToggleCommand, keepLabel.c_str());
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -81,12 +96,13 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
 
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(positionMenu), L"");
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"");
-    SetMenuItemIcon(menu, kContextDockShowFrequentItems,
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(quickMenu), L"\uF6A9", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(quickMenu, kContextDockShowFrequentItems,
         dockSettings_.showFrequentItems
             ? snowdesktop::menu_fluent_glyphs::kShowFrequent
             : snowdesktop::menu_fluent_glyphs::kHideFrequent,
         MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, keepToggleCommand,
+    SetMenuItemIcon(quickMenu, keepToggleCommand,
         snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden,
         MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextDockDetailedSettings, L"");
@@ -156,6 +172,18 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         updated.showFrequentItems = !updated.showFrequentItems;
         layoutChanged = true;
         break;
+    case kContextDockSingleClickLaunch:
+        updated.singleClickLaunchItems = !updated.singleClickLaunchItems;
+        break;
+    case kContextDockShowOnlyWhenSummoned:
+        updated.showOnlyWhenSummoned = !updated.showOnlyWhenSummoned;
+        layoutChanged = true;
+        break;
+    case kContextDockWindowPreviews:
+        updated.showWindowPreviews = !updated.showWindowPreviews;
+        if (!updated.showWindowPreviews)
+            HideDockWindowPreview();
+        break;
     case kContextDockKeepWhenHiddenOn:
         updated.keepWhenDesktopHidden = true;
         break;
@@ -190,6 +218,7 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         (void)settingsController_->SynchronizeDock(dockSettings_);
     if (layoutChanged)
     {
+        ApplyFloatingDockHotkey();
         UpdateLayoutWorkArea();
         LayoutItems();
         InvalidateDragStaticScene();
