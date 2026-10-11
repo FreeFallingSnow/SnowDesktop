@@ -197,6 +197,9 @@ int main()
     SettingsSearchIndexInput catalog;
     PopulateSettingsSearchCatalog(catalog,[](std::string_view key) {return std::wstring(key.begin(),key.end());},false,false);
     const auto find = [&](std::string_view id) {return std::find_if(catalog.staticSettings.begin(),catalog.staticSettings.end(),[&](const auto& descriptor) {return descriptor.focusId == id;});};
+    const auto seconds = find("statusBar.clockShowSeconds");
+    Check(seconds != catalog.staticSettings.end() && seconds->page == SettingsPage::StatusBar,
+        "clock seconds search opens the Status Bar page with its stable focus target");
     Check(find("personalization.savedThemes")->page == SettingsPage::ThemeManager,
         "theme management search targets the independent page");
     for (const auto focus : {"desktop.softwareDesktopHotkey", "desktop.softwareDesktopHotkey.hotkey"})

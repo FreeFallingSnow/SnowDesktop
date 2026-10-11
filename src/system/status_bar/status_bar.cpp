@@ -517,10 +517,9 @@ struct StatusBar::Impl
             auto& snapshot = dataSnapshot;
             if (!trayOnly || !snapshotReady)
             {
-                wchar_t time[64]{}, date[96]{};
-                GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, nullptr, nullptr, time, 64);
-                GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, nullptr, nullptr, date, 96, nullptr);
-                snapshot.clock = std::wstring(date) + L"   " + time;
+                SYSTEMTIME localTime{};
+                GetLocalTime(&localTime);
+                snapshot.clock = StatusBarClockText(localTime, owner.settings.clockShowSeconds);
                 snapshot.cpu = owner.data->Cpu(); snapshot.memory = owner.data->Memory();
                 snapshot.gpu = owner.data->Gpu(true); snapshot.traffic = owner.data->NetworkTraffic();
                 snapshot.network = owner.data->NetworkStatus(); snapshot.audio = owner.data->AudioOutputVolume();

@@ -2584,5 +2584,6 @@
   "settings.dock.fullscreenDefaultPolicy": "默认保护",
   "app.settings.fan_title_font_size": "扇形展开标题字号",
   "settings.dock.fullscreenExceptionManage": "管理应用例外",
-  "app.dock.create_mapping_action": "创建映射"
+  "app.dock.create_mapping_action": "创建映射",
+  "statusBar.clockShowSeconds": "时间显示秒"
 }

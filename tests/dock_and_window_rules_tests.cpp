@@ -1788,6 +1788,32 @@ void CheckStatusBarFullscreenDockSession()
 int main(int argc, char** argv)
 {
     {
+        SYSTEMTIME time{};
+        time.wYear = 2026; time.wMonth = 10; time.wDay = 11;
+        time.wHour = 13; time.wMinute = 5; time.wSecond = 7;
+        for (const auto* locale : {L"de-DE", L"en-US"})
+        {
+            const auto minutes = snowdesktop::StatusBarClockText(time, false, locale);
+            const auto seconds = snowdesktop::StatusBarClockText(time, true, locale);
+            Check(minutes.find(L":05") != std::wstring::npos && minutes.find(L":07") == std::wstring::npos &&
+                seconds.find(L":05:07") != std::wstring::npos,
+                "clock seconds follow the preference in both 24-hour and 12-hour locales");
+            Check(minutes.substr(0, minutes.find(L"   ")) == seconds.substr(0, seconds.find(L"   ")),
+                "showing seconds preserves the localized date");
+            Check(snowdesktop::StatusBarClockDisplay(seconds, false) == seconds &&
+                snowdesktop::StatusBarClockDisplay(seconds, true).find(L":05:07") != std::wstring::npos,
+                "independent and merged clocks retain seconds in one-line and two-line layouts");
+            time.wSecond = 8;
+            Check(snowdesktop::StatusBarClockText(time, false, locale) == minutes &&
+                snowdesktop::StatusBarClockText(time, true, locale).find(L":05:08") != std::wstring::npos,
+                "a second tick changes the seconds clock while the minute clock stays stable");
+            time.wSecond = 7;
+        }
+        time.wHour = 0; time.wMinute = 0; time.wSecond = 0;
+        Check(snowdesktop::StatusBarClockText(time, true, L"de-DE").ends_with(L"00:00:00"),
+            "midnight retains zero-padded minutes and seconds");
+    }
+    {
         namespace presence = snowdesktop::dock_running_animation;
         presence::Presence item;
         item.SetVisible(true, 1000.0, true);

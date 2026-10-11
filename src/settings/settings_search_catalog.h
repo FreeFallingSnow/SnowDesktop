@@ -130,6 +130,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::StatusBar, "statusBar.menu", "statusBar.menu", "statusBar.leftItems"},
     {SettingsPage::StatusBar, "statusBar.quickSearch", "statusBar.quickSearch", "statusBar.leftItems"},
     {SettingsPage::StatusBar, "statusBar.inputMethod", "statusBar.inputMethod", "statusBar.information"},
+    {SettingsPage::StatusBar, "statusBar.clockShowSeconds", "statusBar.clockShowSeconds", "statusBar.information"},
     {SettingsPage::StatusBar, "statusBar.cpu", "statusBar.cpu", "statusBar.information"},
     {SettingsPage::StatusBar, "statusBar.memory", "statusBar.memory", "statusBar.information"},
     {SettingsPage::StatusBar, "statusBar.gpu", "statusBar.gpu", "statusBar.information"},

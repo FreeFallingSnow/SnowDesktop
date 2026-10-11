@@ -2584,5 +2584,6 @@
   "settings.dock.fullscreenDefaultPolicy": "Protección predeterminada",
   "app.settings.fan_title_font_size": "Tamaño de fuente de los títulos del despliegue en abanico",
   "settings.dock.fullscreenExceptionManage": "Administrar excepciones de aplicaciones",
-  "app.dock.create_mapping_action": "Crear asignación"
+  "app.dock.create_mapping_action": "Crear asignación",
+  "statusBar.clockShowSeconds": "Mostrar segundos en la hora"
 }

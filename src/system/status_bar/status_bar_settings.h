@@ -36,6 +36,7 @@ struct StatusBarSettings
     StatusBarAppearanceRule legacyShellUi, legacyVisibleWindow;
     bool menu = true, quickSearch = true, taskView = true;
     bool clockSystemPanel = false, controlCenterSystemPanel = false;
+    bool clockShowSeconds = false;
     bool clock = true, tray = true, network = true, volume = true, battery = true;
     bool controlCenter = true;
     bool inputMethod = true;
@@ -72,6 +73,7 @@ template<class Visitor> void VisitStatusBarFlags(Visitor visit)
     visit("taskView", &StatusBarSettings::taskView);
     visit("inputMethod", &StatusBarSettings::inputMethod);
     visit("clockSystemPanel", &StatusBarSettings::clockSystemPanel);
+    visit("clockShowSeconds", &StatusBarSettings::clockShowSeconds);
     visit("controlCenterSystemPanel", &StatusBarSettings::controlCenterSystemPanel);
     visit("clock", &StatusBarSettings::clock);
     visit("tray", &StatusBarSettings::tray);
