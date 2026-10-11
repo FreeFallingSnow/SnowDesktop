@@ -1274,6 +1274,14 @@ if (BUILD_TESTING)
         LABELS core contract security)
 
     snowdesktop_add_test(
+        SnowDesktopInjectableRuntimeCacheTests
+        injectable_runtime_cache
+        SOURCES tests/platform/injectable_runtime_cache_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES bcrypt
+        LABELS core contract deployment)
+
+    snowdesktop_add_test(
         SnowDesktopShellOverlayWindowTests
         shell_overlay_window
         NATIVE_WINDOW_COMPATIBILITY

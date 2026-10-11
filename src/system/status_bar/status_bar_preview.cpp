@@ -68,7 +68,7 @@ StatusBarSnapshot Fixture()
     data.network.emplace(); data.network->available = true; data.network->connectivity = "internet"; data.network->transport = "wifi";
     data.wifi = WifiFixture(true, 86);
     data.notifications.quiet = false; data.notifications.unreadCount = 0;
-    data.audio.emplace(); data.audio->available = true; data.audio->volume = .45;
+    data.audio.emplace(); data.audio->available = true; data.audio->volume = 1;
     data.power.emplace(); data.power->available = true; data.power->batteryPercent = 58;
     // Explicit fixture icons: never enumerate applications or connect a Hook.
     const SHSTOCKICONID icons[]{SIID_SHIELD, SIID_WORLD};
@@ -227,6 +227,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
         Require(fullWidth >= static_cast<int>(640 * dpiScale), "status bar preview canvas is too narrow");
         std::vector<StatusBarItem> infoItems;
         std::vector<std::uint32_t> normalPixels;
+        std::optional<RECT> fullSpeakerInk;
         widget_preview::Wallpaper stage;
         if (!request.backgroundImage.empty())
         {
@@ -239,9 +240,12 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
         if (request.transparent || request.contentOnly)
         { stage.width = request.canvasWidth; stage.height = request.canvasHeight; stage.pixels.resize(static_cast<std::size_t>(stage.width) * stage.height); }
         Require(!stage.pixels.empty(), "cannot create status bar preview background");
-        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "charging-low", "low-battery", "wifi-off", "offline", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged", "input-icon"})
+        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "charging-low", "low-battery", "wifi-off", "offline", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged", "input-icon", "volume-low", "volume-zero", "volume-muted"})
         {
             auto data = source; StatusBarSettings settings;
+            if (preset == "volume-low") data.audio->volume = .45;
+            if (preset == "volume-zero") data.audio->volume = 0;
+            if (preset == "volume-muted") data.audio->muted = true;
             settings.cpu = settings.memory = settings.gpu = settings.traffic =
                 preset == "information" || preset == "updated" || preset == "narrow" || preset == "merged";
             settings.pinnedTrayItems = {"bar-preview-0", "bar-preview-1"};
@@ -319,7 +323,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             Require(SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "unchanged samples would repaint status bar content");
             if (preset == "normal")
             {
-                identical.audio->volume = .49;
+                identical.audio->volume = .9;
                 Require(SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "tooltip-only changes would repaint the bar");
                 StatusBarTooltipState tooltip;
                 Require(tooltip.Enter("controlCenter/1", Item(items, "controlCenter").controlTips[1], {}, 100, 400), "tooltip did not enter its target");
@@ -457,7 +461,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     "an unknown notification count must not appear as a confirmed empty notification center");
                 Require(control.controlTips[0] != control.controlTips[1] && control.controlTips[1] != control.controlTips[2],
                     "control center glyphs must expose separate network, volume and battery tips");
-                identical.audio->volume = .9;
+                identical.audio->volume = .45;
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "volume level must change its speaker glyph");
             }
             std::optional<std::size_t> hover;
@@ -633,10 +637,10 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             }
             if (preset == "normal" || preset == "information" || preset == "scaled" || preset == "merged")
             {
-                // Check pixels from the production renderer, independently of
-                // font metrics. The old line-box centering left Wi-Fi/search
-                // visibly lower than the battery and text at these scales.
-                const auto centeredInk = [&](RECT bounds, std::string_view name) {
+                // Optical text alignment intentionally differs from geometric
+                // centering. Icons still use the cell center; cap/digit text
+                // shares a slightly lower baseline, regardless of its content.
+                const auto centeredInk = [&](RECT bounds, std::string_view name, bool information = false) {
                     if (IsRectEmpty(&bounds)) return;
                     int minX = request.canvasWidth, minY = request.canvasHeight, maxX = -1, maxY = -1;
                     for (int py = top + bounds.top + 2; py < top + bounds.bottom - 2; ++py)
@@ -651,14 +655,20 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     Require(maxX >= minX && maxY >= minY, "status bar alignment fixture has no visible ink");
                     const float dx = static_cast<float>(minX + maxX + 1 - 2 * left - bounds.left - bounds.right) / 2.f;
                     const float dy = static_cast<float>(minY + maxY + 1 - 2 * top - bounds.top - bounds.bottom) / 2.f;
-                    if (std::abs(dx) > 1.f || std::abs(dy) > 1.f)
+                    // CJK labels and descenders extend beyond the shared cap
+                    // reference; check their baseline through the numeric
+                    // clock/CPU/GPU samples instead of demanding equal boxes.
+                    const bool referenceText = name == "clock" || name == "cpu" || name == "gpu";
+                    const float expectedY = information ? scale : 0;
+                    if (std::abs(dx) > 1.f || ((!information || referenceText) && std::abs(dy - expectedY) > 1.f))
                         throw std::runtime_error("status bar visible ink is not centered: " + std::string(name) +
                             " dx=" + std::to_string(dx) + " dy=" + std::to_string(dy));
                 };
                 for (const auto& item : items)
                 {
                     if (item.icon || item.key == "controlCenter") continue;
-                    centeredInk(item.bounds, item.key);
+                    centeredInk(item.bounds, item.key, item.key == "clock" || item.key == "cpu" ||
+                        item.key == "memory" || item.key == "gpu" || item.key == "traffic");
                 }
                 const auto& controls = Item(items, "controlCenter");
                 for (int part = 0; part < 3; ++part)
@@ -669,6 +679,27 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     bounds.right = bounds.left + static_cast<LONG>(std::lround(28.f * scale));
                     centeredInk(bounds, part == 0 ? "network" : part == 1 ? "speaker" : "battery");
                 }
+            }
+            if (preset == "normal" || preset == "volume-low" || preset == "volume-zero" || preset == "volume-muted")
+            {
+                const auto& control = Item(items, "controlCenter").bounds;
+                const int speakerLeft = left + control.left + static_cast<int>(std::lround(28.f * scale));
+                RECT ink{request.canvasWidth, request.canvasHeight, -1, -1};
+                for (int py = top + control.top + 2; py < top + control.bottom - 2; ++py)
+                    for (int px = speakerLeft + 1; px < speakerLeft + static_cast<int>(std::lround(28.f * scale)) - 1; ++px)
+                    {
+                        const auto pixel = pixels[static_cast<std::size_t>(py) * request.canvasWidth + px];
+                        const int r = (pixel >> 16) & 255, g = (pixel >> 8) & 255, b = pixel & 255;
+                        if ((pixel >> 24) > 128 && std::abs(r - g) < 20 && std::abs(g - b) < 20 &&
+                            (appearance.contentTheme == 1 ? r < 150 : r > 140))
+                        { ink.left = std::min(ink.left, static_cast<LONG>(px)); ink.top = std::min(ink.top, static_cast<LONG>(py));
+                          ink.right = std::max(ink.right, static_cast<LONG>(px)); ink.bottom = std::max(ink.bottom, static_cast<LONG>(py)); }
+                    }
+                Require(ink.right >= ink.left && ink.bottom >= ink.top, "volume fixture has no speaker pixels");
+                if (preset == "normal") fullSpeakerInk = ink;
+                else Require(fullSpeakerInk && std::abs(ink.left - fullSpeakerInk->left) <= 1 &&
+                    std::abs(ink.top - fullSpeakerInk->top) <= 1 && std::abs(ink.bottom - fullSpeakerInk->bottom) <= 1,
+                    "the speaker body must retain its full-volume position when waves change or audio is muted");
             }
             if (preset == "full" || preset == "charging")
             {

@@ -129,6 +129,14 @@ struct NativeTooltip::Impl
     std::shared_ptr<AccessibleState> accessible = std::make_shared<AccessibleState>();
     ComPtr<IRawElementProviderSimple> provider;
 
+    LONG SurfaceInset() const
+    {
+        // Edge-light halos and antialiasing extend outside the panel. The
+        // popup surface must retain that coverage on all four sides.
+        return static_cast<LONG>(std::ceil(std::max(3.f,
+            appearance.widgetBorderWidth * static_cast<float>(dpi) / 192.f + 1.f)));
+    }
+
     bool EnsureWindow()
     {
         if (window) return true;
@@ -230,7 +238,6 @@ struct NativeTooltip::Impl
         ComPtr<ID2D1DeviceContext> context;
         if (FAILED(result = surface->BeginDraw(nullptr, IID_PPV_ARGS(&context), &origin))) return result;
         const float scale = static_cast<float>(dpi) / 96.f;
-        const float pixelWidth = static_cast<float>(w), pixelHeight = static_cast<float>(h);
         const auto translation = D2D1::Matrix3x2F::Translation(static_cast<float>(origin.x), static_cast<float>(origin.y));
         context->SetDpi(96, 96); context->SetTransform(translation);
         context->Clear(D2D1::ColorF(0, 0.f));
@@ -240,28 +247,38 @@ struct NativeTooltip::Impl
         result = context->CreateSolidColorBrush(D2D1::ColorF(0), &brush);
         if (SUCCEEDED(result))
         {
-            const RECT frame{0, 0, static_cast<LONG>(w), static_cast<LONG>(h)};
+            const LONG inset = SurfaceInset();
+            const RECT frame{inset, inset, static_cast<LONG>(w) - inset, static_cast<LONG>(h) - inset};
             auto tooltipAppearance = appearance;
-            tooltipAppearance.cornerRadius = NativeTooltipCornerRadius(appearance, pixelWidth, pixelHeight, scale) / scale;
+            tooltipAppearance.cornerRadius = NativeTooltipCornerRadius(appearance,
+                static_cast<float>(frame.right - frame.left), static_cast<float>(frame.bottom - frame.top), scale) / scale;
             if (!highContrast && drawBackground) drawBackground(context.Get(), frame, tooltipAppearance, scale);
             else
             {
                 const float radius = tooltipAppearance.cornerRadius * scale;
-                const auto shape = D2D1::RoundedRect(D2D1::RectF(.5f, .5f, pixelWidth - .5f, pixelHeight - .5f), radius, radius);
+                const float stroke = highContrast ? 1.f : appearance.widgetBorderWidth * scale;
+                const auto panel = D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
+                    static_cast<float>(frame.right), static_cast<float>(frame.bottom));
+                const auto shape = D2D1::RoundedRect(panel, radius, radius);
                 brush->SetColor(highContrast ? SystemColor(COLOR_INFOBK) : D2D1::ColorF(
                     appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha));
                 if (highContrast || !DrawPanelGradient(context.Get(), shape.rect, radius, appearance.panelGradient))
                     context->FillRoundedRectangle(shape, brush.Get());
                 brush->SetColor(highContrast ? SystemColor(COLOR_INFOTEXT) : D2D1::ColorF(
                     appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha));
-                context->DrawRoundedRectangle(shape, brush.Get(), highContrast ? 1.f : appearance.widgetBorderWidth * scale);
+                const float halfStroke = stroke / 2;
+                context->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(panel.left + halfStroke,
+                    panel.top + halfStroke, panel.right - halfStroke, panel.bottom - halfStroke),
+                    std::max(0.f, radius - halfStroke), std::max(0.f, radius - halfStroke)), brush.Get(), stroke);
             }
             // Background callbacks share application brushes and can alter the
             // context. Restore the tooltip text contract before drawing it.
             context->SetDpi(96, 96);
             context->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale) * translation);
             context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
-            DrawNativeTooltipText(context.Get(), D2D1::RectF(0, 0, measured.width, measured.height), measured, appearance);
+            const float offset = static_cast<float>(inset) / scale;
+            DrawNativeTooltipText(context.Get(), D2D1::RectF(offset, offset,
+                offset + measured.width, offset + measured.height), measured, appearance);
         }
         context.Reset();
         const HRESULT ended = surface->EndDraw();
@@ -308,7 +325,8 @@ struct NativeTooltip::Impl
             contentDirty = false; paintDirty = true;
         }
         auto next = PlaceNativeTooltip(anchor,
-            {static_cast<LONG>(std::ceil(measured.width * scale)), static_cast<LONG>(std::ceil(measured.height * scale))},
+            {static_cast<LONG>(std::ceil(measured.width * scale)) + 2 * SurfaceInset(),
+                static_cast<LONG>(std::ceil(measured.height * scale)) + 2 * SurfaceInset()},
             work, placement, static_cast<LONG>(std::ceil(6 * scale)), static_cast<LONG>(std::ceil(4 * scale)));
         if (dragFeedback)
         {
@@ -331,7 +349,8 @@ struct NativeTooltip::Impl
         {
             if (!backdrop.IsAvailable()) backdrop.InitializePopup(window, true, false);
             backdrop.Reattach(window); backdrop.BeginFrame(true);
-            const RECT frame{0, 0, bounds.right - bounds.left, bounds.bottom - bounds.top};
+            const LONG inset = SurfaceInset();
+            const RECT frame{inset, inset, bounds.right - bounds.left - inset, bounds.bottom - bounds.top - inset};
             backdrop.AddPanel(frame, NativeTooltipCornerRadius(appearance,
                 static_cast<float>(frame.right - frame.left), static_cast<float>(frame.bottom - frame.top), scale),
                 appearance.glassBlurRadius * scale, reinterpret_cast<std::uintptr_t>(this));

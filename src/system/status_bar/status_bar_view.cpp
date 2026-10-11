@@ -76,25 +76,39 @@ bool DrawNotificationBell(ID2D1RenderTarget* context, ID2D1SolidColorBrush* brus
 }
 
 void DrawCenteredBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, IDWriteTextFormat* format,
-    std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush)
+    std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush, bool informationBaseline = false)
 {
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(factory->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format,
             bounds.right - bounds.left, bounds.bottom - bounds.top, &layout))) return;
-    // Line boxes include ascender/descender space and glyph side bearings.
-    // Center the shaped outline rather than moving the button or changing it
-    // with fixed pixel offsets that break at fractional display scaling.
     DWRITE_OVERHANG_METRICS ink{};
     const bool measured = SUCCEEDED(layout->GetOverhangMetrics(&ink));
+    float vertical = measured ? (ink.top - ink.bottom) / 2 : 0;
+    if (informationBaseline)
+    {
+        // Dates and resource labels share a cap/digit baseline. Re-centering
+        // every string moves that baseline when a descender or CJK label is
+        // present. A small optical descent balances the smaller text against
+        // the surrounding 18-DIP icons; it scales with the font, not pixels.
+        const std::wstring_view reference = value.find(L'\n') == std::wstring_view::npos ?
+            L"H0123456789" : L"H0123456789\nH0123456789";
+        ComPtr<IDWriteTextLayout> baseline;
+        DWRITE_OVERHANG_METRICS referenceInk{};
+        if (SUCCEEDED(factory->CreateTextLayout(reference.data(), static_cast<UINT32>(reference.size()), format,
+                bounds.right - bounds.left, bounds.bottom - bounds.top, &baseline)) &&
+            SUCCEEDED(baseline->GetOverhangMetrics(&referenceInk)))
+            vertical = (referenceInk.top - referenceInk.bottom) / 2;
+        vertical += format->GetFontSize() / 12.f;
+    }
     const auto origin = D2D1::Point2F(bounds.left + (measured ? (ink.left - ink.right) / 2 : 0),
-        bounds.top + (measured ? (ink.top - ink.bottom) / 2 : 0));
+        bounds.top + vertical);
     context->PushAxisAlignedClip(bounds, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
     context->DrawTextLayout(origin, layout.Get(), brush);
     context->PopAxisAlignedClip();
 }
 
 bool DrawCenteredBarGlyph(ID2D1RenderTarget* context, IDWriteFontFace* face, std::wstring_view value,
-    float size, D2D1_RECT_F bounds, ID2D1Brush* brush)
+    float size, D2D1_RECT_F bounds, ID2D1Brush* brush, std::wstring_view reference = {})
 {
     if (!face || value.empty()) return false;
     UINT32 code = static_cast<UINT32>(value.front());
@@ -111,6 +125,23 @@ bool DrawCenteredBarGlyph(ID2D1RenderTarget* context, IDWriteFontFace* face, std
         FAILED(sink->Close())) return false;
     D2D1_RECT_F ink{};
     if (FAILED(geometry->GetBounds(nullptr, &ink)) || ink.right <= ink.left || ink.bottom <= ink.top) return false;
+    if (reference.size() == 1 && reference != value)
+    {
+        // All volume states retain the full-volume icon's origin. Centering
+        // a quieter state's shorter waves pushes the speaker body right.
+        const UINT32 referenceCode = static_cast<UINT32>(reference.front());
+        UINT16 referenceGlyph = 0;
+        ComPtr<ID2D1PathGeometry> referenceGeometry;
+        ComPtr<ID2D1GeometrySink> referenceSink;
+        D2D1_RECT_F referenceInk{};
+        if (SUCCEEDED(face->GetGlyphIndices(&referenceCode, 1, &referenceGlyph)) && referenceGlyph &&
+            SUCCEEDED(factory->CreatePathGeometry(&referenceGeometry)) &&
+            SUCCEEDED(referenceGeometry->Open(&referenceSink)) &&
+            SUCCEEDED(face->GetGlyphRunOutline(size, &referenceGlyph, nullptr, nullptr, 1, FALSE, FALSE, referenceSink.Get())) &&
+            SUCCEEDED(referenceSink->Close()) && SUCCEEDED(referenceGeometry->GetBounds(nullptr, &referenceInk)) &&
+            referenceInk.right > referenceInk.left && referenceInk.bottom > referenceInk.top)
+            ink = referenceInk;
+    }
     // The icon font's conservative glyph metrics can differ from its actual
     // paths. Draw those unchanged paths at their measured center, just like
     // the SVG bell and battery, with no font-baseline or hinting displacement.
@@ -340,8 +371,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             SUCCEEDED(family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
                 DWRITE_FONT_STYLE_NORMAL, &font))) font->CreateFontFace(&iconFace);
     }
-    const auto drawGlyph = [&](std::wstring_view glyph, IDWriteTextFormat* glyphFormat, D2D1_RECT_F bounds) {
-        if (!DrawCenteredBarGlyph(context, iconFace.Get(), glyph, glyphFormat->GetFontSize(), bounds, brush.Get()))
+    const auto drawGlyph = [&](std::wstring_view glyph, IDWriteTextFormat* glyphFormat, D2D1_RECT_F bounds,
+        std::wstring_view reference = {}) {
+        if (!DrawCenteredBarGlyph(context, iconFace.Get(), glyph, glyphFormat->GetFontSize(), bounds, brush.Get(), reference))
             DrawCenteredBarText(context, text, glyphFormat, glyph, bounds, brush.Get());
     };
     format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -522,7 +554,8 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         {
                             const auto& glyph = item.controlGlyphs[part];
                             drawGlyph(glyph, part == 2 ? batteryFormat.Get() : iconFormat.Get(),
-                                D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom));
+                                D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom),
+                                part == 1 ? std::wstring_view(status_bar_glyphs::kSpeaker) : std::wstring_view{});
                         }
                         brush->SetColor(color);
                     }
@@ -553,7 +586,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 if (!item.text.empty())
                 {
                     const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
-                    DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get());
+                    DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get(),
+                        item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
+                        item.key == "gpu" || item.key == "traffic");
                 }
             }
             if (keyboardFocusVisible && &item == &items[std::min(focused, items.size() - 1)])

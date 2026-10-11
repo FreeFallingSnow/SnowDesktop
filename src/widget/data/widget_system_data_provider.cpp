@@ -1464,33 +1464,28 @@ WidgetSystemDataProvider::SampleNetworkStatus()
             }
         }
         snapshot.available = true;
-        PMIB_IF_TABLE2 table = nullptr;
-        if (GetIfTable2(&table) == NO_ERROR && table)
+        // Hover details describe connected network profiles, as the system
+        // tray does. The interface table also contains every NDIS filter and
+        // miniport; those driver layers are not independent user connections.
+        for (const auto& profile : profileDetails)
         {
-            const std::unique_ptr<MIB_IF_TABLE2, decltype(&FreeMibTable)> tableOwner(table, &FreeMibTable);
-            for (ULONG index = 0; index < table->NumEntries; ++index)
-            {
-                const auto& row = table->Table[index];
-                if (row.Type == IF_TYPE_SOFTWARE_LOOPBACK) continue;
-                WidgetNetworkConnectionDataSnapshot connection;
-                connection.interfaceId = row.InterfaceLuid.Value;
-                connection.name = winrt::to_string(winrt::hstring(row.Alias[0] ? row.Alias : row.Description));
-                connection.connectivity = row.AdminStatus == NET_IF_ADMIN_STATUS_DOWN ? "disabled" :
-                    row.OperStatus == IfOperStatusUp && row.MediaConnectState == MediaConnectStateConnected ? "connected" : "disconnected";
-                int profileRank = -1;
-                for (const auto& profile : profileDetails)
-                {
-                    if (profile.adapterId != winrt::guid(row.InterfaceGuid) || profile.rank <= profileRank ||
-                        connection.connectivity == "disabled" || connection.connectivity == "disconnected") continue;
-                    profileRank = profile.rank;
-                    connection.connectivity = profile.connectivity;
-                    if (!profile.name.empty()) connection.name = profile.name;
-                }
-                snapshot.connections.push_back(std::move(connection));
-            }
-            std::sort(snapshot.connections.begin(), snapshot.connections.end(),
-                [](const auto& left, const auto& right) { return left.interfaceId < right.interfaceId; });
+            if (profile.name.empty()) continue;
+            NET_LUID luid{};
+            const GUID& adapterId = profile.adapterId;
+            if (ConvertInterfaceGuidToLuid(&adapterId, &luid) != NO_ERROR) continue;
+            const auto existing = std::find_if(snapshot.connections.begin(), snapshot.connections.end(),
+                [&](const auto& connection) { return connection.interfaceId == luid.Value; });
+            if (existing == snapshot.connections.end())
+                snapshot.connections.push_back({luid.Value, profile.name, profile.connectivity});
+            else if (profile.rank > (existing->connectivity == "internet" ? 2 : existing->connectivity == "local" ? 1 : 0))
+                *existing = {luid.Value, profile.name, profile.connectivity};
         }
+        std::stable_sort(snapshot.connections.begin(), snapshot.connections.end(),
+            [](const auto& left, const auto& right) {
+                const int leftRank = left.connectivity == "internet" ? 2 : left.connectivity == "local" ? 1 : 0;
+                const int rightRank = right.connectivity == "internet" ? 2 : right.connectivity == "local" ? 1 : 0;
+                return leftRank > rightRank;
+            });
         if (!selected)
             return snapshot;
 
