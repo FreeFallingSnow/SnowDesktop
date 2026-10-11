@@ -2093,7 +2093,7 @@
   "statusBar.menu.hide": "关闭状态栏",
     "statusBar.menu": "系统菜单",
     "statusBar.quickSearch": "快捷搜索",
-    "statusBar.leftItems": "左侧",
+    "statusBar.leftItems": "快捷操作区",
     "statusBar.centerItems": "中间",
     "statusBar.rightItems": "右侧",
     "statusBar.organizeTray": "整理托盘",

@@ -26,13 +26,13 @@ struct StatusBarPagePresenter::Impl
     muxc::ContentControl independentHost;
     muxc::StackPanel independentBody;
     muxc::StackPanel root, basic, leftItems, infoItems;
-    muxc::Expander leftSection, infoSection;
+    muxc::Expander leftSection, infoSection, timeNotificationSection, controlCenterSection;
     muxc::ComboBox edge, monitors, clockPanel, controlPanel, timeNotificationPosition;
     muxc::Slider scale;
     muxc::NumberBox scaleNumber;
     muxc::Button scaleReset;
     SettingRow edgeRow, monitorsRow, scaleRow, clockPanelRow, controlPanelRow, timeNotificationPositionRow;
-    muxc::TextBlock defaultThemeTitle, rulesTitle, rulesHint, timeNotificationTitle, behaviorHint;
+    muxc::TextBlock defaultThemeTitle, rulesTitle, rulesHint, clockBehaviorHint, controlBehaviorHint;
     const bool systemQuickSettings = StatusBarSupportsSystemQuickSettings();
     struct ThemeControl
     {
@@ -208,10 +208,11 @@ struct StatusBarPagePresenter::Impl
         for (auto row : {edgeRow.root, monitorsRow.root, scaleRow.root}) basic.Children().Append(row);
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         basic.Children().Append(mergedHeight->Content());
-        for (auto section : {leftSection, infoSection})
+        for (auto section : {leftSection, infoSection, timeNotificationSection, controlCenterSection})
         {
             section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+            section.IsExpanded(false);
             root.Children().Append(section);
         }
         leftItems.Spacing(12); infoItems.Spacing(12);
@@ -224,8 +225,11 @@ struct StatusBarPagePresenter::Impl
         ToggleRow(infoItems, "statusBar.memory", "statusBar.memory", &StatusBarSettings::memory);
         ToggleRow(infoItems, "statusBar.gpu", "statusBar.gpu", &StatusBarSettings::gpu);
         ToggleRow(infoItems, "statusBar.traffic", "statusBar.traffic", &StatusBarSettings::traffic);
-        auto timeNotification = Card(style);
-        Title(timeNotificationTitle); timeNotification.Children().Append(timeNotificationTitle);
+        muxc::StackPanel timeNotification; timeNotification.Spacing(12);
+        timeNotificationSection.Content(timeNotification);
+        muxc::StackPanel controlCenter; controlCenter.Spacing(12);
+        controlCenterSection.Content(controlCenter);
+        controlCenterSection.Visibility(systemQuickSettings ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         timeNotificationPosition.Width(200);
         timeNotificationPositionRow.Initialize(timeNotificationPosition);
         timeNotificationPositionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -235,9 +239,13 @@ struct StatusBarPagePresenter::Impl
         controlPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         clockPanelRow.Initialize(clockPanel); controlPanelRow.Initialize(controlPanel);
         timeNotification.Children().Append(clockPanelRow.root);
-        if (systemQuickSettings) timeNotification.Children().Append(controlPanelRow.root);
-        behaviorHint.TextWrapping(mux::TextWrapping::Wrap); behaviorHint.Opacity(.72);
-        timeNotification.Children().Append(behaviorHint);
+        if (systemQuickSettings) controlCenter.Children().Append(controlPanelRow.root);
+        for (auto hint : {clockBehaviorHint, controlBehaviorHint})
+        {
+            hint.TextWrapping(mux::TextWrapping::Wrap); hint.Opacity(.72);
+        }
+        timeNotification.Children().Append(clockBehaviorHint);
+        if (systemQuickSettings) controlCenter.Children().Append(controlBehaviorHint);
         const auto positionSelection = timeNotificationPosition.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = timeNotificationPosition.SelectedIndex();
             if (availability.allStatusMerged || selected < 0 || selected > 1) return;
@@ -330,9 +338,9 @@ struct StatusBarPagePresenter::Impl
     }
     void SyncBehaviorHint()
     {
-        const bool usesSystemPanel = value.clockSystemPanel ||
-            (systemQuickSettings && value.controlCenterSystemPanel);
-        behaviorHint.Visibility(usesSystemPanel ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        clockBehaviorHint.Visibility(value.clockSystemPanel ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        controlBehaviorHint.Visibility(systemQuickSettings && value.controlCenterSystemPanel ?
+            mux::Visibility::Visible : mux::Visibility::Collapsed);
     }
     void Sync(bool force = false)
     {
@@ -389,13 +397,14 @@ struct StatusBarPagePresenter::Impl
         for (auto& toggle : toggles) toggle->row.SetText(L(toggle->key));
         leftSection.Header(winrt::box_value(L("statusBar.leftItems")));
         infoSection.Header(winrt::box_value(L("statusBar.information")));
-        timeNotificationTitle.Text(L("statusBar.timeAndNotificationArea"));
+        timeNotificationSection.Header(winrt::box_value(L("statusBar.timeAndNotificationArea")));
+        controlCenterSection.Header(winrt::box_value(L("statusBar.controlCenter")));
         timeNotificationPositionRow.SetText(L("statusBar.timeNotificationPosition"));
         mux::Automation::AutomationProperties::SetName(timeNotificationPosition, timeNotificationPositionRow.label.Text());
         timeNotificationPosition.Items().Clear();
         timeNotificationPosition.Items().Append(winrt::box_value(L("app.settings.taskbar_center")));
         timeNotificationPosition.Items().Append(winrt::box_value(L("app.dock.right")));
-        behaviorHint.Text(L("statusBar.systemPanelPlacement"));
+        for (auto hint : {clockBehaviorHint, controlBehaviorHint}) hint.Text(L("statusBar.systemPanelPlacement"));
         clockPanelRow.SetText(L("statusBar.clockPanel")); controlPanelRow.SetText(L("statusBar.controlCenterPanel"));
         mux::Automation::AutomationProperties::SetName(clockPanel, clockPanelRow.label.Text());
         mux::Automation::AutomationProperties::SetName(controlPanel, controlPanelRow.label.Text());

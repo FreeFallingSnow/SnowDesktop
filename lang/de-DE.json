@@ -2095,7 +2095,7 @@
   "statusBar.menu.hide": "Statusleiste ausschalten",
     "statusBar.menu": "Systemmenü",
     "statusBar.quickSearch": "Schnellsuche",
-    "statusBar.leftItems": "Links",
+    "statusBar.leftItems": "Schnellaktionen",
     "statusBar.centerItems": "Mitte",
     "statusBar.rightItems": "Rechts",
     "statusBar.organizeTray": "Infobereich anordnen",

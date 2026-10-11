@@ -2095,7 +2095,7 @@
   "statusBar.menu.hide": "Désactiver la barre d’état",
     "statusBar.menu": "Menu système",
     "statusBar.quickSearch": "Recherche rapide",
-    "statusBar.leftItems": "Gauche",
+    "statusBar.leftItems": "Actions rapides",
     "statusBar.centerItems": "Centre",
     "statusBar.rightItems": "Droite",
     "statusBar.organizeTray": "Organiser la zone de notification",

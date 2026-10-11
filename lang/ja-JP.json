@@ -2095,7 +2095,7 @@
   "statusBar.menu.hide": "ステータスバーをオフにする",
     "statusBar.menu": "システムメニュー",
     "statusBar.quickSearch": "クイック検索",
-    "statusBar.leftItems": "左側",
+    "statusBar.leftItems": "クイック操作",
     "statusBar.centerItems": "中央",
     "statusBar.rightItems": "右側",
     "statusBar.organizeTray": "トレイの整理",

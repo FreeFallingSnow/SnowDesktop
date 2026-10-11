@@ -2095,7 +2095,7 @@
   "statusBar.menu.hide": "關閉狀態列",
     "statusBar.menu": "系統選單",
     "statusBar.quickSearch": "快速搜尋",
-    "statusBar.leftItems": "左側",
+    "statusBar.leftItems": "快捷操作區",
     "statusBar.centerItems": "中間",
     "statusBar.rightItems": "右側",
     "statusBar.organizeTray": "整理系統匣",

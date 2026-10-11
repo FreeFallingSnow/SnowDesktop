@@ -2095,7 +2095,7 @@
   "statusBar.menu.hide": "Desactivar barra de estado",
     "statusBar.menu": "Menú del sistema",
     "statusBar.quickSearch": "Búsqueda rápida",
-    "statusBar.leftItems": "Izquierda",
+    "statusBar.leftItems": "Acciones rápidas",
     "statusBar.centerItems": "Centro",
     "statusBar.rightItems": "Derecha",
     "statusBar.organizeTray": "Organizar bandeja",

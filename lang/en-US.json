@@ -2095,7 +2095,7 @@
   "statusBar.menu.hide": "Turn off status bar",
     "statusBar.menu": "System menu",
     "statusBar.quickSearch": "Quick search",
-    "statusBar.leftItems": "Left",
+    "statusBar.leftItems": "Quick actions",
     "statusBar.centerItems": "Center",
     "statusBar.rightItems": "Right",
     "statusBar.organizeTray": "Organize tray",
