@@ -248,8 +248,13 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             if (preset == "scaled") settings.scale = 1.5f;
             if (preset == "input-icon")
             {
-                const auto& icon = data.tray.front();
+                auto& icon = data.tray.front();
                 data.inputMethod.layoutIcon = status_bar_input_method::ProfileIcon{icon.width, icon.height, icon.pixels};
+                // An off-center shape on a non-square transparent canvas:
+                // centering its image rectangle must fail the pixel check.
+                icon.width = 24; icon.height = 32; icon.pixels.assign(24 * 32, 0);
+                for (unsigned y = 3; y < 13; ++y)
+                    for (unsigned x = 2; x < 13; ++x) icon.pixels[y * 24 + x] = 0xff0055ff;
             }
             if (preset == "bottom") settings.position = DockPosition::Bottom;
             if (preset == "updated")
@@ -608,6 +613,63 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 std::memcpy(pixels.data() + static_cast<std::size_t>(y) * request.canvasWidth,
                     mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(request.canvasWidth) * 4);
             readback->Unmap();
+            if (preset == "input-icon")
+            {
+                const auto& trayIcon = *std::find_if(items.begin(), items.end(), [](const auto& item) { return item.icon.has_value(); });
+                const auto& bounds = trayIcon.bounds;
+                int minX = request.canvasWidth, minY = request.canvasHeight, maxX = -1, maxY = -1;
+                for (int py = top + bounds.top; py < top + bounds.bottom; ++py)
+                    for (int px = left + bounds.left; px < left + bounds.right; ++px)
+                    {
+                        const auto pixel = pixels[static_cast<std::size_t>(py) * request.canvasWidth + px];
+                        const int r = (pixel >> 16) & 255, b = pixel & 255;
+                        if ((pixel >> 24) > 128 && b > r + 40)
+                        { minX = std::min(minX, px); minY = std::min(minY, py); maxX = std::max(maxX, px); maxY = std::max(maxY, py); }
+                    }
+                Require(maxX >= minX && maxY >= minY &&
+                    std::abs(minX + maxX + 1 - 2 * left - bounds.left - bounds.right) <= 2 &&
+                    std::abs(minY + maxY + 1 - 2 * top - bounds.top - bounds.bottom) <= 2,
+                    "transparent padding must not displace a tray bitmap's visible shape from its button center");
+            }
+            if (preset == "normal" || preset == "information" || preset == "scaled" || preset == "merged")
+            {
+                // Check pixels from the production renderer, independently of
+                // font metrics. The old line-box centering left Wi-Fi/search
+                // visibly lower than the battery and text at these scales.
+                const auto centeredInk = [&](RECT bounds, std::string_view name) {
+                    if (IsRectEmpty(&bounds)) return;
+                    int minX = request.canvasWidth, minY = request.canvasHeight, maxX = -1, maxY = -1;
+                    for (int py = top + bounds.top + 2; py < top + bounds.bottom - 2; ++py)
+                        for (int px = left + bounds.left + 1; px < left + bounds.right - 1; ++px)
+                        {
+                            const auto pixel = pixels[static_cast<std::size_t>(py) * request.canvasWidth + px];
+                            const int r = (pixel >> 16) & 255, g = (pixel >> 8) & 255, b = pixel & 255;
+                            if ((pixel >> 24) > 128 && std::abs(r - g) < 20 && std::abs(g - b) < 20 &&
+                                (appearance.contentTheme == 1 ? r < 150 : r > 140))
+                            { minX = std::min(minX, px); minY = std::min(minY, py); maxX = std::max(maxX, px); maxY = std::max(maxY, py); }
+                        }
+                    Require(maxX >= minX && maxY >= minY, "status bar alignment fixture has no visible ink");
+                    const float dx = static_cast<float>(minX + maxX + 1 - 2 * left - bounds.left - bounds.right) / 2.f;
+                    const float dy = static_cast<float>(minY + maxY + 1 - 2 * top - bounds.top - bounds.bottom) / 2.f;
+                    if (std::abs(dx) > 1.f || std::abs(dy) > 1.f)
+                        throw std::runtime_error("status bar visible ink is not centered: " + std::string(name) +
+                            " dx=" + std::to_string(dx) + " dy=" + std::to_string(dy));
+                };
+                for (const auto& item : items)
+                {
+                    if (item.icon || item.key == "controlCenter") continue;
+                    centeredInk(item.bounds, item.key);
+                }
+                const auto& controls = Item(items, "controlCenter");
+                for (int part = 0; part < 3; ++part)
+                {
+                    if (controls.controlGlyphs[static_cast<std::size_t>(part)].empty()) continue;
+                    auto bounds = controls.bounds;
+                    bounds.left += static_cast<LONG>(std::lround(28.f * static_cast<float>(part) * scale));
+                    bounds.right = bounds.left + static_cast<LONG>(std::lround(28.f * scale));
+                    centeredInk(bounds, part == 0 ? "network" : part == 1 ? "speaker" : "battery");
+                }
+            }
             if (preset == "full" || preset == "charging")
             {
                 // User-visible contract: green is the charge inside the

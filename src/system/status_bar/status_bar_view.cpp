@@ -62,12 +62,35 @@ bool DrawNotificationBell(ID2D1RenderTarget* context, ID2D1SolidColorBrush* brus
     if (!bell) return false;
     D2D1_MATRIX_3X2_F originalTransform{};
     context->GetTransform(&originalTransform);
-    context->SetTransform(D2D1::Matrix3x2F::Scale((bounds.right - bounds.left) / 24.f,
-        (bounds.bottom - bounds.top) / 24.f) *
-        D2D1::Matrix3x2F::Translation(bounds.left, bounds.top) * originalTransform);
+    D2D1_RECT_F ink{};
+    if (FAILED(bell->GetBounds(nullptr, &ink))) return false;
+    const float sx = (bounds.right - bounds.left) / 24.f;
+    const float sy = (bounds.bottom - bounds.top) / 24.f;
+    context->SetTransform(D2D1::Matrix3x2F::Scale(sx,
+        sy) * D2D1::Matrix3x2F::Translation(
+            (bounds.left + bounds.right - (ink.left + ink.right) * sx) / 2,
+            (bounds.top + bounds.bottom - (ink.top + ink.bottom) * sy) / 2) * originalTransform);
     context->FillGeometry(bell.Get(), brush);
     context->SetTransform(originalTransform);
     return true;
+}
+
+void DrawCenteredBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, IDWriteTextFormat* format,
+    std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush)
+{
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(factory->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format,
+            bounds.right - bounds.left, bounds.bottom - bounds.top, &layout))) return;
+    // Line boxes include ascender/descender space and glyph side bearings.
+    // Center the shaped outline rather than moving the button or changing it
+    // with fixed pixel offsets that break at fractional display scaling.
+    DWRITE_OVERHANG_METRICS ink{};
+    const bool measured = SUCCEEDED(layout->GetOverhangMetrics(&ink));
+    const auto origin = D2D1::Point2F(bounds.left + (measured ? (ink.left - ink.right) / 2 : 0),
+        bounds.top + (measured ? (ink.top - ink.bottom) / 2 : 0));
+    context->PushAxisAlignedClip(bounds, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    context->DrawTextLayout(origin, layout.Get(), brush);
+    context->PopAxisAlignedClip();
 }
 
 std::wstring Percent(double value)
@@ -402,9 +425,22 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         pixels.data(), width * 4,
                         D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &bitmap)))
                 {
-                    const float size = (item.inputIcon ? 14.f : 18.f) * scale;
-                    const float iconLeft = (rect.left + rect.right - size) / 2, iconTop = (rect.top + rect.bottom - size) / 2;
-                    context->DrawBitmap(bitmap.Get(), D2D1::RectF(iconLeft, iconTop, iconLeft + size, iconTop + size));
+                    const float pixelScale = (item.inputIcon ? 14.f : 18.f) * scale /
+                        static_cast<float>(std::max(width, height));
+                    LONG inkLeft = static_cast<LONG>(width), inkTop = static_cast<LONG>(height), inkRight = 0, inkBottom = 0;
+                    for (DWORD y = 0; y < height; ++y)
+                        for (DWORD x = 0; x < width; ++x)
+                            if ((pixels[static_cast<std::size_t>(y) * width + x] >> 24) >= 16)
+                            {
+                                inkLeft = std::min(inkLeft, static_cast<LONG>(x)); inkTop = std::min(inkTop, static_cast<LONG>(y));
+                                inkRight = std::max(inkRight, static_cast<LONG>(x + 1)); inkBottom = std::max(inkBottom, static_cast<LONG>(y + 1));
+                            }
+                    if (inkRight <= inkLeft || inkBottom <= inkTop)
+                    { inkLeft = inkTop = 0; inkRight = static_cast<LONG>(width); inkBottom = static_cast<LONG>(height); }
+                    const float iconLeft = (rect.left + rect.right - static_cast<float>(inkLeft + inkRight) * pixelScale) / 2;
+                    const float iconTop = (rect.top + rect.bottom - static_cast<float>(inkTop + inkBottom) * pixelScale) / 2;
+                    context->DrawBitmap(bitmap.Get(), D2D1::RectF(iconLeft, iconTop,
+                        iconLeft + static_cast<float>(width) * pixelScale, iconTop + static_cast<float>(height) * pixelScale));
                 }
 
             }
@@ -440,8 +476,8 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         else
                         {
                             const auto& glyph = item.controlGlyphs[part];
-                            context->DrawText(glyph.c_str(), static_cast<UINT32>(glyph.size()), part == 2 ? batteryFormat.Get() : iconFormat.Get(),
-                                D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                            DrawCenteredBarText(context, text, part == 2 ? batteryFormat.Get() : iconFormat.Get(), glyph,
+                                D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom), brush.Get());
                         }
                         brush->SetColor(color);
                     }
@@ -466,13 +502,13 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         DrawNotificationBell(context, brush.Get(),
                             D2D1::RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize));
                     if (!bellDrawn)
-                        context->DrawText(item.glyph.c_str(), static_cast<UINT32>(item.glyph.size()), iconFormat.Get(), iconRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                        DrawCenteredBarText(context, text, iconFormat.Get(), item.glyph, iconRect, brush.Get());
                     if (item.flipGlyph) context->SetTransform(originalTransform);
                 }
                 if (!item.text.empty())
                 {
                     const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
-                    context->DrawText(displayed.c_str(), static_cast<UINT32>(displayed.size()), format.Get(), textRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get());
                 }
             }
             if (keyboardFocusVisible && &item == &items[std::min(focused, items.size() - 1)])
