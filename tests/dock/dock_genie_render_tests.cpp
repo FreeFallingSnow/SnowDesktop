@@ -28,6 +28,10 @@ struct DockWindowTransitionTestAccess
     {
         return transition.windowRect_;
     }
+    static bool RetainsPresentedImage(const DockWindowTransition& transition)
+    {
+        return transition.retiredWindowImage_.visual || !transition.retiredGenieWindowImages_.empty();
+    }
 };
 
 namespace
@@ -47,6 +51,7 @@ struct ControlledPresentationWait
     HANDLE finished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::atomic<int> calls{0};
     std::atomic<bool> ranOnUiThread{false};
+    int blockedCall = 0;
     ~ControlledPresentationWait()
     {
         if (entered) CloseHandle(entered);
@@ -56,7 +61,7 @@ struct ControlledPresentationWait
     HRESULT Wait(IDCompositionDesktopDevice* device)
     {
         if (GetCurrentThreadId() == uiThread) ranOnUiThread.store(true);
-        const bool first = calls.fetch_add(1) == 0;
+        const bool first = calls.fetch_add(1) == blockedCall;
         HRESULT result = S_OK;
         if (first)
         {
@@ -154,6 +159,20 @@ LRESULT CALLBACK FrameFixtureProc(HWND window, UINT message, WPARAM wParam, LPAR
             DeleteObject(brush);
         }
         EndPaint(window, &paint);
+        return 0;
+    }
+    return DefWindowProcW(window, message, wParam, lParam);
+}
+
+LRESULT CALLBACK MaximizedFixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    if (message == WM_GETMINMAXINFO)
+    {
+        auto& info = *reinterpret_cast<MINMAXINFO*>(lParam);
+        // Exercise a real WS_MAXIMIZE state without covering the user's desktop.
+        info.ptMaxPosition = {-20000, -20000};
+        info.ptMaxSize = {600, 420};
+        info.ptMaxTrackSize = {1000, 800};
         return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
@@ -678,6 +697,88 @@ void CheckRetainedWindowImage()
                         }
                     }
                     DestroyWindow(framedSource);
+                    transition.SetDiagnosticCallback([&](const wchar_t* message) {
+                        if (std::wstring(message).find(L"Dock transition:") == 0) presentation = message;
+                    });
+                }
+                WNDCLASSW maximizedType{};
+                maximizedType.hInstance = type.hInstance;
+                maximizedType.lpszClassName = L"SnowDesktopMaximizedRestoreFixture";
+                maximizedType.lpfnWndProc = MaximizedFixtureProc;
+                maximizedType.hbrBackground = static_cast<HBRUSH>(GetStockObject(LTGRAY_BRUSH));
+                Check(RegisterClassW(&maximizedType) != 0, "owned maximized restore fixture registers");
+                const HWND maximizedSource = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                    maximizedType.lpszClassName, L"", WS_OVERLAPPEDWINDOW, -20000, -20000, 600, 420,
+                    nullptr, nullptr, type.hInstance, nullptr);
+                Check(maximizedSource != nullptr, "owned maximized restore fixture initializes");
+                if (maximizedSource)
+                {
+                    DwmSetWindowAttribute(maximizedSource, DWMWA_TRANSITIONS_FORCEDISABLED,
+                        &alreadyDisabled, sizeof(alreadyDisabled));
+                    for (const int effect : {1, 2, 3})
+                    {
+                        snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                            2, 0, 60, false, false, effect);
+                        ShowWindow(maximizedSource, SW_SHOWMAXIMIZED);
+                        RECT maximizedBounds{};
+                        GetWindowRect(maximizedSource, &maximizedBounds);
+                        Check(IsZoomed(maximizedSource) && maximizedBounds.right < -19000,
+                            "native maximized fixture stays outside the user's desktop");
+                        ShowWindow(maximizedSource, SW_MINIMIZE);
+                        DwmFlush();
+                        auto wait = std::make_shared<ControlledPresentationWait>();
+                        wait->blockedCall = 1; // Acknowledge preparation, then delay late image replacement.
+                        DockWindowTransitionTestAccess::SetPresentationWait(transition,
+                            [wait](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
+                        int requested = 0, activated = 0, fallback = 0;
+                        bool resized = false;
+                        RECT presentedHost{};
+                        snowdesktop::UiScheduleToken resizeToken = 0;
+                        transition.SetDiagnosticCallback([&](const wchar_t* message) {
+                            if (std::wstring(message).find(L"Dock restore prepared:") == 0)
+                            {
+                                GetWindowRect(transition.GetPresentationWindow(), &presentedHost);
+                                resizeToken = scheduler.ScheduleOnce(80, [&](snowdesktop::UiScheduleToken) {
+                                    RECT actual{};
+                                    GetWindowRect(maximizedSource, &actual);
+                                    resized = SetWindowPos(maximizedSource, nullptr, actual.left, actual.top + 9,
+                                        actual.right - actual.left, actual.bottom - actual.top - 9,
+                                        SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
+                                });
+                            }
+                        });
+                        Check(transition.StartRestore(maximizedSource, dock,
+                            [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                                if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                                {
+                                    ++requested;
+                                    ShowWindow(window, SW_SHOWMAXIMIZED);
+                                }
+                                else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored) ++activated;
+                                else ++fallback;
+                            }), "maximized restore starts through the production entry");
+                        Check(pumpUntil([&] { return WaitForSingleObject(wait->entered, 0) == WAIT_OBJECT_0; }, 1200),
+                            "late maximized frame replacement reaches its presentation barrier");
+                        RECT currentHost{};
+                        GetWindowRect(transition.GetPresentationWindow(), &currentHost);
+                        Check(resized && IsZoomed(maximizedSource) && transition.IsActive() &&
+                            appCloaked(maximizedSource) && activated == 0,
+                            "late replacement keeps the maximized source cloaked until its image is presented");
+                        Check(DockWindowTransitionTestAccess::RetainsPresentedImage(transition),
+                            "late replacement retains the previous live DWM relationships during the pending commit");
+                        Check(EqualRect(&presentedHost, &currentHost),
+                            "a late maximized border shrink does not move or shrink the presented host");
+                        scheduler.ScheduleOnce(80, [wait](snowdesktop::UiScheduleToken) { SetEvent(wait->release); });
+                        drain();
+                        if (resizeToken) scheduler.Cancel(resizeToken);
+                        Check(requested == 1 && activated == 1 && fallback == 0 && !IsIconic(maximizedSource) &&
+                            !appCloaked(maximizedSource) && wait->calls.load() == 4 && !wait->ranOnUiThread.load(),
+                            "maximized restore acknowledges replacement before source exposure and retires cleanly");
+                        Check(!DockWindowTransitionTestAccess::RetainsPresentedImage(transition),
+                            "completed maximized handoff releases its retired live relationships");
+                        DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
+                    }
+                    DestroyWindow(maximizedSource);
                     transition.SetDiagnosticCallback([&](const wchar_t* message) {
                         if (std::wstring(message).find(L"Dock transition:") == 0) presentation = message;
                     });

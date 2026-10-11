@@ -1547,6 +1547,24 @@ bool DockWindowTransition::OnAnimationFrame(
     }
     if (awaitingRestoreVisibility_)
     {
+        if (restorePresentationPhase_ == RestorePresentationPhase::AlignedImage)
+        {
+            const auto result = PresentationBarrierResult(now);
+            if (!result) return true;
+            presentationBarrier_.reset();
+            restorePresentationPhase_ = RestorePresentationPhase::None;
+            if (FAILED(*result))
+            {
+                Finish();
+                return false;
+            }
+            // DwmUnregisterThumbnail is independent of our composition commit.
+            // Keep the previous live relationships until their replacements
+            // have been presented, while the native source remains cloaked.
+            retiredWindowImage_.Reset();
+            retiredGenieWindowImages_.clear();
+            if (diagnosticCallback_) diagnosticCallback_(L"Dock restore realigned: image presented before source exposure");
+        }
         if (restorePresentationPhase_ == RestorePresentationPhase::ExposedSource ||
             restorePresentationPhase_ == RestorePresentationPhase::TransparentOverlay)
         {
@@ -1631,10 +1649,12 @@ bool DockWindowTransition::OnAnimationFrame(
                 // the real window to return to the earlier, now stale bounds.
                 windowRect_ = restoredFrame;
                 fromRect_ = toRect_ = windowRect_;
+                RECT retainedHost{};
+                UnionRect(&retainedHost, &imageHostRect_, &windowRect_);
                 const auto safeHost = ResolveDockWindowNonFullscreenHostRect(
-                    ResolveDockWindowImageHostRect(dockRect_, windowRect_), animationMonitorRects_);
+                    retainedHost, animationMonitorRects_);
                 bool aligned = safeHost.has_value();
-                if (aligned)
+                if (aligned && !EqualRect(&imageHostRect_, &*safeHost))
                 {
                     imageHostRect_ = *safeHost;
                     aligned = SetWindowPos(hwnd_, nullptr, imageHostRect_.left, imageHostRect_.top,
@@ -1643,19 +1663,22 @@ bool DockWindowTransition::OnAnimationFrame(
                 }
                 if (aligned)
                 {
+                    retiredWindowImage_ = std::move(compositionWindowImage_);
+                    retiredGenieWindowImages_ = std::move(genieWindowImages_);
                     ClearGenieStrips();
-                    compositionWindowImage_.Reset();
                     aligned = SUCCEEDED(compositionVisual_->RemoveAllVisuals()) && CreateSharedWindowImage();
                 }
                 hasLastFrame_ = false;
                 compositionTimelineActive_ = false;
                 if (aligned) aligned = ApplyFrame(1.0);
-                if (!aligned)
+                if (!aligned || !BeginPresentationBarrier(RestorePresentationPhase::AlignedImage))
                 {
                     CompleteRestoreAfterRenderFailure();
                     Finish();
                     return false;
                 }
+                if (diagnosticCallback_) diagnosticCallback_(L"Dock restore realigning: retaining live image until presentation");
+                return true;
             }
             ActivateRestoredWindowForHandoff();
             // A failed cross-process release retains ownership; do not retire
@@ -1945,6 +1968,8 @@ void DockWindowTransition::Finish()
         compositionEffect_->SetOpacity(0.0f);
     ClearGenieStrips();
     compositionWindowImage_.Reset();
+    retiredWindowImage_.Reset();
+    retiredGenieWindowImages_.clear();
     compositionSharedWindowActive_ = false;
     if (compositionScaleTransform_)
     {

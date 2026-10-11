@@ -166,7 +166,7 @@ public:
 private:
     friend struct DockWindowTransitionTestAccess;
     struct PresentationBarrier;
-    enum class RestorePresentationPhase { None, PreparedImage, ExposedSource, TransparentOverlay };
+    enum class RestorePresentationPhase { None, PreparedImage, AlignedImage, ExposedSource, TransparentOverlay };
     static constexpr ULONGLONG kAnimationDurationMs = 240;
     static constexpr ULONGLONG
         kMinimumReverseDurationMs = 80;
@@ -252,6 +252,8 @@ private:
     std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual3>> genieStrips_;
     snowdesktop::dock_thumbnail::SharedVisual compositionWindowImage_;
     std::vector<snowdesktop::dock_thumbnail::SharedVisual> genieWindowImages_;
+    snowdesktop::dock_thumbnail::SharedVisual retiredWindowImage_;
+    std::vector<snowdesktop::dock_thumbnail::SharedVisual> retiredGenieWindowImages_;
     bool compositionSharedWindowActive_ = false;
     snowdesktop::dock_genie::Edge genieEdge_ =
         snowdesktop::dock_genie::Edge::Bottom;
