@@ -238,7 +238,12 @@ struct StatusBarPagePresenter::Impl
         timeNotificationSection.Content(timeNotification);
         muxc::StackPanel controlCenter; controlCenter.Spacing(12);
         controlCenterSection.Content(controlCenter);
-        controlCenterSection.Visibility(systemQuickSettings ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        ToggleRow(controlCenter, "statusBar.audioControls", "statusBar.audioControls", &StatusBarSettings::audioControls);
+        ToggleRow(controlCenter, "statusBar.brightnessControls", "statusBar.brightnessControls", &StatusBarSettings::brightnessControls);
+        ToggleRow(controlCenter, "statusBar.wifiControls", "statusBar.wifiControls", &StatusBarSettings::wifiControls);
+        ToggleRow(controlCenter, "statusBar.bluetoothControls", "statusBar.bluetoothControls", &StatusBarSettings::bluetoothControls);
+        ToggleRow(controlCenter, "statusBar.mediaControls", "statusBar.mediaControls", &StatusBarSettings::mediaControls);
+        ToggleRow(controlCenter, "statusBar.powerControls", "statusBar.powerControls", &StatusBarSettings::powerControls);
         timeNotificationPosition.Width(200);
         timeNotificationPositionRow.Initialize(timeNotificationPosition);
         timeNotificationPositionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
