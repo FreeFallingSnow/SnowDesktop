@@ -2141,8 +2141,8 @@ private:
     void ShowDesktopBackgroundContextMenu(POINT screenPoint);
     /** @brief 为指定路径显示外壳扩展上下文菜单。 @param folderPath 文件夹路径 @param screenPoint 屏幕坐标 */
     void ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint);
-    void ShowShellItemContextMenuForPath(
-        const std::wstring& itemPath,
+    void ShowShellItemContextMenuForPaths(
+        const std::vector<std::wstring>& itemPaths,
         POINT screenPoint);
     UINT TrackShellPopupMenuWithDesktopPump(
         HMENU menu,

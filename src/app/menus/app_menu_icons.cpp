@@ -570,6 +570,15 @@ UINT DesktopApp::ShowModernMenu(
     if (!rootMenu)
         return 0;
 
+    // Shift uses the caller's existing native-menu handoff. Do this before
+    // constructing the custom popup or starting its extension queries.
+    if (shellRequest && shellRequest->extended)
+    {
+        const UINT state = GetMenuState(rootMenu, kContextMoreCommand, MF_BYCOMMAND);
+        if (state != static_cast<UINT>(-1) && !(state & (MF_DISABLED | MF_GRAYED)))
+            return kContextMoreCommand;
+    }
+
     std::function<std::vector<snowdesktop::modern_menu::Item>(HMENU)>
         buildItems;
     buildItems = [&](HMENU menu) {

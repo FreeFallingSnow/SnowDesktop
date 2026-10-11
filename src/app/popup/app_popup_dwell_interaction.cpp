@@ -879,7 +879,7 @@ ShowDockFolderPopupContextMenu(
             0, nullptr);
         AppendMenuW(
             menu,
-            singleSelection
+            hasSelection
                 ? MF_STRING
                 : MF_STRING | MF_GRAYED,
             kContextMoreCommand,
@@ -1054,10 +1054,10 @@ ShowDockFolderPopupContextMenu(
         break;
     case kContextMoreCommand:
         if (itemMenu &&
-            selectedPaths.size() == 1)
+            hasSelection)
         {
-            ShowShellItemContextMenuForPath(
-                selectedPaths.front(),
+            ShowShellItemContextMenuForPaths(
+                selectedPaths,
                 screenPoint);
             break;
         }

@@ -216,6 +216,7 @@ void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& tar
  */
 void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
 {
+    const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     // Shell initialization can pump desktop paints before TrackPopupMenuEx.
     // Keep their content commits and hover state covered for the whole handoff.
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
@@ -236,7 +237,7 @@ void DesktopApp::ShowDesktopBackgroundContextMenu(POINT screenPoint)
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
     const HRESULT hr = menuSite.BuildMenu(backgroundFolder.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
-        CMF_NORMAL | CMF_SYNCCASCADEMENU,
+        CMF_NORMAL | CMF_SYNCCASCADEMENU | extendedFlags,
         [&](HWND bindOwner, IContextMenu** target) {
             return backgroundFolder->CreateViewObject(bindOwner, IID_IContextMenu, reinterpret_cast<void**>(target));
         }, contextMenu.GetAddressOf());
@@ -564,6 +565,7 @@ bool DesktopApp::IsProtectedDesktopIcon(const DesktopItem& item) const
  */
 void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POINT screenPoint)
 {
+    const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
     PIDLIST_ABSOLUTE pidl = nullptr;
@@ -596,7 +598,7 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
     if (FAILED(menuSite.BuildMenu(folder.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
-            CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | CMF_SYNCCASCADEMENU,
+            CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | CMF_SYNCCASCADEMENU | extendedFlags,
             [&](HWND bindOwner, IContextMenu** target) {
                 return folder->CreateViewObject(bindOwner, IID_IContextMenu, reinterpret_cast<void**>(target));
             }, contextMenu.GetAddressOf())))
@@ -643,54 +645,55 @@ void DesktopApp::ShowShellContextMenuForPath(const std::wstring& folderPath, POI
 }
 
 void DesktopApp::
-ShowShellItemContextMenuForPath(
-    const std::wstring& itemPath,
+ShowShellItemContextMenuForPaths(
+    const std::vector<std::wstring>& itemPaths,
     POINT screenPoint)
 {
+    if (itemPaths.empty()) return;
+    const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
-    PIDLIST_ABSOLUTE pidl = nullptr;
-    if (FAILED(SHParseDisplayName(
-            itemPath.c_str(), nullptr,
-            &pidl, 0, nullptr)) ||
-        !pidl)
-        return;
-
-    IShellFolder* parentFolder = nullptr;
-    PCUITEMID_CHILD child = nullptr;
-    if (FAILED(SHBindToParent(
-            pidl, IID_IShellFolder,
-            reinterpret_cast<void**>(
-                &parentFolder),
-            &child)) ||
-        !parentFolder)
+    ComPtr<IShellFolder> boundParent;
+    Pidl parentSnapshot;
+    std::vector<Pidl> selectionSnapshot;
+    std::vector<PCUITEMID_CHILD> children;
+    // Mapped-folder and Dock popup selections belong to one source folder.
+    // Retain every PIDL through Shell reentrancy and reject a mixed parent.
+    for (const auto& path : itemPaths)
     {
-        ILFree(pidl);
-        return;
+        PIDLIST_ABSOLUTE raw = nullptr;
+        if (FAILED(SHParseDisplayName(path.c_str(), nullptr, &raw, 0, nullptr)) || !raw)
+            return;
+        Pidl item(raw);
+        Pidl parent(ILCloneFull(raw));
+        if (!parent.get() || !ILRemoveLastID(parent.get())) return;
+        if (!boundParent)
+        {
+            PCUITEMID_CHILD child = nullptr;
+            if (FAILED(SHBindToParent(raw, IID_PPV_ARGS(&boundParent), &child))) return;
+            parentSnapshot = std::move(parent);
+        }
+        else if (!ILIsEqual(parentSnapshot.get(), parent.get()))
+            return;
+        children.push_back(ILFindLastID(raw));
+        selectionSnapshot.push_back(std::move(item));
     }
 
     snowdesktop::ShellContextMenuSite menuSite;
-    ComPtr<IShellFolder> boundParent;
-    boundParent.Attach(parentFolder);
     ComPtr<IContextMenu> contextMenu;
     HMENU menu = CreatePopupMenu();
-    if (!menu)
-    {
-        ILFree(pidl);
-        return;
-    }
+    if (!menu) return;
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
     if (FAILED(
             menuSite.BuildMenu(boundParent.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
-                CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | CMF_SYNCCASCADEMENU,
+                CMF_NORMAL | CMF_EXPLORE | CMF_CANRENAME | CMF_SYNCCASCADEMENU | extendedFlags,
                 [&](HWND bindOwner, IContextMenu** target) {
-                    return boundParent->GetUIObjectOf(bindOwner, 1, &child, IID_IContextMenu,
+                    return boundParent->GetUIObjectOf(bindOwner, static_cast<UINT>(children.size()), children.data(), IID_IContextMenu,
                         nullptr, reinterpret_cast<void**>(target));
                 }, contextMenu.GetAddressOf())))
     {
         DestroyMenu(menu);
-        ILFree(pidl);
         return;
     }
 
@@ -719,11 +722,10 @@ ShowShellItemContextMenuForPath(
         {
             DestroyMenu(menu);
             RestoreDesktopWindowLayer();
-            ILFree(pidl);
             std::vector<snowdesktop::ShellFileOperationStep> steps;
             steps.push_back({
                 FO_DELETE,
-                { itemPath },
+                itemPaths,
                 {},
                 static_cast<FILEOP_FLAGS>(
                     FOF_ALLOWUNDO |
@@ -739,7 +741,7 @@ ShowShellItemContextMenuForPath(
             return;
         }
         const std::wstring invocationDirectory =
-            snowdesktop::ShellInvocationDirectoryForItem(itemPath);
+            snowdesktop::ShellInvocationDirectoryForItem(itemPaths.front());
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask =
@@ -759,7 +761,7 @@ ShowShellItemContextMenuForPath(
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
         const auto startPin = snowdesktop::shell_start_pin::Route(
-            contextMenu.Get(), commandOffset, std::vector<std::wstring>{itemPath},
+            contextMenu.Get(), commandOffset, itemPaths,
             [&](auto action, const auto& path) {
                 snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
                     uiAnimationScheduler_, [this]() { FlushPendingCompositionCommit(); });
@@ -793,5 +795,4 @@ ShowShellItemContextMenuForPath(
     RestoreDesktopWindowLayer();
     if (command == 0)
         RestoreInteractionInputFocus();
-    ILFree(pidl);
 }

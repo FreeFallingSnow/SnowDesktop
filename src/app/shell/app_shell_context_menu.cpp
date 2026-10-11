@@ -107,7 +107,7 @@ void DesktopApp::ShowFolderEntryContextMenu(
         kContextDeleteCommand, _LW("app.settings.delete"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
-        singleSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+        hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextMoreCommand, _LW("app.menu.more_options"));
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
@@ -208,12 +208,12 @@ void DesktopApp::ShowFolderEntryContextMenu(
         DeleteSelectedFolderEntries(false);
         break;
     case kContextMoreCommand:
-        if (singleSelection)
+        if (hasSelection)
         {
             if (keepQuickNavigationOpen)
                 SetQuickNavigationTopmost(false);
-            ShowShellItemContextMenuForPath(
-                fullPath, screenPoint);
+            ShowShellItemContextMenuForPaths(
+                selectedPaths, screenPoint);
             if (keepQuickNavigationOpen)
                 SetQuickNavigationTopmost(true);
         }

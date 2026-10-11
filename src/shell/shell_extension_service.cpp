@@ -1095,7 +1095,7 @@ struct MenuService::Impl
                     {
                         std::lock_guard lock(mutex);
                         if (inspectDesktop) { management = request; Queue(request, QueryPriority::Inspect, true); }
-                        if (warmDesktop) { Queue(request, QueryPriority::Prewarm, false); request.extended = true; Queue(request, QueryPriority::Prewarm, false); }
+                        if (warmDesktop) Queue(request, QueryPriority::Prewarm, false);
                     }
                 }
                 if (inspectDesktop) { std::lock_guard lock(mutex); desktopInspection = false; }
