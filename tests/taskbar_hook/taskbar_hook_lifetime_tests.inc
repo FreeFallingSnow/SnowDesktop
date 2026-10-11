@@ -28,6 +28,9 @@ UINT LifetimeRectMessage()
 
 LRESULT CALLBACK LifetimeWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    // End the synthetic activation at our private window. DefWindowProc would
+    // change focus and reenter activation, involving unrelated desktop windows.
+    if (message == WM_ACTIVATE) return 0;
     if (message == LifetimeRectMessage() && lParam)
     {
         *reinterpret_cast<RECT*>(lParam) = RECT{11, 22, 111, 122};
