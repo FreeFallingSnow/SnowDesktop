@@ -12,6 +12,8 @@ inline constexpr wchar_t HostTokenProperty[] = L"SnowDesktop.Dock.SourceCloak.Le
 inline constexpr wchar_t CommandName[] = L"SnowDesktop.Dock.SourceCloak.Command.v1";
 inline constexpr wchar_t ResultProperty[] = L"SnowDesktop.Dock.SourceCloak.Result.v1";
 inline constexpr wchar_t AckProperty[] = L"SnowDesktop.Dock.SourceCloak.Ack.v1";
+inline constexpr wchar_t RecoveryProperty[] = L"SnowDesktop.Dock.SourceCloak.Recovery.v1";
+inline constexpr wchar_t TimerProperty[] = L"SnowDesktop.Dock.SourceCloak.Timer.v1";
 
 struct Owner
 {
@@ -60,6 +62,55 @@ inline UINT CommandMessage() noexcept
     return message;
 }
 
+inline void RemoveOwner(HWND source, Owner owner) noexcept;
+
+inline void StopRecoveryTimer(HWND source) noexcept
+{
+    const auto timer = reinterpret_cast<UINT_PTR>(RemovePropW(source, TimerProperty));
+    if (timer) KillTimer(source, timer);
+}
+
+inline void CALLBACK RecoverOnSourceThread(HWND source, UINT, UINT_PTR timer, DWORD) noexcept
+{
+    if (reinterpret_cast<UINT_PTR>(GetPropW(source, TimerProperty)) != timer) return;
+    const auto owner = ReadOwner(source);
+    if (!owner.window || !owner.process || !owner.token)
+    {
+        StopRecoveryTimer(source);
+        return;
+    }
+    if (GetPropW(source, RecoveryProperty) != owner.token && IsLiveOwner(owner)) return;
+    const BOOL cloak = FALSE;
+    if (SUCCEEDED(DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak))) &&
+        SameOwner(source, owner))
+    {
+        StopRecoveryTimer(source);
+        RemoveOwner(source, owner);
+    }
+}
+
+inline HRESULT StartRecoveryTimer(HWND source) noexcept
+{
+    if (GetPropW(source, TimerProperty)) return S_OK;
+    // This callback must survive removal of both thread hooks and the host.
+    // Pin the injected module in this target process before publishing a timer;
+    // freeing callback code from inside its own TIMERPROC is not safe.
+    HMODULE module = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+            reinterpret_cast<LPCWSTR>(&RecoverOnSourceThread), &module))
+        return HRESULT_FROM_WIN32(GetLastError());
+    const UINT_PTR timer = SetTimer(source,
+        reinterpret_cast<UINT_PTR>(&RecoverOnSourceThread), 100, RecoverOnSourceThread);
+    if (!timer) return HRESULT_FROM_WIN32(GetLastError() ? GetLastError() : ERROR_GEN_FAILURE);
+    if (!SetPropW(source, TimerProperty, reinterpret_cast<HANDLE>(timer)))
+    {
+        const DWORD error = GetLastError();
+        KillTimer(source, timer);
+        return HRESULT_FROM_WIN32(error ? error : ERROR_GEN_FAILURE);
+    }
+    return S_OK;
+}
+
 // DWMWA_CLOAK rejects a caller in a different process. The per-thread
 // CALLWNDPROC hook applies it inside the source process and acknowledges the
 // current lease; the source application's window procedure is unchanged.
@@ -72,7 +123,9 @@ inline void HandleCommand(HWND source, WPARAM cloakValue, LPARAM token) noexcept
     DWORD process = 0;
     if (!GetWindowThreadProcessId(source, &process) || process != GetCurrentProcessId()) return;
     const BOOL cloak = cloakValue != 0;
-    const HRESULT hr = DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    HRESULT hr = cloak ? StartRecoveryTimer(source) : S_OK;
+    if (SUCCEEDED(hr)) hr = DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloak, sizeof(cloak));
+    if ((cloak && FAILED(hr)) || (!cloak && SUCCEEDED(hr))) StopRecoveryTimer(source);
     if (!SameOwner(source, owner)) return;
     SetPropW(source, ResultProperty, ULongToHandle(static_cast<ULONG>(hr)));
     SetPropW(source, AckProperty, owner.token);
@@ -121,6 +174,7 @@ inline bool RegisterOwner(HWND window) noexcept
 inline void RemoveOwner(HWND source, Owner owner) noexcept
 {
     if (!SameOwner(source, owner)) return;
+    RemovePropW(source, RecoveryProperty);
     RemovePropW(source, AckProperty);
     RemovePropW(source, ResultProperty);
     RemovePropW(source, TokenProperty);
@@ -190,6 +244,14 @@ inline HRESULT Release(HWND source, HWND host) noexcept
         return S_FALSE;
     const BOOL cloak = FALSE;
     bool confirmed = false;
+    // Persist the recovery request before the bounded cross-process send. The
+    // source-thread timer can finish it after the monitor/hooks are gone, even
+    // while the animation owner HWND and token are still alive.
+    if (!SetPropW(source, RecoveryProperty, owner.token))
+    {
+        const DWORD error = GetLastError();
+        return HRESULT_FROM_WIN32(error ? error : ERROR_GEN_FAILURE);
+    }
     const HRESULT hr = ApplyCloak(source, owner, cloak, confirmed);
     if (SUCCEEDED(hr)) RemoveOwner(source, owner);
     return hr;

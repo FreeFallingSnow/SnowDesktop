@@ -3,6 +3,7 @@
 #include "dock/dock_window_source_cloak.h"
 #include "dock/dock_window_transition.h"
 #include "settings/animation_settings.h"
+#include "dock_cloak_pause_fixture.h"
 #include <d3d11.h>
 #include <dxgi.h>
 
@@ -109,6 +110,7 @@ LRESULT CALLBACK ReceiverProc(HWND window, UINT message, WPARAM wParam, LPARAM l
 
 LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (message == dock_cloak_fixture::PauseMessage) return dock_cloak_fixture::Pause(wParam, lParam);
     if (message == kSetClientCaption) { clientCaption = wParam != 0; return 1; }
     if (message == WM_NCHITTEST && clientCaption) return HTCLIENT;
     if (message == kAction)
@@ -145,6 +147,88 @@ bool AppCloaked(HWND window)
     Check(SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &flags, sizeof(flags))),
         "cross-process source cloak state is observable");
     return (flags & DWM_CLOAKED_APP) != 0;
+}
+
+void CheckFailedCloakCleanup(DockExternalMinimize& monitor, HWND receiver,
+    const std::wstring& dll, const std::wstring& helper, const std::wstring& helperDll)
+{
+    const HWND owner = CreateFixtureWindow(L"SnowDesktopCloakCleanupOwner", ReceiverProc);
+    Check(owner && snowdesktop::dock_source_cloak::RegisterOwner(owner), "cleanup lease owner is live");
+    if (!owner) return;
+    const std::array<HWND, 1> targets{fixture};
+    // Issue 21: real source-thread timeout followed by monitor shutdown/removal.
+    // The fourth case is the same-input responsive cleanup control.
+    for (DWORD mode = 0; mode != 4; ++mode)
+    {
+        Check(monitor.Start(receiver, dll, helper, helperDll), "cleanup monitor starts");
+        monitor.UpdateTargets(targets);
+        if (!helper.empty())
+            Check(PumpUntil([&] { return GetPropW(fixture, snowdesktop::dock_minimize::kReadyProperty) == receiver; }),
+                "x86 cleanup hook is ready");
+        bool acquired = false;
+        const HRESULT acquire = snowdesktop::dock_source_cloak::Acquire(fixture, owner, acquired);
+        Check(SUCCEEDED(acquire) && acquired && AppCloaked(fixture), "cleanup fixture acquires a real cross-process cloak");
+        if (FAILED(acquire) || !acquired) break;
+        const DWORD ticket = mode + 1;
+        const HANDLE entered = CreateEventW(nullptr, TRUE, FALSE,
+            dock_cloak_fixture::EventName(GetCurrentProcessId(), ticket, L"-entered").c_str());
+        const HANDLE resume = CreateEventW(nullptr, TRUE, FALSE,
+            dock_cloak_fixture::EventName(GetCurrentProcessId(), ticket, L"-resume").c_str());
+        Check(entered && resume, "cleanup synchronization events are created");
+        if (!entered || !resume)
+        {
+            if (entered) CloseHandle(entered);
+            if (resume) CloseHandle(resume);
+            snowdesktop::dock_source_cloak::Release(fixture, owner);
+            break;
+        }
+        Check(PostMessageW(fixture, dock_cloak_fixture::PauseMessage, GetCurrentProcessId(), ticket) &&
+            WaitForSingleObject(entered, 2000) == WAIT_OBJECT_0, "source thread enters the controlled pause");
+        if (mode == 3)
+        {
+            SetEvent(resume);
+            DWORD_PTR barrier = 0;
+            Check(SendMessageTimeoutW(fixture, WM_NULL, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                2000, &barrier) != 0, "responsive cleanup control resumes before release");
+        }
+        const HRESULT release = snowdesktop::dock_source_cloak::Release(fixture, owner);
+        std::cout << "Cloak cleanup mode=" << mode << " release=" << release << '\n';
+        Check(mode == 3 ? SUCCEEDED(release) : release == HRESULT_FROM_WIN32(ERROR_TIMEOUT),
+            "release observes the actual target-thread timeout or responsive control");
+        if (mode == 1) monitor.UpdateTargets({});
+        if (mode >= 2) monitor.Stop();
+        SetEvent(resume);
+        // No RecoverStale call, new monitor, or host-token removal may rescue
+        // this assertion. Restoration must survive with the same live owner.
+        Check(PumpUntil([&] { return !AppCloaked(fixture); }),
+            "resumed source uncloaks after release timeout, target removal, or monitor stop");
+        Check(snowdesktop::dock_source_cloak::IsLiveOwner({owner, ULongToHandle(GetCurrentProcessId()),
+                GetPropW(owner, snowdesktop::dock_source_cloak::HostTokenProperty)}),
+            "recovery does not depend on destroying the live animation owner");
+        Check(!snowdesktop::dock_source_cloak::ReadOwner(fixture).window &&
+            !GetPropW(fixture, snowdesktop::dock_source_cloak::TimerProperty) &&
+            !GetPropW(fixture, snowdesktop::dock_source_cloak::RecoveryProperty),
+            "recovery clears lease, timer and pending request");
+        // Failure cleanup only, after assertions, so an old-hook negative
+        // control cannot leave the owned fixture hidden for subsequent cases.
+        if (AppCloaked(fixture))
+        {
+            monitor.Start(receiver, dll, helper, helperDll);
+            monitor.UpdateTargets(targets);
+            if (!helper.empty()) PumpUntil([&] {
+                return GetPropW(fixture, snowdesktop::dock_minimize::kReadyProperty) == receiver;
+            });
+            snowdesktop::dock_source_cloak::Release(fixture, owner);
+        }
+        CloseHandle(entered);
+        CloseHandle(resume);
+    }
+    DestroyWindow(owner);
+    Check(monitor.Start(receiver, dll, helper, helperDll), "monitor resumes after cleanup regression");
+    monitor.UpdateTargets(targets);
+    if (!helper.empty()) Check(PumpUntil([&] {
+        return GetPropW(fixture, snowdesktop::dock_minimize::kReadyProperty) == receiver;
+    }), "x86 monitor resumes after cleanup regression");
 }
 
 void CheckCrossProcessGenie()
@@ -366,9 +450,8 @@ void CheckHostRestart(HWND receiver, const std::wstring& executable,
         Check(crash ? GetPropW(fixture, snowdesktop::dock_minimize::kTargetProperty) == hostReceiver :
                 GetPropW(fixture, snowdesktop::dock_minimize::kTargetProperty) == nullptr,
             crash ? "abrupt host exit leaves a stale marker for recovery" : "normal host exit removes its marker");
-        if (crash) Check(AppCloaked(fixture) &&
-            snowdesktop::dock_source_cloak::TaskWindowCloakFlags(fixture, DWM_CLOAKED_APP) == 0,
-            "an interrupted child-process cloak stays discoverable for a replacement host");
+        if (crash) Check(PumpUntil([] { return !AppCloaked(fixture); }),
+            "source-thread recovery uncloaks after the animation host crashes");
     }
 }
 }
@@ -467,6 +550,8 @@ int wmain(int argc, wchar_t** argv)
 
         CheckMinimizeButtonPress(monitor, fixture);
         CheckCrossProcessGenie();
+        CheckFailedCloakCleanup(monitor, receiver, dll.wstring(),
+            argc == 5 ? runtimePath(argv[3]) : L"", argc == 5 ? runtimePath(argv[4]) : L"");
 
         PostMessageW(fixture, kAction, 0, 0);
         Check(PumpUntil([] { return IsIconic(fixture) != FALSE; }), "system-menu minimize completes after declined animation");

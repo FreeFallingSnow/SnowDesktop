@@ -1,11 +1,13 @@
 #include <windows.h>
 #include <cstdlib>
+#include "dock_cloak_pause_fixture.h"
 
 namespace
 {
 bool clientCaption = false;
 LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (message == dock_cloak_fixture::PauseMessage) return dock_cloak_fixture::Pause(wParam, lParam);
     if (message == WM_APP + 6) { clientCaption = wParam != 0; return 1; }
     if (message == WM_NCHITTEST && clientCaption) return HTCLIENT;
     if (message == WM_APP + 2)

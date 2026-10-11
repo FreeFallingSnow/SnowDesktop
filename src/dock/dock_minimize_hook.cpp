@@ -24,8 +24,8 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockSourceCloakHook
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
-// Runs only in the marked application's window thread. No worker, allocation,
-// capture or replacement minimize command is executed inside the target.
+// Runs only in the marked application's window thread. Source cloaking retains
+// a recovery timer there; no capture or replacement minimize command runs here.
 extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockMinimizeHook(
     int code, WPARAM wParam, LPARAM lParam)
 {

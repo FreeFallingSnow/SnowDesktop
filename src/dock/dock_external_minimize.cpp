@@ -71,6 +71,8 @@ void DockExternalMinimize::UpdateTargets(std::span<const HWND> windows)
             if (OwnsTarget(it->first))
             {
                 const auto owner = snowdesktop::dock_source_cloak::ReadOwner(it->first);
+                // Release persists recovery on the source thread before its
+                // bounded send, so a timeout no longer depends on this hook.
                 if (owner.process == ULongToHandle(GetCurrentProcessId()))
                     snowdesktop::dock_source_cloak::Release(it->first, owner.window);
                 RemovePropW(it->first, snowdesktop::dock_minimize::kTargetProperty);
@@ -146,6 +148,8 @@ void DockExternalMinimize::Stop() noexcept
         if (OwnsTarget(window))
         {
             const auto owner = snowdesktop::dock_source_cloak::ReadOwner(window);
+            // A timed-out Release leaves the source-thread recovery timer
+            // responsible for uncloaking after the application resumes.
             if (owner.process == ULongToHandle(GetCurrentProcessId()))
                 snowdesktop::dock_source_cloak::Release(window, owner.window);
             if (GetPropW(window, snowdesktop::dock_minimize::kReadyProperty) == receiver_)
