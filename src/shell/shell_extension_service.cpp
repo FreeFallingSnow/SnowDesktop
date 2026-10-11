@@ -1370,7 +1370,7 @@ struct MenuService::Impl
                         request.sourceClsid.empty() && !request.startPinOnly && !request.originalShortcutOnly)
                     {
                         auto plan = PlanDemandQueries(catalogue, available, preferences, request, contexts);
-                        const bool verifying = catalogueStale || scanning || checkedRegistryRevision < registryRevision;
+                        const bool verifying = catalogueStale || checkedRegistryRevision < registryRevision;
                         // While global attribution is being refreshed, retain a
                         // full fallback even for a previously sources-only plan.
                         // Known sources are freshly checked by the native helper.
