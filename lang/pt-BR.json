@@ -2585,5 +2585,7 @@
   "app.settings.fan_title_font_size": "Tamanho da fonte dos títulos da expansão em leque",
   "settings.dock.fullscreenExceptionManage": "Gerenciar exceções de aplicativos",
   "app.dock.create_mapping_action": "Criar mapeamento",
-  "statusBar.clockShowSeconds": "Mostrar segundos no horário"
+  "statusBar.clockShowSeconds": "Mostrar segundos no horário",
+  "statusBar.timeAndNotificationArea": "Hora e área de notificação",
+  "statusBar.timeNotificationPosition": "Posição"
 }

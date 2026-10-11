@@ -62,7 +62,7 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.pinnedTrayItems, v.trayOrder, v.menu, v.quickSearch, v.taskView,
     v.clockSystemPanel, v.controlCenterSystemPanel, v.leftOrder, v.rightOrder,
     v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow, v.inputMethod,
-    v.quickControlOrder, v.hiddenQuickControls);
+    v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
 SD_IPC_FIELDS(GeneralSettings,
     v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,

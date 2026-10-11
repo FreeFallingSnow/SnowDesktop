@@ -250,7 +250,8 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
 }
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
     UINT w, UINT h, float scale, const PersonalizationSettings& a, const StatusBarPalette& palette,
-    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock)
+    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,
+    bool timeNotificationRightAligned)
 {
     if (!context || !text || !w || !h || !std::isfinite(scale) || scale <= 0) return E_INVALIDARG;
     const bool twoLineClock = StatusBarUsesTwoLineClock(mergedDock, static_cast<float>(h), scale);
@@ -313,18 +314,28 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         const LONG edgePadding = static_cast<LONG>(padding);
         // Keep the date itself centered. The symmetric reservation protects
         // its trailing notification button without shifting the date left.
-        if (!mergedDock && clockWidth + 2 * notificationWidth + 2 * (edgePadding + controlWidth) > viewportWidth)
+        if (!mergedDock && !timeNotificationRightAligned &&
+            clockWidth + 2 * notificationWidth + 2 * (edgePadding + controlWidth) > viewportWidth)
             clockWidth = 0;
         LONG leftLimit = 0;
-        if (mergedDock)
+        if (mergedDock || timeNotificationRightAligned)
         {
-            const auto layout = LayoutMergedStatusBar(viewportWidth, viewportHeight, scale,
-                edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex);
+            const auto layout = LayoutRightStatusBar(viewportWidth, viewportHeight, scale,
+                edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex, mergedDock);
             if (clockIndex) items[*clockIndex].bounds = layout.clock;
             if (notificationIndex) items[*notificationIndex].bounds = layout.notifications;
             for (std::size_t i = 0; i < rightIndices.size(); ++i)
                 items[rightIndices[i]].bounds = layout.right[i];
-            leftLimit = layout.center.left - edgePadding;
+            if (mergedDock) leftLimit = layout.center.left - edgePadding;
+            else
+            {
+                leftLimit = viewportWidth - edgePadding;
+                const auto reserve = [&](RECT bounds) {
+                    if (!IsRectEmpty(&bounds)) leftLimit = std::min(leftLimit, bounds.left - edgePadding);
+                };
+                reserve(layout.clock); reserve(layout.notifications);
+                for (const auto& bounds : layout.right) reserve(bounds);
+            }
         }
         else
         {

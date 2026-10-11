@@ -82,14 +82,14 @@ struct MergedStatusBarLayout
     RECT center{}, clock{}, notifications{};
     std::vector<RECT> right;
 };
-// The Dock keeps its symmetric reservation. The clock and notification target
-// form the last group on the complete bar; tray items never follow them.
-inline MergedStatusBarLayout LayoutMergedStatusBar(LONG width, LONG height, float scale,
+// The clock and notification target form the last group on the complete bar.
+// Merged bars also keep the Dock's symmetric central reservation.
+inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float scale,
     LONG padding, LONG clockWidth, LONG notificationWidth, std::span<const LONG> rightWidths,
-    std::optional<std::size_t> controlIndex)
+    std::optional<std::size_t> controlIndex, bool merged = false)
 {
     MergedStatusBarLayout result;
-    result.center = MergedStatusBarCenter(width, height, scale);
+    if (merged) result.center = MergedStatusBarCenter(width, height, scale);
     const LONG centerWidth = result.center.right - result.center.left;
     clockWidth = std::max(0L, clockWidth);
     notificationWidth = std::max(0L, notificationWidth);
@@ -131,5 +131,12 @@ inline MergedStatusBarLayout LayoutMergedStatusBar(LONG width, LONG height, floa
         if (notificationWidth) result.notifications = {group.left + clockWidth, 0, group.right, height};
     }
     return result;
+}
+inline MergedStatusBarLayout LayoutMergedStatusBar(LONG width, LONG height, float scale,
+    LONG padding, LONG clockWidth, LONG notificationWidth, std::span<const LONG> rightWidths,
+    std::optional<std::size_t> controlIndex)
+{
+    return LayoutRightStatusBar(width, height, scale, padding, clockWidth, notificationWidth,
+        rightWidths, controlIndex, true);
 }
 }

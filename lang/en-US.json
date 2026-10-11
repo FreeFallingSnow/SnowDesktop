@@ -2585,5 +2585,7 @@
   "app.settings.fan_title_font_size": "Fan Expansion Title Font Size",
   "settings.dock.fullscreenExceptionManage": "Manage application exceptions",
   "app.dock.create_mapping_action": "Create Mapping",
-  "statusBar.clockShowSeconds": "Show seconds in the time"
+  "statusBar.clockShowSeconds": "Show seconds in the time",
+  "statusBar.timeAndNotificationArea": "Time and notification area",
+  "statusBar.timeNotificationPosition": "Position"
 }

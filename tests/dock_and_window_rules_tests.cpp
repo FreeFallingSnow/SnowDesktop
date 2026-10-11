@@ -2141,6 +2141,22 @@ int main(int argc, char** argv)
         for (const LONG scale : {1L, 2L, 3L})
         {
             const std::array<LONG, 4> right{32 * scale, 32 * scale, 32 * scale, 92 * scale};
+            const auto standaloneRight = snowdesktop::LayoutRightStatusBar(1920 * scale, 32 * scale,
+                static_cast<float>(scale), 12 * scale, 180 * scale, 32 * scale, right, 3);
+            Check(IsRectEmpty(&standaloneRight.center) && standaloneRight.notifications.right == 1908 * scale &&
+                standaloneRight.clock.left == 1696 * scale && standaloneRight.clock.right == standaloneRight.notifications.left &&
+                standaloneRight.right.back().right == standaloneRight.clock.left,
+                "independent right alignment puts controls before the clock and notifications without reserving a Dock center");
+            const auto narrowRight = snowdesktop::LayoutRightStatusBar(320 * scale, 32 * scale,
+                static_cast<float>(scale), 12 * scale, 180 * scale, 32 * scale, right, 3);
+            Check(IsRectEmpty(&narrowRight.clock) && narrowRight.notifications.right == 308 * scale &&
+                narrowRight.right.back().right == narrowRight.notifications.left,
+                "narrow right-aligned bars omit the whole clock while retaining complete notification and control targets");
+            const auto noRightClock = snowdesktop::LayoutRightStatusBar(640 * scale, 32 * scale,
+                static_cast<float>(scale), 12 * scale, 0, 32 * scale, right, 3);
+            Check(IsRectEmpty(&noRightClock.clock) && noRightClock.notifications.right == 628 * scale &&
+                noRightClock.right.back().right == noRightClock.notifications.left,
+                "hiding a right-aligned clock leaves its notification at the right edge");
             const auto wide = snowdesktop::LayoutMergedStatusBar(1920 * scale, 64 * scale,
                 static_cast<float>(scale), 12 * scale, 104 * scale, 32 * scale, right, 3);
             Check(wide.notifications.right == 1908 * scale && wide.clock.right == wide.notifications.left &&

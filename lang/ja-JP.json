@@ -2585,5 +2585,7 @@
   "app.settings.fan_title_font_size": "扇形展開のタイトルの文字サイズ",
   "settings.dock.fullscreenExceptionManage": "アプリの例外を管理",
   "app.dock.create_mapping_action": "マッピングを作成",
-  "statusBar.clockShowSeconds": "時刻に秒を表示"
+  "statusBar.clockShowSeconds": "時刻に秒を表示",
+  "statusBar.timeAndNotificationArea": "時刻と通知領域",
+  "statusBar.timeNotificationPosition": "位置"
 }

@@ -568,6 +568,8 @@ int main(int argc, char** argv)
         Check(firstEnable.inputMethod, "existing profiles gain the input indicator by default");
         Check(!value.statusBar.clockShowSeconds && !firstEnable.clockShowSeconds,
             "new and existing profiles keep seconds hidden until enabled");
+        Check(!value.statusBar.timeNotificationRightAligned && !firstEnable.timeNotificationRightAligned,
+            "new and existing independent bars keep the centered time and notification area");
         for (const bool seconds : {true, false})
         {
             firstEnable.clockShowSeconds = seconds;
@@ -577,6 +579,14 @@ int main(int argc, char** argv)
                 stored.Find("clockShowSeconds")->boolean == seconds &&
                 DecodeStatusBarSettings(stored, restored) && restored.clockShowSeconds == seconds,
                 "both seconds preferences survive a settings reload");
+        }
+        for (const bool rightAligned : {true, false})
+        {
+            firstEnable.timeNotificationRightAligned = rightAligned;
+            JsonValue stored; StatusBarSettings restored;
+            Check(ParseJson(EncodeStatusBarSettings(firstEnable), stored) &&
+                DecodeStatusBarSettings(stored, restored) && restored.timeNotificationRightAligned == rightAligned,
+                "both time and notification positions survive a settings reload");
         }
         {
             firstEnable.inputMethod = false;
@@ -633,6 +643,7 @@ int main(int argc, char** argv)
         value.statusBar.taskView = false;
         value.statusBar.clockSystemPanel = value.statusBar.controlCenterSystemPanel = true;
         value.statusBar.clockShowSeconds = true;
+        value.statusBar.timeNotificationRightAligned = true;
         value.statusBar.leftOrder = {"quickSearch", "menu", "taskView"};
         std::reverse(value.statusBar.rightOrder.begin(), value.statusBar.rightOrder.end());
         value.statusBar.pinnedTrayItems = {"C:\\测试\\app.exe|42", "guid:\"test\""};
@@ -690,7 +701,8 @@ int main(int argc, char** argv)
         }
         for (const auto* json : {"{\"shellUi\":true}", "{\"maximizedWindow\":{\"enabled\":1}}",
             "{\"visibleWindow\":{\"theme\":{\"mode\":9}}}", "{\"noWindow\":{\"enabled\":1}}",
-            "{\"sceneRulesVersion\":3}", "{\"sceneRulesVersion\":\"2\"}", "{\"clockShowSeconds\":1}"})
+            "{\"sceneRulesVersion\":3}", "{\"sceneRulesVersion\":\"2\"}", "{\"clockShowSeconds\":1}",
+            "{\"timeNotificationRightAligned\":\"right\"}"})
         {
             JsonValue invalid; ParseJson(json, invalid);
             auto unchanged = value.statusBar;

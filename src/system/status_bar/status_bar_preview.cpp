@@ -103,7 +103,7 @@ const StatusBarItem& Item(const std::vector<StatusBarItem>& items, std::string_v
     return *found;
 }
 void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, int width, int height, float scale, bool merged,
-    bool expectNotification = true) try
+    bool expectNotification = true, bool rightAligned = false) try
 {
     const auto clock = std::find_if(items.begin(), items.end(), [](const auto& item) { return item.key == "clock"; });
     const bool dateVisible = clock != items.end() && !IsRectEmpty(&clock->bounds);
@@ -122,12 +122,12 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         Require(dateVisible, "date disappeared despite sufficient status bar width");
     if (dateVisible)
     {
-        if (!merged) Require(std::abs(clock->bounds.left + clock->bounds.right - width) <= 1,
+        if (!merged && !rightAligned) Require(std::abs(clock->bounds.left + clock->bounds.right - width) <= 1,
             "date itself is not centered on the complete bar");
         Require(notification.left == clock->bounds.right,
             "notification button must immediately follow the date without shifting it");
     }
-    else if (!merged) Require(std::abs(notification.left + notification.right - width) <= 1,
+    else if (!merged && !rightAligned) Require(std::abs(notification.left + notification.right - width) <= 1,
         "notification button must remain centered when the date is absent");
     const auto& controls = Item(items, "controlCenter").bounds;
     if (IsRectEmpty(&controls) || (!IsRectEmpty(&notification) != expectNotification))
@@ -136,7 +136,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
             std::to_string(notification.left) + "," + std::to_string(notification.right) + "]");
     if (expectNotification) Require(notification.right - notification.left == static_cast<LONG>(std::ceil(32.f * scale)),
         "notification button must remain a complete independent hit target");
-    if (merged && expectNotification)
+    if ((merged || rightAligned) && expectNotification)
     {
         Require(notification.right >= width - static_cast<LONG>(12.f * scale) && notification.right <= width,
             "merged notifications must be anchored to the complete bar's right edge");
@@ -492,11 +492,16 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 // Exercise the real renderer's fallback paths without adding
                 // CLI presets or altering the exported normal frame.
                 const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale,
-                    bool search = true, bool taskView = true, int mergedHeight = 64) {
+                    bool search = true, bool taskView = true, int mergedHeight = 64,
+                    bool rightAligned = false, bool seconds = false) {
                     auto compactSettings = settings; compactSettings.clock = date;
+                    compactSettings.timeNotificationRightAligned = rightAligned;
+                    compactSettings.clockShowSeconds = seconds;
                     compactSettings.quickSearch = search; compactSettings.taskView = taskView;
                     compactSettings.cpu = compactSettings.memory = compactSettings.gpu = compactSettings.traffic = true;
-                    auto compact = BuildStatusBarItems(compactSettings, data);
+                    auto compactData = data;
+                    if (seconds) compactData.clock = L"2026/09/26   09:09:59";
+                    auto compact = BuildStatusBarItems(compactSettings, compactData);
                     Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "clock"; }) == date,
                         "the existing date visibility flag must be respected");
                     Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "quickSearch"; }) == search,
@@ -510,12 +515,13 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     context->SetTarget(scratch.Get()); context->SetTransform(D2D1::Matrix3x2F::Identity());
                     context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
                     const auto content = DrawStatusBarContent(context.Get(), text, compact, testWidth, testHeight,
-                        testScale, appearance, palette, {}, false, 0, merged);
+                        testScale, appearance, palette, {}, false, 0, merged, compactSettings.timeNotificationRightAligned);
                     const auto end = context->EndDraw(); context->SetTarget(nullptr); Require(content); Require(end);
                     const auto dockCenter = MergedStatusBarCenter(static_cast<LONG>(testWidth), static_cast<LONG>(testHeight), testScale);
                     const bool notificationFits = !merged || static_cast<LONG>(testWidth) - dockCenter.right >=
                         static_cast<LONG>(std::ceil(32.f * testScale) + std::ceil(92.f * testScale));
-                    CheckLayout(text, compact, static_cast<int>(testWidth), static_cast<int>(testHeight), testScale, merged, notificationFits);
+                    CheckLayout(text, compact, static_cast<int>(testWidth), static_cast<int>(testHeight), testScale, merged,
+                        notificationFits, rightAligned);
                     if (!merged && search && logicalWidth >= 640)
                         Require(!IsRectEmpty(&Item(compact, "quickSearch").bounds),
                             "standalone status bar lost its enabled search entry");
@@ -532,6 +538,15 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                         Require(IsRectEmpty(&Item(compact, "clock").bounds),
                             "crowded date must yield as a whole while its notification target remains available");
                 };
+                for (const float rightScale : {.75f, 1.f, 1.5f, 2.f, 3.f})
+                {
+                    compactLayout(false, true, 1920, rightScale, true, true, 64, true, true);
+                    compactLayout(false, true, 640, rightScale, true, true, 64, true, true);
+                    compactLayout(false, true, 320, rightScale, true, true, 64, true, true);
+                    compactLayout(false, false, 640, rightScale, true, true, 64, true);
+                    compactLayout(true, true, 1920, rightScale, true, true, 64, false, true);
+                    compactLayout(true, true, 1920, rightScale, true, true, 64, true, true);
+                }
                 compactLayout(false, false, 640, scale);
                 compactLayout(false, false, 640, scale, false);
                 compactLayout(false, true, 640, scale);

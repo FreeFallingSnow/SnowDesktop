@@ -37,6 +37,7 @@ struct StatusBarSettings
     bool menu = true, quickSearch = true, taskView = true;
     bool clockSystemPanel = false, controlCenterSystemPanel = false;
     bool clockShowSeconds = false;
+    bool timeNotificationRightAligned = false;
     bool clock = true, tray = true, network = true, volume = true, battery = true;
     bool controlCenter = true;
     bool inputMethod = true;
@@ -74,6 +75,7 @@ template<class Visitor> void VisitStatusBarFlags(Visitor visit)
     visit("inputMethod", &StatusBarSettings::inputMethod);
     visit("clockSystemPanel", &StatusBarSettings::clockSystemPanel);
     visit("clockShowSeconds", &StatusBarSettings::clockShowSeconds);
+    visit("timeNotificationRightAligned", &StatusBarSettings::timeNotificationRightAligned);
     visit("controlCenterSystemPanel", &StatusBarSettings::controlCenterSystemPanel);
     visit("clock", &StatusBarSettings::clock);
     visit("tray", &StatusBarSettings::tray);

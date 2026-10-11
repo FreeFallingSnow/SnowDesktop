@@ -2585,5 +2585,7 @@
   "app.settings.fan_title_font_size": "Schriftgröße der Titel in der Fächeransicht",
   "settings.dock.fullscreenExceptionManage": "Anwendungsausnahmen verwalten",
   "app.dock.create_mapping_action": "Zuordnung erstellen",
-  "statusBar.clockShowSeconds": "Sekunden in der Uhrzeit anzeigen"
+  "statusBar.clockShowSeconds": "Sekunden in der Uhrzeit anzeigen",
+  "statusBar.timeAndNotificationArea": "Uhrzeit und Infobereich",
+  "statusBar.timeNotificationPosition": "Position"
 }

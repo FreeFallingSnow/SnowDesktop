@@ -2585,5 +2585,7 @@
   "app.settings.fan_title_font_size": "扇形展開標題字號",
   "settings.dock.fullscreenExceptionManage": "管理應用程式例外",
   "app.dock.create_mapping_action": "建立對應",
-  "statusBar.clockShowSeconds": "時間顯示秒"
+  "statusBar.clockShowSeconds": "時間顯示秒",
+  "statusBar.timeAndNotificationArea": "時間與通知區",
+  "statusBar.timeNotificationPosition": "位置"
 }

@@ -2585,5 +2585,7 @@
   "app.settings.fan_title_font_size": "Taille de police des titres de la vue en éventail",
   "settings.dock.fullscreenExceptionManage": "Gérer les exceptions des applications",
   "app.dock.create_mapping_action": "Créer un mappage",
-  "statusBar.clockShowSeconds": "Afficher les secondes"
+  "statusBar.clockShowSeconds": "Afficher les secondes",
+  "statusBar.timeAndNotificationArea": "Heure et zone de notification",
+  "statusBar.timeNotificationPosition": "Position"
 }

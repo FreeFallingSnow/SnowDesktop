@@ -618,7 +618,7 @@ struct StatusBar::Impl
             const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
                 dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), a, palette, interaction.hovered,
                 keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
-                interaction.focused.value_or(0), mergedDockHeight > 0);
+                interaction.focused.value_or(0), mergedDockHeight > 0, owner.settings.timeNotificationRightAligned);
             if (dropIndicator)
             {
                 ComPtr<ID2D1SolidColorBrush> brush;

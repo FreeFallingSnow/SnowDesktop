@@ -2585,5 +2585,7 @@
   "app.settings.fan_title_font_size": "Tamaño de fuente de los títulos del despliegue en abanico",
   "settings.dock.fullscreenExceptionManage": "Administrar excepciones de aplicaciones",
   "app.dock.create_mapping_action": "Crear asignación",
-  "statusBar.clockShowSeconds": "Mostrar segundos en la hora"
+  "statusBar.clockShowSeconds": "Mostrar segundos en la hora",
+  "statusBar.timeAndNotificationArea": "Hora y área de notificación",
+  "statusBar.timeNotificationPosition": "Posición"
 }
