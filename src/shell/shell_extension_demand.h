@@ -21,7 +21,17 @@ inline const Registration *DemandSource(const Catalogue &catalogue, const Catalo
             !item.display.key.empty() && item.display.provider == "verb:" + AttributionVerb(item.display.key))
             for (const auto &path : item.sources)
                 if (path.starts_with(L"attribution:"))
-                    ids.emplace(path.begin() + 12, path.end());
+                {
+                    // Registration IDs used here contain ASCII CLSIDs. Reject
+                    // malformed evidence instead of narrowing arbitrary Unicode.
+                    std::string registration;
+                    for (const auto c : std::wstring_view(path).substr(12))
+                    {
+                        if (c > 0x7f) { registration.clear(); break; }
+                        registration.push_back(static_cast<char>(c));
+                    }
+                    if (!registration.empty()) ids.insert(std::move(registration));
+                }
     for (const auto &a : catalogue.associations)
         if (a.provider == id && (ContextBit(a.context) & contexts)) ids.insert(a.registration);
     if (ids.size() != 1) return nullptr;

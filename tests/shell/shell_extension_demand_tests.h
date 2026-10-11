@@ -56,7 +56,7 @@ inline void Plan()
         "folder selection uses its own initialization key, not the first merged registration");
     auto mixed = ext::PlanDemandQueries(catalogue, observed, prefs, request, 3);
     Expect(mixed.full && mixed.sources.empty(), "mixed selection cannot borrow a file-only or directory-only key");
-    ext::SetHidden(prefs, "verb:action1", ext::Context::File, true);
+    ext::SetOverride(prefs, "verb:action1", ext::Context::File, ext::Visibility::Hide);
     Expect(ext::PlanDemandQueries(catalogue, observed, prefs, request, 1).sources.size() == 1,
         "per-context overrides are applied before dispatch");
     ext::SetCommon(prefs, "verb:unknown", ext::Category::Objects, true);
