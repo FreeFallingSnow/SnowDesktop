@@ -5715,6 +5715,8 @@ void BenchmarkMenus()
     ext::InvalidateMenuCache();
 }
 
+#include "shell/shell_extension_demand_tests.h"
+
 int wmain(int argc, wchar_t **argv)
 {
     const bool archiveProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-archive-submenus";
@@ -5826,6 +5828,7 @@ int wmain(int argc, wchar_t **argv)
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-demand-queries") demand_tests::Run();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-bootstrap") TestShellContextMenuBootstrap();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-native-menu-bootstrap") ProbeNativeShellMenuBootstrap(false);
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-legacy-native-menu") ProbeNativeShellMenuBootstrap(true);
@@ -5911,6 +5914,7 @@ int wmain(int argc, wchar_t **argv)
         }
         else
         {
+            demand_tests::Run();
             TestAggregateCataloguePriming();
             for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode);
             TestFileSnapshotNotificationReuse();

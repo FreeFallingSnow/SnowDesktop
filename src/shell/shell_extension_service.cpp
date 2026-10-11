@@ -2,6 +2,7 @@
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_discovery.h"
 #include "shell_extension_attribution.h"
+#include "shell_extension_demand.h"
 #include "shell_extension_nvidia_compat.h"
 #include "shell_context_menu_invoke.h"
 #include <condition_variable>
@@ -160,6 +161,7 @@ struct MenuService::Impl
         std::uint64_t provisionalRegistryRevision = 0;
         std::uint64_t expires = 0; bool checkRequested = false, checkInspection = false;
         bool queued = false, force = false, invalid = false, inspection = false;
+        bool fullMenuRequested = false;
         std::vector<Click> clicks;
     };
     struct Running
@@ -295,7 +297,11 @@ struct MenuService::Impl
     bool ObjectPreparationEnabled() const
     {
         for (int i = 0; i < 2; ++i)
-            for (const auto &id : shown[i]) if (StateVisibilityId(id) != "state:start-pin") return true;
+            for (const auto &id : shown[i]) if (StateVisibilityId(id) != "state:start-pin")
+            {
+                const auto *source = DemandSource(catalogue, available, id, 1u << i);
+                if (!source || DemandSourceKey(*source, {}, 1u << i).empty()) return true;
+            }
         return false;
     }
     bool OnlyStartShown(const Request &request, unsigned contexts = 0) const
@@ -449,6 +455,9 @@ struct MenuService::Impl
         for (const auto &item : catalogue.rows) registered.emplace(item.id, &item);
         for (const auto &[key, row] : rows)
         {
+            // Independent metadata must not teach the inventory that a command
+            // exists in the real aggregate; routing evidence comes from inspection.
+            if (!row.request.sourceClsid.empty()) continue;
             if (!row.view.snapshot || row.expires <= MenuSnapshotCache::Now()) continue;
             for (const auto &entry : row.view.snapshot->entries)
             {
@@ -584,7 +593,7 @@ struct MenuService::Impl
         if (!inspected || !sourcePending || scanning || scanRequested || !catalogue.revision) return {};
         for (const auto &[key, row] : rows)
         {
-            if (row.request.startPinOnly) continue;
+            if (row.request.startPinOnly || !row.request.sourceClsid.empty()) continue;
             if (!row.view.snapshot || row.view.pending || row.invalid || row.expires <= MenuSnapshotCache::Now() || !Local(row.request)) continue;
             const bool missing = std::any_of(row.view.snapshot->entries.begin(), row.view.snapshot->entries.end(), [&](const auto &entry) {
                 const auto found = observed.find(entry.registration.empty() ? entry.provider : entry.registration);
@@ -671,7 +680,7 @@ struct MenuService::Impl
                 if (reply.ok)
                 {
                     const auto associations = catalogue.associations.size();
-                    Associate(catalogue, resolved, reply);
+                    if (request.sourceClsid.empty()) Associate(catalogue, resolved, reply);
                     catalogueDirty |= associations != catalogue.associations.size();
                     row.failures = 0; row.retryAt = 0; row.completed = GetTickCount64();
                     row.invalid = row.registryInvalid = false;
@@ -1288,8 +1297,34 @@ struct MenuService::Impl
                         MenuTrace("schedule", "snapshot_reused"); continue;
                     }
                 }
+                {
+                    std::lock_guard lock(mutex);
+                    auto &row = rows[key];
+                    // Classification and planning run on the worker. UI reads
+                    // only this plan and immutable, separately keyed snapshots.
+                    if (!row.inspection && priority != QueryPriority::Execute &&
+                        !row.fullMenuRequested && configured && !catalogueStale &&
+                        checkedRegistryRevision >= registryRevision &&
+                        request.sourceClsid.empty() && !request.startPinOnly && !request.originalShortcutOnly)
+                    {
+                        const auto plan = PlanDemandQueries(catalogue, available, preferences, request, contexts);
+                        row.view.sources = plan.sources;
+                        row.view.sourcesOnly = !plan.full;
+                        row.view.contexts = contexts;
+                        for (const auto &source : plan.sources) Queue(source, priority, row.force);
+                        if (!plan.full)
+                        {
+                            row.view.pending = false; row.view.error.clear(); row.checkRequested = false;
+                            row.force = false; ++row.view.revision;
+                            MenuTrace("schedule", "sources_only", 0, static_cast<unsigned>(plan.sources.size()));
+                            continue;
+                        }
+                    }
+                    else row.view.sourcesOnly = false;
+                    row.fullMenuRequested = false;
+                }
                 Running job{key, sequence, dependency, cache.Begin(ticket), {}, GetTickCount64(), request.startPinOnly, contexts, {}, 0, 0};
-                usePreparedQuery = priority != QueryPriority::Inspect && !request.startPinOnly;
+                usePreparedQuery = priority != QueryPriority::Inspect && !request.startPinOnly && request.sourceClsid.empty();
                 if (nativeFactory && usePreparedQuery)
                 {
                     bool unverified = false;
@@ -1428,6 +1463,13 @@ void MenuService::Query(const Request &request, QueryPriority priority, bool for
 {
     std::lock_guard lock(impl_->mutex);
     impl_->RememberView(request, impl_->Queue(request, priority, force));
+}
+void MenuService::QueryFullMenu(const Request &request)
+{
+    std::lock_guard lock(impl_->mutex);
+    const auto key = impl_->Queue(request, QueryPriority::Menu, true);
+    if (!key.empty()) impl_->rows[key].fullMenuRequested = true;
+    impl_->RememberView(request, key);
 }
 bool MenuService::MenuEnabled(const Request &request, const Preferences &fallback)
 {

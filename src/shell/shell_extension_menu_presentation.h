@@ -152,9 +152,14 @@ class Presentation
     {
         MoveMoreToBottom(items, moreCommand);
         if (cached_) Insert(items, Convert(NewNormalEntries(cached_->entries), {}, cachedOriginal_), moreCommand);
-        if ((!normalDone_ || !startDone_) && !source_.paths.empty())
+        if (!normalDone_)
         {
-            options.pollItemsFinished = [this] { return normalDone_ && startDone_ && originalDone_; };
+            SyncSources(service_.MenuDisplay(normalSource_, prefs_, true));
+            PollSources(items, moreCommand);
+        }
+        if ((!normalDone_ || !startDone_ || !SourcesDone()) && !source_.paths.empty())
+        {
+            options.pollItemsFinished = [this] { return normalDone_ && startDone_ && originalDone_ && SourcesDone(); };
             options.pollItemsStablePrefix = true;
             options.pollItems = [this, moreCommand](const auto &current, bool canApply) -> std::optional<std::vector<modern_menu::Item>> {
                 if (!canApply)
@@ -172,6 +177,11 @@ class Presentation
                 }
                 auto updated = current;
                 bool progressed = false;
+                // The scheduler can discover the plan after the popup opens.
+                // Read it before completing the ordinary stream, including a
+                // sources-only plan with no aggregate payload at all.
+                if (!normalDone_) SyncSources(service_.MenuDisplay(normalSource_, prefs_, true));
+                progressed |= PollSources(updated, moreCommand);
                 if (!normalDone_)
                 {
                     auto view = service_.MenuDisplay(normalSource_, prefs_, true);
@@ -196,7 +206,7 @@ class Presentation
                                 return (startLane_ && pair && pair->id == "state:start-pin") ||
                                     (warm && !cachedOriginal_ && refreshState_ && !pair);
                             });
-                            if (!normalSource_.originalShortcutOnly && !originalCommands_.empty())
+                            if (!normalSource_.originalShortcutOnly && (!originalCommands_.empty() || !sources_.empty()))
                                 progressed |= SupplementChildren(updated, additions);
                             additions = NewNormalEntries(std::move(additions));
                             if (!additions.empty())
@@ -262,6 +272,44 @@ class Presentation
     }
 
   private:
+    struct SourceLane { Request request; bool done = false; };
+    bool SourcesDone() const
+    {
+        return std::all_of(sources_.begin(), sources_.end(), [](const auto &source) { return source.done; });
+    }
+    void SyncSources(const MenuView &view)
+    {
+        for (const auto &request : view.sources)
+            if (std::none_of(sources_.begin(), sources_.end(), [&](const auto &source) { return source.request == request; }))
+                sources_.push_back({request});
+    }
+    bool PollSources(std::vector<modern_menu::Item> &items, UINT moreCommand)
+    {
+        bool progressed = false, fallback = false;
+        for (auto &source : sources_) if (!source.done)
+        {
+            auto view = service_.MenuDisplay(source.request, prefs_, true);
+            if (view.pending || view.attributionPending) continue;
+            if (view.snapshot && view.error.empty() && !view.snapshot->entries.empty())
+            {
+                auto additions = std::move(view.snapshot->entries);
+                // State-changing commands retain their per-opening refresh and
+                // dedicated execution rules, even when a source emits them too.
+                std::erase_if(additions, [](const auto &entry) { return StatePairForVerb(entry.key) != nullptr; });
+                Insert(items, Convert(NewNormalEntries(std::move(additions))), moreCommand);
+            }
+            else fallback = true;
+            source.done = true;
+            progressed = true;
+        }
+        if (fallback && !sourcesRetried_)
+        {
+            sourcesRetried_ = true;
+            normalDone_ = false;
+            service_.QueryFullMenu(source_);
+        }
+        return progressed;
+    }
     bool SupplementChildren(std::vector<modern_menu::Item> &items, const std::vector<Entry> &entries,
                             const CommandReference &parent = {})
     {
@@ -320,7 +368,8 @@ class Presentation
             normalSource_ = originalSource_;
             initialRevision_ = service_.View(normalSource_).revision;
         }
-        service_.Query(normalSource_, QueryPriority::Menu, true);
+        if (sourcesRetried_ && !normalSource_.originalShortcutOnly) service_.QueryFullMenu(normalSource_);
+        else service_.Query(normalSource_, QueryPriority::Menu, true);
     }
     static bool IsOurCommand(UINT command)
     {
@@ -428,6 +477,8 @@ class Presentation
     std::set<UINT> converting_;
     std::set<UINT> originalCommands_;
     std::vector<CommandReference> displayedNormal_;
+    std::vector<SourceLane> sources_;
+    bool sourcesRetried_ = false;
     std::optional<Reply> cached_;
     bool refreshState_ = false;
     bool normalRetried_ = false;

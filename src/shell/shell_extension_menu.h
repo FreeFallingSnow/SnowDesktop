@@ -16,7 +16,8 @@ struct Request
     bool catalogueOnly = false;
     bool extended = false;
     Context context = Context::Automatic;
-    // Private metadata query: never displayed or invoked as a menu session.
+    // Private source query: supplies display metadata, never invocation tokens.
+    // A click is resolved again against the actual selection's full Shell menu.
     std::wstring sourceClsid, sourceKey;
     // Private executable query of Microsoft's Start handler, isolated from
     // arbitrary extension discovery and its worker pool.

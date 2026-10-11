@@ -877,13 +877,14 @@ struct Host
             progress("query original shortcut objects");
             return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
         }
-        // Source probes only supply metadata for commands already returned by
-        // the real aggregate. They never contribute displayed/executable items.
+        // Source queries supply metadata without retaining executable authority.
+        // Popup clicks are always re-resolved through a fresh real aggregate.
         if (request.startPinOnly || !request.sourceClsid.empty())
         {
             native->metadataOnly = !request.startPinOnly;
             constexpr auto startHandler = L"{470C0EBD-5D73-4D58-9CED-E91E22E23282}";
             if (request.startPinOnly && !HandlerEnabled(startHandler)) return Reply{true, {}, {}};
+            if (!request.sourceClsid.empty() && !HandlerEnabled(request.sourceClsid)) return Reply{true, {}, {}};
             CLSID clsid{};
             if (FAILED(CLSIDFromString(request.startPinOnly ? startHandler : request.sourceClsid.c_str(), &clsid))) return {};
             if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&native->context))))
@@ -991,7 +992,7 @@ struct Host
                 const auto *pair = StatePairForVerb(entry.key);
                 return !pair || pair->id != "state:start-pin";
             });
-        if (!request.startPinOnly && request.sourceClsid.empty())
+        if (!request.startPinOnly)
             for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
         progress("resolve NVIDIA compatibility application");
         NvidiaCompatibility(request, reply);
