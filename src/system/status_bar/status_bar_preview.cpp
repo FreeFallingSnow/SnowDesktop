@@ -540,9 +540,9 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 };
                 for (const float rightScale : {.75f, 1.f, 1.5f, 2.f, 3.f})
                 {
-                    compactLayout(false, true, 1920, rightScale, true, true, 64, true, true);
-                    compactLayout(false, true, 640, rightScale, true, true, 64, true, true);
-                    compactLayout(false, true, 320, rightScale, true, true, 64, true, true);
+                    compactLayout(true, false, 1920, rightScale, true, true, 64, true, true);
+                    compactLayout(true, false, 640, rightScale, true, true, 64, true, true);
+                    compactLayout(true, false, 320, rightScale, true, true, 64, true, true);
                     compactLayout(false, false, 640, rightScale, true, true, 64, true);
                     compactLayout(true, true, 1920, rightScale, true, true, 64, false, true);
                     compactLayout(true, true, 1920, rightScale, true, true, 64, true, true);
