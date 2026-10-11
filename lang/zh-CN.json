@@ -2589,7 +2589,7 @@
   "statusBar.timeAndNotificationArea": "时间与通知区",
   "statusBar.timeNotificationPosition": "位置",
   "app.dock.quick_operations": "常用操作",
-  "app.dock.single_click_launch": "单击启动",
+  "app.dock.single_click_launch": "单击启动应用",
   "settings.dock.visibilityAndSummon": "显示与唤起",
   "settings.dock.launchAndWindows": "启动与窗口",
   "settings.dock.visibleItems": "显示项目",
@@ -2604,5 +2604,6 @@
   "statusBar.networkInternet": "Internet 访问",
   "statusBar.networkNoInternet": "无法访问 Internet",
   "statusBar.networkDisconnected": "未连接",
-  "statusBar.networkDisabled": "已禁用"
+  "statusBar.networkDisabled": "已禁用",
+  "app.dock.start_button": "开始按钮"
 }

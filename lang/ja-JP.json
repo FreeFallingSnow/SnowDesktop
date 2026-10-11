@@ -2589,7 +2589,7 @@
   "statusBar.timeAndNotificationArea": "時刻と通知領域",
   "statusBar.timeNotificationPosition": "位置",
   "app.dock.quick_operations": "よく使う操作",
-  "app.dock.single_click_launch": "シングルクリックで起動",
+  "app.dock.single_click_launch": "シングルクリックでアプリを起動",
   "settings.dock.visibilityAndSummon": "表示と呼び出し",
   "settings.dock.launchAndWindows": "起動とウィンドウ",
   "settings.dock.visibleItems": "表示する項目",
@@ -2604,5 +2604,6 @@
   "statusBar.networkInternet": "インターネット アクセス",
   "statusBar.networkNoInternet": "インターネット アクセスなし",
   "statusBar.networkDisconnected": "未接続",
-  "statusBar.networkDisabled": "無効"
+  "statusBar.networkDisabled": "無効",
+  "app.dock.start_button": "スタートボタン"
 }

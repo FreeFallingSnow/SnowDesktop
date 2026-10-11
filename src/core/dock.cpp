@@ -1217,6 +1217,19 @@ RECT DockContainer::GetVisualPanelBounds(POINT pointer) const
                 panel, visual, app_->dockSettings_.position,
                 ScaledSpacing() / 2);
     }
+    if (app_->statusBar_ && IsEdgeAttached() && !IsMergedWithStatusBar())
+    {
+        RECT screen = area_;
+        OffsetRect(&screen, app_->virtualLeft_, app_->virtualTop_);
+        const auto monitor = MonitorFromRect(&screen, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO info{sizeof(info)};
+        if (GetMonitorInfoW(monitor, &info))
+        {
+            RECT workArea = app_->statusBar_->AvailableWorkArea(monitor, info.rcMonitor);
+            OffsetRect(&workArea, -app_->virtualLeft_, -app_->virtualTop_);
+            panel = snowdesktop::dock_magnification::ClipPanelToWorkArea(panel, workArea);
+        }
+    }
     return panel;
 }
 

@@ -2589,7 +2589,7 @@
   "statusBar.timeAndNotificationArea": "時間與通知區",
   "statusBar.timeNotificationPosition": "位置",
   "app.dock.quick_operations": "常用操作",
-  "app.dock.single_click_launch": "單擊啟動",
+  "app.dock.single_click_launch": "單擊啟動應用程式",
   "settings.dock.visibilityAndSummon": "顯示與喚起",
   "settings.dock.launchAndWindows": "啟動與視窗",
   "settings.dock.visibleItems": "顯示項目",
@@ -2604,5 +2604,6 @@
   "statusBar.networkInternet": "Internet 存取",
   "statusBar.networkNoInternet": "無法存取 Internet",
   "statusBar.networkDisconnected": "未連線",
-  "statusBar.networkDisabled": "已停用"
+  "statusBar.networkDisabled": "已停用",
+  "app.dock.start_button": "開始按鈕"
 }

@@ -1,5 +1,7 @@
 #include "app/app.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "settings/bar_settings_rules.h"
+#include "dock/dock_settings_rules.h"
 #include "dock_platform_helpers.h"
 #include "dock_running_app_pin_rules.h"
 #include "dock_explorer_pin.h"
@@ -20,6 +22,10 @@ constexpr UINT kMergedDockScaleFirst = 41850;
 constexpr UINT kMergedBarHeightFirst = 41860;
 constexpr UINT kMergedBarDetailedSettings = 41869;
 constexpr int kMergedBarHeights[]{32, 40, 48, 56, 64, 72, 80, 96};
+constexpr UINT kDockRevealGestureFirst = 41870;
+constexpr UINT kDockReserveDesktop = 41872;
+constexpr UINT kDockReserveMaximized = 41873;
+constexpr UINT kDockStartButton = 41874;
 }
 
 HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
@@ -29,12 +35,14 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     HMENU layoutMenu = CreatePopupMenu();
     HMENU monitorMenu = CreatePopupMenu();
     HMENU scaleMenu = CreatePopupMenu();
-    if (!menu || !positionMenu || !layoutMenu || !monitorMenu || !scaleMenu)
+    HMENU revealMenu = CreatePopupMenu();
+    if (!menu || !positionMenu || !layoutMenu || !monitorMenu || !scaleMenu || !revealMenu)
     {
         if (positionMenu) DestroyMenu(positionMenu);
         if (layoutMenu) DestroyMenu(layoutMenu);
         if (monitorMenu) DestroyMenu(monitorMenu);
         if (scaleMenu) DestroyMenu(scaleMenu);
+        if (revealMenu) DestroyMenu(revealMenu);
         if (menu) DestroyMenu(menu);
         return nullptr;
     }
@@ -57,6 +65,16 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(monitorMenu), _LW("settings.dock.monitor"));
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(scaleMenu), _LW("app.settings.dock_thickness"));
+    const auto availability = snowdesktop::ResolveBarSettingsAvailability(
+        generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS));
+    const bool edgeRevealEnabled = snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
+        dockSettings_.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled);
+    AppendMenuW(menu, MF_POPUP | (edgeRevealEnabled ? 0 : MF_GRAYED),
+        reinterpret_cast<UINT_PTR>(revealMenu), _LW("settings.dock.edgeRevealGesture"));
+    addChoice(revealMenu, kDockRevealGestureFirst, _LW("settings.dock.gestureSwipe"),
+        dockSettings_.edgeRevealGesture == 0, L"\uF8E5");
+    addChoice(revealMenu, kDockRevealGestureFirst + 1, _LW("settings.dock.gestureHover"),
+        dockSettings_.edgeRevealGesture == 1, L"\uE5F2");
     const char* monitorLabels[]{"app.dock.first_screen", "app.dock.last_screen", "app.dock.all_screens"};
     for (UINT index = 0; index < std::size(monitorLabels); ++index)
     {
@@ -83,17 +101,26 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         _LW("app.dock.show_frequent"),
         dockSettings_.showFrequentItems);
     const auto addToggle = [&](UINT command, const wchar_t* title, bool enabled,
-                               const wchar_t* glyph) {
-        const auto label = toggleLabel(title, enabled);
-        AppendMenuW(menu, MF_STRING, command, label.c_str());
+                               const wchar_t* glyph, bool available = true, bool visibility = false) {
+        const auto label = visibility ? std::wstring(title) + L"\t" +
+            _LW(enabled ? "app.interact.shown" : "app.interact.hidden") : toggleLabel(title, enabled);
+        AppendMenuW(menu, MF_STRING | (available ? 0 : MF_GRAYED), command, label.c_str());
         SetMenuItemIcon(menu, command, glyph, MenuIconFont::FluentRegular);
     };
+    addToggle(kDockStartButton, _LW("app.dock.start_button"), dockSettings_.showWindowsButton,
+        L"\uF133", true, true);
     addToggle(kContextDockSingleClickLaunch, _LW("app.dock.single_click_launch"),
         dockSettings_.singleClickLaunchItems, L"\uE445"); // cursor_click_20
     addToggle(kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
         dockSettings_.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
     addToggle(kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
         dockSettings_.showWindowPreviews, L"\uF8B5"); // window_20
+    const bool spaceOptionsEnabled = !dockSettings_.showOnlyWhenSummoned && !availability.allDockMerged;
+    addToggle(kDockReserveDesktop, _LW("settings.dock.allowDesktopContentOverlap"),
+        snowdesktop::dock_settings_rules::ShouldReserveDesktopWorkArea(
+            dockSettings_.showOnlyWhenSummoned, dockSettings_.allowDesktopContentOverlap), L"\uF359", spaceOptionsEnabled);
+    addToggle(kDockReserveMaximized, _LW("settings.dock.reserveScreenSpace"),
+        dockSettings_.reserveScreenSpace, L"\uF8B5", spaceOptionsEnabled);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING,
         kContextDockShowFrequentItems, frequentLabel.c_str());
@@ -114,6 +141,7 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"\uF587", MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(monitorMenu), L"\uF359", MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(scaleMenu), L"\uF8C4", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(revealMenu), L"\uE445", MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextDockShowFrequentItems,
         dockSettings_.showFrequentItems
             ? snowdesktop::menu_fluent_glyphs::kShowFrequent
@@ -233,6 +261,19 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
     case kContextDockSingleClickLaunch:
         updated.singleClickLaunchItems = !updated.singleClickLaunchItems;
         break;
+    case kDockStartButton:
+        updated.showWindowsButton = !updated.showWindowsButton;
+        layoutChanged = true;
+        break;
+    case kDockReserveDesktop:
+    case kDockReserveMaximized:
+        if (updated.showOnlyWhenSummoned || snowdesktop::ResolveBarSettingsAvailability(
+            generalSettings_.dockEnabled, updated, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).allDockMerged) return;
+        if (command == kDockReserveDesktop)
+            updated.allowDesktopContentOverlap = !updated.allowDesktopContentOverlap;
+        else updated.reserveScreenSpace = !updated.reserveScreenSpace;
+        layoutChanged = true;
+        break;
     case kContextDockShowOnlyWhenSummoned:
         updated.showOnlyWhenSummoned = !updated.showOnlyWhenSummoned;
         layoutChanged = true;
@@ -268,7 +309,14 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
             MessageBeep(MB_ICONWARNING);
         return;
     default:
-        if (command >= kDockMonitorScopeFirst && command < kDockMonitorScopeFirst + 3)
+        if (command >= kDockRevealGestureFirst && command < kDockRevealGestureFirst + 2)
+        {
+            if (!snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
+                updated.showOnlyWhenSummoned, updated.floatingEdgeSwipeEnabled)) return;
+            updated.edgeRevealGesture = static_cast<int>(command - kDockRevealGestureFirst);
+            layoutChanged = updated.edgeRevealGesture != dockSettings_.edgeRevealGesture;
+        }
+        else if (command >= kDockMonitorScopeFirst && command < kDockMonitorScopeFirst + 3)
         {
             updated.monitorScope = static_cast<DockMonitorScope>(command - kDockMonitorScopeFirst);
             layoutChanged = updated.monitorScope != dockSettings_.monitorScope;

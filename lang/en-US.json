@@ -2589,7 +2589,7 @@
   "statusBar.timeAndNotificationArea": "Time and notification area",
   "statusBar.timeNotificationPosition": "Position",
   "app.dock.quick_operations": "Quick operations",
-  "app.dock.single_click_launch": "Single-click launch",
+  "app.dock.single_click_launch": "Single-click to launch apps",
   "settings.dock.visibilityAndSummon": "Visibility and summon",
   "settings.dock.launchAndWindows": "Launch and windows",
   "settings.dock.visibleItems": "Visible items",
@@ -2604,5 +2604,6 @@
   "statusBar.networkInternet": "Internet access",
   "statusBar.networkNoInternet": "No Internet access",
   "statusBar.networkDisconnected": "Disconnected",
-  "statusBar.networkDisabled": "Disabled"
+  "statusBar.networkDisabled": "Disabled",
+  "app.dock.start_button": "Start button"
 }

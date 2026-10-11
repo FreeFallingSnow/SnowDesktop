@@ -2589,7 +2589,7 @@
   "statusBar.timeAndNotificationArea": "시간 및 알림 영역",
   "statusBar.timeNotificationPosition": "위치",
   "app.dock.quick_operations": "자주 사용하는 작업",
-  "app.dock.single_click_launch": "한 번 클릭하여 실행",
+  "app.dock.single_click_launch": "한 번 클릭하여 앱 실행",
   "settings.dock.visibilityAndSummon": "표시 및 호출",
   "settings.dock.launchAndWindows": "실행 및 창",
   "settings.dock.visibleItems": "표시 항목",
@@ -2604,5 +2604,6 @@
   "statusBar.networkInternet": "인터넷 액세스",
   "statusBar.networkNoInternet": "인터넷 액세스 없음",
   "statusBar.networkDisconnected": "연결되지 않음",
-  "statusBar.networkDisabled": "사용 안 함"
+  "statusBar.networkDisabled": "사용 안 함",
+  "app.dock.start_button": "시작 버튼"
 }

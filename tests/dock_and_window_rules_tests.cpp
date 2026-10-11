@@ -2135,6 +2135,17 @@ int main(int argc, char** argv)
             "network hover lists each adapter instead of substituting aggregate connectivity");
         Check(joined.size() == 1 && joined.front().left == 80 && joined.front().right == 1920,
             "a side Dock removes only its contact segment from the top status bar border");
+        const auto hoveringPanel = snowdesktop::dock_magnification::ExtendPanelAlongDockAxis(
+            {0, 32, 80, 1080}, {0, 18, 80, 1100}, DockPosition::Left, 6);
+        const auto clippedHover = snowdesktop::dock_magnification::ClipPanelToWorkArea(hoveringPanel, {0, 32, 1920, 1080});
+        const auto hoverJoin = snowdesktop::StatusBarEdgeSegments({0, 0, 1920, 32}, DockPosition::Top, clippedHover);
+        Check(clippedHover.top == 32 && clippedHover.bottom == 1080 && hoverJoin.size() == 1 && hoverJoin.front().left == 80,
+            "hover magnification retains the original material contact with the top status bar");
+        const auto clippedBottom = snowdesktop::dock_magnification::ClipPanelToWorkArea({1840, -20, 1920, 1080}, {0, 0, 1920, 1048});
+        const auto clippedLeft = snowdesktop::dock_magnification::ClipPanelToWorkArea({0, 0, 1950, 80}, {32, 0, 1920, 1080});
+        const auto clippedRight = snowdesktop::dock_magnification::ClipPanelToWorkArea({-20, 1000, 1920, 1080}, {0, 0, 1888, 1080});
+        Check(clippedBottom.bottom == 1048 && clippedLeft.left == 32 && clippedRight.right == 1888,
+            "hover panel growth respects bottom, left and right status bar reservations");
         const auto separated = snowdesktop::StatusBarEdgeSegments({0, 0, 1920, 32}, DockPosition::Top, {0, 40, 80, 1080});
         Check(separated.size() == 1 && separated.front().left == 0,
             "panels with a real gap preserve the full border");
