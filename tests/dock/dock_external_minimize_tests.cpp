@@ -527,6 +527,7 @@ int wmain(int argc, wchar_t** argv)
     CloseHandle(child.hThread);
     const bool ready = PumpUntil([] { return fixture && IsWindow(fixture); });
     Check(ready, "fixture announces its own window");
+    std::filesystem::path restartCopies;
     if (ready)
     {
         std::filesystem::path dll = argv[1];
@@ -627,24 +628,32 @@ int wmain(int argc, wchar_t** argv)
         monitor.Stop();
         DestroyWindow(otherReceiver);
 
-        const auto copies = std::filesystem::temp_directory_path() /
+        restartCopies = std::filesystem::temp_directory_path() /
             (L"SnowDesktopDockMinimizeRestart-" + std::to_wstring(GetCurrentProcessId()) +
              L"-" + std::to_wstring(GetTickCount64()));
         const std::wstring helper = argc == 5 ? runtimePath(argv[3]) : L"";
         const std::wstring helperDll = argc == 5 ? runtimePath(argv[4]) : L"";
-        CheckHostRestart(receiver, executable.data(), dll, helper, helperDll, copies / L"first", false);
-        CheckHostRestart(receiver, executable.data(), dll, helper, helperDll, copies / L"second", true);
-        CheckHostRestart(receiver, executable.data(), dll, helper, helperDll, copies / L"third", false);
-        std::error_code cleanup;
-        std::filesystem::remove_all(copies, cleanup);
+        CheckHostRestart(receiver, executable.data(), dll, helper, helperDll, restartCopies / L"first", false);
+        CheckHostRestart(receiver, executable.data(), dll, helper, helperDll, restartCopies / L"second", true);
+        CheckHostRestart(receiver, executable.data(), dll, helper, helperDll, restartCopies / L"third", false);
     }
     if (fixture) PostMessageW(fixture, WM_CLOSE, 0, 0);
     if (!PumpUntil([&] { return WaitForSingleObject(child.hProcess, 0) == WAIT_OBJECT_0; }))
     {
         Check(false, "owned fixture exits normally");
         TerminateProcess(child.hProcess, 1);
+        Check(WaitForSingleObject(child.hProcess, 3000) == WAIT_OBJECT_0, "failed owned fixture has exited before cleanup");
     }
     CloseHandle(child.hProcess);
+    if (!restartCopies.empty())
+    {
+        // Source-thread callback code is pinned in this owned fixture. Its
+        // private DLLs become deletable only after that process has exited.
+        std::error_code cleanup;
+        std::filesystem::remove_all(restartCopies, cleanup);
+        Check(!cleanup && !std::filesystem::exists(restartCopies, cleanup) && !cleanup,
+            "private restart runtimes are removed after the pinned fixture exits");
+    }
     DestroyWindow(receiver);
     if (!failures) std::cout << "Dock external minimize hook checks passed\n";
     return failures ? 1 : 0;
