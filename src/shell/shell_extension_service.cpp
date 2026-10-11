@@ -278,6 +278,13 @@ struct MenuService::Impl
             for (const auto &id : shown[i])
             {
                 if (request.startPinOnly && StateVisibilityId(id) != "state:start-pin") continue;
+                if (!request.sourceClsid.empty())
+                {
+                    const auto *source = DemandSource(catalogue, available, id, 1u << i);
+                    if (!source) continue;
+                    const std::wstring clsid(source->verbs.front().begin(), source->verbs.front().end());
+                    if (lstrcmpiW(clsid.c_str(), request.sourceClsid.c_str()) != 0) continue;
+                }
                 bool allowed = true;
                 for (int j = 0; contexts && j < 4; ++j)
                     if ((contexts & (1u << j)) && !shown[j].contains(id)) allowed = false;

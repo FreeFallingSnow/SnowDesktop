@@ -288,6 +288,12 @@ class Presentation
         bool progressed = false, fallback = false;
         for (auto &source : sources_) if (!source.done)
         {
+            if (!service_.MenuEnabled(source.request, prefs_))
+            {
+                source.done = true;
+                progressed = true;
+                continue;
+            }
             auto view = service_.MenuDisplay(source.request, prefs_, true);
             if (view.pending || view.attributionPending) continue;
             if (view.snapshot && view.error.empty() && !view.snapshot->entries.empty())

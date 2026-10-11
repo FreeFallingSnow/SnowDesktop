@@ -128,7 +128,8 @@ inline void Streams(int mode)
     auto poll = [&] {
         if (auto changed = options.pollItems(items, true)) items = std::move(*changed);
     };
-    PumpUntil([&] { poll(); return items.size() == 2; }, "first provider publishes while another provider remains held");
+    auto actions = [&] { return std::count_if(items.begin(), items.end(), [](const auto &item) { return !item.separator; }); };
+    PumpUntil([&] { poll(); return actions() == 2; }, "first provider publishes while another provider remains held");
     Expect(items.front().label == Entry(0).label && items.back().command == 7 &&
         first == 1 && (mode == 1 ? full == 1 : full == 0) && !options.pollItemsFinished(),
         "independent publication preserves the More footer and does not wait for the slow stream");
@@ -139,14 +140,14 @@ inline void Streams(int mode)
         PumpUntil([&] { poll(); return full == 1; }, "a failed source triggers one real aggregate compatibility query");
     else
     {
-        PumpUntil([&] { poll(); return items.size() == 3; }, "second provider appears without waiting for compatibility");
+        PumpUntil([&] { poll(); return actions() == 3; }, "second provider appears without waiting for compatibility");
         Expect(items.front().command == firstCommand, "later publication preserves existing command identities");
     }
     if (mode)
     {
         releaseFull = true;
         PumpUntil([&] { poll(); return options.pollItemsFinished(); }, "compatibility stream completes");
-        Expect(items.size() == (mode == 1 ? 4u : 3u) && items.front().command == firstCommand && full == 1,
+        Expect(actions() == (mode == 1 ? 4 : 3) && items.front().command == firstCommand && full == 1,
             "aggregate fallback adds missing commands without duplicating or renumbering displayed source rows");
     }
     else
@@ -173,9 +174,49 @@ inline void Streams(int mode)
     Expect(!succeeded && invoked == 0, "disabling a published command prevents its invocation");
     service.Shutdown();
 }
+inline void CancelQueued()
+{
+    TemporaryDirectory temp;
+    const auto file = temp.path / L"selected.txt", cache = temp.path / L"cache";
+    std::ofstream(file) << "private"; std::filesystem::create_directory(cache);
+    const auto catalogue = Inventory(), observed = Observed(catalogue);
+    std::vector<std::pair<std::string, std::uint64_t>> proof;
+    for (const auto &source : catalogue.rows) proof.emplace_back(source.id, source.menuRevision);
+    Write(cache / L"catalogue.bin", snowdesktop::settings_ipc::Pack(std::uint32_t(5), catalogue, proof));
+    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(3), observed.rows));
+    ext::Request request; request.paths = {file.wstring()};
+    ext::Preferences prefs;
+    for (int i = 0; i < 3; ++i) ext::SetCommon(prefs, Entry(i).provider, ext::Category::Objects, true);
+    const auto plan = ext::PlanDemandQueries(catalogue, observed, prefs, request, 1);
+    std::atomic<unsigned> started = 0, disabledCalls = 0;
+    std::atomic<bool> release = false;
+    ext::MenuService service(cache, [&](const ext::Request &target) -> ext::QueryWork {
+        ++started;
+        const bool disabled = target.sourceClsid == plan.sources.back().sourceClsid;
+        if (disabled) ++disabledCalls;
+        return {[&]() -> std::optional<ext::Reply> {
+            if (!release) return {};
+            return ext::Reply{true, {Entry(0)}, {}};
+        }, {}};
+    }, [catalogue] { return catalogue; });
+    service.Configure(prefs); service.Query(request);
+    PumpUntil([&] { return started == 2; }, "two source sessions occupy the bounded worker pool");
+    Expect(disabledCalls == 0 && service.View(plan.sources.back()).pending,
+        "third source is queued behind the two active sessions");
+    ext::SetCommon(prefs, Entry(2).provider, ext::Category::Objects, false);
+    service.Configure(prefs);
+    Expect(!service.View(plan.sources.back()).pending && !service.MenuEnabled(plan.sources.back(), prefs),
+        "disabling a source cancels its queued work even while other sources stay enabled");
+    release = true;
+    PumpUntil([&] { return !service.View(plan.sources.front()).pending && !service.View(plan.sources[1]).pending; },
+        "remaining enabled sources complete normally");
+    Expect(disabledCalls == 0, "the disabled queued provider is never activated");
+    service.Shutdown();
+}
 inline void Run()
 {
     Plan();
     for (int mode = 0; mode < 3; ++mode) Streams(mode);
+    CancelQueued();
 }
 }
