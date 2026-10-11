@@ -93,6 +93,36 @@ void DrawCenteredBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, ID
     context->PopAxisAlignedClip();
 }
 
+bool DrawCenteredBarGlyph(ID2D1RenderTarget* context, IDWriteFontFace* face, std::wstring_view value,
+    float size, D2D1_RECT_F bounds, ID2D1Brush* brush)
+{
+    if (!face || value.empty()) return false;
+    UINT32 code = static_cast<UINT32>(value.front());
+    if (value.size() == 2 && code >= 0xd800 && code <= 0xdbff && value[1] >= 0xdc00 && value[1] <= 0xdfff)
+        code = 0x10000 + ((code - 0xd800) << 10) + (static_cast<UINT32>(value[1]) - 0xdc00);
+    else if (value.size() != 1) return false;
+    UINT16 glyph = 0;
+    if (FAILED(face->GetGlyphIndices(&code, 1, &glyph)) || !glyph) return false;
+    ComPtr<ID2D1Factory> factory; context->GetFactory(&factory);
+    ComPtr<ID2D1PathGeometry> geometry;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (!factory || FAILED(factory->CreatePathGeometry(&geometry)) || FAILED(geometry->Open(&sink)) ||
+        FAILED(face->GetGlyphRunOutline(size, &glyph, nullptr, nullptr, 1, FALSE, FALSE, sink.Get())) ||
+        FAILED(sink->Close())) return false;
+    D2D1_RECT_F ink{};
+    if (FAILED(geometry->GetBounds(nullptr, &ink)) || ink.right <= ink.left || ink.bottom <= ink.top) return false;
+    // The icon font's conservative glyph metrics can differ from its actual
+    // paths. Draw those unchanged paths at their measured center, just like
+    // the SVG bell and battery, with no font-baseline or hinting displacement.
+    D2D1_MATRIX_3X2_F original{}; context->GetTransform(&original);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(
+        (bounds.left + bounds.right - ink.left - ink.right) / 2,
+        (bounds.top + bounds.bottom - ink.top - ink.bottom) / 2) * original);
+    context->FillGeometry(geometry.Get(), brush);
+    context->SetTransform(original);
+    return true;
+}
+
 std::wstring Percent(double value)
 {
     return std::isfinite(value) && value >= 0 && value <= 100 ?
@@ -299,6 +329,21 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
     ComPtr<IDWriteTextFormat> batteryFormat;
     batteryFormat.Attach(CreateFluentTextFormat(text, 20.f * scale));
     if (!format || !brush || !iconFormat || !batteryFormat) return E_FAIL;
+    ComPtr<IDWriteFontFace> iconFace;
+    ComPtr<IDWriteFontCollection> iconFonts;
+    UINT32 familyIndex = 0; BOOL familyExists = FALSE;
+    if (SUCCEEDED(iconFormat->GetFontCollection(&iconFonts)) && iconFonts &&
+        SUCCEEDED(iconFonts->FindFamilyName(L"FluentSystemIcons-Regular", &familyIndex, &familyExists)) && familyExists)
+    {
+        ComPtr<IDWriteFontFamily> family; ComPtr<IDWriteFont> font;
+        if (SUCCEEDED(iconFonts->GetFontFamily(familyIndex, &family)) &&
+            SUCCEEDED(family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL, &font))) font->CreateFontFace(&iconFace);
+    }
+    const auto drawGlyph = [&](std::wstring_view glyph, IDWriteTextFormat* glyphFormat, D2D1_RECT_F bounds) {
+        if (!DrawCenteredBarGlyph(context, iconFace.Get(), glyph, glyphFormat->GetFontSize(), bounds, brush.Get()))
+            DrawCenteredBarText(context, text, glyphFormat, glyph, bounds, brush.Get());
+    };
     format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     if (format && brush)
     {
@@ -476,8 +521,8 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         else
                         {
                             const auto& glyph = item.controlGlyphs[part];
-                            DrawCenteredBarText(context, text, part == 2 ? batteryFormat.Get() : iconFormat.Get(), glyph,
-                                D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom), brush.Get());
+                            drawGlyph(glyph, part == 2 ? batteryFormat.Get() : iconFormat.Get(),
+                                D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom));
                         }
                         brush->SetColor(color);
                     }
@@ -502,7 +547,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         DrawNotificationBell(context, brush.Get(),
                             D2D1::RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize));
                     if (!bellDrawn)
-                        DrawCenteredBarText(context, text, iconFormat.Get(), item.glyph, iconRect, brush.Get());
+                        drawGlyph(item.glyph, iconFormat.Get(), iconRect);
                     if (item.flipGlyph) context->SetTransform(originalTransform);
                 }
                 if (!item.text.empty())
