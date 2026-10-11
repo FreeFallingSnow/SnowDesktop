@@ -12,6 +12,7 @@
 #include <dwrite.h>
 #include <shellapi.h>
 #include <wrl/client.h>
+#include <array>
 #include <cmath>
 #include <utility>
 
@@ -76,34 +77,57 @@ bool DrawNotificationBell(ID2D1RenderTarget* context, ID2D1SolidColorBrush* brus
 }
 
 void DrawCenteredBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, IDWriteTextFormat* format,
-    std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush, bool informationBaseline = false)
+    std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush, bool informationOpticalDescent = false,
+    bool separateLabelValue = false)
 {
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(factory->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format,
             bounds.right - bounds.left, bounds.bottom - bounds.top, &layout))) return;
     DWRITE_OVERHANG_METRICS ink{};
     const bool measured = SUCCEEDED(layout->GetOverhangMetrics(&ink));
-    float vertical = measured ? (ink.top - ink.bottom) / 2 : 0;
-    if (informationBaseline)
-    {
-        // Dates and resource labels share a cap/digit baseline. Re-centering
-        // every string moves that baseline when a descender or CJK label is
-        // present. A small optical descent balances the smaller text against
-        // the surrounding 18-DIP icons; it scales with the font, not pixels.
-        const std::wstring_view reference = value.find(L'\n') == std::wstring_view::npos ?
-            L"H0123456789" : L"H0123456789\nH0123456789";
-        ComPtr<IDWriteTextLayout> baseline;
-        DWRITE_OVERHANG_METRICS referenceInk{};
-        if (SUCCEEDED(factory->CreateTextLayout(reference.data(), static_cast<UINT32>(reference.size()), format,
-                bounds.right - bounds.left, bounds.bottom - bounds.top, &baseline)) &&
-            SUCCEEDED(baseline->GetOverhangMetrics(&referenceInk)))
-            vertical = (referenceInk.top - referenceInk.bottom) / 2;
-        vertical += format->GetFontSize() / 12.f;
-    }
+    // Balance the smaller information text against the surrounding icons.
+    // Measure the displayed ink: a synthetic cap reference has different
+    // extents at larger font sizes and moves dates farther than intended.
+    const float descent = informationOpticalDescent ? format->GetFontSize() / 12.f : 0;
+    const float vertical = (measured ? (ink.top - ink.bottom) / 2 : 0) + descent;
     const auto origin = D2D1::Point2F(bounds.left + (measured ? (ink.left - ink.right) / 2 : 0),
         bounds.top + vertical);
+    std::array<ComPtr<IDWriteTextLayout>, 2> fragments;
+    std::array<DWRITE_OVERHANG_METRICS, 2> fragmentInk{};
+    std::array<float, 2> fragmentX{};
+    const auto separator = value.rfind(L' ');
+    bool separated = separateLabelValue && separator != std::wstring_view::npos && separator + 1 < value.size();
+    if (separated)
+    {
+        // Keep the full layout's horizontal positions and spacing, but center
+        // the label and value vertically using their own ink. CJK labels are
+        // taller than the adjacent Latin digits, which otherwise look raised.
+        const std::size_t split = separator + 1;
+        for (std::size_t i = 0; i < fragments.size(); ++i)
+        {
+            const auto part = i == 0 ? value.substr(0, split) : value.substr(split);
+            float unusedY = 0;
+            float partX = 0;
+            DWRITE_HIT_TEST_METRICS hit{};
+            if (FAILED(factory->CreateTextLayout(part.data(), static_cast<UINT32>(part.size()), format,
+                    bounds.right - bounds.left, bounds.bottom - bounds.top, &fragments[i])) ||
+                FAILED(fragments[i]->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)) ||
+                FAILED(fragments[i]->GetOverhangMetrics(&fragmentInk[i])) ||
+                FAILED(layout->HitTestTextPosition(i == 0 ? 0 : static_cast<UINT32>(split), FALSE,
+                    &fragmentX[i], &unusedY, &hit)) ||
+                FAILED(fragments[i]->HitTestTextPosition(0, FALSE, &partX, &unusedY, &hit)))
+            { separated = false; break; }
+            // The logical first character need not be the leftmost character
+            // in a bidirectional label; retain its original anchor either way.
+            fragmentX[i] -= partX;
+        }
+    }
     context->PushAxisAlignedClip(bounds, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    context->DrawTextLayout(origin, layout.Get(), brush);
+    if (separated)
+        for (std::size_t i = 0; i < fragments.size(); ++i)
+            context->DrawTextLayout(D2D1::Point2F(origin.x + fragmentX[i],
+                bounds.top + (fragmentInk[i].top - fragmentInk[i].bottom) / 2 + descent), fragments[i].Get(), brush);
+    else context->DrawTextLayout(origin, layout.Get(), brush);
     context->PopAxisAlignedClip();
 }
 
@@ -563,6 +587,11 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 else if (!item.glyph.empty() && iconFormat)
                 {
                     auto iconRect = rect;
+                    // The filled dome makes a geometrically centered bell
+                    // look raised. Keep its click target and horizontal center
+                    // while moving all known bell states down one scaled DIP.
+                    if (item.action == StatusBarAction::Notifications && item.glyph != status_bar_glyphs::kUnknown)
+                    { iconRect.top += scale; iconRect.bottom += scale; }
                     if (!item.text.empty()) { iconRect.right = iconRect.left + 28.f * scale; textRect.left += 22.f * scale; }
                     D2D1_MATRIX_3X2_F originalTransform{};
                     if (item.flipGlyph)
@@ -588,7 +617,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                     const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
                     DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get(),
                         item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
-                        item.key == "gpu" || item.key == "traffic");
+                        item.key == "gpu" || item.key == "traffic", item.key == "memory");
                 }
             }
             if (keyboardFocusVisible && &item == &items[std::min(focused, items.size() - 1)])

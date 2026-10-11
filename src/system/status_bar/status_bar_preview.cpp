@@ -638,9 +638,10 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             if (preset == "normal" || preset == "information" || preset == "scaled" || preset == "merged")
             {
                 // Optical text alignment intentionally differs from geometric
-                // centering. Icons still use the cell center; cap/digit text
-                // shares a slightly lower baseline, regardless of its content.
-                const auto centeredInk = [&](RECT bounds, std::string_view name, bool information = false) {
+                // centering. Information text and bell shapes have a small
+                // optical descent; other icons retain the cell center.
+                const auto centeredInk = [&](RECT bounds, std::string_view name, bool opticalDescent = false,
+                    bool checkHorizontal = true) {
                     if (IsRectEmpty(&bounds)) return;
                     int minX = request.canvasWidth, minY = request.canvasHeight, maxX = -1, maxY = -1;
                     for (int py = top + bounds.top + 2; py < top + bounds.bottom - 2; ++py)
@@ -655,12 +656,8 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     Require(maxX >= minX && maxY >= minY, "status bar alignment fixture has no visible ink");
                     const float dx = static_cast<float>(minX + maxX + 1 - 2 * left - bounds.left - bounds.right) / 2.f;
                     const float dy = static_cast<float>(minY + maxY + 1 - 2 * top - bounds.top - bounds.bottom) / 2.f;
-                    // CJK labels and descenders extend beyond the shared cap
-                    // reference; check their baseline through the numeric
-                    // clock/CPU/GPU samples instead of demanding equal boxes.
-                    const bool referenceText = name == "clock" || name == "cpu" || name == "gpu";
-                    const float expectedY = information ? scale : 0;
-                    if (std::abs(dx) > 1.f || ((!information || referenceText) && std::abs(dy - expectedY) > 1.f))
+                    const float expectedY = opticalDescent ? scale : 0;
+                    if ((checkHorizontal && std::abs(dx) > 1.f) || std::abs(dy - expectedY) > 1.f)
                         throw std::runtime_error("status bar visible ink is not centered: " + std::string(name) +
                             " dx=" + std::to_string(dx) + " dy=" + std::to_string(dy));
                 };
@@ -668,7 +665,33 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 {
                     if (item.icon || item.key == "controlCenter") continue;
                     centeredInk(item.bounds, item.key, item.key == "clock" || item.key == "cpu" ||
-                        item.key == "memory" || item.key == "gpu" || item.key == "traffic");
+                        item.key == "memory" || item.key == "gpu" || item.key == "traffic" ||
+                        (item.key == "notifications" && item.glyph != status_bar_glyphs::kUnknown));
+                    if (item.key == "memory" && !IsRectEmpty(&item.bounds))
+                    {
+                        // Inspect the label and numeric pixels independently.
+                        // A centered combined CJK/Latin box used to pass while
+                        // its shorter percent digits remained visibly raised.
+                        ComPtr<IDWriteTextFormat> font;
+                        Require(app_fonts::CreateTextFormat(text, L"Segoe UI", DWRITE_FONT_WEIGHT_SEMI_BOLD,
+                            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, 12.f * scale, L"", &font));
+                        font->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+                        font->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+                        font->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+                        ComPtr<IDWriteTextLayout> layout;
+                        Require(text->CreateTextLayout(item.text.data(), static_cast<UINT32>(item.text.size()), font.Get(),
+                            static_cast<float>(item.bounds.right - item.bounds.left),
+                            static_cast<float>(item.bounds.bottom - item.bounds.top), &layout));
+                        DWRITE_OVERHANG_METRICS ink{}; Require(layout->GetOverhangMetrics(&ink));
+                        float splitX = 0, unusedY = 0; DWRITE_HIT_TEST_METRICS hit{};
+                        Require(layout->HitTestTextPosition(static_cast<UINT32>(item.text.rfind(L' ') + 1), FALSE,
+                            &splitX, &unusedY, &hit));
+                        const LONG divider = item.bounds.left + static_cast<LONG>(std::lround(splitX + (ink.left - ink.right) / 2));
+                        auto labelBounds = item.bounds, valueBounds = item.bounds;
+                        labelBounds.right = divider; valueBounds.left = divider;
+                        centeredInk(labelBounds, "memory-label", true, false);
+                        centeredInk(valueBounds, "memory-value", true, false);
+                    }
                 }
                 const auto& controls = Item(items, "controlCenter");
                 for (int part = 0; part < 3; ++part)
