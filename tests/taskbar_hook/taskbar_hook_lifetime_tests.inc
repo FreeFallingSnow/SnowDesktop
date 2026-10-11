@@ -38,8 +38,9 @@ LRESULT CALLBACK LifetimeWindowProc(HWND window, UINT message, WPARAM wParam, LP
 
 bool WaitForLifetimeWorkers(HMODULE module)
 {
-    // Ready is signalled just before FreeLibraryAndExitThread. Wait for the
-    // real worker, rather than racing that release or using a fixed sleep.
+    // Ready precedes FreeLibraryAndExitThread; the independent owner monitor
+    // also stays alive until its owner exits. Call only after ending the private
+    // owner process, then wait for actual worker release instead of sleeping.
     using QueryThread = LONG (WINAPI*)(HANDLE, ULONG, void*, ULONG, ULONG*);
     const auto query = reinterpret_cast<QueryThread>(GetProcAddress(
         GetModuleHandleW(L"ntdll.dll"), "NtQueryInformationThread"));
@@ -82,13 +83,36 @@ int RunLifetimeChild(const std::filesystem::path& root,
     // No real XAML TAP, native appearance or auto-hide preference is touched.
     const HMODULE sentinel = LoadLibraryW((root / L"ExplorerTAP.dll").c_str());
     if (!sentinel) return fail("load XAML ownership sentinel");
+    struct OwnerProcess
+    {
+        PROCESS_INFORMATION value{};
+        bool Stop() const
+        {
+            if (!value.hProcess) return true;
+            if (WaitForSingleObject(value.hProcess, 0) == WAIT_OBJECT_0) return true;
+            // Only our never-resumed fixture child, not a desktop application.
+            return TerminateProcess(value.hProcess, 0) &&
+                WaitForSingleObject(value.hProcess, 5000) == WAIT_OBJECT_0;
+        }
+        ~OwnerProcess()
+        {
+            Stop();
+            if (value.hThread) CloseHandle(value.hThread);
+            if (value.hProcess) CloseHandle(value.hProcess);
+        }
+    } owner;
+    STARTUPINFOW startup{sizeof(startup)};
+    const auto ownerExecutable = root / L"explorer.exe";
+    if (!CreateProcessW(ownerExecutable.c_str(), nullptr, nullptr, nullptr, FALSE,
+            CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, root.c_str(), &startup, &owner.value))
+        return fail("create private suspended owner process");
     const HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
         PAGE_READWRITE, 0, sizeof(SharedState), mappingName);
     if (!mapping || GetLastError() == ERROR_ALREADY_EXISTS) return fail("create isolated IPC mapping");
     auto* shared = static_cast<SharedState*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
     if (!shared) return fail("map isolated IPC");
     *shared = SharedState{};
-    shared->ownerProcessId = GetCurrentProcessId();
+    shared->ownerProcessId = owner.value.dwProcessId;
     shared->enabled = TRUE;
     shared->appearanceEnabled = TRUE;
     const HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, readyName);
@@ -148,19 +172,18 @@ int RunLifetimeChild(const std::filesystem::path& root,
         const bool failedSafely = WaitForSingleObject(ready, 5000) == WAIT_OBJECT_0 &&
             shared->status == kStatusFailed && shared->lastError == ERROR_ALREADY_EXISTS &&
             GetPropW(window, kHookOwnerProperty) == library;
-        const bool workerStopped = WaitForLifetimeWorkers(library);
         FreeLibrary(library);
         resident = GetModuleHandleW(path.c_str());
         report << "ATTACH " << path.filename().string() << ": failure_status_and_owner=" << failedSafely
-            << ", worker_stopped=" << workerStopped << ", code_resident=" << (resident == library) << '\n';
-        return failedSafely && workerStopped && resident == library;
+            << ", code_resident=" << (resident == library) << '\n';
+        return failedSafely && resident == library;
     };
     HMODULE first = nullptr;
     if (!attach(root / L"SnowDesktopTaskbarHook.dll", first))
-        return fail("failed TAP must retain owner callback code after caller/worker references are released");
+        return fail("failed TAP must retain owner callback code after the caller reference is released");
     if (!observeActivation(true))
         return fail("failed XAML must not prevent native activation dispatch on either taskbar");
-    if (!AreTaskbarThreadsConnected(windows, GetCurrentProcessId(), GetCurrentProcessId()))
+    if (!AreTaskbarThreadsConnected(windows, GetCurrentProcessId(), owner.value.dwProcessId))
         return fail("failed XAML must still acknowledge native connection for this host on both taskbars");
     // A late symbol helper result must reach the observer through the owner
     // callback even though no VisualTreeWatcher was ever constructed. The
@@ -197,6 +220,12 @@ int RunLifetimeChild(const std::filesystem::path& root,
     for (const HWND target : windows)
         SendMessageW(target, RegisterWindowMessageW(kApplyMessageName), 0, 0);
     if (!observeActivation(true)) return fail("re-enable must restore observation without XAML reinjection");
+    if (!owner.Stop() || !WaitForLifetimeWorkers(first) || !WaitForLifetimeWorkers(replacement))
+        return fail("private host exit must finish owner and TAP workers for both DLL instances");
+    if (!GetModuleHandleW((root / L"SnowDesktopTaskbarHook.dll").c_str()) ||
+        !GetModuleHandleW((root / L"ReplacementTaskbarHook.dll").c_str()) ||
+        !query() || !observeActivation(false))
+        return fail("after caller/worker release, host exit must stop observation and retain callback code");
     for (const HWND target : windows)
         if (SendMessageW(target, RegisterWindowMessageW(kRetireHookMessageName),
                 reinterpret_cast<WPARAM>(replacement), 0) != 1 ||
@@ -215,7 +244,7 @@ int RunLifetimeChild(const std::filesystem::path& root,
     UnmapViewOfFile(shared);
     CloseHandle(mapping);
     FreeLibrary(sentinel);
-    report << "PASS: failed TAP release, independent all-taskbar activation, late adapter Apply, foreign query, replacement, disable, re-enable and retirement\n";
+    report << "PASS: failed TAP release, independent all-taskbar activation, late adapter Apply, foreign query, replacement, disable, re-enable, host exit and retirement\n";
     return 0;
 }
 
