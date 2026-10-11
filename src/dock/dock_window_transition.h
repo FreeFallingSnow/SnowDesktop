@@ -271,6 +271,7 @@ private:
     bool externalMinimize_ = false;
     bool externalMinimizeObserved_ = false;
     DWORD externalMinimizeDeadline_ = 0;
+    DWORD externalMinimizeObservationDeadline_ = 0;
     bool minimizeObserved_ = false;
     double minimizeCleanupDeadlineMs_ = 0.0;
     RECT imageHostRect_{};

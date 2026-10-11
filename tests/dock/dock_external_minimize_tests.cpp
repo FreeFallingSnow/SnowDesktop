@@ -99,6 +99,9 @@ LRESULT CALLBACK ReceiverProc(HWND window, UINT message, WPARAM wParam, LPARAM l
     if (message >= 0xC000 && message == snowdesktop::dock_minimize::CancelMessage())
     {
         ++cancellations;
+        if (transitionForRequest)
+            transitionForRequest->CancelExternalMinimize(
+                reinterpret_cast<HWND>(wParam), static_cast<DWORD>(lParam));
         return 0;
     }
     return DefWindowProcW(window, message, wParam, lParam);
@@ -213,6 +216,49 @@ void CheckCrossProcessGenie()
         Check(IsIconic(fixture) && !AppCloaked(fixture), "native Genie finishes with the child minimized and uncloaked");
         PostMessageW(fixture, kAction, 1, 0);
         Check(PumpUntil([] { return !IsIconic(fixture); }), "child is restored after the cross-process regression");
+
+        // Win10 VMware's first visible commit took 219-234 ms, beyond the
+        // 180 ms hook wait. Delay the real scene submission after acquiring
+        // its image, and deliver the hook's actual timeout to the same engine.
+        bool delayedPresentation = false;
+        transition.SetPresentationCallback([&](HWND overlay) {
+            if (overlay && !delayedPresentation)
+            {
+                delayedPresentation = true;
+                Sleep(snowdesktop::dock_minimize::kRequestTimeoutMs + 80);
+            }
+        });
+        const int cancellationsBeforeLateImage = cancellations;
+        transitionForRequest = &transition;
+        nativeGenieStarted = false;
+        PostMessageW(fixture, kAction, 0, 0);
+        Check(PumpUntil([] { return IsIconic(fixture) != FALSE; }) &&
+                delayedPresentation && nativeGenieStarted && transition.IsActive() && AppCloaked(fixture),
+            "image prepared after sender timeout continues the original native minimize animation");
+        Check(cancellations > cancellationsBeforeLateImage,
+            "late-image regression exercises the real hook timeout notification");
+        transitionForRequest = nullptr;
+        if (nativeGenieStarted) drain();
+        transition.SetPresentationCallback({});
+        Check(IsIconic(fixture) && !AppCloaked(fixture),
+            "late native minimize animation completes and releases its source cloak");
+        PostMessageW(fixture, kAction, 1, 0);
+        Check(PumpUntil([] { return !IsIconic(fixture); }), "child restores after the late-image regression");
+
+        Check(!transition.StartExternalMinimize(fixture, dock, GetTickCount() - 1) && !transition.IsActive(),
+            "request already expired on arrival does not acquire or present an image");
+        const DWORD vetoedDeadline = GetTickCount() + snowdesktop::dock_minimize::kRequestTimeoutMs;
+        const bool awaitingNative = transition.StartExternalMinimize(fixture, dock, vetoedDeadline);
+        Check(awaitingNative, "current request prepares a live image before native minimize observation");
+        if (awaitingNative)
+        {
+            // No minimize follows, equivalent to a later hook vetoing it.
+            transition.CancelExternalMinimize(fixture, vetoedDeadline);
+            Check(transition.IsActive(), "timeout report alone does not erase a prepared image");
+            drain();
+        }
+        Check(!IsIconic(fixture) && !AppCloaked(fixture) && !transition.IsActive(),
+            "unobserved or vetoed native minimize retires within the bounded observation period");
         requests = 0;
         cancellations = 0;
     }

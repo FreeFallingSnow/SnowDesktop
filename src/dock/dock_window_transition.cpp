@@ -494,24 +494,31 @@ bool DockWindowTransition::StartExternalMinimize(HWND sourceWindow, RECT dockRec
     if (!StartMinimize(sourceWindow, dockRect,
             keepBelowWindow))
         return false;
-    // A timeout releases the target UI thread even while capture/composition
-    // is still running here. Never retain an overlay prepared after that point.
-    if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
-        IsIconic(sourceWindow))
-    {
-        Cancel();
-        return false;
-    }
+    // The sender's timeout releases its original minimize request; it does
+    // not invalidate the live image acquired while that request was current.
+    // On slower DWM drivers the first commit can finish after the sender has
+    // resumed. Keep this successfully presented image and observe the native
+    // action separately, including an action that has already completed.
     externalMinimize_ = true;
-    externalMinimizeObserved_ = false;
+    externalMinimizeObserved_ = IsIconic(sourceWindow) != FALSE;
     externalMinimizeDeadline_ = deadline;
+    externalMinimizeObservationDeadline_ = GetTickCount() +
+        snowdesktop::dock_minimize::kRequestTimeoutMs;
+    if (diagnosticCallback_ &&
+        !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()))
+        diagnosticCallback_(L"Dock minimize handoff: prepared after request deadline; observing native minimize");
     return true;
 }
 
 void DockWindowTransition::CancelExternalMinimize(HWND sourceWindow, DWORD deadline)
 {
     if (externalMinimize_ && sourceWindow_ == sourceWindow && externalMinimizeDeadline_ == deadline)
-        Cancel();
+    {
+        // This message reports a SendMessageTimeout failure. The hook still
+        // executes the original action, so cancellation is not a native veto.
+        // Do not extend the observation deadline on repeated timeout reports.
+        if (IsIconic(sourceWindow_)) externalMinimizeObserved_ = true;
+    }
 }
 
 bool DockWindowTransition::StartRestore(
@@ -815,6 +822,7 @@ bool DockWindowTransition::Reverse(
     externalMinimize_ = false;
     externalMinimizeObserved_ = false;
     externalMinimizeDeadline_ = 0;
+    externalMinimizeObservationDeadline_ = 0;
 
     if (!awaitingRestoreVisibility_)
     {
@@ -1496,7 +1504,7 @@ bool DockWindowTransition::OnAnimationFrame(
     {
         if (IsIconic(sourceWindow_)) externalMinimizeObserved_ = true;
         else if (externalMinimizeObserved_ ||
-            !snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeDeadline_, GetTickCount()))
+            !snowdesktop::dock_minimize::RequestIsCurrent(externalMinimizeObservationDeadline_, GetTickCount()))
         {
             // Another hook can veto the original action; a restore can also
             // arrive before our image reaches the Dock. Do not cover it.
@@ -1891,6 +1899,7 @@ void DockWindowTransition::Finish()
     externalMinimize_ = false;
     externalMinimizeObserved_ = false;
     externalMinimizeDeadline_ = 0;
+    externalMinimizeObservationDeadline_ = 0;
     minimizeObserved_ = false;
     minimizeCleanupDeadlineMs_ = 0.0;
     if (animationScheduler_ && animationToken_)
