@@ -580,6 +580,7 @@ struct DockPagePresenter::Impl
         root = dockRoot;
 
         InitializeCard(enableCard, cardStyle, dockEnableRoot);
+        enableCard.title.Visibility(mux::Visibility::Collapsed);
         dockEnabledToggle = muxc::ToggleSwitch{};
         dockEnabledToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         dockEnabledRow.Initialize(dockEnabledToggle);
@@ -2616,8 +2617,6 @@ struct DockPagePresenter::Impl
         const bool previousUpdating = updatingControls;
         updatingControls = true;
 
-        SetCardText(enableCard,
-            "app.settings.dock_bar", L"Dock and Taskbar");
         SetCardText(appearanceCard,
             "settings.dock.appearanceAndAnimation", L"Appearance and animation");
         SetCardText(edgeSwipeCard,
