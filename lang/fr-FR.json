@@ -2597,5 +2597,6 @@
   "settings.desktop.shortcutMatching": "Correspondance des raccourcis",
   "settings.dock.appearanceAndAnimation": "Apparence et animations",
   "statusBar.layout": "Position et échelle",
-  "statusBar.visibleItems": "Éléments visibles"
+  "statusBar.visibleItems": "Éléments visibles",
+  "statusBar.menu.current": "Actuel"
 }

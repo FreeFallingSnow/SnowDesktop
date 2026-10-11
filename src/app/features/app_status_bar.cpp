@@ -625,40 +625,69 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         // Use the clicked item's identity for direct quick settings. All changes
         // go through the same controller as the settings window, after dismissal.
         using Settings = snowdesktop::StatusBarSettings;
-        struct Flag { const char* key; bool Settings::* member; Action context; };
+        struct Flag { const char* key; bool Settings::* member; Action context; const wchar_t* glyph; };
+        // Official Fluent Regular 20 glyphs from the embedded font's pinned upstream commit.
         const Flag flags[]{
-            {"statusBar.menu", &Settings::menu, Action::MenuSystem},
-            {"statusBar.quickSearch", &Settings::quickSearch, Action::MenuQuickSearch},
-            {"statusBar.taskView", &Settings::taskView, Action::MenuTaskView},
-            {"statusBar.inputMethod", &Settings::inputMethod, Action::InputMethodPanel},
-            {"statusBar.cpu", &Settings::cpu, Action::MenuCpu},
-            {"statusBar.memory", &Settings::memory, Action::MenuMemory},
-            {"statusBar.gpu", &Settings::gpu, Action::MenuGpu},
-            {"statusBar.traffic", &Settings::traffic, Action::MenuTraffic},
-            {"statusBar.clock", &Settings::clock, Action::MenuTime},
-            {"statusBar.clockShowSeconds", &Settings::clockShowSeconds, Action::MenuTime},
-            {"statusBar.audioControls", &Settings::audioControls, Action::MenuControlCenter},
-            {"statusBar.brightnessControls", &Settings::brightnessControls, Action::MenuControlCenter},
-            {"statusBar.wifiControls", &Settings::wifiControls, Action::MenuControlCenter},
-            {"statusBar.bluetoothControls", &Settings::bluetoothControls, Action::MenuControlCenter},
-            {"statusBar.mediaControls", &Settings::mediaControls, Action::MenuControlCenter},
-            {"statusBar.powerControls", &Settings::powerControls, Action::MenuControlCenter}};
+            {"statusBar.menu", &Settings::menu, Action::MenuSystem, L"\uF133"}, // apps
+            {"statusBar.quickSearch", &Settings::quickSearch, Action::MenuQuickSearch, L"\uF68F"}, // search
+            {"statusBar.taskView", &Settings::taskView, Action::MenuTaskView, L"\uE05D"}, // app_recent
+            {"statusBar.inputMethod", &Settings::inputMethod, Action::InputMethodPanel, L"\uF4B8"}, // keyboard
+            {"statusBar.cpu", &Settings::cpu, Action::MenuCpu, L"\uE4AC"}, // developer_board
+            {"statusBar.memory", &Settings::memory, Action::MenuMemory, L"\uE9F3"}, // ram
+            {"statusBar.gpu", &Settings::gpu, Action::MenuGpu, L"\uF359"}, // desktop
+            {"statusBar.traffic", &Settings::traffic, Action::MenuTraffic, L"\uE45F"}, // data_usage
+            {"statusBar.clock", &Settings::clock, Action::MenuTime, L"\uE24E"}, // calendar_ltr
+            {"statusBar.clockShowSeconds", &Settings::clockShowSeconds, Action::MenuTime, L"\uF2DD"}, // clock
+            {"statusBar.audioControls", &Settings::audioControls, Action::MenuControlCenter, L"\uEB42"}, // speaker_2
+            {"statusBar.brightnessControls", &Settings::brightnessControls, Action::MenuControlCenter, L"\uF8A1"}, // weather_sunny
+            {"statusBar.wifiControls", &Settings::wifiControls, Action::MenuControlCenter, L"\uF8AC"}, // wifi_1
+            {"statusBar.bluetoothControls", &Settings::bluetoothControls, Action::MenuControlCenter, L"\uF1DE"}, // bluetooth
+            {"statusBar.mediaControls", &Settings::mediaControls, Action::MenuControlCenter, L"\uF605"}, // play
+            {"statusBar.powerControls", &Settings::powerControls, Action::MenuControlCenter, L"\uF60E"}}; // power
         constexpr UINT positionBase = 42000, monitorBase = 42010, scaleBase = 42020;
         constexpr UINT flagBase = 42100, clockBase = 42200, timePositionBase = 42210, controlBase = 42220;
         const Settings currentSettings = generalSettings_.statusBar;
         const auto addChoice = [&](HMENU target, UINT command, const wchar_t* label, bool selected, bool disabled = false) {
-            AppendMenuW(target, MF_STRING | (selected ? MF_CHECKED : 0) | (disabled ? MF_GRAYED : 0), command, label);
+            std::wstring text = label;
+            if (selected) { text += L"\t"; text += _LW("statusBar.menu.current"); }
+            AppendMenuW(target, MF_STRING | (disabled ? MF_GRAYED : 0), command, text.c_str());
+            const wchar_t* glyph = L"\uF587"; // options_20
+            if (command == positionBase) glyph = L"\uF19B"; // arrow_up_20
+            else if (command == positionBase + 1) glyph = L"\uF148"; // arrow_down_20
+            else if (command >= monitorBase && command < monitorBase + 3)
+                glyph = command == monitorBase + 2 ? L"\uEB96" : L"\uF359"; // square_multiple / desktop_20
+            else if (command >= scaleBase && command < scaleBase + 6) glyph = L"\uF8C4"; // zoom_in_20
+            else if (command == clockBase || command == clockBase + 1) glyph = L"\uE24E"; // calendar_ltr_20
+            else if (command == timePositionBase) glyph = L"\uE025"; // align_center_horizontal_20
+            else if (command == timePositionBase + 1) glyph = L"\uE039"; // align_right_20
+            SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
         };
         const auto addFlag = [&](HMENU target, std::size_t index) {
-            addChoice(target, flagBase + static_cast<UINT>(index), _LW(flags[index].key),
-                currentSettings.*(flags[index].member), merged && flags[index].member == &Settings::quickSearch);
+            const auto command = flagBase + static_cast<UINT>(index);
+            std::wstring label = _LW(flags[index].key);
+            label += L"\t";
+            label += _LW(currentSettings.*(flags[index].member) ? "app.interact.shown" : "app.interact.hidden");
+            const bool disabled = merged && flags[index].member == &Settings::quickSearch;
+            AppendMenuW(target, MF_STRING | (disabled ? MF_GRAYED : 0), command, label.c_str());
+            SetMenuItemIcon(target, command, flags[index].glyph, MenuIconFont::FluentRegular);
         };
         const auto submenu = [&](HMENU parent, const char* label) {
             const auto child = CreatePopupMenu();
             if (!child) return static_cast<HMENU>(nullptr);
             if (!AppendMenuW(parent, MF_POPUP, reinterpret_cast<UINT_PTR>(child), _LW(label)))
             { DestroyMenu(child); return static_cast<HMENU>(nullptr); }
-            SetMenuItemIcon(parent, reinterpret_cast<UINT_PTR>(child), L"\uF6A9", MenuIconFont::FluentRegular);
+            const std::string_view key(label);
+            const wchar_t* glyph = L"\uF587"; // options_20
+            if (key == "statusBar.layout" || key == "statusBar.position" || key == "statusBar.timeNotificationPosition")
+                glyph = L"\uF8E5"; // arrow_move_20
+            else if (key == "statusBar.visibleItems") glyph = L"\uE5F2"; // eye_20
+            else if (key == "statusBar.leftItems") glyph = L"\uF133"; // apps_20
+            else if (key == "statusBar.information") glyph = L"\uE45F"; // data_usage_20
+            else if (key == "statusBar.timeAndNotificationArea") glyph = L"\uF2DD"; // clock_20
+            else if (key == "statusBar.clockPanel") glyph = L"\uE24E"; // calendar_ltr_20
+            else if (key == "settings.dock.monitor") glyph = L"\uF359"; // desktop_20
+            else if (key == "statusBar.scale") glyph = L"\uF8C4"; // zoom_in_20
+            SetMenuItemIcon(parent, reinterpret_cast<UINT_PTR>(child), glyph, MenuIconFont::FluentRegular);
             return child;
         };
         const auto addTimeChoices = [&](HMENU target) {

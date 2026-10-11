@@ -2597,5 +2597,6 @@
   "settings.desktop.shortcutMatching": "Verknüpfungen zuordnen",
   "settings.dock.appearanceAndAnimation": "Darstellung und Animationen",
   "statusBar.layout": "Position und Skalierung",
-  "statusBar.visibleItems": "Sichtbare Elemente"
+  "statusBar.visibleItems": "Sichtbare Elemente",
+  "statusBar.menu.current": "Aktuell"
 }

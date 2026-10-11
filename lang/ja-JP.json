@@ -2597,5 +2597,6 @@
   "settings.desktop.shortcutMatching": "ショートカットの判定",
   "settings.dock.appearanceAndAnimation": "外観とアニメーション",
   "statusBar.layout": "位置と拡大率",
-  "statusBar.visibleItems": "表示項目"
+  "statusBar.visibleItems": "表示項目",
+  "statusBar.menu.current": "現在"
 }

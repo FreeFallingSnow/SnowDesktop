@@ -2597,5 +2597,6 @@
   "settings.desktop.shortcutMatching": "Correspondência de atalhos",
   "settings.dock.appearanceAndAnimation": "Aparência e animações",
   "statusBar.layout": "Posição e escala",
-  "statusBar.visibleItems": "Itens visíveis"
+  "statusBar.visibleItems": "Itens visíveis",
+  "statusBar.menu.current": "Atual"
 }

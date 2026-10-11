@@ -2597,5 +2597,6 @@
   "settings.desktop.shortcutMatching": "捷徑比對",
   "settings.dock.appearanceAndAnimation": "外觀與動效",
   "statusBar.layout": "位置與縮放",
-  "statusBar.visibleItems": "顯示項目"
+  "statusBar.visibleItems": "顯示項目",
+  "statusBar.menu.current": "目前"
 }
