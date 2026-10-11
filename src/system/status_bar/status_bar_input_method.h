@@ -5,6 +5,7 @@
 #include "ui/render/ui_animation_scheduler.h"
 #include <algorithm>
 #include <cwctype>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -14,6 +15,12 @@
 
 namespace snowdesktop::status_bar_input_method
 {
+struct ProfileIcon
+{
+    DWORD width = 0, height = 0;
+    std::vector<std::uint32_t> pixels;
+    friend bool operator==(const ProfileIcon&, const ProfileIcon&) = default;
+};
 struct Snapshot
 {
     HWND foreground = nullptr;
@@ -21,7 +28,9 @@ struct Snapshot
     DWORD thread = 0;
     HKL layout = nullptr;
     bool menuActive = false;
+    bool profileKnown = false;
     std::wstring label, description, layoutLabel;
+    std::optional<ProfileIcon> layoutIcon;
     friend bool operator==(const Snapshot&, const Snapshot&) = default;
 };
 
@@ -144,7 +153,7 @@ inline std::wstring LayoutLabel(std::wstring description, std::wstring abbreviat
     std::transform(description.begin(), description.end(), description.begin(),
         [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
     if (description.find(L"pinyin") != std::wstring::npos ||
-        description.find(L"拼音") != std::wstring::npos)
+        description.find(L"拼音") != std::wstring::npos) // l10n-allow: registered input-method name matcher, not UI text
         return L"拼"; // l10n-allow: intrinsic Pinyin input-method symbol, independent of UI language
     return abbreviation;
 }
@@ -177,23 +186,46 @@ inline bool Matches(const Snapshot& value, HWND foreground, DWORD thread, HKL la
 class DisplayCache
 {
 public:
-    Snapshot Get(const Snapshot& sample, const Snapshot& target, bool menu)
+    Snapshot Get(const Snapshot& sample, const Snapshot& target, bool menu, ULONGLONG now = GetTickCount64())
     {
         if (!menu && (!sample.label.empty() || !sample.layoutLabel.empty()) &&
             Matches(sample, target.foreground, target.thread, target.layout, target.focus))
         {
-            const auto previous = shown_;
-            shown_ = sample;
+            auto next = sample;
             // A layout can be sampled even when its conversion-mode query is
             // unavailable. Retain a known mode only for the same typing target.
-            if (sample.label.empty() && Matches(previous, target.foreground,
+            if (sample.label.empty() && Matches(shown_, target.foreground,
                     target.thread, target.layout, target.focus))
-                shown_.label = previous.label;
+                next.label = shown_.label;
+            if (!sample.profileKnown && shown_.layoutIcon && Matches(shown_, target.foreground,
+                    target.thread, target.layout, target.focus))
+            {
+                next.layoutIcon = shown_.layoutIcon;
+                next.layoutLabel = shown_.layoutLabel;
+                next.description = shown_.description;
+            }
+            const auto hasMode = [](const Snapshot& value) {
+                return !value.label.empty() && value.label != value.layoutLabel;
+            };
+            // Focus/profile reads can temporarily lose a mode indicator. Keep
+            // the last presentation while a visibility change settles; action
+            // targets are still freshly captured, never taken from this cache.
+            if (shown_.foreground && hasMode(next) != hasMode(shown_))
+            {
+                const bool visible = hasMode(next);
+                if (!pendingMode_ || *pendingMode_ != visible)
+                { pendingMode_ = visible; pendingSince_ = now; }
+                if (now - pendingSince_ < 600) return shown_;
+            }
+            pendingMode_.reset();
+            shown_ = std::move(next);
         }
         return shown_;
     }
 private:
     Snapshot shown_;
+    std::optional<bool> pendingMode_;
+    ULONGLONG pendingSince_ = 0;
 };
 }
 

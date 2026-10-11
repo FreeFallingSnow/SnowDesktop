@@ -215,7 +215,8 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
             if (!input.description.empty()) items.back().tip += L"  " + input.description;
             items.back().tip += L"\n" + std::wstring(_LW("statusBar.inputMethod.switch"));
         }
-        add("inputMethodLayout", layoutLabel, StatusBarAction::InputMethodPanel);
+        add("inputMethodLayout", L"", StatusBarAction::InputMethodPanel, L"\uF4B8"); // keyboard
+        items.back().inputIcon = input.layoutIcon;
         items.back().tip = std::wstring(_LW("statusBar.inputMethodPanel"));
         if (!input.description.empty()) items.back().tip += L"  " + input.description;
     }
@@ -253,7 +254,7 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
             a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels;
         return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs &&
             a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel && a.batteryPluggedIn == b.batteryPluggedIn &&
-            a.flipGlyph == b.flipGlyph;
+            a.flipGlyph == b.flipGlyph && a.inputIcon == b.inputIcon;
     });
 }
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
@@ -283,19 +284,21 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         const float padding = 12.f * scale;
         const auto extentOf = [&](const StatusBarItem& item) {
-            if (item.key == "controlCenter" && item.controlGlyphs[2].empty()) return 64.f * scale;
+            if (item.key == "controlCenter" && item.controlGlyphs[2].empty()) return 56.f * scale;
             if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
-            if (item.icon || item.text.empty()) return 32.f * scale;
+            if (item.icon || item.inputIcon || item.text.empty()) return 28.f * scale;
             auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
             if (item.key == "memory") reserved = std::wstring(_LW("statusBar.memory")) + L" 100%";
+            if (item.key == "cpu") reserved = L"CPU 100%";
+            if (item.key == "gpu") reserved = L"GPU 100%";
             // Reserve equal digit advances for the date/time too.
             if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
             ComPtr<IDWriteTextLayout> layout;
             DWRITE_TEXT_METRICS metrics{};
             if (SUCCEEDED(text->CreateTextLayout(reserved.c_str(), static_cast<UINT32>(reserved.size()),
                     format.Get(), 2000.f, static_cast<float>(h), &layout))) layout->GetMetrics(&metrics);
-            const float paddingDip = item.key == "memory" ? 12.f : item.glyph.empty() ? 16.f : 36.f;
-            return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 32.f * scale, 260.f * scale);
+            const float paddingDip = item.glyph.empty() ? 16.f : 36.f;
+            return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 28.f * scale, 260.f * scale);
         };
         std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex;
         std::vector<std::size_t> leftIndices, rightIndices;
@@ -390,12 +393,14 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             if (hover && item.action != StatusBarAction::None && hoverBrush) context->FillRoundedRectangle(inset, hoverBrush.Get());
             brush->SetColor(hc && hover ? palette.highlightText : hc ? palette.foreground :
                 D2D1::ColorF(a.contentTheme == 1 ? 0x202020 : 0xf4f4f4));
-            if (item.icon)
+            if (item.icon || item.inputIcon)
             {
-                const auto& icon = *item.icon;
+                const auto width = item.icon ? item.icon->width : item.inputIcon->width;
+                const auto height = item.icon ? item.icon->height : item.inputIcon->height;
+                const auto& pixels = item.icon ? item.icon->pixels : item.inputIcon->pixels;
                 ComPtr<ID2D1Bitmap> bitmap;
-                if (icon.width > 0 && icon.height > 0 && icon.width <= 64 && icon.height <= 64 && icon.pixels.size() == static_cast<std::size_t>(icon.width) * icon.height && SUCCEEDED(context->CreateBitmap(D2D1::SizeU(icon.width, icon.height),
-                        icon.pixels.data(), icon.width * 4,
+                if (width > 0 && height > 0 && width <= 64 && height <= 64 && pixels.size() == static_cast<std::size_t>(width) * height && SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height),
+                        pixels.data(), width * 4,
                         D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &bitmap)))
                 {
                     const float size = 18.f * scale;
@@ -412,7 +417,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                     for (std::size_t part = 0; part < item.controlGlyphs.size(); ++part)
                     {
                         if (item.controlGlyphs[part].empty()) continue;
-                        const float left = rect.left + (4 + 28.f * static_cast<float>(part)) * scale;
+                        const float left = rect.left + 28.f * static_cast<float>(part) * scale;
                         const auto color = brush->GetColor();
                         if (part == 2 && !hc)
                         {

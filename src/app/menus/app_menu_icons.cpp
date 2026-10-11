@@ -804,7 +804,20 @@ UINT DesktopApp::ShowModernMenu(
     // A status-bar session may use a floating host as its native z-order owner.
     // Retain that exact owner so hiding a different monitor never dismisses it.
     if (statusBarMenuOwner_ == owner && statusBarMenuMonitor_)
+    {
+        RECT barBounds{};
+        if (GetWindowRect(owner, &barBounds))
+        {
+            // Keep a right-side menu adjacent to its source. Rectangle-based
+            // placement clamps at the work-area edge without flipping a whole
+            // menu width to the left of the clicked status-bar control.
+            options.anchorRect = {screenPoint.x, barBounds.top, screenPoint.x, barBounds.bottom};
+            options.rootPlacement = generalSettings_.statusBar.position == DockPosition::Bottom
+                ? snowdesktop::modern_menu::RootPlacement::AboveAnchorRect
+                : snowdesktop::modern_menu::RootPlacement::BelowAnchorRect;
+        }
         statusBarMenuOwner_ = options.zOrderOwner ? options.zOrderOwner : options.owner;
+    }
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
     if (result.command == kContextManageMenuCommand)

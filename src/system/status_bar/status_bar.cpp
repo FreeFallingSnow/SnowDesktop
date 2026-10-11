@@ -264,14 +264,13 @@ struct StatusBar::Impl
                 const auto part = *tooltipControlPart;
                 key += "/" + std::to_string(part); body = item.controlTips[part];
                 const float scale = dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale);
-                if (part == 0) anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(32 * scale)));
+                if (part == 0) anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(28 * scale)));
                 else if (part == 1)
                 {
-                    const float end = item.controlGlyphs[2].empty() ? 64.f : 60.f;
-                    anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(end * scale)));
-                    anchor.left += static_cast<LONG>(std::lround(32 * scale));
+                    anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(56 * scale)));
+                    anchor.left += static_cast<LONG>(std::lround(28 * scale));
                 }
-                else anchor.left += static_cast<LONG>(std::lround(60 * scale));
+                else anchor.left += static_cast<LONG>(std::lround(56 * scale));
                 if (part == 1 && owner.volumeWheel.pending)
                     body = StatusBarVolumeTooltip(dataSnapshot.audioDevice, dataSnapshot.audio, *owner.volumeWheel.pending);
             }

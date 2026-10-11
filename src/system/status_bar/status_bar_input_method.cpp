@@ -2,6 +2,10 @@
 #include "ui/menu/modern_menu.h"
 #include "status_bar_input_method_native.h"
 #include "diagnostics/diagnostic_log.h"
+#include <cstring>
+#include "system/tray/tray_icon_pixels.h"
+#include <shellapi.h>
+#include <shlobj.h>
 #include <wrl/client.h>
 #include <chrono>
 #include <condition_variable>
@@ -93,6 +97,54 @@ void TraceTarget(const wchar_t* stage, const Snapshot& target, const Snapshot& o
         static_cast<unsigned>(observed.menuActive));
     WriteDiagnosticLogEntry(message, FAILED(result) ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
 }
+std::optional<ProfileIcon> ReadProfileIcon(const TF_INPUTPROCESSORPROFILE& profile)
+{
+    wchar_t service[40]{}, id[40]{}, language[16]{};
+    StringFromGUID2(profile.clsid, service, static_cast<int>(std::size(service)));
+    StringFromGUID2(profile.guidProfile, id, static_cast<int>(std::size(id)));
+    swprintf_s(language, L"0x%08x", static_cast<unsigned>(profile.langid));
+    const std::wstring path = std::wstring(L"SOFTWARE\\Microsoft\\CTF\\TIP\\") + service +
+        L"\\LanguageProfile\\" + language + L"\\" + id;
+    for (const auto root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+    {
+        wchar_t file[4096]{}, expanded[4096]{};
+        DWORD bytes = sizeof(file), index = 0, indexBytes = sizeof(index);
+        if (RegGetValueW(root, path.c_str(), L"IconFile", RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ | RRF_NOEXPAND,
+                nullptr, file, &bytes) != ERROR_SUCCESS || !file[0]) continue;
+        const DWORD length = ExpandEnvironmentStringsW(file, expanded, static_cast<DWORD>(std::size(expanded)));
+        if (!length || length > std::size(expanded)) continue;
+        RegGetValueW(root, path.c_str(), L"IconIndex", RRF_RT_REG_DWORD, nullptr, &index, &indexBytes);
+        HICON icon = nullptr;
+        // Extract the resource registered by this exact profile; no loading or
+        // calling input-method code, and no fabricated language-code icon.
+        if (SUCCEEDED(SHDefExtractIconW(expanded, static_cast<int>(index), 0, &icon, nullptr, 32)) && icon)
+        {
+            tray::Event image{};
+            tray::Pixels(icon, image);
+            DestroyIcon(icon);
+            if (image.width && image.height)
+                return ProfileIcon{image.width, image.height,
+                    {image.pixels.begin(), image.pixels.begin() + image.width * image.height}};
+        }
+    }
+    return {};
+}
+std::optional<ProfileIcon> ProfileImage(const TF_INPUTPROCESSORPROFILE& profile)
+{
+    // One sampler owns this cache. Failed resource reads retry after five
+    // seconds; foreground polling never repeatedly extracts the same icon.
+    thread_local TF_INPUTPROCESSORPROFILE previous{};
+    thread_local std::optional<ProfileIcon> image;
+    thread_local ULONGLONG retry = 0;
+    const auto now = GetTickCount64();
+    if (!SameProfile(previous, profile) || (!image && now >= retry))
+    {
+        previous = profile;
+        image = ReadProfileIcon(profile);
+        retry = now + 5000;
+    }
+    return image;
+}
 Snapshot Read()
 {
     Snapshot result = Target();
@@ -117,13 +169,18 @@ Snapshot Read()
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
             IID_PPV_ARGS(&profiles))) && SUCCEEDED(profiles.As(&manager)) &&
         manager->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &active) == S_OK &&
-        active.langid == language && active.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+        active.langid == language)
     {
-        BSTR description = nullptr;
-        if (SUCCEEDED(profiles->GetLanguageProfileDescription(active.clsid, active.langid,
-                active.guidProfile, &description)) && description)
-            result.description.assign(description, SysStringLen(description));
-        SysFreeString(description);
+        result.profileKnown = true;
+        if (active.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+        {
+            BSTR description = nullptr;
+            if (SUCCEEDED(profiles->GetLanguageProfileDescription(active.clsid, active.langid,
+                    active.guidProfile, &description)) && description)
+                result.description.assign(description, SysStringLen(description));
+            SysFreeString(description);
+            result.layoutIcon = ProfileImage(active);
+        }
     }
     result.layoutLabel = detail::LayoutLabel(result.description, abbreviation);
     std::optional<bool> open;

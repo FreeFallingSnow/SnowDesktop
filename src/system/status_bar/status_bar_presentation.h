@@ -23,10 +23,9 @@ inline std::wstring StatusBarClockText(const SYSTEMTIME& localTime, bool showSec
 // localized memory label is reserved using its widest percentage separately.
 inline float StatusBarFixedWidth(std::string_view key)
 {
-    if (key == "cpu" || key == "gpu") return 68.f;
     if (key == "traffic") return 152.f;
-    if (key == "controlCenter") return 92.f;
-    if (key == "inputMethod" || key == "inputMethodLayout") return 36.f;
+    if (key == "controlCenter") return 84.f;
+    if (key == "inputMethod" || key == "inputMethodLayout") return 28.f;
     return 0.f;
 }
 inline std::wstring StatusBarRate(std::uint64_t bytes)

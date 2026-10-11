@@ -40,14 +40,6 @@ std::wstring FontMenuValue(double value, const wchar_t* unit)
     return text;
 }
 
-std::wstring FontPresetLabel(int value, int defaultValue, const wchar_t* unit)
-{
-    const auto label = FontMenuValue(value, unit);
-    return value == defaultValue
-        ? std::wstring(_LW("app.settings.restore_default")) + L" · " + label
-        : label;
-}
-
 std::wstring FontWeightMenuLabel(int weight)
 {
     return std::wstring(_LW("app.settings.title_font_weight")) + L": " +
@@ -1540,8 +1532,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         {
             for (const int size : kFontSizePresets)
             {
-                const auto label = FontPresetLabel(size,
-                    static_cast<int>(kDefaultItemFontSizeCu), L" cu");
+                const auto label = FontMenuValue(size, L" cu");
                 const UINT flags = MF_STRING |
                     (itemFontSizeCu_ == static_cast<float>(size) ? MF_CHECKED : 0);
                 AppendMenuW(fontSizeMenu, flags,
@@ -1559,8 +1550,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         {
             for (const int size : kFontSizePresets)
             {
-                const auto label = FontPresetLabel(size,
-                    static_cast<int>(kDefaultItemFontSizeCu), L" cu");
+                const auto label = FontMenuValue(size, L" cu");
                 const UINT flags = MF_STRING |
                     (listItemFontSizeCu_ == static_cast<float>(size) ? MF_CHECKED : 0);
                 AppendMenuW(listFontSizeMenu, flags,
@@ -1581,7 +1571,7 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         {
             for (const int percent : kFontWeightPercentPresets)
             {
-                const auto label = FontPresetLabel(percent, 100, L"%");
+                const auto label = FontMenuValue(percent, L"%");
                 const UINT flags = MF_STRING |
                     (itemFontWeight_ == snowdesktop::font_weight_rules::FromPercent(percent)
                         ? MF_CHECKED : 0);

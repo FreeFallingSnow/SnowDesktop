@@ -135,7 +135,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         throw std::runtime_error("narrow status bar removed essential controls: control=[" +
             std::to_string(controls.left) + "," + std::to_string(controls.right) + "] notification=[" +
             std::to_string(notification.left) + "," + std::to_string(notification.right) + "]");
-    if (expectNotification) Require(notification.right - notification.left == static_cast<LONG>(std::ceil(32.f * scale)),
+    if (expectNotification) Require(notification.right - notification.left == static_cast<LONG>(std::ceil(28.f * scale)),
         "notification button must remain a complete independent hit target");
     if ((merged || rightAligned) && expectNotification)
     {
@@ -147,7 +147,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
                     "a tray or system item was placed after the merged date and notifications");
     }
     const bool hasBattery = !Item(items, "controlCenter").controlGlyphs[2].empty();
-    Require(controls.right - controls.left == static_cast<LONG>(std::ceil((hasBattery ? 92.f : 64.f) * scale)),
+    Require(controls.right - controls.left == static_cast<LONG>(std::ceil((hasBattery ? 84.f : 56.f) * scale)),
         "available system controls must retain their hit targets without an absent-battery slot");
     std::vector<RECT> rectangles;
     ComPtr<IDWriteTextFormat> font;
@@ -169,8 +169,8 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
                 dateVisible ? clock->bounds.left : notification.left;
             Require(item.left && r.right < informationEnd && r.left >= launchEnd,
                 "system information must follow the launch buttons on the left");
-            if (item.key != "memory")
-                Require(r.right - r.left <= (item.key == "traffic" ? 152 : 68) * scale + 1,
+            if (item.key == "traffic")
+                Require(r.right - r.left <= 152 * scale + 1,
                     "system information wastes horizontal space");
         }
         Require(r.left >= 0 && r.top >= 0 && r.right <= width && r.bottom <= height, "status bar item escaped its viewport");
@@ -196,7 +196,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         if (merged && item.key == "clock")
             Require(metrics.lineCount == (twoLineClock ? 2u : 1u) && metrics.height <= r.bottom - r.top + 1,
                 "merged date and time must fit the bar's available height");
-        const float reserved = item.key == "controlCenter" ? 94.f * scale : 0.f;
+        const float reserved = item.key == "controlCenter" ? 84.f * scale : 0.f;
         Require(metrics.widthIncludingTrailingWhitespace <= r.right - r.left - reserved + 1,
             "status bar fixed width clips visible text");
     }
@@ -239,13 +239,18 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
         if (request.transparent || request.contentOnly)
         { stage.width = request.canvasWidth; stage.height = request.canvasHeight; stage.pixels.resize(static_cast<std::size_t>(stage.width) * stage.height); }
         Require(!stage.pixels.empty(), "cannot create status bar preview background");
-        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "charging-low", "low-battery", "wifi-off", "offline", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged"})
+        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "charging-low", "low-battery", "wifi-off", "offline", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged", "input-icon"})
         {
             auto data = source; StatusBarSettings settings;
             settings.cpu = settings.memory = settings.gpu = settings.traffic =
                 preset == "information" || preset == "updated" || preset == "narrow" || preset == "merged";
             settings.pinnedTrayItems = {"bar-preview-0", "bar-preview-1"};
             if (preset == "scaled") settings.scale = 1.5f;
+            if (preset == "input-icon")
+            {
+                const auto& icon = data.tray.front();
+                data.inputMethod.layoutIcon = status_bar_input_method::ProfileIcon{icon.width, icon.height, icon.pixels};
+            }
             if (preset == "bottom") settings.position = DockPosition::Bottom;
             if (preset == "updated")
             {
@@ -292,6 +297,17 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 auto switchedInput = data; switchedInput.inputMethod.label = L"英"; // l10n-allow: fixed Chinese IME mode-transition sample
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, switchedInput)),
                     "IME mode changes must refresh the indicator without a layout change");
+                auto iconInput = data;
+                iconInput.inputMethod.layoutIcon = status_bar_input_method::ProfileIcon{1, 1, {0xff00cc00}};
+                const auto iconItems = BuildStatusBarItems(settings, iconInput);
+                const auto& iconButton = Item(iconItems, "inputMethodLayout");
+                auto invocationItems = iconItems;
+                const auto index = static_cast<std::size_t>(&iconButton - iconItems.data());
+                invocationItems[index].bounds = {0, 0, 28, 32};
+                const auto invocation = ResolveStatusBarInvocation(invocationItems, index, false);
+                Require(iconButton.inputIcon && !iconButton.icon && invocation && !invocation->isTray &&
+                    invocation->action == StatusBarAction::InputMethodPanel && !SameStatusBarContent(items, iconItems),
+                    "a profile bitmap must repaint and activate the layout picker, never a tray callback");
             }
             auto identical = data; if (identical.cpu) ++identical.cpu->revision;
             Require(SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "unchanged samples would repaint status bar content");
@@ -522,7 +538,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     const auto end = context->EndDraw(); context->SetTarget(nullptr); Require(content); Require(end);
                     const auto dockCenter = MergedStatusBarCenter(static_cast<LONG>(testWidth), static_cast<LONG>(testHeight), testScale);
                     const bool notificationFits = !merged || static_cast<LONG>(testWidth) - dockCenter.right >=
-                        static_cast<LONG>(std::ceil(32.f * testScale) + std::ceil(92.f * testScale));
+                        static_cast<LONG>(std::ceil(28.f * testScale) + std::ceil(84.f * testScale));
                     CheckLayout(text, compact, static_cast<int>(testWidth), static_cast<int>(testHeight), testScale, merged,
                         notificationFits, rightAligned);
                     if (!merged && search && logicalWidth >= 640)
@@ -533,7 +549,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                         const auto& entry = Item(compact, "taskView");
                         const auto invocation = ResolveStatusBarInvocation(compact,
                             static_cast<std::size_t>(&entry - compact.data()), false);
-                        Require(entry.bounds.right - entry.bounds.left == static_cast<LONG>(std::ceil(32.f * testScale)) &&
+                        Require(entry.bounds.right - entry.bounds.left == static_cast<LONG>(std::ceil(28.f * testScale)) &&
                             invocation && invocation->action == StatusBarAction::TaskView,
                             "Task View must retain a complete independent hit target and keyboard action");
                     }
@@ -595,7 +611,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 // User-visible contract: green is the charge inside the
                 // battery, while the outline remains the neutral foreground.
                 const auto& control = Item(items, "controlCenter");
-                const float glyphLeft = left + control.bounds.left + 64 * scale;
+                const float glyphLeft = left + control.bounds.left + 60 * scale;
                 const float glyphTop = top + (height - 20 * scale) / 2;
                 const int expected = appearance.contentTheme == 1 ? 0x20 : 0xf4;
                 int neutralOutline = 0, greenFill = 0;

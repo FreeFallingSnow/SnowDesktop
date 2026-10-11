@@ -145,11 +145,19 @@ int RunTrayModelTests()
             layoutDisplay.Get(layoutOnly, layoutOnly, false).label.empty(),
             "an available keyboard layout is shown without inventing an unavailable conversion mode");
         auto withMode = layoutOnly; withMode.label = L"中";
-        layoutDisplay.Get(withMode, withMode, false);
+        layoutDisplay.Get(withMode, withMode, false, 100);
+        layoutDisplay.Get(withMode, withMode, false, 700);
         check(layoutDisplay.Get(layoutOnly, layoutOnly, false).label == L"中",
             "an unavailable conversion query retains the same target's last successful mode");
         auto newLayoutTarget = layoutOnly; newLayoutTarget.foreground = reinterpret_cast<HWND>(2);
-        check(layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false).label.empty(),
+        check(layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 1000).label == L"中" &&
+            layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 1599).label == L"中",
+            "a transient unavailable mode does not flash the language button off");
+        check(layoutDisplay.Get(withMode, withMode, false, 1600).label == L"中" &&
+            layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 2000).label == L"中" &&
+            layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 2600).label.empty(),
+            "recovered mode resets the debounce and sustained absence eventually hides it");
+        check(layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 2800).label.empty(),
             "a valid new layout target cannot inherit another application's conversion mode");
         check(display.Get(old, old, false).label == L"A", "first valid input mode is presented immediately");
         auto other = old; other.foreground = reinterpret_cast<HWND>(2); other.label = L"B";

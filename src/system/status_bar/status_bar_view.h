@@ -26,6 +26,7 @@ struct StatusBarItem
     int batteryLevel = -1;
     bool flipGlyph = false;
     bool batteryPluggedIn = false;
+    std::optional<status_bar_input_method::ProfileIcon> inputIcon;
 };
 
 // Data boundary only: no HWND, sampling, Explorer or device operations.
@@ -54,7 +55,7 @@ struct StatusBarPalette
 std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings&, const StatusBarSnapshot&);
 bool SameStatusBarContent(const std::vector<StatusBarItem>&, const std::vector<StatusBarItem>&);
 inline std::size_t StatusBarControlPart(float localDip, bool hasBattery = true)
-{ return localDip < 32 ? 0 : (localDip < 60 || !hasBattery) ? 1 : 2; }
+{ return localDip < 28 ? 0 : (localDip < 56 || !hasBattery) ? 1 : 2; }
 inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<StatusBarItem>& items, POINT point)
 {
     for (std::size_t index = 0; index < items.size(); ++index)
