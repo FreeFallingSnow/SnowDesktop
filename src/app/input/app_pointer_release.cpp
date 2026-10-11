@@ -47,14 +47,14 @@ void DesktopApp::OnMouseLeave()
     else CancelPopupHover();
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveBegin);
-    if (snowdesktop::desktop_hover_rules::
+    if (HasActiveContextMenuSession() ||
+        snowdesktop::desktop_hover_rules::
             ShouldHoldHoverDuringNativeShellPopup(
                 shellPopupMenuLayerDepth_ > 0))
     {
-        // A native Shell menu owns mouse capture while its modal session is
-        // active. Preserve the complete Dock hover frame so its content and
-        // paired backdrop cannot diverge; EndShellPopupMenuLayer reconciles
-        // once against the real pointer location.
+        // Popup windows temporarily own pointer input. Preserve the complete
+        // Dock hover frame until the menu session unwinds; subsequent live
+        // sampling reconciles the real pointer location.
         RecordShellHoverTrace(
             ShellHoverTraceEvent::MouseLeaveEnd);
         return;
@@ -168,17 +168,17 @@ void DesktopApp::ReconcileDesktopHoverState(
     const HWND shellDialogOwner = ShellDialogOwnerHwnd();
     const bool shellDialogOwnerAvailable =
         shellDialogOwner && IsWindow(shellDialogOwner);
-    if (!snowdesktop::desktop_hover_rules::
+    if (HasActiveContextMenuSession() ||
+        !snowdesktop::desktop_hover_rules::
             ShouldReconcileFromSurfaceSample(
                 shellPopupMenuLayerDepth_ > 0,
                 shellDialogOwnerAvailable,
                 !shellDialogOwnerAvailable ||
                     IsWindowEnabled(shellDialogOwner)))
     {
-        // TrackPopupMenuEx and a synchronously invoked Shell command run a
-        // private modal loop. Real pointer leave messages remain authoritative,
-        // but WindowFromPoint can alternate between a menu/dialog shadow and
-        // the desktop while those Shell-owned windows are being restacked.
+        // Modern menus own a separate input surface; native Shell menus and
+        // commands run private modal loops. WindowFromPoint can alternate
+        // between a menu/dialog shadow and the desktop during restacking.
         // Do not let foreground notifications or the periodic fallback replay
         // passive hover until both the popup layer has unwound and the Shell
         // dialog owner has been re-enabled. The latter tracks Task Dialogs
@@ -195,29 +195,32 @@ void DesktopApp::ReconcileDesktopHoverState(
         const bool passiveHoverCleared =
             lastMousePoint_.x == LONG_MIN &&
             lastMousePoint_.y == LONG_MIN;
-        const bool activateHover =
-            snowdesktop::desktop_hover_rules::
-                ShouldActivateFromSurfaceSample(
-                    true, passiveHoverCleared, mode,
-                    foregroundSettled);
-        POINT baseCursorPoint{};
-        const bool pointerOnBaseDesktopSurface =
-            !passiveHoverCleared &&
-            TryGetBaseDesktopHoverPointFromCursor(
-                baseCursorPoint);
         POINT dockScreenPoint = cursorPoint;
-        const HWND dockHitWindow = !passiveHoverCleared &&
-            IsPointInPromotedDockLayer(cursorPoint) &&
-            ClientToScreen(hwnd_, &dockScreenPoint)
+        const HWND dockHitWindow = ClientToScreen(hwnd_, &dockScreenPoint)
                 ? WindowFromPoint(dockScreenPoint) : nullptr;
+        const bool pointerOnBaseDesktopSurface =
+            IsBaseDesktopHoverSurfaceWindow(dockHitWindow);
+        bool pointerInDockLayer = false;
+        for (const auto& host : persistentDockHosts_)
+        {
+            if (host && ShouldShowPersistentDockHost(*host) &&
+                (dockHitWindow == host->hwnd ||
+                    host->backdrop.IsBackdropWindow(dockHitWindow)) &&
+                snowdesktop::floating_dock_rules::IsPointInVisibleLayer(
+                    cursorPoint, host->dockRect,
+                    host->popupRect, host->tooltipRect))
+            {
+                pointerInDockLayer = true;
+                break;
+            }
+        }
         const bool pointerOnActiveHoverSurface =
             snowdesktop::desktop_hover_rules::IsActiveHoverSampleSurface(
                 pointerOnBaseDesktopSurface,
                 IsPersistentDockHostWindow(dockHitWindow) ||
                     IsPersistentDockBackdropWindow(dockHitWindow),
-                dockHitWindow != nullptr);
-        const POINT activeCursorPoint = pointerOnBaseDesktopSurface
-            ? baseCursorPoint : cursorPoint;
+                pointerInDockLayer);
+        const POINT activeCursorPoint = cursorPoint;
         const bool pointerPositionChanged =
             pointerOnActiveHoverSurface &&
             (activeCursorPoint.x != lastMousePoint_.x ||
@@ -234,6 +237,10 @@ void DesktopApp::ReconcileDesktopHoverState(
                     mouseDown_,
                     dragSession_.IsActive(),
                     widgetInteractionActive);
+        const bool activateHover = passiveHoverAllowed &&
+            snowdesktop::desktop_hover_rules::ShouldActivateFromSurfaceSample(
+                pointerOnActiveHoverSurface, passiveHoverCleared, mode,
+                foregroundSettled);
         const bool refreshActiveHover =
             snowdesktop::desktop_hover_rules::
                 ShouldRefreshActiveHoverFromSurfaceSample(
@@ -243,6 +250,17 @@ void DesktopApp::ReconcileDesktopHoverState(
                     passiveHoverAllowed,
                     mode,
                     foregroundSettled);
+        // A sampled acquisition does not deliver WM_MOUSEMOVE, so it must
+        // restore the leave subscription itself. Do not track Dock content
+        // while a backdrop owns the hit: that would generate repeated leaves.
+        if (passiveHoverAllowed && pointerOnActiveHoverSurface &&
+            (dockHitWindow == hwnd_ || IsPersistentDockHostWindow(dockHitWindow)))
+        {
+            TRACKMOUSEEVENT tracking{ sizeof(tracking) };
+            tracking.dwFlags = TME_LEAVE;
+            tracking.hwndTrack = dockHitWindow;
+            TrackMouseEvent(&tracking);
+        }
         if (activateHover || refreshActiveHover)
         {
             lastMousePoint_ = activateHover
@@ -251,8 +269,7 @@ void DesktopApp::ReconcileDesktopHoverState(
             // the cursor reached its final desktop or Dock point. Keep the title
             // HRGN synchronized with the repaired point before presenting so
             // an old visual/input island cannot outlive the hover state.
-            if (refreshActiveHover)
-                UpdateFloatingDockWindowBounds(false);
+            UpdateFloatingDockWindowBounds(false);
             PresentPassiveHoverVisualChange();
             RecordShellHoverTrace(
                 activateHover

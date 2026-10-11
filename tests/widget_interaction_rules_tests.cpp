@@ -3,6 +3,7 @@
 #include "../src/widgets/widget_pair_drop.h"
 #include "app/widgets/widget_pair_drag_source.h"
 #include "desktop/desktop_hover_rules.h"
+#include "dock/dock_magnification.h"
 #include "drag_drop/drag_input_rules.h"
 #include "drag_drop/drag_hint_rules.h"
 #include "widget/view/widget_scroll_rules.h"
@@ -1105,6 +1106,48 @@ void TestDesktopHoverDeactivation()
         "active-hover fallback must reject bridges, cleared state, unchanged points, gestures, and unsettled samples");
 }
 
+void TestDockDesktopHoverHandoff()
+{
+    // Replace only native hit sampling/tracking. Both variants drive the real
+    // magnification timeline; the old content/backdrop-only route is a negative
+    // control for the stationary desktop hit recorded after minimize.
+    const auto preservesHandoff = [](bool acceptDesktopHandoff) {
+        snowdesktop::dock_magnification::HoverEntryAnimation entry;
+        int contentTracking = 0;
+        int desktopTracking = 0;
+        const auto routeLeave = [&](bool content, bool backdrop, bool desktop, double now) {
+            const auto rearm = [&](bool trackContent) {
+                if (trackContent) ++contentTracking;
+                else ++desktopTracking;
+            };
+            const bool retained = acceptDesktopHandoff
+                ? hoverRules::RetainDockSurfaceMouseLeave(content, backdrop, desktop, rearm)
+                : hoverRules::RetainPairedSurfaceMouseLeave(content, backdrop,
+                    [&] { rearm(true); });
+            if (!retained) entry.SetHovered(false, now, 1.0);
+            return retained;
+        };
+        entry.SetHovered(true, 1000.0, 1.0);
+        entry.Advance(1080.0);
+        const bool retained = routeLeave(false, false, true, 1080.0);
+        entry.SetHovered(true, 1080.0, 1.0);
+        entry.Advance(1160.0);
+        const bool uninterrupted = retained && desktopTracking == 1 &&
+            contentTracking == 0 && entry.FocusScale(2.0f) == 2.0f && !entry.IsAnimating();
+        const bool backdropRetained = routeLeave(false, true, false, 1160.0) &&
+            contentTracking == 0 && desktopTracking == 1;
+        const bool contentRetained = routeLeave(true, false, false, 1160.0) &&
+            contentTracking == 1 && desktopTracking == 1;
+        const bool exited = !routeLeave(false, false, false, 1200.0) &&
+            entry.FocusScale(2.0f) == 1.0f && !entry.IsAnimating();
+        return uninterrupted && backdropRetained && contentRetained && exited;
+    };
+    Check(preservesHandoff(true),
+        "minimize desktop handoff must preserve the wave, transfer leave tracking, and clear on a real exit");
+    Check(!preservesHandoff(false),
+        "negative control must reject the old route that restarts hover and leaves desktop tracking unarmed");
+}
+
 void TestDragInputSampling()
 {
     Check(
@@ -1970,6 +2013,7 @@ int main()
     TestWidgetDesktopSurfaceVisibility();
     TestWidgetPreviewSourceVisibility();
     TestDesktopHoverDeactivation();
+    TestDockDesktopHoverHandoff();
     TestDragInputSampling();
     TestPopupIconLoadCancellationRules();
     TestDragHintPlacementRules();

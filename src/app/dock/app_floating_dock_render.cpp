@@ -450,18 +450,27 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         if (GetCursorPos(&cursorScreen))
         {
             const HWND hitWindow = WindowFromPoint(cursorScreen);
-            if (snowdesktop::desktop_hover_rules::RetainPairedSurfaceMouseLeave(
+            POINT desktopCursor = cursorScreen;
+            const bool pointerOnBaseDesktopDockSurface =
+                ShouldShowPersistentDockHost(host) &&
+                hitWindow == hwnd_ &&
+                ScreenToClient(hwnd_, &desktopCursor) &&
+                PtInRect(&host.dockRect, desktopCursor);
+            if (snowdesktop::desktop_hover_rules::RetainDockSurfaceMouseLeave(
                     hitWindow == hwnd,
                     host.backdrop.IsBackdropWindow(hitWindow),
-                    [hwnd]() {
+                    pointerOnBaseDesktopDockSurface,
+                    [this, hwnd](bool trackDockContent) {
                         TRACKMOUSEEVENT tracking{ sizeof(tracking) };
                         tracking.dwFlags = TME_LEAVE;
-                        tracking.hwndTrack = hwnd;
+                        tracking.hwndTrack = trackDockContent ? hwnd : hwnd_;
                         TrackMouseEvent(&tracking);
                     }))
             {
                 snowdesktop::dock_taskbar_diagnostics::Record(
-                    hitWindow == hwnd
+                    pointerOnBaseDesktopDockSurface
+                        ? L"Dock mouse-leave retained on desktop Dock surface"
+                        : hitWindow == hwnd
                         ? L"Dock mouse-leave retained on content"
                         : L"Dock mouse-leave retained on backdrop",
                     hitWindow);

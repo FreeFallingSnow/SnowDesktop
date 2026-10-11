@@ -58,6 +58,26 @@ bool RetainPairedSurfaceMouseLeave(
     return true;
 }
 
+template<typename RearmTracking>
+bool RetainDockSurfaceMouseLeave(
+    bool pointerOnContentWindow,
+    bool pointerOnPairedBackdropWindow,
+    bool pointerOnBaseDesktopDockSurface,
+    RearmTracking rearmTracking)
+{
+    // Explorer can restack the desktop above a Dock during minimize. The same
+    // logical Dock then receives input through the desktop HWND. Transfer leave
+    // tracking to that HWND without clearing/restarting the hover animation.
+    if (pointerOnBaseDesktopDockSurface)
+    {
+        rearmTracking(false);
+        return true;
+    }
+    return RetainPairedSurfaceMouseLeave(
+        pointerOnContentWindow, pointerOnPairedBackdropWindow,
+        [&] { rearmTracking(true); });
+}
+
 constexpr bool ShouldResamplePassiveMouseMove(
     bool mouseDown,
     bool dragActive,
