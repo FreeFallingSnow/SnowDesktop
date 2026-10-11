@@ -1802,8 +1802,9 @@ int main(int argc, char** argv)
             Check(minutes.substr(0, minutes.find(L"   ")) == seconds.substr(0, seconds.find(L"   ")),
                 "showing seconds preserves the localized date");
             Check(snowdesktop::StatusBarClockDisplay(seconds, false) == seconds &&
-                snowdesktop::StatusBarClockDisplay(seconds, true).find(L":05:07") != std::wstring::npos,
-                "independent and merged clocks retain seconds in one-line and two-line layouts");
+                snowdesktop::StatusBarClockDisplay(seconds, true) ==
+                    seconds.substr(seconds.find(L"   ") + 3) + L"\n" + seconds.substr(0, seconds.find(L"   ")),
+                "independent clock retains one line; merged clock places time above date without changing either format");
             time.wSecond = 8;
             Check(snowdesktop::StatusBarClockText(time, false, locale) == minutes &&
                 snowdesktop::StatusBarClockText(time, true, locale).find(L":05:08") != std::wstring::npos,

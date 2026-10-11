@@ -695,8 +695,8 @@ struct DesktopStylePagePresenter::Impl
         {
             if (merged && item.key == "quickSearch") continue;
             muxc::Grid cell;
-            const bool twoLineClock = StatusBarUsesTwoLineClock(merged, static_cast<float>(mergedHeightDip), 1.f);
-            cell.Height(merged && item.key == "clock" && twoLineClock ? 40 : 32);
+            const bool twoLineClock = StatusBarUsesTwoLineClock(merged);
+            cell.Height(merged && item.key == "clock" ? (std::min)(40, mergedHeightDip) : 32);
             if (item.key == "controlCenter")
             {
                 muxc::StackPanel controls;
@@ -713,9 +713,10 @@ struct DesktopStylePagePresenter::Impl
                 text.Text(item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text);
                 text.FontSize(12);
                 text.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-                text.TextAlignment(mux::TextAlignment::Center);
+                const bool mergedClock = merged && item.key == "clock";
+                text.TextAlignment(mergedClock ? mux::TextAlignment::Right : mux::TextAlignment::Center);
                 text.VerticalAlignment(mux::VerticalAlignment::Center);
-                text.Margin({8, 0, 8, 0});
+                text.Margin(mergedClock ? mux::Thickness{4, 0, 4, 0} : mux::Thickness{8, 0, 8, 0});
                 cell.Children().Append(text);
             }
             else

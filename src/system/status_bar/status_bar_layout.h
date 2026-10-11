@@ -40,16 +40,16 @@ inline std::vector<RECT> StatusBarEdgeSegments(RECT frame, DockPosition position
     return segments;
 }
 
-inline bool StatusBarUsesTwoLineClock(bool merged, float height, float scale)
+inline bool StatusBarUsesTwoLineClock(bool merged)
 {
-    return merged && height >= 40.f * scale;
+    return merged;
 }
 inline std::wstring StatusBarClockDisplay(std::wstring_view value, bool twoLineClock)
 {
     std::wstring result(value);
     if (twoLineClock)
         if (const auto separator = result.find(L"   "); separator != std::wstring::npos)
-            result.replace(separator, 3, L"\n");
+            result = result.substr(separator + 3) + L"\n" + result.substr(0, separator);
     return result;
 }
 inline RECT StatusBarCompactTarget(RECT bounds, float scale, bool twoLineClock)

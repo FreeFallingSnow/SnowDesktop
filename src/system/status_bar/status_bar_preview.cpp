@@ -189,7 +189,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         rectangles.push_back(r);
         if (item.text.empty() || item.icon) continue;
         ComPtr<IDWriteTextLayout> layout;
-        const bool twoLineClock = StatusBarUsesTwoLineClock(merged, static_cast<float>(height), scale);
+        const bool twoLineClock = StatusBarUsesTwoLineClock(merged);
         const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
         Require(text->CreateTextLayout(displayed.c_str(), static_cast<UINT32>(displayed.size()), font.Get(), 4000, 400, &layout));
         DWRITE_TEXT_METRICS metrics{}; Require(layout->GetMetrics(&metrics));
@@ -586,7 +586,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 compactLayout(true, true, 480, 1.5f * scale);
                 compactLayout(true, true, 1920, 1.25f * scale);
                 compactLayout(true, true, 1920, 3.f);
-                // Use the real renderer at the single/two-line boundary and
+                // Use the real renderer at compact/tall merged heights and
                 // fractional DPI: line height, measured width and hit targets
                 // must fit the compact bar rather than merely changing text.
                 for (const float testScale : {1.f, 1.25f, 1.5f, 3.f})

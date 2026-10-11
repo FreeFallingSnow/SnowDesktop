@@ -76,11 +76,13 @@ bool DrawNotificationBell(ID2D1RenderTarget* context, ID2D1SolidColorBrush* brus
 }
 
 void DrawCenteredBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, IDWriteTextFormat* format,
-    std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush, bool fixedInformationBaseline = false)
+    std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush, bool fixedInformationBaseline = false,
+    bool rightAligned = false)
 {
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(factory->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format,
             bounds.right - bounds.left, bounds.bottom - bounds.top, &layout))) return;
+    if (rightAligned) layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
     auto origin = D2D1::Point2F(bounds.left, bounds.top);
     if (fixedInformationBaseline)
     {
@@ -343,7 +345,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
     bool timeNotificationRightAligned)
 {
     if (!context || !text || !w || !h || !std::isfinite(scale) || scale <= 0) return E_INVALIDARG;
-    const bool twoLineClock = StatusBarUsesTwoLineClock(mergedDock, static_cast<float>(h), scale);
+    const bool twoLineClock = StatusBarUsesTwoLineClock(mergedDock);
     const bool hc = palette.highContrast;
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(hc ? palette.foreground :
@@ -393,7 +395,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             DWRITE_TEXT_METRICS metrics{};
             if (SUCCEEDED(text->CreateTextLayout(reserved.c_str(), static_cast<UINT32>(reserved.size()),
                     format.Get(), 2000.f, static_cast<float>(h), &layout))) layout->GetMetrics(&metrics);
-            const float paddingDip = item.key == "clock" ? 0.f : item.glyph.empty() ? 8.f : 28.f;
+            const float paddingDip = item.key == "clock" ? (mergedDock ? 8.f : 0.f) : item.glyph.empty() ? 8.f : 28.f;
             return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 28.f * scale, 260.f * scale);
         };
         std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex;
@@ -587,10 +589,16 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 }
                 if (!item.text.empty())
                 {
+                    const bool mergedClock = mergedDock && item.key == "clock";
+                    if (mergedClock)
+                    {
+                        textRect.left += 4.f * scale;
+                        textRect.right -= 4.f * scale;
+                    }
                     const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
                     DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get(),
                         item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
-                        item.key == "gpu" || item.key == "traffic");
+                        item.key == "gpu" || item.key == "traffic", mergedClock);
                 }
             }
             if (keyboardFocusVisible && &item == &items[std::min(focused, items.size() - 1)])
