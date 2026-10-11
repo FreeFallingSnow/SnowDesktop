@@ -223,6 +223,13 @@ int main()
             find("quickNav.view") == catalog.staticSettings.end(),
         "functional search settings stay on navigation and the obsolete opening preference is absent");
     Check(!find("general.advancedFeatures")->visible && find("statusBar.controlCenterPanel") == catalog.staticSettings.end(),"shared catalog honors advanced and system capability visibility");
+    Check(find("dock.mergedIconScale") == catalog.staticSettings.end(),
+        "search does not navigate to hidden merged bar controls when no bar is merged");
+    SettingsSearchIndexInput mergedCatalog;
+    PopulateSettingsSearchCatalog(mergedCatalog, [](std::string_view key) { return std::wstring(key.begin(), key.end()); }, false, false, 0, true);
+    Check(std::any_of(mergedCatalog.staticSettings.begin(), mergedCatalog.staticSettings.end(),
+        [](const auto& entry) { return entry.focusId == "dock.mergedIconScale" && entry.page == SettingsPage::Dock; }),
+        "an active merged bar exposes its independent icon scale search target");
     for (int style = 0; style <= 6; ++style)
     {
         SettingsSearchIndexInput menus;

@@ -605,9 +605,10 @@ struct DesktopStylePagePresenter::Impl
         items.Spacing(3);
         items.HorizontalAlignment(mux::HorizontalAlignment::Center);
         items.VerticalAlignment(mux::VerticalAlignment::Center);
-        const int spacing = static_cast<int>(std::round(12 * ClampDockScale(settings.thicknessScale)));
+        const float scale = ResolveDockScale(settings, merged);
+        const int spacing = static_cast<int>(std::round(12 * scale));
         const int mergedIconSize = static_cast<int>(std::round((settings.mergedBarHeight -
-            2 * MergedDockVerticalPadding(settings.mergedBarHeight, spacing)) * ClampDockScale(settings.thicknessScale)));
+            2 * MergedDockVerticalPadding(settings.mergedBarHeight, spacing)) * scale));
         const double iconExtent = nativeTaskbar ? 30 : merged ? mergedIconSize : 40;
         const double extent = nativeTaskbar ? 40 : merged ? iconExtent + spacing : 48;
         const auto append = [&](const mux::UIElement& icon, bool running = false) {

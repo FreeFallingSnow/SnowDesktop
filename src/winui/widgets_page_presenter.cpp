@@ -262,6 +262,7 @@ struct WidgetsPagePresenter::Impl
     muxc::TextBlock developmentWorkspacePath{nullptr};
     muxc::StackPanel cliRows{nullptr};
     muxc::Button publishWorkspaceButton{nullptr};
+    muxc::TextBlock publishWorkspaceLabel{nullptr};
     muxc::TextBlock iconReferenceTitle{nullptr};
     muxc::Expander fluentIconsExpander{nullptr};
     muxc::Expander fontAwesomeIconsExpander{nullptr};
@@ -715,6 +716,20 @@ struct WidgetsPagePresenter::Impl
         publishWorkspaceButton.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
         publishWorkspaceButton.VerticalAlignment(mux::VerticalAlignment::Center);
+        publishWorkspaceButton.VerticalContentAlignment(mux::VerticalAlignment::Center);
+        publishWorkspaceLabel = muxc::TextBlock{};
+        const double headingFontSize = publishWorkspaceButton.FontSize();
+        for (const auto& text : {developerPublishCard.title, publishWorkspaceLabel})
+        {
+            text.FontFamily(publishWorkspaceButton.FontFamily());
+            text.FontSize(headingFontSize);
+            text.LineStackingStrategy(mux::LineStackingStrategy::BlockLineHeight);
+            text.LineHeight(headingFontSize * 1.4);
+            text.VerticalAlignment(mux::VerticalAlignment::Center);
+            text.Margin({0, 0, 0, 0});
+            text.Padding({0, 0, 0, 0});
+        }
+        publishWorkspaceButton.Content(publishWorkspaceLabel);
         muxc::Grid publishHeading;
         publishHeading.ColumnSpacing(16);
         muxc::ColumnDefinition publishTitleColumn, publishActionColumn;
@@ -3179,8 +3194,8 @@ struct WidgetsPagePresenter::Impl
         openDevelopmentFolderButton.Content(winrt::box_value(L(
             "app.settings.widgets_open_development_folder",
             L"Open Development Components Folder")));
-        publishWorkspaceButton.Content(winrt::box_value(L(
-            "app.settings.widgets_publish_steam", L"Publish to Steam")));
+        publishWorkspaceLabel.Text(L(
+            "app.settings.widgets_publish_steam", L"Publish to Steam"));
         copyAllErrorsButton.Content(winrt::box_value(L(
             "app.settings.copy_all", L"Copy All")));
         clearAllErrorsButton.Content(winrt::box_value(L(

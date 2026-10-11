@@ -94,6 +94,7 @@ JsonValue EncodeDockLayout(const DockLayoutSettings& settings)
         {"reserveScreenSpace", BooleanValue(settings.reserveScreenSpace)},
         {"frequentItemCount", NumberValue(settings.frequentItemCount)},
         {"thicknessScale", NumberValue(settings.thicknessScale)},
+        {"mergedIconScale", NumberValue(settings.mergedIconScale)},
         {"lastMonitorUseHomeSize", BooleanValue(settings.lastMonitorUseHomeSize)},
         {"mergedBarHeight", NumberValue(settings.mergedBarHeight)},
     };
@@ -593,10 +594,12 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
     int position = static_cast<int>(decoded.position);
     int monitorScope = static_cast<int>(decoded.monitorScope);
     std::optional<float> thickness;
+    std::optional<float> mergedIconScale;
     if (!ReadInteger(*value, "position", "dockLayout.position", position, error) ||
         !ReadInteger(*value, "monitorScope", "dockLayout.monitorScope", monitorScope, error) ||
         !ReadInteger(*value, "frequentItemCount", "dockLayout.frequentItemCount", decoded.frequentItemCount, error) ||
         !ReadOptionalFloat(*value, "thicknessScale", "dockLayout.thicknessScale", thickness, error) ||
+        !ReadOptionalFloat(*value, "mergedIconScale", "dockLayout.mergedIconScale", mergedIconScale, error) ||
         !ReadBoolean(*value, "edgeAttached", "dockLayout.edgeAttached", decoded.edgeAttached, error) ||
         !ReadBoolean(*value, "showWindowsButton", "dockLayout.showWindowsButton", decoded.showWindowsButton, error) ||
         !ReadBoolean(*value, "showFrequentItems", "dockLayout.showFrequentItems", decoded.showFrequentItems, error) ||
@@ -614,10 +617,13 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
     if (decoded.frequentItemCount < 1 || decoded.frequentItemCount > 8)
         return Fail(error, "dockLayout.frequentItemCount", "must be between 1 and 8");
     decoded.thicknessScale = thickness.value_or(decoded.thicknessScale);
+    decoded.mergedIconScale = mergedIconScale.value_or(ClampMergedDockIconScale(decoded.thicknessScale));
     if (decoded.mergedBarHeight < 32 || decoded.mergedBarHeight > 96)
         return Fail(error, "dockLayout.mergedBarHeight", "must be between 32 and 96");
     if (decoded.thicknessScale < kDockMinimumScale || decoded.thicknessScale > kDockMaximumScale)
         return Fail(error, "dockLayout.thicknessScale", "is outside the supported range");
+    if (decoded.mergedIconScale < kDockMinimumScale || decoded.mergedIconScale > 1.f)
+        return Fail(error, "dockLayout.mergedIconScale", "is outside the supported range");
     decoded.position = static_cast<DockPosition>(position);
     decoded.monitorScope = static_cast<DockMonitorScope>(monitorScope);
     document.dockLayout = decoded;

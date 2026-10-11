@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include "dock/dock_layout_settings.h"
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -10,6 +11,35 @@
 
 namespace snowdesktop
 {
+// Clip only the shared edge. Corners and panels separated by a gap keep it.
+inline std::vector<RECT> StatusBarEdgeSegments(RECT frame, DockPosition position, RECT dock)
+{
+    const bool horizontal = position == DockPosition::Top || position == DockPosition::Bottom;
+    const bool touching = !IsRectEmpty(&dock) &&
+        (position == DockPosition::Top ? std::abs(frame.bottom - dock.top) <= 1 :
+         position == DockPosition::Bottom ? std::abs(frame.top - dock.bottom) <= 1 :
+         position == DockPosition::Left ? std::abs(frame.right - dock.left) <= 1 : std::abs(frame.left - dock.right) <= 1);
+    const LONG begin = horizontal ? frame.left : frame.top;
+    const LONG end = horizontal ? frame.right : frame.bottom;
+    const LONG cutBegin = std::max(begin, horizontal ? dock.left : dock.top);
+    const LONG cutEnd = std::min(end, horizontal ? dock.right : dock.bottom);
+    if (!touching || cutBegin >= cutEnd) return {frame};
+    std::vector<RECT> segments;
+    if (cutBegin > begin)
+    {
+        auto first = frame;
+        if (horizontal) first.right = cutBegin; else first.bottom = cutBegin;
+        segments.push_back(first);
+    }
+    if (cutEnd < end)
+    {
+        auto last = frame;
+        if (horizontal) last.left = cutEnd; else last.top = cutEnd;
+        segments.push_back(last);
+    }
+    return segments;
+}
+
 inline bool StatusBarUsesTwoLineClock(bool merged, float height, float scale)
 {
     return merged && height >= 40.f * scale;

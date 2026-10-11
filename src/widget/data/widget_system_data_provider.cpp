@@ -644,6 +644,7 @@ bool WidgetNetworkStatusDebouncer::SemanticallyEqual(
         left.metered == right.metered &&
         left.roaming == right.roaming &&
         left.overLimit == right.overLimit &&
+        left.connections == right.connections &&
         left.error == right.error;
 }
 
@@ -1434,7 +1435,8 @@ WidgetSystemDataProvider::SampleNetworkStatus()
     {
         ConnectionProfile selected{ nullptr };
         int selectedRank = -1;
-        for (const auto& profile : NetworkInformation::GetConnectionProfiles())
+        const auto profiles = NetworkInformation::GetConnectionProfiles();
+        for (const auto& profile : profiles)
         {
             const int rank = ConnectivityRank(
                 profile.GetNetworkConnectivityLevel());
@@ -1445,6 +1447,37 @@ WidgetSystemDataProvider::SampleNetworkStatus()
             }
         }
         snapshot.available = true;
+        PMIB_IF_TABLE2 table = nullptr;
+        if (GetIfTable2(&table) == NO_ERROR && table)
+        {
+            const std::unique_ptr<MIB_IF_TABLE2, decltype(&FreeMibTable)> tableOwner(table, &FreeMibTable);
+            for (ULONG index = 0; index < table->NumEntries; ++index)
+            {
+                const auto& row = table->Table[index];
+                if (row.Type == IF_TYPE_SOFTWARE_LOOPBACK) continue;
+                WidgetNetworkConnectionDataSnapshot connection;
+                connection.interfaceId = row.InterfaceLuid.Value;
+                connection.name = winrt::to_string(winrt::hstring(row.Alias[0] ? row.Alias : row.Description));
+                connection.connectivity = row.AdminStatus == NET_IF_ADMIN_STATUS_DOWN ? "disabled" :
+                    row.OperStatus == IfOperStatusUp && row.MediaConnectState == MediaConnectStateConnected ? "connected" : "disconnected";
+                int profileRank = -1;
+                for (const auto& profile : profiles)
+                {
+                    const auto adapter = profile.NetworkAdapter();
+                    if (!adapter || adapter.NetworkAdapterId() != winrt::guid(row.InterfaceGuid)) continue;
+                    const auto level = profile.GetNetworkConnectivityLevel();
+                    const int rank = ConnectivityRank(level);
+                    if (rank <= profileRank || connection.connectivity == "disabled" || connection.connectivity == "disconnected") continue;
+                    profileRank = rank;
+                    connection.connectivity = ConnectivityName(level);
+                    const auto name = profile.ProfileName();
+                    if (!name.empty()) connection.name = winrt::to_string(name);
+                }
+                snapshot.connections.push_back(std::move(connection));
+            }
+            std::sort(snapshot.connections.begin(), snapshot.connections.end(),
+                [](const auto& left, const auto& right) { return left.interfaceId < right.interfaceId; });
+        }
         if (!selected)
             return snapshot;
 

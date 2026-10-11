@@ -69,6 +69,7 @@ struct SettingsCard
 enum class ContinuousField
 {
     ThicknessScale,
+    MergedIconScale,
     FrequentItemCount,
     TaskbarBackgroundAlpha,
     TaskbarBorderAlpha,
@@ -364,6 +365,7 @@ struct DockPagePresenter::Impl
     SettingsCard edgeSwipeCard;
     SettingsCard fullscreenCard;
     SettingsCard layoutCard;
+    SettingsCard mergedCard;
     SettingsCard behaviorCard;
     SettingsCard appearanceCard;
     SettingsCard itemsCard;
@@ -412,6 +414,7 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch allowDesktopContentOverlapToggle{nullptr};
     muxc::ToggleSwitch showOnlyWhenSummonedToggle{nullptr};
     ContinuousControl thicknessScale;
+    ContinuousControl mergedIconScale;
     ContinuousControl frequentItemCount;
 
     muxc::HyperlinkButton taskbarSettingsLink{nullptr};
@@ -460,8 +463,9 @@ struct DockPagePresenter::Impl
     DynamicRuleControl shellUiRule;
     std::array<DynamicRuleControl*, 3> dynamicRules = {
         &shellUiRule, &maximizedWindowRule, &visibleWindowRule};
-    std::array<ContinuousControl*, 5> continuousControls = {
+    std::array<ContinuousControl*, 6> continuousControls = {
         &thicknessScale,
+        &mergedIconScale,
         &frequentItemCount,
         &taskbarBackgroundAlpha,
         &taskbarBorderAlpha,
@@ -583,6 +587,7 @@ struct DockPagePresenter::Impl
         enableCard.content.Children().Append(dockEnabledRow.root);
 
         InitializeCard(layoutCard, cardStyle, dockRoot, true);
+        InitializeCard(mergedCard, cardStyle, dockRoot, true);
         InitializeCard(itemsCard, cardStyle, dockRoot, true);
         InitializeCard(behaviorCard, cardStyle, dockRoot, true);
         InitializeCard(edgeSwipeCard, cardStyle, dockRoot, true);
@@ -594,14 +599,18 @@ struct DockPagePresenter::Impl
         layoutRow.Initialize(layoutCombo);
         monitorScopeRow.Initialize(monitorScopeCombo);
         InitializeContinuousControl(thicknessScale,
-            ContinuousField::ThicknessScale, 50.0, 100.0, 1.0,
+            ContinuousField::ThicknessScale, 50.0, kDockMaximumScale * 100.0, 1.0,
             nullptr, 100.0);
         layoutCard.content.Children().Append(positionRow.root);
         layoutCard.content.Children().Append(monitorScopeRow.root);
         layoutCard.content.Children().Append(layoutRow.root);
         layoutCard.content.Children().Append(thicknessScale.root);
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
-        layoutCard.content.Children().Append(mergedHeight->Content());
+        mergedCard.content.Children().Append(mergedHeight->Content());
+        InitializeContinuousControl(mergedIconScale,
+            ContinuousField::MergedIconScale, 50.0, 100.0, 1.0,
+            nullptr, 100.0);
+        mergedCard.content.Children().Append(mergedIconScale.root);
         homeSizeRow.Initialize(homeSize);
         homeSizeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         layoutCard.content.Children().Append(homeSizeRow.root);
@@ -715,7 +724,7 @@ struct DockPagePresenter::Impl
         itemsCard.content.Children().Append(showWindowsButtonRow.root);
         itemsCard.content.Children().Append(showFrequentItemsRow.root);
         itemsCard.content.Children().Append(frequentItemCount.root);
-        for (auto* card : {&layoutCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
+        for (auto* card : {&layoutCard, &mergedCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
         {
             auto overlay = mux::Markup::XamlReader::Load(
                 LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="8" IsHitTestVisible="False" Opacity="0" />)")
@@ -931,6 +940,7 @@ struct DockPagePresenter::Impl
         switch (field)
         {
         case ContinuousField::ThicknessScale:
+        case ContinuousField::MergedIconScale:
         case ContinuousField::TaskbarBackgroundAlpha:
         case ContinuousField::TaskbarBorderAlpha:
             SetUnit(control, L"%");
@@ -1131,7 +1141,7 @@ struct DockPagePresenter::Impl
             if (highlightTimer) highlightTimer.Stop();
             if (cardHighlightAnimation) cardHighlightAnimation.Stop();
             cardHighlightAnimation = nullptr;
-            for (auto* card : {&layoutCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
+            for (auto* card : {&layoutCard, &mergedCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
                 if (card->highlight) card->highlight.Opacity(0);
         }
         catch (...) {}
@@ -1144,8 +1154,9 @@ struct DockPagePresenter::Impl
         namespace animation = mux::Media::Animation;
         const bool animate = winrt::Windows::UI::ViewManagement::UISettings{}.AnimationsEnabled();
         cardHighlightAnimation = animation::Storyboard{};
-        for (auto* card : {&layoutCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
+        for (auto* card : {&layoutCard, &mergedCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
         {
+            if (card->root.Visibility() != mux::Visibility::Visible) continue;
             if (!animate) { card->highlight.Opacity(1); continue; }
             animation::DoubleAnimation pulse;
             pulse.From(0.0);
@@ -1621,6 +1632,8 @@ struct DockPagePresenter::Impl
         {
         case ContinuousField::ThicknessScale:
             return ClampDockScale(settings.thicknessScale) * 100.0;
+        case ContinuousField::MergedIconScale:
+            return ClampMergedDockIconScale(settings.mergedIconScale) * 100.0;
         case ContinuousField::FrequentItemCount:
             return std::clamp(settings.frequentItemCount, 1, 8);
         case ContinuousField::TaskbarBackgroundAlpha:
@@ -1656,6 +1669,10 @@ struct DockPagePresenter::Impl
         {
         case ContinuousField::ThicknessScale:
             settings.thicknessScale = ClampDockScale(
+                static_cast<float>(uiValue / 100.0));
+            break;
+        case ContinuousField::MergedIconScale:
+            settings.mergedIconScale = ClampMergedDockIconScale(
                 static_cast<float>(uiValue / 100.0));
             break;
         case ContinuousField::FrequentItemCount:
@@ -1973,6 +1990,7 @@ struct DockPagePresenter::Impl
         monitorScopeRow.SetEnabled(dockEnabled);
         layoutRow.SetEnabled(dockEnabled);
         thicknessScale.row.SetEnabled(dockEnabled);
+        mergedIconScale.row.SetEnabled(dockEnabled && barAvailability.anyMerged);
         suppressTaskbarRow.SetEnabled(dockEnabled);
         taskbarSuppressRow.SetEnabled(true);
         if (taskbarMode.Items().Size() == 3)
@@ -1992,11 +2010,13 @@ struct DockPagePresenter::Impl
         edgeSwipeCard.root.IsHitTestVisible(dockEnabled);
         fullscreenCard.root.IsHitTestVisible(dockEnabled);
         layoutCard.root.IsHitTestVisible(dockEnabled);
+        mergedCard.root.IsHitTestVisible(dockEnabled);
         behaviorCard.root.IsHitTestVisible(dockEnabled);
         itemsCard.root.IsHitTestVisible(dockEnabled);
         edgeSwipeCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         fullscreenCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         layoutCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
+        mergedCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         behaviorCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         itemsCard.root.Opacity(dockEnabled ? 1.0 : 0.62);
         frequentItemCount.slider.IsEnabled(
@@ -2606,6 +2626,8 @@ struct DockPagePresenter::Impl
             "settings.dock.fullscreenPolicy", L"Fullscreen protection");
         SetCardText(layoutCard,
             "settings.dock.layoutAndPosition", L"Position and layout");
+        SetCardText(mergedCard,
+            "settings.bars.mergedSettings", L"Merged bar settings");
         SetCardText(behaviorCard,
             "settings.dock.launchAndWindows", L"Launch and windows");
         SetCardText(itemsCard,
@@ -2670,9 +2692,11 @@ struct DockPagePresenter::Impl
             {"app.dock.all_screens", L"All Displays"},
         });
         SetContinuousText(thicknessScale,
-            "app.settings.dock_thickness", L"Dock Thickness",
+            "app.settings.dock_thickness", L"Dock Scale",
             L("app.settings.dock_thickness_hint",
                 L"Adjust dock bar and icon size together."));
+        SetContinuousText(mergedIconScale,
+            "settings.bars.iconSize", L"Icon size", L"");
 
         floatingEdgeSwipeRow.SetText(
             L("app.dock.floating_edge_swipe", L"Edge Swipe"));
@@ -2912,7 +2936,7 @@ struct DockPagePresenter::Impl
         barAvailability = ResolveBarSettingsAvailability(snapshot.values.general.dockEnabled, dock, bar, GetSystemMetrics(SM_CMONITORS));
         spaceReservedByStatusBar = barAvailability.allDockMerged;
         mergedHeight->Update(snapshot);
-        thicknessScale.row.SetText(L(barAvailability.anyMerged ? "settings.bars.iconSize" : "app.settings.dock_thickness", L"Dock size"));
+        mergedCard.root.Visibility(barAvailability.anyMerged ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         if (newGeneration)
         {
             confirmationGate->confirmationPending = false;
@@ -2963,6 +2987,7 @@ struct DockPagePresenter::Impl
         if (id == "dock.monitor" || id == "dock.monitorScope")
             return monitorScopeCombo;
         if (id == "dock.mergedBarHeight") return mergedHeight->FocusTarget();
+        if (id == "dock.mergedIconScale") return mergedIconScale.slider;
         if (id == "dock.lastMonitorUseHomeSize") return homeSize;
         if (id == "taskbar.displayMode" || id == "taskbar.suppressSystemTaskbar" || id == "taskbar.autoHide") return taskbarMode;
         if (id == "dock.thickness" || id == "dock.thicknessScale")

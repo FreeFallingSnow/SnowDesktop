@@ -91,6 +91,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::DesktopStyle, "desktopStyle.merged", "settings.desktopStyle.merged.title", "settings.desktopStyle.merged.description"},
     {SettingsPage::DesktopStyle, "desktopStyle.side", "settings.desktopStyle.side.title", "settings.desktopStyle.side.description"},
     {SettingsPage::Dock, "dock.mergedBarHeight", "settings.bars.height", "settings.bars.height.description"},
+    {SettingsPage::Dock, "dock.mergedIconScale", "settings.bars.iconSize", "settings.bars.mergedSettings"},
     {SettingsPage::Dock, "dock.lastMonitorUseHomeSize", "settings.bars.homeSize", "settings.bars.homeSize.description"},
     {SettingsPage::StatusBar, "statusBar.mergedBarHeight", "settings.bars.height", "settings.bars.height.description"},
     {SettingsPage::Dock, "dock.reserveScreenSpace", "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description"},
@@ -611,7 +612,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
 inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
     const std::function<std::wstring(std::string_view)>& L,
     bool advancedFeaturesVisible, bool supportsQuickSettings,
-    int contextMenuStyle = 0)
+    int contextMenuStyle = 0, bool mergedBarVisible = false)
 {
             const auto pageContext = [&L](SettingsPage page) {
                 switch (page)
@@ -667,6 +668,9 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
             input.staticSettings.reserve(std::size(kStaticSearchDefinitions));
             for (const auto& definition : kStaticSearchDefinitions)
             {
+                const std::string_view focus(definition.focusId);
+                if (!mergedBarVisible && (focus == "dock.mergedIconScale" ||
+                    focus == "dock.mergedBarHeight" || focus == "statusBar.mergedBarHeight")) continue;
                 if (std::string_view(definition.focusId) == "statusBar.controlCenterPanel" &&
                     !supportsQuickSettings) continue;
                 if (std::string_view(definition.focusId) == "contextMenu.expandQuickActions" &&

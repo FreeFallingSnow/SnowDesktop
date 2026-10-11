@@ -40,6 +40,7 @@ struct StatusBarSnapshot
     std::optional<system_control::Snapshot> wifi;
     status_bar_notification::Snapshot notifications;
     std::optional<widget_runtime::WidgetAudioOutputVolumeDataSnapshot> audio;
+    std::optional<widget_runtime::WidgetAudioOutputDefaultDataSnapshot> audioDevice;
     std::optional<widget_runtime::WidgetPowerDataSnapshot> power;
     std::vector<tray::Icon> tray;
     bool trayExpanded = false;
@@ -66,5 +67,5 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext*, IDWriteFactory*, std::vector<S
     bool mergedDock = false, bool timeNotificationRightAligned = false);
 PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings&);
 // The desktop-facing halo occupies space within the existing AppBar allocation.
-void DrawStatusBarEdge(ID2D1DeviceContext*, RECT, const PersonalizationSettings&, float scale, DockPosition);
+void DrawStatusBarEdge(ID2D1DeviceContext*, RECT, const PersonalizationSettings&, float scale, DockPosition, RECT adjacentDock = {});
 }

@@ -71,6 +71,8 @@ void TestCodec()
     dockSpace.reserveScreenSpace = true;
     dockSpace.lastMonitorUseHomeSize = false;
     dockSpace.mergedBarHeight = 64;
+    dockSpace.thicknessScale = 2.f;
+    dockSpace.mergedIconScale = 0.75f;
     Check(Unpack<DockSettings>(Pack(dockSpace)) == dockSpace,
         "system Dock space reservation must cross the settings-process boundary");
     for (const bool enabled : {true, false})

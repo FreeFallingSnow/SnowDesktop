@@ -180,6 +180,7 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_running_animation.h
     src/app/features/app_status_bar.cpp
     src/system/status_bar/status_bar_view.cpp
+    src/system/status_bar/status_bar_tooltip.h
     src/system/status_bar/status_bar_view.h
     src/system/status_bar/status_bar_preview.cpp
     src/system/status_bar/status_bar_preview.h

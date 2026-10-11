@@ -1,4 +1,5 @@
 #include "settings/settings_search_catalog.h"
+#include "settings/bar_settings_rules.h"
 #include "app/app.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "ui/menu/modern_menu.h"
@@ -1867,7 +1868,8 @@ snowdesktop::SettingsSearchIndexInput DesktopApp::BuildSettingsSearchInput()
             steamEntitlementService_ && ToGeneralAdvancedFeatureStatus(steamEntitlementService_->Current(),
                 snowdesktop::deployment::GetRuntimeDeploymentContext().kind).cardVisible,
             snowdesktop::StatusBarSupportsSystemQuickSettings(),
-            CurrentPersonalization().contextMenuStyle);
+            CurrentPersonalization().contextMenuStyle,
+            snowdesktop::ResolveBarSettingsAvailability(generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged);
         if (!widgetSettingsBackend_)
             return input;
         // Indexing must not replace live WidgetSettingsService sessions or

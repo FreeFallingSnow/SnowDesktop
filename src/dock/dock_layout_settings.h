@@ -4,7 +4,12 @@
 
 inline constexpr bool kDefaultDockEnabled = false;
 inline constexpr float kDockMinimumScale = 0.50f;
-inline constexpr float kDockMaximumScale = 1.00f;
+inline constexpr float kDockMaximumScale = 2.00f;
+
+inline float ClampMergedDockIconScale(float scale)
+{
+    return std::clamp(scale, kDockMinimumScale, 1.00f);
+}
 
 inline float ClampDockScale(float scale)
 {
@@ -46,4 +51,10 @@ struct DockLayoutSettings
     bool showOnlyWhenSummoned = false;
     int frequentItemCount = 3;
     float thicknessScale = 1.0f;
+    float mergedIconScale = 1.0f;
 };
+
+inline float ResolveDockScale(const DockLayoutSettings& settings, bool merged)
+{
+    return merged ? ClampMergedDockIconScale(settings.mergedIconScale) : ClampDockScale(settings.thicknessScale);
+}

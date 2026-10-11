@@ -2,6 +2,7 @@
 
 #include "settings_window_host.h"
 #include "settings/settings_search_catalog.h"
+#include "settings/bar_settings_rules.h"
 #include "data/data_paths.h"
 #include "resources/resource.h"
 #include "ui/render/app_font.h"
@@ -1085,7 +1086,9 @@ struct SettingsWindowHost::Impl
         {
             PopulateSettingsSearchCatalog(input, [this](std::string_view key) { return L(key); },
                 advancedFeaturesVisible, StatusBarSupportsSystemQuickSettings(),
-                snapshot ? snapshot->values.personalization.contextMenuStyle : 0);
+                snapshot ? snapshot->values.personalization.contextMenuStyle : 0,
+                snapshot && ResolveBarSettingsAvailability(snapshot->values.general.dockEnabled,
+                    snapshot->values.dock, snapshot->values.general.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged);
         }
         if (snapshot && (snapshot->values.personalization.contextMenuStyle == 5 ||
             snapshot->values.personalization.contextMenuStyle == 6))

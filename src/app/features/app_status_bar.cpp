@@ -749,6 +749,9 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     if (group == 2) addTimeChoices(section);
                     if (group == 3) addControlChoices(section);
                 }
+            AppendMenuW(settings, MF_SEPARATOR, 0, nullptr);
+            AppendMenuW(settings, MF_STRING, 1, _LW("statusBar.menu.detailed"));
+            SetMenuItemIcon(settings, 1, L"\uF6A9", MenuIconFont::FluentRegular);
         }
         statusBarMenuMonitor_ = monitor;
         statusBarMenuOwner_ = owner;
@@ -847,7 +850,6 @@ void DesktopApp::SyncStatusBar()
                 DrawWidgetPanelBackground(context, frame, 0,
                     D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                     D2D1::ColorF(0, 0.f), false, 0, &fillAppearance, false, 0, scale);
-                 snowdesktop::DrawStatusBarEdge(context, frame, appearance, scale, generalSettings_.statusBar.position);
                 brushCache_.clear(); brushCacheContext_ = nullptr;
              });
         statusBar_->SetPointerPressed([this] {
@@ -896,6 +898,12 @@ void DesktopApp::SyncStatusBar()
                 if (!host || !host->active || host->monitor != monitor || !host->container ||
                     !host->hwnd || !IsWindow(host->hwnd)) continue;
                 state.promoted = host->promoted;
+                if (dockSettings_.edgeAttached && !host->container->IsMergedWithStatusBar() &&
+                    IsWindowVisible(host->hwnd) && IsDockContainerInteractionVisible(host->container))
+                {
+                    state.adjacentDockBounds = host->container->GetVisualPanelBounds(lastMousePoint_);
+                    OffsetRect(&state.adjacentDockBounds, virtualLeft_, virtualTop_);
+                }
                 if (host->container->IsMergedWithStatusBar() && IsWindowVisible(host->hwnd))
                 {
                     state.window = host->hwnd;

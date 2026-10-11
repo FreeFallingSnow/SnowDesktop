@@ -543,7 +543,7 @@ int DockContainer::ItemIconSize() const
         const int height = static_cast<int>(area_.bottom - area_.top);
         const int padding = snowdesktop::MergedDockVerticalPadding(height, ScaledSpacing());
         const int available = std::max(1, height - 2 * padding);
-        return std::max(1, static_cast<int>(std::round(available * ClampDockScale(app_->dockSettings_.thicknessScale))));
+        return std::max(1, static_cast<int>(std::round(available * ClampMergedDockIconScale(app_->dockSettings_.mergedIconScale))));
     }
     const POINT center{
         (area_.left + area_.right) / 2,
@@ -563,14 +563,14 @@ int DockContainer::ItemPitch() const
 int DockContainer::ScaledSpacing() const
 {
     const float scale = app_
-        ? ClampDockScale(app_->dockSettings_.thicknessScale) : 1.0f;
+        ? ResolveDockScale(app_->dockSettings_, IsMergedWithStatusBar()) : 1.0f;
     return std::max(1, static_cast<int>(std::round(kDockSpacing * scale)));
 }
 
 int DockContainer::ScaledSeparatorGap() const
 {
     const float scale = app_
-        ? ClampDockScale(app_->dockSettings_.thicknessScale) : 1.0f;
+        ? ResolveDockScale(app_->dockSettings_, IsMergedWithStatusBar()) : 1.0f;
     return std::max(1, static_cast<int>(std::round(kDockSeparatorGap * scale)));
 }
 

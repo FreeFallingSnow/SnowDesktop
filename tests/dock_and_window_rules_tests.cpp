@@ -53,6 +53,7 @@
 #include "system/status_bar/status_bar_appbar.h"
 #include "dock/merged_dock_presentation.h"
 #include "system/status_bar/status_bar_layout.h"
+#include "system/status_bar/status_bar_tooltip.h"
 #include "system/status_bar/status_bar_presentation.h"
 #include "system/status_bar/status_bar_interaction.h"
 #include "layout/floating_popup_rules.h"
@@ -2115,6 +2116,35 @@ int main(int argc, char** argv)
             std::array<LONG, 3>{60, 80, 32});
         Check(narrow[1].left == 110 && IsRectEmpty(&narrow[3]) && narrow[4].right == 392 && narrow[0].right < narrow[1].left,
             "narrow bars keep the clock and last system control visible without overlapping targets");
+        const auto joined = snowdesktop::StatusBarEdgeSegments({0, 0, 1920, 32}, DockPosition::Top, {0, 32, 80, 1080});
+        snowdesktop::widget_runtime::WidgetAudioOutputDefaultDataSnapshot output;
+        output.available = true; output.id = "headphones"; output.name = "Headphones (REDMI Buds 8 Pro)";
+        snowdesktop::widget_runtime::WidgetAudioOutputVolumeDataSnapshot outputVolume;
+        outputVolume.available = true; outputVolume.endpointId = "headphones"; outputVolume.volume = .49;
+        Check(snowdesktop::StatusBarVolumeTooltip(output, outputVolume) == L"Headphones (REDMI Buds 8 Pro): 49%" &&
+                snowdesktop::StatusBarVolumeTooltip(output, outputVolume, .5) == L"Headphones (REDMI Buds 8 Pro): 50%",
+            "audio hover shows the active endpoint name with sampled or pending wheel volume");
+        outputVolume.endpointId = "speakers";
+        Check(snowdesktop::StatusBarVolumeTooltip(output, outputVolume).find(L"REDMI") == std::wstring::npos,
+            "a device switch cannot pair an old endpoint name with a new endpoint volume");
+        const std::vector<snowdesktop::widget_runtime::WidgetNetworkConnectionDataSnapshot> adapters{
+            {1, "FIClash", "internet"}, {2, "HIT-WLAN", "connected"}, {3, "Ethernet 4", "local"}};
+        const auto networkTip = snowdesktop::StatusBarNetworkTooltip(adapters, L"fallback");
+        Check(networkTip.find(L"FIClash\n") != std::wstring::npos && networkTip.find(L"HIT-WLAN\n") != std::wstring::npos &&
+                networkTip.find(L"Ethernet 4\n") != std::wstring::npos && networkTip.find(L"fallback") == std::wstring::npos,
+            "network hover lists each adapter instead of substituting aggregate connectivity");
+        Check(joined.size() == 1 && joined.front().left == 80 && joined.front().right == 1920,
+            "a side Dock removes only its contact segment from the top status bar border");
+        const auto separated = snowdesktop::StatusBarEdgeSegments({0, 0, 1920, 32}, DockPosition::Top, {0, 40, 80, 1080});
+        Check(separated.size() == 1 && separated.front().left == 0,
+            "panels with a real gap preserve the full border");
+        const auto bottomJoin = snowdesktop::StatusBarEdgeSegments({0, 1048, 1920, 1080}, DockPosition::Bottom, {1840, 0, 1920, 1048});
+        Check(bottomJoin.size() == 1 && bottomJoin.front().right == 1840,
+            "bottom status bars trim the contact with a right-side Dock");
+        const auto leftJoin = snowdesktop::StatusBarEdgeSegments({0, 0, 32, 1080}, DockPosition::Left, {32, 0, 1920, 80});
+        const auto rightJoin = snowdesktop::StatusBarEdgeSegments({1888, 0, 1920, 1080}, DockPosition::Right, {0, 1000, 1888, 1080});
+        Check(leftJoin.size() == 1 && leftJoin.front().top == 80 && rightJoin.size() == 1 && rightJoin.front().bottom == 1000,
+            "vertical status bars trim only their shared Dock edge");
         const auto buttons = snowdesktop::StatusBarHorizontalLayout(400, 32, 12,
             std::array<LONG, 2>{32, 32}, 180, std::array<LONG, 2>{48, 32});
         Check(buttons[0].left == 12 && buttons[0].right == buttons[1].left && buttons[1].right == 76 &&

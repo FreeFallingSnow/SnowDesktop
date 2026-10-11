@@ -3,6 +3,7 @@
 #include "status_bar_glyphs.h"
 #include "status_bar_battery.h"
 #include "status_bar_layout.h"
+#include "status_bar_tooltip.h"
 #include "status_bar_presentation.h"
 #include "widget/preview/widget_preview_stage.h"
 #include "system/tray/tray_presentation.h"
@@ -227,9 +228,9 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     control.batteryTone = battery.tone;
     control.batteryPluggedIn = battery.pluggedIn;
     control.batteryLevel = power && power->available ? StatusBarBatteryLevel(power->batteryPercent) : -1;
-    control.controlTips[0] = networkTip;
-    control.controlTips[1] = std::wstring(_LW("statusBar.volume")) + L"  " +
-        (audio && audio->available ? (audio->muted ? std::wstring(_LW("statusBar.muted")) : Percent(audio->volume * 100.)) : L"—");
+    control.controlTips[0] = snapshot.network && snapshot.network->available ?
+        StatusBarNetworkTooltip(snapshot.network->connections, networkTip) : networkTip;
+    control.controlTips[1] = StatusBarVolumeTooltip(snapshot.audioDevice, audio);
     if (hasBattery)
         control.controlTips[2] = std::wstring(_LW(battery.label)) + L"  " + Percent(power->batteryPercent);
     return items;
@@ -479,22 +480,25 @@ PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings& a
     return fill;
 }
 void DrawStatusBarEdge(ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance,
-    float scale, DockPosition position)
+    float scale, DockPosition position, RECT adjacentDock)
 {
     if (!context || IsRectEmpty(&frame)) return;
-    const auto clip = D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
-        static_cast<float>(frame.right), static_cast<float>(frame.bottom));
+    const auto segments = StatusBarEdgeSegments(frame, position, adjacentDock);
     if (appearance.widgetEdgeHighlightEnabled && appearance.widgetEdgeHighlightStrength > .0005f)
     {
         using widget_preview::HighlightEdge;
         const auto edge = position == DockPosition::Bottom ? HighlightEdge::Top :
             position == DockPosition::Left ? HighlightEdge::Right :
             position == DockPosition::Right ? HighlightEdge::Left : HighlightEdge::Bottom;
-        context->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        (void)widget_preview::DrawEdgeHighlight(context, frame, 0,
-            D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
-            appearance.widgetEdgeHighlightWidth * scale, appearance.widgetEdgeHighlightStrength, appearance.edgeLight, edge);
-        context->PopAxisAlignedClip();
+        for (const auto& segment : segments)
+        {
+            context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(segment.left), static_cast<float>(segment.top),
+                static_cast<float>(segment.right), static_cast<float>(segment.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            (void)widget_preview::DrawEdgeHighlight(context, frame, 0,
+                D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
+                appearance.widgetEdgeHighlightWidth * scale, appearance.widgetEdgeHighlightStrength, appearance.edgeLight, edge);
+            context->PopAxisAlignedClip();
+        }
     }
     if (appearance.widgetBorderWidth <= 0 || appearance.widgetBorderAlpha <= 0) return;
     ComPtr<ID2D1SolidColorBrush> border;
@@ -504,12 +508,14 @@ void DrawStatusBarEdge(ID2D1DeviceContext* context, RECT frame, const Personaliz
     if (position == DockPosition::Left || position == DockPosition::Right)
     {
         const float x = position == DockPosition::Right ? frame.left + width / 2 : frame.right - width / 2;
-        if (border) context->DrawLine(D2D1::Point2F(x, static_cast<float>(frame.top)),
-            D2D1::Point2F(x, static_cast<float>(frame.bottom)), border.Get(), width);
+        if (border) for (const auto& segment : segments)
+            context->DrawLine(D2D1::Point2F(x, static_cast<float>(segment.top)),
+                D2D1::Point2F(x, static_cast<float>(segment.bottom)), border.Get(), width);
         return;
     }
     const float y = position == DockPosition::Bottom ? frame.top + width / 2 : frame.bottom - width / 2;
-    if (border) context->DrawLine(D2D1::Point2F(static_cast<float>(frame.left), y),
-        D2D1::Point2F(static_cast<float>(frame.right), y), border.Get(), width);
+    if (border) for (const auto& segment : segments)
+        context->DrawLine(D2D1::Point2F(static_cast<float>(segment.left), y),
+            D2D1::Point2F(static_cast<float>(segment.right), y), border.Get(), width);
 }
 }

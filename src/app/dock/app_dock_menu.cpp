@@ -13,6 +13,13 @@ namespace
 {
 constexpr UINT kDockStatusBarSettingsCommand = 1;
 constexpr UINT kDockTaskManagerCommand = 2;
+constexpr UINT kDockMonitorScopeFirst = 41830;
+constexpr UINT kDockScaleFirst = 41840;
+constexpr int kDockScalePercent[]{50, 75, 100, 125, 150, 175, 200};
+constexpr UINT kMergedDockScaleFirst = 41850;
+constexpr UINT kMergedBarHeightFirst = 41860;
+constexpr UINT kMergedBarDetailedSettings = 41869;
+constexpr int kMergedBarHeights[]{32, 40, 48, 56, 64, 72, 80, 96};
 }
 
 HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
@@ -20,35 +27,50 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     HMENU menu = CreatePopupMenu();
     HMENU positionMenu = CreatePopupMenu();
     HMENU layoutMenu = CreatePopupMenu();
-    HMENU quickMenu = CreatePopupMenu();
-    if (!menu || !positionMenu || !layoutMenu || !quickMenu)
+    HMENU monitorMenu = CreatePopupMenu();
+    HMENU scaleMenu = CreatePopupMenu();
+    if (!menu || !positionMenu || !layoutMenu || !monitorMenu || !scaleMenu)
     {
         if (positionMenu) DestroyMenu(positionMenu);
         if (layoutMenu) DestroyMenu(layoutMenu);
-        if (quickMenu) DestroyMenu(quickMenu);
+        if (monitorMenu) DestroyMenu(monitorMenu);
+        if (scaleMenu) DestroyMenu(scaleMenu);
         if (menu) DestroyMenu(menu);
         return nullptr;
     }
 
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionBottom, _LW("app.dock.bottom"));
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionTop, _LW("app.dock.top"));
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionLeft, _LW("app.dock.left"));
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionRight, _LW("app.dock.right"));
-    CheckMenuRadioItem(positionMenu,
-        kContextDockPositionBottom, kContextDockPositionRight,
-        kContextDockPositionBottom + static_cast<UINT>(dockSettings_.position),
-        MF_BYCOMMAND);
-
-    AppendMenuW(layoutMenu, MF_STRING, kContextDockLayoutIsland, _LW("app.dock.island"));
-    AppendMenuW(layoutMenu, MF_STRING, kContextDockLayoutEdge, _LW("app.dock.edge"));
-    CheckMenuRadioItem(layoutMenu,
-        kContextDockLayoutIsland, kContextDockLayoutEdge,
-        dockSettings_.edgeAttached ? kContextDockLayoutEdge : kContextDockLayoutIsland,
-        MF_BYCOMMAND);
+    const auto addChoice = [this](HMENU target, UINT command, const wchar_t* title,
+                              bool selected, const wchar_t* glyph) {
+        std::wstring label = title;
+        if (selected) { label += L"\t"; label += _LW("statusBar.menu.current"); }
+        AppendMenuW(target, MF_STRING, command, label.c_str());
+        SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
+    };
+    addChoice(positionMenu, kContextDockPositionBottom, _LW("app.dock.bottom"), dockSettings_.position == DockPosition::Bottom, L"\uF148");
+    addChoice(positionMenu, kContextDockPositionTop, _LW("app.dock.top"), dockSettings_.position == DockPosition::Top, L"\uF19B");
+    addChoice(positionMenu, kContextDockPositionLeft, _LW("app.dock.left"), dockSettings_.position == DockPosition::Left, L"\uF15B");
+    addChoice(positionMenu, kContextDockPositionRight, _LW("app.dock.right"), dockSettings_.position == DockPosition::Right, L"\uF181");
+    addChoice(layoutMenu, kContextDockLayoutIsland, _LW("app.dock.island"), !dockSettings_.edgeAttached, L"\uF8B5");
+    addChoice(layoutMenu, kContextDockLayoutEdge, _LW("app.dock.edge"), dockSettings_.edgeAttached, L"\uF359");
 
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(positionMenu), _LW("app.dock.position"));
     AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(quickMenu), _LW("app.dock.quick_operations"));
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(monitorMenu), _LW("settings.dock.monitor"));
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(scaleMenu), _LW("app.settings.dock_thickness"));
+    const char* monitorLabels[]{"app.dock.first_screen", "app.dock.last_screen", "app.dock.all_screens"};
+    for (UINT index = 0; index < std::size(monitorLabels); ++index)
+    {
+        addChoice(monitorMenu, kDockMonitorScopeFirst + index, _LW(monitorLabels[index]),
+            static_cast<UINT>(dockSettings_.monitorScope) == index,
+            index == 2 ? L"\uEB96" : L"\uF359");
+    }
+    for (UINT index = 0; index < std::size(kDockScalePercent); ++index)
+    {
+        const auto label = std::to_wstring(kDockScalePercent[index]) + L"%";
+        addChoice(scaleMenu, kDockScaleFirst + index, label.c_str(),
+            std::abs(dockSettings_.thicknessScale * 100 - kDockScalePercent[index]) < .5f, L"\uF8C4");
+    }
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     auto toggleLabel = [](const wchar_t* title, bool enabled) {
         std::wstring label = title;
         label += L"\t";
@@ -63,8 +85,8 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     const auto addToggle = [&](UINT command, const wchar_t* title, bool enabled,
                                const wchar_t* glyph) {
         const auto label = toggleLabel(title, enabled);
-        AppendMenuW(quickMenu, MF_STRING, command, label.c_str());
-        SetMenuItemIcon(quickMenu, command, glyph, MenuIconFont::FluentRegular);
+        AppendMenuW(menu, MF_STRING, command, label.c_str());
+        SetMenuItemIcon(menu, command, glyph, MenuIconFont::FluentRegular);
     };
     addToggle(kContextDockSingleClickLaunch, _LW("app.dock.single_click_launch"),
         dockSettings_.singleClickLaunchItems, L"\uE445"); // cursor_click_20
@@ -72,8 +94,8 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         dockSettings_.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
     addToggle(kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
         dockSettings_.showWindowPreviews, L"\uF8B5"); // window_20
-    AppendMenuW(quickMenu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(quickMenu, MF_STRING,
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING,
         kContextDockShowFrequentItems, frequentLabel.c_str());
 
     const UINT keepToggleCommand =
@@ -83,33 +105,69 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     const std::wstring keepLabel = toggleLabel(
         _LW("app.dock.keep_when_hidden"),
         dockSettings_.keepWhenDesktopHidden);
-    AppendMenuW(quickMenu, MF_STRING,
+    AppendMenuW(menu, MF_STRING,
         keepToggleCommand, keepLabel.c_str());
 
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, _LW("app.dock.detailed"));
-    if (includeStatusBar)
-    {
-        AppendMenuW(menu, MF_STRING, kDockStatusBarSettingsCommand, _LW("statusBar.menu.settings"));
-        AppendMenuW(menu, MF_STRING, kDockTaskManagerCommand, _LW("statusBar.taskManager"));
-    }
-
-    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(positionMenu), L"");
-    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"");
-    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(quickMenu), L"\uF6A9", MenuIconFont::FluentRegular);
-    SetMenuItemIcon(quickMenu, kContextDockShowFrequentItems,
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(positionMenu), L"\uF8E5", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"\uF587", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(monitorMenu), L"\uF359", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(scaleMenu), L"\uF8C4", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextDockShowFrequentItems,
         dockSettings_.showFrequentItems
             ? snowdesktop::menu_fluent_glyphs::kShowFrequent
             : snowdesktop::menu_fluent_glyphs::kHideFrequent,
         MenuIconFont::FluentRegular);
-    SetMenuItemIcon(quickMenu, keepToggleCommand,
+    SetMenuItemIcon(menu, keepToggleCommand,
         snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden,
         MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, kContextDockDetailedSettings, L"");
+    SetMenuItemIcon(menu, kContextDockDetailedSettings, L"\uF6A9", MenuIconFont::FluentRegular);
     if (includeStatusBar)
     {
-        SetMenuItemIcon(menu, kDockStatusBarSettingsCommand, L"\uF6A9", MenuIconFont::FluentRegular);
-        SetMenuItemIcon(menu, kDockTaskManagerCommand, L"\uE49D", MenuIconFont::FluentRegular);
+        const HMENU root = CreatePopupMenu();
+        if (!root) { DestroyMenu(menu); return nullptr; }
+        AppendMenuW(root, MF_STRING, kDockStatusBarSettingsCommand, _LW("statusBar.menu.settings"));
+        AppendMenuW(root, MF_STRING, kDockTaskManagerCommand, _LW("statusBar.taskManager"));
+        AppendMenuW(root, MF_SEPARATOR, 0, nullptr);
+        if (!AppendMenuW(root, MF_POPUP, reinterpret_cast<UINT_PTR>(menu), _LW("app.settings.dock_bar")))
+        { DestroyMenu(menu); DestroyMenu(root); return nullptr; }
+        SetMenuItemIcon(root, kDockStatusBarSettingsCommand, L"\uF6A9", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(root, kDockTaskManagerCommand, L"\uE49D", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(root, reinterpret_cast<UINT_PTR>(menu), L"\uF133", MenuIconFont::FluentRegular);
+        const HMENU mergedMenu = CreatePopupMenu();
+        const HMENU heightMenu = CreatePopupMenu();
+        const HMENU iconMenu = CreatePopupMenu();
+        if (!mergedMenu || !heightMenu || !iconMenu)
+        {
+            if (mergedMenu) DestroyMenu(mergedMenu);
+            if (heightMenu) DestroyMenu(heightMenu);
+            if (iconMenu) DestroyMenu(iconMenu);
+            DestroyMenu(root);
+            return nullptr;
+        }
+        AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(heightMenu), _LW("settings.bars.height"));
+        AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("settings.bars.iconSize"));
+        for (UINT index = 0; index < std::size(kMergedBarHeights); ++index)
+        {
+            const auto label = std::to_wstring(kMergedBarHeights[index]);
+            addChoice(heightMenu, kMergedBarHeightFirst + index, label.c_str(),
+                dockSettings_.mergedBarHeight == kMergedBarHeights[index], L"\uF8C4");
+        }
+        for (UINT index = 0; index < 3; ++index)
+        {
+            const auto label = std::to_wstring(kDockScalePercent[index]) + L"%";
+            addChoice(iconMenu, kMergedDockScaleFirst + index, label.c_str(),
+                std::abs(dockSettings_.mergedIconScale * 100 - kDockScalePercent[index]) < .5f, L"\uF8C4");
+        }
+        AppendMenuW(mergedMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(mergedMenu, MF_STRING, kMergedBarDetailedSettings, _LW("statusBar.menu.detailed"));
+        AppendMenuW(root, MF_POPUP, reinterpret_cast<UINT_PTR>(mergedMenu), _LW("settings.bars.mergedSettings"));
+        SetMenuItemIcon(root, reinterpret_cast<UINT_PTR>(mergedMenu), L"\uF587", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(heightMenu), L"\uF8C4", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(iconMenu), L"\uF133", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(mergedMenu, kMergedBarDetailedSettings, L"\uF6A9", MenuIconFont::FluentRegular);
+        return root;
     }
     return menu;
 }
@@ -191,13 +249,14 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         updated.keepWhenDesktopHidden = false;
         break;
     case kContextDockDetailedSettings:
+    case kMergedBarDetailedSettings:
         if (settingsController_)
         {
             (void)settingsController_->SynchronizeGeneral(generalSettings_);
             (void)settingsController_->SynchronizeDock(dockSettings_);
         }
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
-            snowdesktop::SettingsPage::DockAndTaskbar));
+            snowdesktop::SettingsPage::Dock, command == kMergedBarDetailedSettings ? "dock.mergedBarHeight" : ""));
         return;
     case kDockStatusBarSettingsCommand:
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
@@ -209,7 +268,28 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
             MessageBeep(MB_ICONWARNING);
         return;
     default:
-        return;
+        if (command >= kDockMonitorScopeFirst && command < kDockMonitorScopeFirst + 3)
+        {
+            updated.monitorScope = static_cast<DockMonitorScope>(command - kDockMonitorScopeFirst);
+            layoutChanged = updated.monitorScope != dockSettings_.monitorScope;
+        }
+        else if (command >= kDockScaleFirst && command < kDockScaleFirst + std::size(kDockScalePercent))
+        {
+            updated.thicknessScale = ClampDockScale(kDockScalePercent[command - kDockScaleFirst] / 100.f);
+            layoutChanged = updated.thicknessScale != dockSettings_.thicknessScale;
+        }
+        else if (command >= kMergedDockScaleFirst && command < kMergedDockScaleFirst + 3)
+        {
+            updated.mergedIconScale = ClampMergedDockIconScale(kDockScalePercent[command - kMergedDockScaleFirst] / 100.f);
+            layoutChanged = updated.mergedIconScale != dockSettings_.mergedIconScale;
+        }
+        else if (command >= kMergedBarHeightFirst && command < kMergedBarHeightFirst + std::size(kMergedBarHeights))
+        {
+            updated.mergedBarHeight = kMergedBarHeights[command - kMergedBarHeightFirst];
+            layoutChanged = updated.mergedBarHeight != dockSettings_.mergedBarHeight;
+        }
+        else return;
+        break;
     }
 
     dockSettings_ = updated;

@@ -316,7 +316,8 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             saved.mergedBarHeight = 48 + position * 8;
             saved.showOnlyWhenSummoned = true;
             saved.frequentItemCount = 7;
-            saved.thicknessScale = 0.73f;
+            saved.thicknessScale = attached ? 2.f : 0.73f;
+            saved.mergedIconScale = attached ? 0.75f : 1.f;
             const std::string contents = std::string("{\"dockEnabled\":") +
                 (attached ? "true" : "false") + ",\"dockLayout\":" +
                 layout::SerializeDockLayout(saved) + "}";
@@ -355,6 +356,16 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             legacy.dockLayout && !legacy.dockLayout->reserveScreenSpace &&
             legacy.dockLayout->lastMonitorUseHomeSize && legacy.dockLayout->mergedBarHeight == 48,
         "legacy Dock layouts do not opt into screen reservation when the field is absent");
+    Expect(layout::ParseDocument(R"({"dockLayout":{"thicknessScale":0.75}})", legacy) &&
+            legacy.dockLayout && legacy.dockLayout->thicknessScale == 0.75f &&
+            legacy.dockLayout->mergedIconScale == 0.75f,
+        "legacy backups retain the former shared scale in both independent values");
+    DockLayoutSettings scales;
+    scales.thicknessScale = 2.f;
+    scales.mergedIconScale = 0.75f;
+    Expect(ResolveDockScale(scales, false) == 2.f && ResolveDockScale(scales, true) == 0.75f &&
+            ClampDockScale(3.f) == 2.f && ClampMergedDockIconScale(2.f) == 1.f,
+        "switching Dock modes uses independent scales and keeps merged icons inside the fixed-height bar");
     for (const char* malformed : {
              R"({"dockLayout":false})",
              R"({"dockLayout":{"position":4}})",
@@ -367,7 +378,10 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
              R"({"dockLayout":{"mergedBarHeight":97}})",
              R"({"dockLayout":{"mergedBarHeight":48.5}})",
              R"({"dockLayout":{"frequentItemCount":0}})",
-             R"({"dockLayout":{"thicknessScale":0.1}})"})
+             R"({"dockLayout":{"thicknessScale":0.1}})",
+             R"({"dockLayout":{"thicknessScale":2.01}})",
+             R"({"dockLayout":{"mergedIconScale":0.49}})",
+             R"({"dockLayout":{"mergedIconScale":1.01}})"})
     {
         Expect(!layout::ValidateDocument(malformed),
             "invalid Dock layout values are rejected before replacing live data");
