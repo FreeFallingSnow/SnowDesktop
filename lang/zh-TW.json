@@ -1431,7 +1431,7 @@
   "settings.dock.thickness.description": "同步調整獨立 Dock 的列體與圖示大小。",
   "settings.dock.allowDesktopContentOverlap": "桌面內容避開 Dock",
   "settings.dock.allowDesktopContentOverlap.description": "為桌面圖示和元件留出位置；不改變最大化視窗的範圍。",
-  "settings.dock.showOnlyWhenSummoned": "僅在喚起時顯示 Dock",
+  "settings.dock.showOnlyWhenSummoned": "僅在喚起時顯示",
   "settings.dock.showOnlyWhenSummoned.description": "平時隱藏，透過所選邊緣手勢或快捷鍵喚起；拖曳項目到邊緣時立即展開。",
   "settings.dock.frequentItems": "常用項目",
   "settings.dock.frequentItems.description": "顯示常用應用程式並設定最大數量。",
@@ -2606,5 +2606,7 @@
   "statusBar.networkDisconnected": "未連線",
   "statusBar.networkDisabled": "已停用",
   "app.dock.start_button": "開始按鈕",
-  "settings.bars.mergedBar": "融合列"
+  "settings.bars.mergedBar": "融合列",
+  "settings.bars.positionAndAppearance": "位置與外觀",
+  "settings.bars.dockActions": "Dock 操作"
 }

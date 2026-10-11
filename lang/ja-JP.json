@@ -1431,7 +1431,7 @@
   "settings.dock.thickness.description": "独立した Dock バーとアイコンのサイズを同時に調整します。",
   "settings.dock.allowDesktopContentOverlap": "デスクトップの内容を Dock から避ける",
   "settings.dock.allowDesktopContentOverlap.description": "最大化ウィンドウの範囲を変えず、デスクトップアイコンやウィジェット用の余白を確保します。",
-  "settings.dock.showOnlyWhenSummoned": "呼び出したときだけ Dock を表示",
+  "settings.dock.showOnlyWhenSummoned": "呼び出し時のみ表示",
   "settings.dock.showOnlyWhenSummoned.description": "選択したジェスチャーやショートカットを使うまで非表示にします。項目を端へドラッグするとすぐに表示します。",
   "settings.dock.frequentItems": "よく使う項目",
   "settings.dock.frequentItems.description": "よく使うアプリを表示し、最大数を設定します。",
@@ -2606,5 +2606,7 @@
   "statusBar.networkDisconnected": "未接続",
   "statusBar.networkDisabled": "無効",
   "app.dock.start_button": "スタートボタン",
-  "settings.bars.mergedBar": "統合バー"
+  "settings.bars.mergedBar": "統合バー",
+  "settings.bars.positionAndAppearance": "位置と外観",
+  "settings.bars.dockActions": "Dock の操作"
 }

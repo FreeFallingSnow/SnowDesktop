@@ -7,7 +7,9 @@
 #include "dock_explorer_pin.h"
 #include "app/shell/shell_icon_request.h"
 #include "desktop/desktop_source.h"
+#include "desktop/desktop_style_presets.h"
 #include "layout/logical_slot_picker_rules.h"
+#include <commctrl.h>
 
 // Dock and running-application context menus.
 
@@ -26,6 +28,54 @@ constexpr UINT kDockRevealGestureFirst = 41870;
 constexpr UINT kDockReserveDesktop = 41872;
 constexpr UINT kDockReserveMaximized = 41873;
 constexpr UINT kDockStartButton = 41874;
+constexpr UINT kDesktopStyleFirst = 41880;
+constexpr wchar_t const* kDesktopStyles[]{L"native", L"taskbar-dock", L"island", L"merged", L"side"};
+constexpr char const* kDesktopStyleLabels[]{"settings.desktopStyle.native.title", "settings.desktopStyle.taskbar-dock.title",
+    "settings.desktopStyle.island.title", "settings.desktopStyle.merged.title", "settings.desktopStyle.side.title"};
+constexpr char const* kDesktopStyleAnimations[]{nullptr, nullptr, "settings.desktopStyle.island.animations",
+    "settings.desktopStyle.merged.animations", "settings.desktopStyle.side.animations"};
+static_assert(std::size(kDesktopStyles) == std::size(kDesktopStyleLabels) &&
+    std::size(kDesktopStyles) == std::size(kDesktopStyleAnimations));
+
+bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* message,
+    const wchar_t* accept, const wchar_t* cancel)
+{
+    const TASKDIALOG_BUTTON buttons[]{{IDYES, accept}, {IDCANCEL, cancel}};
+    POINT anchor{};
+    GetCursorPos(&anchor);
+    TASKDIALOGCONFIG dialog{};
+    dialog.cbSize = sizeof(dialog);
+    dialog.hwndParent = owner;
+    dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
+    dialog.pszWindowTitle = L"SnowDesktop";
+    dialog.pszMainInstruction = title;
+    dialog.pszContent = message;
+    dialog.cButtons = static_cast<UINT>(std::size(buttons));
+    dialog.pButtons = buttons;
+    dialog.nDefaultButton = IDCANCEL;
+    dialog.lpCallbackData = reinterpret_cast<LONG_PTR>(&anchor);
+    dialog.pfCallback = +[](HWND window, UINT notification, WPARAM, LPARAM, LONG_PTR data) -> HRESULT {
+        if (notification == TDN_CREATED)
+        {
+            const auto point = *reinterpret_cast<const POINT*>(data);
+            MONITORINFO monitor{sizeof(monitor)};
+            RECT bounds{};
+            UINT flags = SWP_NOSIZE | SWP_SHOWWINDOW;
+            int x = 0, y = 0;
+            if (GetMonitorInfoW(MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST), &monitor) && GetWindowRect(window, &bounds))
+            {
+                x = monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - bounds.right + bounds.left) / 2;
+                y = monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - bounds.bottom + bounds.top) / 2;
+            }
+            else flags |= SWP_NOMOVE;
+            SetWindowPos(window, HWND_TOPMOST, x, y, 0, 0, flags);
+            SetForegroundWindow(window);
+        }
+        return S_OK;
+    };
+    int selected = IDCANCEL;
+    return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
+}
 }
 
 HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
@@ -57,6 +107,19 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
             (target == positionMenu || target == layoutMenu || target == monitorMenu || target == scaleMenu);
         AppendMenuW(target, MF_STRING | (inactive ? MF_GRAYED : 0), command, label.c_str());
         SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
+    };
+    const auto addDesktopStyles = [&](HMENU parent) {
+        const HMENU styles = CreatePopupMenu();
+        if (!styles) return;
+        if (!AppendMenuW(parent, MF_POPUP, reinterpret_cast<UINT_PTR>(styles), _LW("settings.desktopStyle.title")))
+        { DestroyMenu(styles); return; }
+        SetMenuItemIcon(parent, reinterpret_cast<UINT_PTR>(styles), L"\uF359", MenuIconFont::FluentRegular);
+        const wchar_t* glyphs[]{L"\uF8B5", L"\uF133", L"\uF587", L"\uF587", L"\uF15B"};
+        for (UINT index = 0; index < std::size(kDesktopStyles); ++index)
+        {
+            AppendMenuW(styles, MF_STRING, kDesktopStyleFirst + index, _LW(kDesktopStyleLabels[index]));
+            SetMenuItemIcon(styles, kDesktopStyleFirst + index, glyphs[index], MenuIconFont::FluentRegular);
+        }
     };
     addChoice(positionMenu, kContextDockPositionBottom, _LW("app.dock.bottom"), dockSettings_.position == DockPosition::Bottom, L"\uF148");
     addChoice(positionMenu, kContextDockPositionTop, _LW("app.dock.top"), dockSettings_.position == DockPosition::Top, L"\uF19B");
@@ -143,6 +206,7 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     if (!includeStatusBar)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        addDesktopStyles(menu);
         AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, _LW("app.dock.detailed"));
         SetMenuItemIcon(menu, kContextDockDetailedSettings, L"\uF6A9", MenuIconFont::FluentRegular);
     }
@@ -165,11 +229,25 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         if (!root) { DestroyMenu(menu); DestroyMenu(independentMenu); return nullptr; }
         AppendMenuW(root, MF_STRING, kDockTaskManagerCommand, _LW("statusBar.taskManager"));
         AppendMenuW(root, MF_SEPARATOR, 0, nullptr);
-        if (!AppendMenuW(root, MF_POPUP, reinterpret_cast<UINT_PTR>(menu), _LW("settings.bars.mergedBar")))
-        { DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        const HMENU mergedMenu = CreatePopupMenu();
+        const HMENU appearanceMenu = CreatePopupMenu();
+        if (!mergedMenu || !appearanceMenu)
+        {
+            if (mergedMenu) DestroyMenu(mergedMenu);
+            if (appearanceMenu) DestroyMenu(appearanceMenu);
+            DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr;
+        }
+        if (!AppendMenuW(root, MF_POPUP, reinterpret_cast<UINT_PTR>(mergedMenu), _LW("settings.bars.mergedBar")))
+        { DestroyMenu(mergedMenu); DestroyMenu(appearanceMenu); DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
         SetMenuItemIcon(root, kDockTaskManagerCommand, L"\uE49D", MenuIconFont::FluentRegular);
-        SetMenuItemIcon(root, reinterpret_cast<UINT_PTR>(menu), L"\uF587", MenuIconFont::FluentRegular);
-        const HMENU mergedMenu = menu;
+        SetMenuItemIcon(root, reinterpret_cast<UINT_PTR>(mergedMenu), L"\uF587", MenuIconFont::FluentRegular);
+        if (!AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(appearanceMenu), _LW("settings.bars.positionAndAppearance")))
+        { DestroyMenu(appearanceMenu); DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        if (!AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(menu), _LW("settings.bars.dockActions")))
+        { DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(appearanceMenu), L"\uF592", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(menu), L"\uE445", MenuIconFont::FluentRegular);
+        addDesktopStyles(mergedMenu);
         const HMENU heightMenu = CreatePopupMenu();
         const HMENU iconMenu = CreatePopupMenu();
         if (!heightMenu || !iconMenu)
@@ -180,9 +258,8 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
             DestroyMenu(root);
             return nullptr;
         }
-        InsertMenuW(mergedMenu, 0, MF_BYPOSITION | MF_POPUP, reinterpret_cast<UINT_PTR>(heightMenu), _LW("settings.bars.height"));
-        InsertMenuW(mergedMenu, 1, MF_BYPOSITION | MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("settings.bars.iconSize"));
-        InsertMenuW(mergedMenu, 2, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(appearanceMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(heightMenu), _LW("settings.bars.height"));
+        AppendMenuW(appearanceMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("settings.bars.iconSize"));
         for (UINT index = 0; index < std::size(kMergedBarHeights); ++index)
         {
             const auto label = std::to_wstring(kMergedBarHeights[index]);
@@ -199,8 +276,8 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         if (!AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(independentMenu), _LW("app.settings.dock_bar")))
         { DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
         SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(independentMenu), L"\uF133", MenuIconFont::FluentRegular);
-        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(heightMenu), L"\uF8C4", MenuIconFont::FluentRegular);
-        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(iconMenu), L"\uF133", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(appearanceMenu, reinterpret_cast<UINT_PTR>(heightMenu), L"\uF8C4", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(appearanceMenu, reinterpret_cast<UINT_PTR>(iconMenu), L"\uF133", MenuIconFont::FluentRegular);
         return root;
     }
     return menu;
@@ -240,6 +317,42 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
 
 void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
 {
+    if (command >= kDesktopStyleFirst && command < kDesktopStyleFirst + std::size(kDesktopStyles))
+    {
+        if (!settingsController_) return;
+        const auto index = command - kDesktopStyleFirst;
+        const std::wstring preset = kDesktopStyles[index];
+        // The status-bar interaction window can disappear when the layout is
+        // switched. Keep dialogs owned by the stable desktop host instead.
+        const HWND dialogOwner = hwnd_;
+        snowdesktop::SettingsHostActions::Request request;
+        request.action = snowdesktop::SettingsHostActions::Action::ApplyDesktopStylePreset;
+        request.value = preset;
+        if (preset == L"native" && settingsController_->Snapshot()->values.general.dockEnabled)
+        {
+            if (!ConfirmBarMenuAction(dialogOwner, _LW("settings.dock.disableConfirm.title"),
+                _LW("settings.dock.disableConfirm.description"), _LW("settings.desktopStyle.applyLayout"),
+                _LW("settings.dialog.cancel"))) return;
+            request.boolValue = true;
+        }
+        auto result = settingsController_->InvokeHostAction(request);
+        if (result.Succeeded()) result = settingsController_->FlushPending();
+        if (!result.Succeeded())
+        { MessageBoxW(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR); return; }
+        if (snowdesktop::NeedsDesktopStyleAnimations(preset, settingsController_->Snapshot()->values.dock))
+        {
+            const auto description = std::wstring(_LW("settings.desktopStyle.animationPrompt.description")) + L"\n\n" + _LW(kDesktopStyleAnimations[index]);
+            if (ConfirmBarMenuAction(dialogOwner, _LW("settings.desktopStyle.animationPrompt.title"), description.c_str(),
+                _LW("settings.desktopStyle.applyAnimations"), _LW("settings.desktopStyle.animationPrompt.keep")))
+            {
+                request.action = snowdesktop::SettingsHostActions::Action::ApplyDesktopStyleAnimations;
+                result = settingsController_->InvokeHostAction(request);
+                if (result.Succeeded()) result = settingsController_->FlushPending();
+                if (!result.Succeeded()) MessageBoxW(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
+            }
+        }
+        return;
+    }
     DockSettings updated = dockSettings_;
     bool layoutChanged = false;
     switch (command)

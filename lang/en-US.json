@@ -1431,7 +1431,7 @@
     "settings.dock.thickness.description": "Adjust the standalone Dock bar and icon size together.",
     "settings.dock.allowDesktopContentOverlap": "Keep desktop content clear of Dock",
     "settings.dock.allowDesktopContentOverlap.description": "Reserve space for desktop icons and widgets without changing maximized window bounds.",
-    "settings.dock.showOnlyWhenSummoned": "Show Dock only when summoned",
+    "settings.dock.showOnlyWhenSummoned": "Show only when summoned",
     "settings.dock.showOnlyWhenSummoned.description": "Keep hidden until the selected edge gesture or a shortcut is used. Dragging an item to the edge reveals it immediately.",
     "settings.dock.frequentItems": "Frequent items",
     "settings.dock.frequentItems.description": "Show frequently used apps and set their maximum count.",
@@ -2606,5 +2606,7 @@
   "statusBar.networkDisconnected": "Disconnected",
   "statusBar.networkDisabled": "Disabled",
   "app.dock.start_button": "Start button",
-  "settings.bars.mergedBar": "Merged bar"
+  "settings.bars.mergedBar": "Merged bar",
+  "settings.bars.positionAndAppearance": "Position and appearance",
+  "settings.bars.dockActions": "Dock actions"
 }

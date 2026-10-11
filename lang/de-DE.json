@@ -1431,7 +1431,7 @@
   "settings.dock.thickness.description": "Größe der eigenständigen Dock-Leiste und ihrer Symbole gemeinsam anpassen.",
   "settings.dock.allowDesktopContentOverlap": "Desktop-Inhalte vom Dock fernhalten",
   "settings.dock.allowDesktopContentOverlap.description": "Platz für Desktop-Symbole und Widgets reservieren, ohne maximierte Fenster zu verändern.",
-  "settings.dock.showOnlyWhenSummoned": "Dock nur nach Aufruf anzeigen",
+  "settings.dock.showOnlyWhenSummoned": "Nur beim Aufrufen anzeigen",
   "settings.dock.showOnlyWhenSummoned.description": "Bis zur gewählten Randgeste oder Tastenkombination ausblenden. Beim Ziehen eines Elements zum Rand sofort einblenden.",
   "settings.dock.frequentItems": "Häufig verwendete Elemente",
   "settings.dock.frequentItems.description": "Häufig verwendete Apps anzeigen und ihre maximale Anzahl festlegen.",
@@ -2606,5 +2606,7 @@
   "statusBar.networkDisconnected": "Nicht verbunden",
   "statusBar.networkDisabled": "Deaktiviert",
   "app.dock.start_button": "Start-Schaltfläche",
-  "settings.bars.mergedBar": "Zusammengeführte Leiste"
+  "settings.bars.mergedBar": "Zusammengeführte Leiste",
+  "settings.bars.positionAndAppearance": "Position und Erscheinungsbild",
+  "settings.bars.dockActions": "Dock-Aktionen"
 }

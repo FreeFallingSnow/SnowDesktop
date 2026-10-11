@@ -1431,7 +1431,7 @@
   "settings.dock.thickness.description": "Ajusta conjuntamente o tamanho da barra Dock independente e de seus ícones.",
   "settings.dock.allowDesktopContentOverlap": "Manter o conteúdo da área de trabalho fora do Dock",
   "settings.dock.allowDesktopContentOverlap.description": "Reserva espaço para ícones e widgets sem alterar os limites das janelas maximizadas.",
-  "settings.dock.showOnlyWhenSummoned": "Mostrar o Dock somente quando invocado",
+  "settings.dock.showOnlyWhenSummoned": "Mostrar apenas quando acionado",
   "settings.dock.showOnlyWhenSummoned.description": "Ocultar até usar o gesto escolhido ou um atalho. Arrastar um item até a borda exibe a barra imediatamente.",
   "settings.dock.frequentItems": "Itens frequentes",
   "settings.dock.frequentItems.description": "Mostre aplicativos usados com frequência e defina a quantidade máxima.",
@@ -2606,5 +2606,7 @@
   "statusBar.networkDisconnected": "Desconectado",
   "statusBar.networkDisabled": "Desabilitado",
   "app.dock.start_button": "Botão Iniciar",
-  "settings.bars.mergedBar": "Barra combinada"
+  "settings.bars.mergedBar": "Barra combinada",
+  "settings.bars.positionAndAppearance": "Posição e aparência",
+  "settings.bars.dockActions": "Ações do Dock"
 }

@@ -671,14 +671,10 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             AppendMenuW(target, MF_STRING | (disabled ? MF_GRAYED : 0), command, label.c_str());
             SetMenuItemIcon(target, command, flags[index].glyph, MenuIconFont::FluentRegular);
         };
-        const auto submenu = [&](HMENU parent, const char* label, UINT position = static_cast<UINT>(-1)) {
+        const auto submenu = [&](HMENU parent, const char* label) {
             const auto child = CreatePopupMenu();
             if (!child) return static_cast<HMENU>(nullptr);
-            const bool attached = position == static_cast<UINT>(-1)
-                ? AppendMenuW(parent, MF_POPUP, reinterpret_cast<UINT_PTR>(child), _LW(label)) != FALSE
-                : InsertMenuW(parent, position, MF_BYPOSITION | MF_POPUP,
-                    reinterpret_cast<UINT_PTR>(child), _LW(label)) != FALSE;
-            if (!attached)
+            if (!AppendMenuW(parent, MF_POPUP, reinterpret_cast<UINT_PTR>(child), _LW(label)))
             { DestroyMenu(child); return static_cast<HMENU>(nullptr); }
             const std::string_view key(label);
             const wchar_t* glyph = L"\uF587"; // options_20
@@ -746,12 +742,13 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         }
         if (settingsMenu)
         {
-            if (const auto edge = submenu(settingsMenu, "statusBar.position", merged ? 0 : static_cast<UINT>(-1)))
+            const HMENU positionAndAppearance = merged ? GetSubMenu(settingsMenu, 0) : settingsMenu;
+            if (const auto edge = positionAndAppearance ? submenu(positionAndAppearance, "statusBar.position") : nullptr)
             {
                 addChoice(edge, positionBase, _LW("app.dock.top"), currentSettings.position == DockPosition::Top);
                 addChoice(edge, positionBase + 1, _LW("app.dock.bottom"), currentSettings.position == DockPosition::Bottom);
             }
-            if (const auto scope = submenu(settingsMenu, "settings.dock.monitor", merged ? 1 : static_cast<UINT>(-1)))
+            if (const auto scope = positionAndAppearance ? submenu(positionAndAppearance, "settings.dock.monitor") : nullptr)
             {
                 const char* labels[]{"app.dock.first_screen", "app.dock.last_screen", "app.dock.all_screens"};
                 for (UINT index = 0; index < std::size(labels); ++index)
@@ -769,9 +766,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             const char* labels[]{"statusBar.leftItems", "statusBar.information", "statusBar.timeAndNotificationArea", "statusBar.controlCenter"};
             const std::size_t boundaries[]{0, 3, 8, 10, std::size(flags)};
             for (std::size_t group = 0; group < std::size(labels); ++group)
-                if (const auto section = merged ? settingsMenu : submenu(settingsMenu, labels[group]))
+                if (const auto section = submenu(settingsMenu, labels[group]))
                 {
-                    if (merged && group != 0) AppendMenuW(section, MF_SEPARATOR, 0, nullptr);
                     for (auto index = boundaries[group]; index < boundaries[group + 1]; ++index)
                     {
                         const HMENU target = merged && flags[index].member == &Settings::quickSearch ? independentStatus : section;

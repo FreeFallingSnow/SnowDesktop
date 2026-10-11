@@ -1431,7 +1431,7 @@
   "settings.dock.thickness.description": "독립 Dock 막대와 아이콘 크기를 함께 조절합니다.",
   "settings.dock.allowDesktopContentOverlap": "데스크톱 콘텐츠가 Dock을 피하도록 배치",
   "settings.dock.allowDesktopContentOverlap.description": "최대화 창 영역은 변경하지 않고 데스크톱 아이콘과 위젯 공간을 확보합니다.",
-  "settings.dock.showOnlyWhenSummoned": "호출할 때만 Dock 표시",
+  "settings.dock.showOnlyWhenSummoned": "호출할 때만 표시",
   "settings.dock.showOnlyWhenSummoned.description": "선택한 동작이나 단축키를 사용할 때까지 숨깁니다. 항목을 가장자리로 끌면 즉시 표시됩니다.",
   "settings.dock.frequentItems": "자주 사용하는 항목",
   "settings.dock.frequentItems.description": "자주 사용하는 앱을 표시하고 최대 개수를 설정합니다.",
@@ -2606,5 +2606,7 @@
   "statusBar.networkDisconnected": "연결되지 않음",
   "statusBar.networkDisabled": "사용 안 함",
   "app.dock.start_button": "시작 버튼",
-  "settings.bars.mergedBar": "통합 표시줄"
+  "settings.bars.mergedBar": "통합 표시줄",
+  "settings.bars.positionAndAppearance": "위치 및 모양",
+  "settings.bars.dockActions": "Dock 동작"
 }
