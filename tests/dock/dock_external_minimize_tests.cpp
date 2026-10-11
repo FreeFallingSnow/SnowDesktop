@@ -490,7 +490,7 @@ int wmain(int argc, wchar_t** argv)
         // Cross-thread ownership implicitly attaches input queues, for which
         // SendMessageTimeout is allowed to ignore its timeout altogether.
         const HWND window = CreateFixtureWindow(L"SnowDesktopMinimizeFixture", FixtureProc,
-            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
+            WS_EX_NOACTIVATE);
         if (!window) return 1;
         ShowWindow(window, SW_SHOWNOACTIVATE);
         PostMessageW(receiver, kReady, reinterpret_cast<WPARAM>(window), 0);
