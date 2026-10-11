@@ -5738,6 +5738,20 @@ int wmain(int argc, wchar_t **argv)
             preparedSample = request.paths.front();
         }
         if (!request.paths.empty() && request.paths.front() == L"synthetic-hang") Sleep(INFINITE);
+        if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename() == L"routing-slots.txt")
+        {
+            namespace ext = snowdesktop::shell_extensions;
+            const auto catalogue = demand_tests::Inventory();
+            if (!request.sourceClsid.empty())
+            {
+                const auto &id = catalogue.rows.front().verbs.front();
+                const int index = request.sourceClsid == std::wstring(id.begin(), id.end()) ? 0 : 1;
+                return ext::Reply{true, {demand_tests::Entry(index)}, {}};
+            }
+            auto extra = demand_tests::Entry(2);
+            extra.key = "unmapped-enabled-command"; extra.provider = "verb:" + extra.key;
+            return ext::Reply{true, {demand_tests::Entry(0), demand_tests::Entry(1), extra}, {}};
+        }
         if(request.paths.size()==3&&request.paths[0]==L"read-disk-cache")
         {
             snowdesktop::shell_extensions::MenuSnapshotCache cache(request.paths[1]);

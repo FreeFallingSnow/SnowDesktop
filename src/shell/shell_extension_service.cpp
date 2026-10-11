@@ -1268,6 +1268,7 @@ struct MenuService::Impl
                     return job.startPinOnly;
                 });
                 const auto normalJobs = static_cast<std::ptrdiff_t>(running.size()) - startJobs + (sourceJob ? 1 : 0);
+                const bool preparedSlot = nativeFactory && Session::PollPreparedMenuWorker() != Session::PreparationState::Absent;
                 Key key; Request request; QueryPriority priority; std::uint64_t sequence = 0, dependency = 0; bool invalid = false;
                 {
                     std::lock_guard lock(mutex);
@@ -1284,6 +1285,9 @@ struct MenuService::Impl
                         if (it->second.queued && it->second.due <= now &&
                             (it->second.request.startPinOnly ? startJobs < 1 :
                                 normalJobs < (it->second.priority <= QueryPriority::Menu ? 2 : 1)) &&
+                            // Metadata needs a fresh process; unlike an ordinary
+                            // aggregate it cannot consume the prepared worker.
+                            (it->second.request.sourceClsid.empty() || normalJobs + (preparedSlot ? 1 : 0) < 2) &&
                             (best == rows.end() || std::tie(it->second.priority, it->second.due) < std::tie(best->second.priority, best->second.due))) best = it;
                     if (best == rows.end()) break;
                     auto &row = best->second; key = best->first; request = row.request; priority = row.priority;

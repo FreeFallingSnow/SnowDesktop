@@ -340,15 +340,19 @@ inline void PreparationAfterRegistryNoise()
     };
     std::atomic<unsigned> scans = 0;
     std::atomic<bool> release = false;
+    const auto cache = temp.path / L"cache";
+    std::filesystem::create_directory(cache);
+    Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(3), Observed(Inventory()).rows));
     // Release the held reader before service destruction, including assertion
     // failures. The real STA/process preparation remains under test.
-    ext::MenuService service(temp.path / L"cache", {}, [&] {
+    ext::MenuService service(cache, {}, [&] {
         if (++scans == 1) while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         return Inventory();
     });
     struct Release { std::atomic<bool> &value; ~Release() { value = true; } } cleanup{release};
     ext::Preferences prefs;
     ext::SetCommon(prefs, "verb:unmapped-enabled-command", ext::Category::Objects, true);
+    for (int i = 0; i < 2; ++i) ext::SetCommon(prefs, Entry(i).provider, ext::Category::Objects, true);
     service.Configure(prefs);
     PumpUntil([&] { return scans == 1; }, "initial preparation inventory starts without an open menu");
     const DWORD value = 1;
@@ -359,6 +363,18 @@ inline void PreparationAfterRegistryNoise()
     PumpUntil([&] { return scans >= 2 && logged("phase=preparation reason=ready"); },
         "pending preparation verifies registry noise and becomes ready without a foreground query");
     Expect(!logged("phase=helper_start"), "background preparation does not need a user query to unblock itself");
+    ext::Request request; request.paths = {(temp.path / L"routing-slots.txt").wstring()};
+    std::ofstream(request.paths.front()) << "private native scheduler fixture";
+    const auto plan = ext::PlanDemandQueries(Inventory(), Observed(Inventory()), prefs, request, 1);
+    Expect(plan.full && plan.sources.size() == 2, "mixed native scheduling fixture has two sources and a fallback");
+    service.Query(request);
+    PumpUntil([&] {
+        return std::all_of(plan.sources.begin(), plan.sources.end(), [&](const auto &source) {
+            const auto view = service.View(source);
+            Expect(view.error.empty(), "a reserved prepared worker cannot cause metadata helper startup failure");
+            return !view.pending && view.snapshot.has_value();
+        }) && service.View(request).snapshot.has_value();
+    }, "both metadata sources and the full query share the actual two-process pool without overflow");
     service.Shutdown();
 }
 inline void Run()
