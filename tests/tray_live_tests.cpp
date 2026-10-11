@@ -241,8 +241,18 @@ int TryRunTrayLiveTests()
     std::error_code error; std::filesystem::create_directory(directory, error);
     if (error) { std::cerr << "FAIL: cannot prepare isolated Hook directory\n"; return 2; }
     const auto hook = directory / L"SnowDesktopTaskbarHook.dll";
-    std::filesystem::copy_file(std::filesystem::absolute(argv[2]), hook, error);
-    if (error) { std::filesystem::remove(directory); std::cerr << "FAIL: cannot copy test Hook\n"; return 2; }
+    auto sourceHook = std::filesystem::absolute(argv[2]);
+    // The standard build arranges the DLL into its private runtime directory
+    // after CMake has generated this diagnostic's target-file argument.
+    if (!std::filesystem::is_regular_file(sourceHook, error))
+        sourceHook = sourceHook.parent_path() / L"SnowDesktop.Runtime" / sourceHook.filename();
+    error.clear();
+    std::filesystem::copy_file(sourceHook, hook, error);
+    if (error)
+    {
+        std::cerr << "FAIL: cannot copy test Hook: " << error.message() << '\n';
+        std::filesystem::remove(directory); return 2;
+    }
     // Explorer pins hook code for callback safety. Keep this exact temporary
     // file until Explorer exits rather than locking any build output.
     hookPath = hook.wstring();
