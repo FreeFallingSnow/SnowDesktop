@@ -192,11 +192,21 @@ public:
             Matches(sample, target.foreground, target.thread, target.layout, target.focus))
         {
             auto next = sample;
-            // A layout can be sampled even when its conversion-mode query is
-            // unavailable. Retain a known mode only for the same typing target.
-            if (sample.label.empty() && Matches(shown_, target.foreground,
-                    target.thread, target.layout, target.focus))
+            const auto hasMode = [](const Snapshot& value) {
+                return !value.label.empty() && value.label != value.layoutLabel;
+            };
+            // Missing conversion data is not evidence that the button should
+            // disappear. Focus changes and non-editable controls can keep it
+            // unavailable indefinitely. Only the presentation is retained;
+            // commands still capture the current typing target independently.
+            if (sample.label.empty() && hasMode(shown_))
+            {
+                pendingModeRemoval_ = false;
+                if (PRIMARYLANGID(LOWORD(reinterpret_cast<ULONG_PTR>(sample.layout))) !=
+                    PRIMARYLANGID(LOWORD(reinterpret_cast<ULONG_PTR>(shown_.layout))))
+                    return shown_;
                 next.label = shown_.label;
+            }
             if (!sample.profileKnown && shown_.layoutIcon && Matches(shown_, target.foreground,
                     target.thread, target.layout, target.focus))
             {
@@ -204,27 +214,23 @@ public:
                 next.layoutLabel = shown_.layoutLabel;
                 next.description = shown_.description;
             }
-            const auto hasMode = [](const Snapshot& value) {
-                return !value.label.empty() && value.label != value.layoutLabel;
-            };
-            // Focus/profile reads can temporarily lose a mode indicator. Keep
-            // the last presentation while a visibility change settles; action
-            // targets are still freshly captured, never taken from this cache.
-            if (shown_.foreground && hasMode(next) != hasMode(shown_))
+            // Debounce confirmed removal only. A successfully read conversion
+            // mode is shown immediately, including a Chinese/English toggle.
+            if (hasMode(shown_) && !hasMode(next))
             {
-                const bool visible = hasMode(next);
-                if (!pendingMode_ || *pendingMode_ != visible)
-                { pendingMode_ = visible; pendingSince_ = now; }
+                if (!pendingModeRemoval_)
+                { pendingModeRemoval_ = true; pendingSince_ = now; }
                 if (now - pendingSince_ < 600) return shown_;
             }
-            pendingMode_.reset();
+            pendingModeRemoval_ = false;
             shown_ = std::move(next);
         }
+        else pendingModeRemoval_ = false; // Unknown/menu samples break continuous confirmation.
         return shown_;
     }
 private:
     Snapshot shown_;
-    std::optional<bool> pendingMode_;
+    bool pendingModeRemoval_ = false;
     ULONGLONG pendingSince_ = 0;
 };
 }

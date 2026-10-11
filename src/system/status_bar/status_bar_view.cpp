@@ -297,7 +297,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             DWRITE_TEXT_METRICS metrics{};
             if (SUCCEEDED(text->CreateTextLayout(reserved.c_str(), static_cast<UINT32>(reserved.size()),
                     format.Get(), 2000.f, static_cast<float>(h), &layout))) layout->GetMetrics(&metrics);
-            const float paddingDip = item.glyph.empty() ? 16.f : 36.f;
+            const float paddingDip = item.glyph.empty() ? 8.f : 28.f;
             return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 28.f * scale, 260.f * scale);
         };
         std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex;
@@ -403,7 +403,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         pixels.data(), width * 4,
                         D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &bitmap)))
                 {
-                    const float size = 18.f * scale;
+                    const float size = (item.inputIcon ? 14.f : 18.f) * scale;
                     const float iconLeft = (rect.left + rect.right - size) / 2, iconTop = (rect.top + rect.bottom - size) / 2;
                     context->DrawBitmap(bitmap.Get(), D2D1::RectF(iconLeft, iconTop, iconLeft + size, iconTop + size));
                 }

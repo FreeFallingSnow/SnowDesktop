@@ -153,12 +153,31 @@ int RunTrayModelTests()
         check(layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 1000).label == L"中" &&
             layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 1599).label == L"中",
             "a transient unavailable mode does not flash the language button off");
-        check(layoutDisplay.Get(withMode, withMode, false, 1600).label == L"中" &&
-            layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 2000).label == L"中" &&
-            layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 2600).label.empty(),
-            "recovered mode resets the debounce and sustained absence eventually hides it");
-        check(layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 2800).label.empty(),
-            "a valid new layout target cannot inherit another application's conversion mode");
+        check(layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 2600).label == L"中" &&
+            layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 10000).label == L"中",
+            "unavailable conversion reads after changing foreground never confirm removal of the mode button");
+        auto childTarget = newLayoutTarget; childTarget.focus = reinterpret_cast<HWND>(3);
+        check(layoutDisplay.Get(childTarget, childTarget, false, 11000).label == L"中",
+            "non-editable child focus retains the last successful presentation without hiding the button");
+        childTarget.label = L"英";
+        check(layoutDisplay.Get(childTarget, childTarget, false, 11001).label == L"英",
+            "a successfully sampled mode replaces the retained presentation immediately");
+        auto englishLayout = childTarget;
+        englishLayout.layout = reinterpret_cast<HKL>(0x0409);
+        englishLayout.label = englishLayout.layoutLabel = L"EN";
+        check(layoutDisplay.Get(englishLayout, englishLayout, false, 12000).label == L"英" &&
+            layoutDisplay.Get(englishLayout, englishLayout, false, 12599).label == L"英",
+            "a confirmed plain keyboard must settle before removing the conversion-mode button");
+        layoutDisplay.Get({}, {}, false, 12600);
+        check(layoutDisplay.Get(englishLayout, englishLayout, false, 13000).label == L"英",
+            "an unavailable foreground sample interrupts rather than completes pending removal");
+        layoutDisplay.Get(englishLayout, englishLayout, true, 13600);
+        check(layoutDisplay.Get(englishLayout, englishLayout, false, 14000).label == L"英" &&
+            layoutDisplay.Get(englishLayout, englishLayout, false, 14599).label == L"英" &&
+            layoutDisplay.Get(englishLayout, englishLayout, false, 14600).label == L"EN",
+            "menu focus interrupts removal and a continuous confirmed keyboard change eventually hides the mode button");
+        check(layoutDisplay.Get(childTarget, childTarget, false, 14601).label == L"英",
+            "switching back to a confirmed IME displays its mode without a reveal delay");
         check(display.Get(old, old, false).label == L"A", "first valid input mode is presented immediately");
         auto other = old; other.foreground = reinterpret_cast<HWND>(2); other.label = L"B";
         check(display.Get(old, other, false).label == L"A" &&
