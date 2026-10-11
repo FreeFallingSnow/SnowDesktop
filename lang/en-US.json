@@ -2594,5 +2594,6 @@
   "settings.dock.launchAndWindows": "Launch and windows",
   "settings.dock.visibleItems": "Visible items",
   "settings.dock.appearance": "Dock appearance",
-  "settings.desktop.shortcutMatching": "Shortcut matching"
+  "settings.desktop.shortcutMatching": "Shortcut matching",
+  "settings.dock.appearanceAndAnimation": "Appearance and animation"
 }

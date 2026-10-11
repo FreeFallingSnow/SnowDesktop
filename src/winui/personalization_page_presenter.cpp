@@ -95,11 +95,10 @@ struct ColorControl
 void InitializeCard(
     SettingsCard& card,
     const mux::Style& style,
-    const muxc::StackPanel& page,
-    bool collapsible = false)
+    const muxc::StackPanel& page)
 {
     card.root = muxc::Border{};
-    if (style && !collapsible)
+    if (style)
         card.root.Style(style);
     card.content = muxc::StackPanel{};
     card.content.Spacing(12.0);
@@ -107,21 +106,8 @@ void InitializeCard(
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
-    if (collapsible)
-    {
-        muxc::Expander section;
-        section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        section.IsExpanded(false);
-        section.Header(card.title);
-        section.Content(card.content);
-        card.root.Child(section);
-    }
-    else
-    {
-        card.content.Children().Append(card.title);
-        card.root.Child(card.content);
-    }
+    card.content.Children().Append(card.title);
+    card.root.Child(card.content);
     page.Children().Append(card.root);
 }
 
@@ -559,9 +545,9 @@ struct PersonalizationPagePresenter::Impl
         popupAppearanceContent.Children().Append(popupThemes->SaveContent());
         popupThemeCard.content.Children().Append(popupAppearanceContent);
         dockThemeRoot = muxc::StackPanel{};
-        muxc::StackPanel dockBody;
-        InitializeCard(dockThemeCard, cardStyle, dockBody, true);
-        dockAppearanceHost.Content(dockBody);
+        dockThemeCard.content = muxc::StackPanel{};
+        dockThemeCard.content.Spacing(12.0);
+        dockAppearanceHost.Content(dockThemeCard.content);
         dockAppearanceHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         dockThemeRoot.Children().Append(dockAppearanceHost);
         dockAppearanceCombo = muxc::ComboBox{};
@@ -1544,7 +1530,6 @@ struct PersonalizationPagePresenter::Impl
         popupCopyComponentRow.SetText(L("appearance.copyComponent", L"Copy current component appearance"),
             L("appearance.copyComponentHint", L"Copy the component appearance from the global theme once, then edit independently."));
         muxa::AutomationProperties::SetName(popupCopyComponent, popupCopyComponentRow.label.Text());
-        SetCardText(dockThemeCard, "settings.dock.appearance", L"Dock appearance");
         statusBarLinkTitle.Text(L("settings.nav.statusBar", L"Status bar"));
         statusBarLinkDescription.Text(L("appearance.openStatusBar", L"Open status bar settings"));
         dockLinkTitle.Text(L("guide.setting.dockAppearance.title"));

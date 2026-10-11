@@ -355,6 +355,8 @@ struct DockPagePresenter::Impl
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
     muxc::StackPanel dockEnableRoot{nullptr};
+    muxc::StackPanel dockAppearanceRoot{nullptr};
+    muxc::ContentControl appearanceHost, animationHost, shortcutsHost;
     muxc::StackPanel dockRoot{nullptr};
     muxc::StackPanel taskbarRoot{nullptr};
 
@@ -363,6 +365,7 @@ struct DockPagePresenter::Impl
     SettingsCard fullscreenCard;
     SettingsCard layoutCard;
     SettingsCard behaviorCard;
+    SettingsCard appearanceCard;
     SettingsCard itemsCard;
     SettingsCard taskbarCard;
     SettingsCard taskbarAppearanceCard;
@@ -558,6 +561,14 @@ struct DockPagePresenter::Impl
     {
         dockEnableRoot = muxc::StackPanel{};
         dockEnableRoot.Spacing(8.0);
+        dockAppearanceRoot = muxc::StackPanel{};
+        dockAppearanceRoot.Spacing(8.0);
+        InitializeCard(appearanceCard, cardStyle, dockAppearanceRoot, true);
+        appearanceCard.content.Spacing(24.0);
+        for (auto const& host : {appearanceHost, animationHost, shortcutsHost})
+            host.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        appearanceCard.content.Children().Append(appearanceHost);
+        appearanceCard.content.Children().Append(animationHost);
         dockRoot = muxc::StackPanel{};
         dockRoot.Spacing(8.0);
         taskbarRoot = muxc::StackPanel{};
@@ -689,6 +700,7 @@ struct DockPagePresenter::Impl
         fullscreenCard.content.Children().Append(fullscreenExceptionsExpander);
         edgeSwipeCard.content.Children().InsertAt(0, showOnlyWhenSummonedRow.root);
         edgeSwipeCard.content.Children().InsertAt(2, edgeRevealGestureRow.root);
+        edgeSwipeCard.content.Children().Append(shortcutsHost);
         reserveScreenSpaceRow.Initialize(reserveScreenSpaceToggle);
         reserveScreenSpaceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         edgeSwipeCard.content.Children().Append(reserveScreenSpaceRow.root);
@@ -2586,6 +2598,8 @@ struct DockPagePresenter::Impl
 
         SetCardText(enableCard,
             "app.settings.dock_bar", L"Dock and Taskbar");
+        SetCardText(appearanceCard,
+            "settings.dock.appearanceAndAnimation", L"Appearance and animation");
         SetCardText(edgeSwipeCard,
             "settings.dock.visibilityAndSummon", L"Visibility and summon");
         SetCardText(fullscreenCard,
@@ -3217,6 +3231,23 @@ mux::UIElement DockPagePresenter::Content() const noexcept
 mux::UIElement DockPagePresenter::DockEnableContent() const noexcept
 {
     return impl_ ? impl_->dockEnableRoot : nullptr;
+}
+
+mux::UIElement DockPagePresenter::DockAppearanceContent() const noexcept
+{
+    return impl_ ? impl_->dockAppearanceRoot : nullptr;
+}
+
+void DockPagePresenter::SetSupplementalContent(const mux::UIElement& appearance,
+    const mux::UIElement& animation, const mux::UIElement& shortcuts)
+{
+    if (!impl_) return;
+    if (impl_->appearanceHost.Content().try_as<mux::UIElement>() != appearance)
+        impl_->appearanceHost.Content(appearance);
+    if (impl_->animationHost.Content().try_as<mux::UIElement>() != animation)
+        impl_->animationHost.Content(animation);
+    if (impl_->shortcutsHost.Content().try_as<mux::UIElement>() != shortcuts)
+        impl_->shortcutsHost.Content(shortcuts);
 }
 
 mux::UIElement DockPagePresenter::DockContent() const noexcept

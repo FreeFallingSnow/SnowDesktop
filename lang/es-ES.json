@@ -2594,5 +2594,6 @@
   "settings.dock.launchAndWindows": "Inicio y ventanas",
   "settings.dock.visibleItems": "Elementos visibles",
   "settings.dock.appearance": "Apariencia del Dock",
-  "settings.desktop.shortcutMatching": "Coincidencia de accesos directos"
+  "settings.desktop.shortcutMatching": "Coincidencia de accesos directos",
+  "settings.dock.appearanceAndAnimation": "Apariencia y animaciones"
 }

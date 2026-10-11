@@ -47,32 +47,18 @@ struct SettingsCard
 void InitializeCard(
     SettingsCard& card,
     const mux::Style& style,
-    const muxc::StackPanel& page,
-    bool collapsible = false)
+    const muxc::StackPanel& page)
 {
     card.root = muxc::Border{};
-    if (!collapsible) card.root.Style(style);
+    card.root.Style(style);
     card.content = muxc::StackPanel{};
     card.content.Spacing(12.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
-    if (collapsible)
-    {
-        muxc::Expander section;
-        section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        section.IsExpanded(false);
-        section.Header(card.title);
-        section.Content(card.content);
-        card.root.Child(section);
-    }
-    else
-    {
-        card.content.Children().Append(card.title);
-        card.root.Child(card.content);
-    }
+    card.content.Children().Append(card.title);
+    card.root.Child(card.content);
     page.Children().Append(card.root);
 }
 
@@ -188,7 +174,6 @@ struct GeneralPagePresenter::Impl
     SettingsCard quickNavigationCard;
     SettingsCard pageNavigationCard;
     SettingsCard desktopPassthroughCard;
-    SettingsCard floatingDockCard;
 
     muxc::ToggleSwitch autoStartToggle{nullptr};
     muxc::StackPanel advancedFeatureControls{nullptr};
@@ -539,17 +524,16 @@ struct GeneralPagePresenter::Impl
         desktopPassthroughHotkeyRow.Initialize(desktopPassthroughHotkey);
         desktopPassthroughCard.content.Children().Append(
             desktopPassthroughHotkeyRow.row.root);
-        InitializeCard(floatingDockCard, cardStyle, dockShortcutRoot, true);
         floatingDockToggle = muxc::ToggleSwitch{};
         floatingDockToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
         floatingDockToggleRow.Initialize(floatingDockToggle);
         floatingDockToggleRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
-        floatingDockCard.content.Children().Append(floatingDockToggleRow.root);
+        dockShortcutRoot.Children().Append(floatingDockToggleRow.root);
         floatingDockHotkeyLabel = muxc::TextBlock{};
         floatingDockHotkeyRow.Initialize(floatingDockHotkey);
-        floatingDockCard.content.Children().Append(
+        dockShortcutRoot.Children().Append(
             floatingDockHotkeyRow.row.root);
     }
 
@@ -985,8 +969,6 @@ struct GeneralPagePresenter::Impl
             "settings.general.pageNavigation");
         SetCardText(desktopPassthroughCard,
             "settings.desktop.passthrough");
-        SetCardText(floatingDockCard,
-            "settings.dock.floatingShortcut");
 
         autoStartRow.SetText(L("app.settings.auto_start"));
         advancedFeatureRow.SetText(L("settings.general.advancedFeatures"));

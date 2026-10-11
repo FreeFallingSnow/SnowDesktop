@@ -25,11 +25,10 @@ struct Card
     muxc::StackPanel content{nullptr};
     muxc::Grid header{nullptr};
     muxc::TextBlock title{nullptr};
-    void Initialize(const mux::Style& style, const muxc::StackPanel& parent,
-        bool collapsible = false)
+    void Initialize(const mux::Style& style, const muxc::StackPanel& parent)
     {
         root = muxc::Border{};
-        if (!collapsible) root.Style(style);
+        root.Style(style);
         content = muxc::StackPanel{};
         content.Spacing(16);
         header = muxc::Grid{};
@@ -45,21 +44,8 @@ struct Card
         title.TextWrapping(mux::TextWrapping::Wrap);
         title.VerticalAlignment(mux::VerticalAlignment::Center);
         header.Children().Append(title);
-        if (collapsible)
-        {
-            muxc::Expander section;
-            section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-            section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-            section.IsExpanded(false);
-            section.Header(header);
-            section.Content(content);
-            root.Child(section);
-        }
-        else
-        {
-            content.Children().Append(header);
-            root.Child(content);
-        }
+        content.Children().Append(header);
+        root.Child(content);
         parent.Children().Append(root);
     }
 };
@@ -113,7 +99,9 @@ struct AnimationPerformancePagePresenter::Impl
         root = muxc::StackPanel{};
         root.Spacing(8);
         generalCard.Initialize(style, root);
-        dockCard.Initialize(style, dockRoot, true);
+        dockCard.content = muxc::StackPanel{};
+        dockCard.content.Spacing(16);
+        dockRoot.Children().Append(dockCard.content);
         performanceCard.Initialize(style, root);
         AddChoice(mode, generalCard, "mode", "animation.mode", 0,
             {L10N_KEY("settings.animation.option.followSystem"),
@@ -368,7 +356,6 @@ struct AnimationPerformancePagePresenter::Impl
         const bool wasUpdating = updating;
         updating = true;
         generalCard.title.Text(L("settings.animation.general"));
-        dockCard.title.Text(L("settings.animation.dock"));
         performanceCard.title.Text(L("settings.animation.performance"));
         for (auto* choice : {&mode, &popup, &speed, &hover, &launch, &window, &frameLimit})
         {

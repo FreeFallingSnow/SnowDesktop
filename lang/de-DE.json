@@ -2594,5 +2594,6 @@
   "settings.dock.launchAndWindows": "Starten und Fenster",
   "settings.dock.visibleItems": "Angezeigte Elemente",
   "settings.dock.appearance": "Dock-Darstellung",
-  "settings.desktop.shortcutMatching": "Verknüpfungen zuordnen"
+  "settings.desktop.shortcutMatching": "Verknüpfungen zuordnen",
+  "settings.dock.appearanceAndAnimation": "Darstellung und Animationen"
 }

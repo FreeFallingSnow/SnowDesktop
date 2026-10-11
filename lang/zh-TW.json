@@ -2594,5 +2594,6 @@
   "settings.dock.launchAndWindows": "啟動與視窗",
   "settings.dock.visibleItems": "顯示項目",
   "settings.dock.appearance": "Dock 外觀",
-  "settings.desktop.shortcutMatching": "捷徑比對"
+  "settings.desktop.shortcutMatching": "捷徑比對",
+  "settings.dock.appearanceAndAnimation": "外觀與動效"
 }

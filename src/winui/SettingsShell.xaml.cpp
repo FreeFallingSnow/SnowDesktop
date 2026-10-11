@@ -2913,14 +2913,13 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     case SettingsPage::Dock:
         if (dockPage_ && generalPage_)
         {
+            dockPage_->SetSupplementalContent(personalizationPage_->DockAppearanceContent(),
+                animationPage_->DockContent(), generalPage_->DockShortcutContent());
+            PageCards().Children().Append(dockPage_->DockAppearanceContent());
             PageCards().Children().Append(dockPage_->DockEnableContent());
             PageCards().Children().Append(dockPage_->DockContent());
-            PageCards().Children().Append(
-                generalPage_->DockShortcutContent());
-            PageCards().Children().Append(personalizationPage_->DockAppearanceContent());
             RegisterFocusTarget("personalization.dockAppearance", personalizationPage_->FocusTarget("personalization.dockAppearance"));
             personalizationPage_->Activate();
-            PageCards().Children().Append(animationPage_->DockContent());
             animationPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
                 if (id == "animation.hover" || id == "animation.hoverScale" || id == "animation.launch" || id == "animation.window")
                     RegisterFocusTarget(std::move(id), element);

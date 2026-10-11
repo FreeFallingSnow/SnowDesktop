@@ -2594,5 +2594,6 @@
   "settings.dock.launchAndWindows": "실행 및 창",
   "settings.dock.visibleItems": "표시 항목",
   "settings.dock.appearance": "Dock 모양",
-  "settings.desktop.shortcutMatching": "바로 가기 일치 규칙"
+  "settings.desktop.shortcutMatching": "바로 가기 일치 규칙",
+  "settings.dock.appearanceAndAnimation": "모양 및 애니메이션"
 }

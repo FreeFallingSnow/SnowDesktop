@@ -79,10 +79,17 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         Content() const noexcept;
-    /** Dock enable row, placed before GeneralPagePresenter's hotkey block. */
+    /** Combined appearance/animation card, followed by the Dock enable row. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
+        DockAppearanceContent() const noexcept;
+    void SetSupplementalContent(
+        const winrt::Microsoft::UI::Xaml::UIElement& appearance,
+        const winrt::Microsoft::UI::Xaml::UIElement& animation,
+        const winrt::Microsoft::UI::Xaml::UIElement& shortcuts);
+    /** Dock enable row. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         DockEnableContent() const noexcept;
-    /** Remaining non-taskbar Dock controls, owned by General. */
+    /** Remaining non-taskbar Dock cards. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         DockContent() const noexcept;
     /** Taskbar behavior, default appearance, scenario overrides and shell UI. */

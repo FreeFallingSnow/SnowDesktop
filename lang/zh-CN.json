@@ -2594,5 +2594,6 @@
   "settings.dock.launchAndWindows": "启动与窗口",
   "settings.dock.visibleItems": "显示项目",
   "settings.dock.appearance": "Dock 外观",
-  "settings.desktop.shortcutMatching": "快捷方式匹配"
+  "settings.desktop.shortcutMatching": "快捷方式匹配",
+  "settings.dock.appearanceAndAnimation": "外观与动效"
 }

@@ -2594,5 +2594,6 @@
   "settings.dock.launchAndWindows": "起動とウィンドウ",
   "settings.dock.visibleItems": "表示する項目",
   "settings.dock.appearance": "Dock の外観",
-  "settings.desktop.shortcutMatching": "ショートカットの判定"
+  "settings.desktop.shortcutMatching": "ショートカットの判定",
+  "settings.dock.appearanceAndAnimation": "外観とアニメーション"
 }
