@@ -79,7 +79,13 @@ SharedState* g_sharedState = nullptr;
 UINT g_applyMessage = 0;
 std::atomic<DWORD> g_watchedOwnerProcessId{0};
 std::atomic_bool g_forceRestore{false};
-std::atomic_bool g_taskbarTapStarted{false};
+std::mutex g_taskbarTapMutex;
+bool g_taskbarTapStarted = false;
+DWORD g_taskbarTapOwner = 0;
+ULONGLONG g_taskbarTapFailureTick = 0;
+std::mutex g_hookStatusMutex;
+LONG g_hookStatus = kStatusIdle;
+DWORD g_hookError = ERROR_SUCCESS;
 std::atomic_bool g_taskViewMonitorStarted{false};
 auto& g_retired = hookInstanceRetired;
 std::atomic<HWND> g_primaryTaskbar{nullptr};
@@ -423,10 +429,24 @@ bool OpenSharedState()
 
 void SetHookStatus(LONG status, DWORD error = ERROR_SUCCESS)
 {
+    std::lock_guard lock(g_hookStatusMutex);
     if (!g_sharedState || g_retired.load())
         return;
+    g_hookStatus = status;
+    g_hookError = error;
     InterlockedExchange(&g_sharedState->lastError, static_cast<LONG>(error));
     InterlockedExchange(&g_sharedState->status, status);
+}
+
+bool ReplayHookStatus()
+{
+    std::lock_guard lock(g_hookStatusMutex);
+    if (!g_sharedState || g_retired.load()) return false;
+    // The new host resets IPC to Injecting. Preserve the resident TAP's
+    // result even when unchanged visuals produce no new XAML callback.
+    InterlockedExchange(&g_sharedState->lastError, static_cast<LONG>(g_hookError));
+    InterlockedExchange(&g_sharedState->status, g_hookStatus);
+    return g_hookStatus == kStatusApplied || g_hookStatus == kStatusFailed;
 }
 
 void SignalReady()
@@ -1586,6 +1606,7 @@ LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
             {
                 RemovePropW(window, autohide_observer::kActivationProtectionProperty);
                 RemovePropW(window, kHookHostProcessProperty);
+                RemovePropW(window, kHookConnectionProperty);
                 RemovePropW(window, kHookOwnerProperty);
             }
             return 1;
@@ -1601,6 +1622,7 @@ LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
         {
             RemovePropW(window, autohide_observer::kActivationProtectionProperty);
             RemovePropW(window, kHookHostProcessProperty);
+            RemovePropW(window, kHookConnectionProperty);
             RemovePropW(window, kHookOwnerProperty);
         }
         if (g_primaryTaskbar.load() == window) g_primaryTaskbar.store(nullptr);
@@ -1670,9 +1692,20 @@ using InitializeXamlDiagnosticsExProc = decltype(&InitializeXamlDiagnosticsEx);
 DWORD WINAPI InstallTaskbarTap(void* parameter)
 {
     const HMODULE selfReference = static_cast<HMODULE>(parameter);
+    // Keep one XAML reference per pinned instance, including failed attempts:
+    // diagnostics can retain callbacks even when initialization reports failure.
+    static HMODULE xaml = nullptr;
     // Failure leaves only the passive owner subclass, which must remain
     // callable until retirement on its window thread. Its module is pinned.
     const auto finish = [selfReference](DWORD result, bool keepLoaded) -> DWORD {
+        if (!keepLoaded)
+        {
+            // Release only after the attempt has finished publishing status;
+            // callbacks and the passive owner remain pinned independently.
+            std::lock_guard lock(g_taskbarTapMutex);
+            g_taskbarTapFailureTick = GetTickCount64();
+            g_taskbarTapStarted = false;
+        }
         if (selfReference && !keepLoaded)
             FreeLibraryAndExitThread(selfReference, result);
         return result;
@@ -1680,10 +1713,12 @@ DWORD WINAPI InstallTaskbarTap(void* parameter)
 
     if (!OpenSharedState())
     {
+        SetHookStatus(kStatusFailed, ERROR_FILE_NOT_FOUND);
         SignalReady();
         return finish(ERROR_FILE_NOT_FOUND, false);
     }
     g_sharedState->explorerProcessId = GetCurrentProcessId();
+    InterlockedExchange(&g_sharedState->diagnosticStage, 90); // TAP worker entered
     SetHookStatus(kStatusInjecting);
 
     // XAML Diagnostics can only own a taskbar visual tree once. Refuse to
@@ -1696,7 +1731,7 @@ DWORD WINAPI InstallTaskbarTap(void* parameter)
         return finish(ERROR_ALREADY_EXISTS, false);
     }
 
-    HMODULE xaml = LoadLibraryExW(L"Windows.UI.Xaml.dll", nullptr,
+    if (!xaml) xaml = LoadLibraryExW(L"Windows.UI.Xaml.dll", nullptr,
         LOAD_LIBRARY_SEARCH_SYSTEM32);
     auto initialize = xaml ? reinterpret_cast<InitializeXamlDiagnosticsExProc>(
         GetProcAddress(xaml, "InitializeXamlDiagnosticsEx")) : nullptr;
@@ -1722,6 +1757,7 @@ DWORD WINAPI InstallTaskbarTap(void* parameter)
     HRESULT result = E_FAIL;
     for (unsigned attempt = 1; attempt <= 60 && FAILED(result); ++attempt)
     {
+        if (g_retired.load()) return finish(ERROR_CANCELLED, false);
         wchar_t connection[64]{};
         swprintf_s(connection, L"VisualDiagConnection%u", attempt);
         InterlockedExchange(&g_sharedState->diagnosticStage,
@@ -1763,18 +1799,28 @@ bool IsExplorerProcess()
 
 void StartTaskbarTapIfNeeded()
 {
-    if (!IsExplorerProcess())
+    if (!IsExplorerProcess() || g_retired.load())
         return;
-    bool expected = false;
-    if (!g_taskbarTapStarted.compare_exchange_strong(expected, true))
+    std::lock_guard lock(g_taskbarTapMutex);
+    const DWORD owner = g_sharedState ? g_sharedState->ownerProcessId : 0;
+    constexpr ULONGLONG retryDelayMs = 10000;
+    if (g_taskbarTapStarted || (g_taskbarTapFailureTick && owner == g_taskbarTapOwner &&
+            GetTickCount64() - g_taskbarTapFailureTick < retryDelayMs))
+    {
+        if (ReplayHookStatus()) SignalReady();
         return;
+    }
+    g_taskbarTapOwner = owner;
+    g_taskbarTapStarted = true;
+    SetHookStatus(kStatusInjecting);
     // Acquire the worker's reference before publishing its entry point.
     HMODULE selfReference = nullptr;
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
             reinterpret_cast<LPCWSTR>(&InstallTaskbarTap), &selfReference))
     {
         const DWORD error = GetLastError();
-        g_taskbarTapStarted.store(false);
+        g_taskbarTapStarted = false;
+        g_taskbarTapFailureTick = GetTickCount64();
         SetHookStatus(kStatusFailed, error);
         SignalReady();
         return;
@@ -1785,7 +1831,8 @@ void StartTaskbarTapIfNeeded()
     {
         const DWORD error = GetLastError();
         FreeLibrary(selfReference);
-        g_taskbarTapStarted.store(false);
+        g_taskbarTapStarted = false;
+        g_taskbarTapFailureTick = GetTickCount64();
         SetHookStatus(kStatusFailed, error);
         SignalReady();
         return;
@@ -1800,7 +1847,9 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
     if (code >= 0 && lParam && IsExplorerProcess() && OpenSharedState())
     {
         const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
-        if (message->message != WM_NULL && message->message != RegisterWindowMessageW(kApplyMessageName))
+        const UINT connectMessage = RegisterWindowMessageW(kConnectHookMessageName);
+        if (message->message != WM_NULL && message->message != connectMessage &&
+            message->message != RegisterWindowMessageW(kApplyMessageName))
             return CallNextHookEx(nullptr, code, wParam, lParam);
         wchar_t className[64]{};
         GetClassNameW(message->hwnd, className, 64);
@@ -1826,6 +1875,9 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
             SignalReady();
             return CallNextHookEx(nullptr, code, wParam, lParam);
         }
+        if (message->message == connectMessage && !SetPropW(message->hwnd,
+                kHookConnectionProperty, reinterpret_cast<HANDLE>(message->wParam)))
+            return CallNextHookEx(nullptr, code, wParam, lParam);
         ApplyTaskbarActivationProtection(message->hwnd);
         const bool classic = native::IsClassicTaskbarPlatform();
         if (classic || g_sharedState->suppressTaskbar)

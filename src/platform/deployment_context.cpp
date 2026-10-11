@@ -704,14 +704,14 @@ private:
     HANDLE ownerHandle_ = INVALID_HANDLE_VALUE;
 };
 
-std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename)
+std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename, bool isolated = false)
 {
     const std::filesystem::path source =
         snowdesktop::deployment::GetRuntimeFilePath(filename);
     if (!std::filesystem::is_regular_file(source))
-        return source.wstring();
+        return isolated ? std::wstring{} : source.wstring();
 
-    if (_wcsicmp(source.extension().c_str(), L".dll") == 0)
+    if (!isolated && _wcsicmp(source.extension().c_str(), L".dll") == 0)
     {
         static snowdesktop::deployment::InjectableRuntimeCache cache([] {
             const std::filesystem::path data = GetDataDirectoryPath();
@@ -726,7 +726,7 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename)
     static const InjectableRuntimeDirectory runtimeDirectory;
     const std::filesystem::path& targetDirectory = runtimeDirectory.Path();
     if (targetDirectory.empty())
-        return source.wstring();
+        return isolated ? std::wstring{} : source.wstring();
 
     const std::filesystem::path target =
         targetDirectory / source.filename();
@@ -738,7 +738,7 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename)
         std::filesystem::copy_options::none, error);
     if (!error && std::filesystem::is_regular_file(target))
         return target.wstring();
-    return source.wstring();
+    return isolated ? std::wstring{} : source.wstring();
 }
 
 snowdesktop::deployment::PackagedAutoStartState ConvertStartupTaskState(
@@ -982,6 +982,12 @@ std::wstring GetTaskbarHookPath()
 {
     static const std::wstring deployedPath =
         GetInjectableRuntimeFilePath(kTaskbarHookFilename);
+    return deployedPath;
+}
+
+std::wstring GetIsolatedTaskbarHookPath()
+{
+    static const std::wstring deployedPath = DeployInjectableRuntimeCopy(kTaskbarHookFilename, true);
     return deployedPath;
 }
 

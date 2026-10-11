@@ -12,6 +12,8 @@ inline constexpr wchar_t kHookOwnerProperty[] = L"SnowDesktop.Taskbar.HookOwner.
 // Native attachment acknowledgement for this host session, independent of TAP
 // appearance status. An old resident DLL must not satisfy a new host's attach.
 inline constexpr wchar_t kHookHostProcessProperty[] = L"SnowDesktop.Taskbar.HookHostProcess.v1";
+inline constexpr wchar_t kHookConnectionProperty[] = L"SnowDesktop.Taskbar.HookConnection.v1";
+inline constexpr wchar_t kConnectHookMessageName[] = L"SnowDesktop.Taskbar.ConnectHook.v1";
 inline constexpr wchar_t kRetireHookMessageName[] = L"SnowDesktop.Taskbar.RetireHook.v1";
 inline std::atomic_bool hookInstanceRetired{false};
 inline std::atomic<DWORD> taskViewMonitorThread{0};

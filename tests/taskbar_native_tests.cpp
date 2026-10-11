@@ -79,7 +79,7 @@ LRESULT CALLBACK TestConnectionHook(int code, WPARAM wParam, LPARAM lParam)
     if (code >= 0 && lParam && connectionState)
     {
         const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
-        if (message->message == WM_NULL)
+        if (message->message == RegisterWindowMessageW(snowdesktop::taskbar_hook::kConnectHookMessageName))
         {
             snowdesktop::taskbar_hook::native::Attach(
                 message->hwnd, connectionState, false, TestAppBarMessage);
@@ -91,6 +91,8 @@ LRESULT CALLBACK TestConnectionHook(int code, WPARAM wParam, LPARAM lParam)
                     GetModuleHandleW(nullptr));
                 SetPropW(message->hwnd, snowdesktop::taskbar_hook::kHookHostProcessProperty,
                     reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(GetCurrentProcessId())));
+                SetPropW(message->hwnd, snowdesktop::taskbar_hook::kHookConnectionProperty,
+                    reinterpret_cast<HANDLE>(message->wParam));
             }
         }
     }
@@ -693,11 +695,10 @@ int RunNativeTaskbarTests()
             check(ReadSharedSnapshot(&shared, connectionSnapshot) &&
                 AreSuppressedTaskbarsControlled(connectionSnapshot),
                 "reconnected Dock displays immediately report completed suppression");
-            RemovePropW(secondary, kHookHostProcessProperty);
             acknowledgeConnection = false;
             check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
                 GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel) == ERROR_DLL_INIT_FAILED,
-                "successful message delivery without secondary owner acknowledgement is not a connection");
+                "stale owner properties cannot acknowledge a fresh connection request");
             acknowledgeConnection = true;
             shared.enabled = FALSE;
             SendMessageW(window, apply, 0, 0);
@@ -713,6 +714,7 @@ int RunNativeTaskbarTests()
             for (const HWND attached : windows)
             {
                 RemovePropW(attached, kHookHostProcessProperty);
+                RemovePropW(attached, kHookConnectionProperty);
                 RemovePropW(attached, kHookOwnerProperty);
             }
         }

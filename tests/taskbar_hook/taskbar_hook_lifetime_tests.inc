@@ -178,7 +178,8 @@ int RunLifetimeChild(const std::filesystem::path& root,
         FreeLibrary(library);
         resident = GetModuleHandleW(path.c_str());
         report << "ATTACH " << path.filename().string() << ": failure_status_and_owner=" << failedSafely
-            << ", code_resident=" << (resident == library) << '\n';
+            << ", code_resident=" << (resident == library) << ", status=" << shared->status
+            << ", error=" << shared->lastError << ", stage=" << shared->diagnosticStage << '\n';
         return failedSafely && resident == library;
     };
     HMODULE first = nullptr;
@@ -210,11 +211,63 @@ int RunLifetimeChild(const std::filesystem::path& root,
             rect.left == 11 && rect.top == 22 && rect.right == 111 && rect.bottom == 122;
     };
     if (!query()) return fail("foreign taskbar rectangle query must pass through the failed TAP owner");
+    // Finish the first worker before exercising the same pinned DLL. Replaying
+    // its result must restore host-reset IPC without spawning a cooldown retry.
+    if (!owner.Stop() || !WaitForLifetimeWorkers(first))
+        return fail("finish first owner and failed TAP workers before reuse");
+    shared->status = kStatusInjecting;
+    shared->lastError = ERROR_SUCCESS;
+    shared->diagnosticStage = 4242;
+    HMODULE reused = nullptr;
+    if (!attach(root / L"SnowDesktopTaskbarHook.dll", reused) || reused != first ||
+        shared->diagnosticStage != 4242)
+        return fail("same-owner cooldown must replay the failure without another TAP worker");
+    OwnerProcess restartedOwner;
+    if (!CreateProcessW(ownerExecutable.c_str(), nullptr, nullptr, nullptr, FALSE,
+            CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, root.c_str(), &startup, &restartedOwner.value))
+        return fail("create restarted private host");
+    shared->ownerProcessId = restartedOwner.value.dwProcessId;
+    shared->status = kStatusInjecting;
+    shared->lastError = ERROR_SUCCESS;
+    if (!attach(root / L"SnowDesktopTaskbarHook.dll", reused) || reused != first ||
+        shared->diagnosticStage != 90 || !observeActivation(true) ||
+        !AreTaskbarThreadsConnected(windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId))
+        return fail("restarted host must run a new TAP attempt in the same pinned DLL and rebind both bars");
     // A fresh DLL instance must retire the failed one on its window thread.
     HMODULE replacement = nullptr;
     if (!attach(root / L"ReplacementTaskbarHook.dll", replacement) || replacement == first ||
         GetPropW(window, kHookOwnerProperty) != replacement || !query() || !observeActivation(true))
         return fail("replacement must safely retire a failed owner and handle the same query");
+    // Both old and replacement properties describe this host, so checking the
+    // PID alone would incorrectly accept a retired candidate. Exercise the
+    // production connector/fallback against actual DLLs in these private bars.
+    std::wstring selectedPath = (root / L"SnowDesktopTaskbarHook.dll").wstring();
+    unsigned fallbackCount = 0;
+    const auto isolatedPath = (root / L"Isolated" / L"SnowDesktopTaskbarHook.dll").wstring();
+    const auto resolve = [&] { ++fallbackCount; return isolatedPath; };
+    ResetEvent(ready);
+    if (ConnectTaskbarRuntime(window, windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId,
+            selectedPath, nullptr, nullptr, resolve) != ERROR_SUCCESS ||
+        selectedPath != isolatedPath || fallbackCount != 1 ||
+        WaitForSingleObject(ready, 5000) != WAIT_OBJECT_0)
+        return fail("retired shared candidate must select and attach exactly one isolated runtime");
+    const HMODULE recovery = GetModuleHandleW(isolatedPath.c_str());
+    if (!recovery || recovery == first || recovery == replacement ||
+        GetPropW(window, kHookOwnerProperty) != recovery ||
+        GetPropW(secondary, kHookOwnerProperty) != recovery || !query() || !observeActivation(true))
+        return fail("isolated recovery must own both bars without reviving either retired callback");
+    if (ConnectTaskbarRuntime(window, windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId,
+            selectedPath, nullptr, nullptr, resolve) != ERROR_SUCCESS || fallbackCount != 1)
+        return fail("subsequent connections must reuse the selected isolated instance");
+    const HANDLE cancelled = CreateEventW(nullptr, TRUE, TRUE, nullptr);
+    if (!cancelled) return fail("create cancelled recovery request");
+    std::wstring cancelledPath = (root / L"SnowDesktopTaskbarHook.dll").wstring();
+    const DWORD cancelledResult = ConnectTaskbarRuntime(window, windows, GetCurrentProcessId(),
+        restartedOwner.value.dwProcessId, cancelledPath, nullptr, cancelled, resolve);
+    CloseHandle(cancelled);
+    if (cancelledResult != ERROR_CANCELLED || fallbackCount != 1 ||
+        GetPropW(window, kHookOwnerProperty) != recovery)
+        return fail("cancellation must not mint another runtime or change the active owner");
     shared->enabled = FALSE;
     for (const HWND target : windows)
         SendMessageW(target, RegisterWindowMessageW(kApplyMessageName), 0, 0);
@@ -223,16 +276,18 @@ int RunLifetimeChild(const std::filesystem::path& root,
     for (const HWND target : windows)
         SendMessageW(target, RegisterWindowMessageW(kApplyMessageName), 0, 0);
     if (!observeActivation(true)) return fail("re-enable must restore observation without XAML reinjection");
-    if (!owner.Stop() || !WaitForLifetimeWorkers(first) || !WaitForLifetimeWorkers(replacement))
-        return fail("private host exit must finish owner and TAP workers for both DLL instances");
+    if (!restartedOwner.Stop() || !WaitForLifetimeWorkers(first) ||
+        !WaitForLifetimeWorkers(replacement) || !WaitForLifetimeWorkers(recovery))
+        return fail("private host exit must finish owner and TAP workers for all DLL instances");
     if (!GetModuleHandleW((root / L"SnowDesktopTaskbarHook.dll").c_str()) ||
         !GetModuleHandleW((root / L"ReplacementTaskbarHook.dll").c_str()) ||
         !query() || !observeActivation(false))
         return fail("after caller/worker release, host exit must stop observation and retain callback code");
     for (const HWND target : windows)
         if (SendMessageW(target, RegisterWindowMessageW(kRetireHookMessageName),
-                reinterpret_cast<WPARAM>(replacement), 0) != 1 ||
-            GetPropW(target, kHookOwnerProperty) || GetPropW(target, kHookHostProcessProperty))
+                reinterpret_cast<WPARAM>(recovery), 0) != 1 ||
+            GetPropW(target, kHookOwnerProperty) || GetPropW(target, kHookHostProcessProperty) ||
+            GetPropW(target, kHookConnectionProperty))
             return fail("retirement must remove native owner acknowledgement from every taskbar");
     if (!query() || !observeActivation(false))
         return fail("retirement must stop observation and preserve the original window procedure");
@@ -247,7 +302,7 @@ int RunLifetimeChild(const std::filesystem::path& root,
     UnmapViewOfFile(shared);
     CloseHandle(mapping);
     FreeLibrary(sentinel);
-    report << "PASS: failed TAP release, independent all-taskbar activation, late adapter Apply, foreign query, replacement, disable, re-enable, host exit and retirement\n";
+    report << "PASS: failed TAP release, cooldown status replay, same-DLL host restart retry, retired-DLL isolated recovery and reuse, cancellation, all-taskbar activation, late adapter Apply, foreign query, disable, re-enable, host exit and retirement\n";
     return 0;
 }
 
@@ -305,6 +360,10 @@ int RunTaskbarOwnerLifetimeTests()
     const auto hookCopy = root / L"SnowDesktopTaskbarHook.dll";
     { std::ofstream file(hookCopy, std::ios::binary); file.write(image.data(), static_cast<std::streamsize>(image.size())); if (!file) return 1; }
     std::filesystem::copy_file(hookCopy, root / L"ReplacementTaskbarHook.dll", error);
+    if (error) return 1;
+    std::filesystem::create_directory(root / L"Isolated", error);
+    if (error) return 1;
+    std::filesystem::copy_file(hookCopy, root / L"Isolated" / L"SnowDesktopTaskbarHook.dll", error);
     if (error) return 1;
     std::filesystem::copy_file(library, root / L"ExplorerTAP.dll", error);
     if (error) return 1;

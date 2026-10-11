@@ -639,12 +639,15 @@ public:
             snowdesktop::taskbar_hook::AreTaskbarThreadsConnected(
                 taskbars, explorerProcessId, GetCurrentProcessId());
         const bool alreadyInjected = ownsConnection && !nativeMissing;
-        if (alreadyInjected && !resolveSymbols)
+        const bool retryAppearance = appearanceEnabled &&
+            state_->status == snowdesktop::taskbar_hook::kStatusFailed;
+        if (alreadyInjected && !resolveSymbols && !retryAppearance)
             return true;
         if (injectionInFlight_.load(std::memory_order_acquire))
             return false;
         constexpr ULONGLONG kFailedInjectionRetryDelayMs = 10000;
-        if (!alreadyInjected && state_->explorerProcessId == explorerProcessId &&
+        if ((!alreadyInjected || retryAppearance) && !resolveSymbols &&
+            state_->explorerProcessId == explorerProcessId &&
             now - lastInjectionAttemptTick_ < kFailedInjectionRetryDelayMs)
             return false;
 
@@ -678,9 +681,9 @@ public:
             const auto executable = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktop.exe";
             const auto symbolCache = std::filesystem::path(GetDataDirectoryPath()) / L"ShellHookSymbols";
             injectionThread_ = std::thread([this, primaryTaskbar, explorerProcessId,
-                    alreadyInjected, resolveSymbols, executable, symbolCache,
+                    alreadyInjected, retryAppearance, resolveSymbols, executable, symbolCache,
                     taskbars = std::move(taskbars)] {
-                const bool injected = alreadyInjected || Inject(primaryTaskbar, explorerProcessId,
+                const bool injected = (alreadyInjected && !retryAppearance) || Inject(primaryTaskbar, explorerProcessId,
                     taskbars);
                 if (injected && resolveSymbols)
                     ResolveAdapter(explorerProcessId, taskbars, executable, symbolCache);
@@ -797,9 +800,8 @@ private:
     bool Inject(HWND taskbar, DWORD expectedExplorerProcessId,
         const std::vector<HWND>& taskbars)
     {
-        const std::filesystem::path hookPath =
-            snowdesktop::deployment::GetTaskbarHookPath();
-        if (!std::filesystem::is_regular_file(hookPath))
+        if (selectedHookPath_.empty()) selectedHookPath_ = snowdesktop::deployment::GetTaskbarHookPath();
+        if (!std::filesystem::is_regular_file(selectedHookPath_))
         {
             return Fail(expectedExplorerProcessId, ERROR_FILE_NOT_FOUND);
         }
@@ -807,24 +809,22 @@ private:
         HANDLE explorerProcess = OpenProcess(SYNCHRONIZE, FALSE,
             expectedExplorerProcessId);
 
-        HMODULE module = LoadLibraryW(hookPath.c_str());
-        if (!module)
-        {
-            const DWORD error = GetLastError();
-            if (explorerProcess)
-                CloseHandle(explorerProcess);
-            return Fail(expectedExplorerProcessId, error);
-        }
-        auto hookProc = reinterpret_cast<HOOKPROC>(
-            GetProcAddress(module, "SnowDesktopTaskbarHookProc"));
-        const DWORD error = hookProc
-            ? snowdesktop::taskbar_hook::ConnectTaskbarThreads(taskbar, taskbars,
-                expectedExplorerProcessId, GetCurrentProcessId(), module, hookProc,
-                explorerProcess, injectionCancelEvent_)
-            : ERROR_INVALID_FUNCTION;
-        FreeLibrary(module);
+        const DWORD error = snowdesktop::taskbar_hook::ConnectTaskbarRuntime(taskbar, taskbars,
+            expectedExplorerProcessId, GetCurrentProcessId(), selectedHookPath_, explorerProcess,
+            injectionCancelEvent_, [this] {
+                if (selectedHookPath_ != snowdesktop::deployment::GetTaskbarHookPath()) return std::wstring{};
+                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] shared instance did not acknowledge; selecting isolated runtime");
+                return snowdesktop::deployment::GetIsolatedTaskbarHookPath();
+            });
         if (explorerProcess)
             CloseHandle(explorerProcess);
+        if (error != ERROR_SUCCESS && error != ERROR_CANCELLED)
+        {
+            const std::wstring message = L"[TaskbarHookConnection] explorerPid=" +
+                std::to_wstring(expectedExplorerProcessId) + L" error=" + std::to_wstring(error) +
+                L" runtime=" + selectedHookPath_;
+            WriteDiagnosticLogEntry(message.c_str());
+        }
 
         if (error == ERROR_CANCELLED) return false;
         if (error != ERROR_SUCCESS) return Fail(expectedExplorerProcessId, error);
@@ -859,6 +859,7 @@ private:
     ULONGLONG lastInjectionAttemptTick_ = 0;
     DWORD symbolAttemptProcessId_ = 0;
     DWORD injectedExplorerProcessId_ = 0;
+    std::wstring selectedHookPath_;
     ULONGLONG lastSymbolAttemptTick_ = 0;
 };
 
