@@ -216,7 +216,6 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
             items.back().tip += L"\n" + std::wstring(_LW("statusBar.inputMethod.switch"));
         }
         add("inputMethodLayout", L"", StatusBarAction::InputMethodPanel, L"\uF4B8"); // keyboard
-        items.back().inputIcon = input.layoutIcon;
         items.back().tip = std::wstring(_LW("statusBar.inputMethodPanel"));
         if (!input.description.empty()) items.back().tip += L"  " + input.description;
     }
@@ -297,7 +296,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             DWRITE_TEXT_METRICS metrics{};
             if (SUCCEEDED(text->CreateTextLayout(reserved.c_str(), static_cast<UINT32>(reserved.size()),
                     format.Get(), 2000.f, static_cast<float>(h), &layout))) layout->GetMetrics(&metrics);
-            const float paddingDip = item.glyph.empty() ? 8.f : 28.f;
+            const float paddingDip = item.key == "clock" ? 0.f : item.glyph.empty() ? 8.f : 28.f;
             return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 28.f * scale, 260.f * scale);
         };
         std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex;

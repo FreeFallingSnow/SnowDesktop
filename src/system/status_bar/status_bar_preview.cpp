@@ -305,9 +305,10 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 const auto index = static_cast<std::size_t>(&iconButton - iconItems.data());
                 invocationItems[index].bounds = {0, 0, 28, 32};
                 const auto invocation = ResolveStatusBarInvocation(invocationItems, index, false);
-                Require(iconButton.inputIcon && !iconButton.icon && invocation && !invocation->isTray &&
-                    invocation->action == StatusBarAction::InputMethodPanel && !SameStatusBarContent(items, iconItems),
-                    "a profile bitmap must repaint and activate the layout picker, never a tray callback");
+                Require(!iconButton.inputIcon && !iconButton.icon && !iconButton.glyph.empty() &&
+                    invocation && !invocation->isTray && invocation->action == StatusBarAction::InputMethodPanel &&
+                    SameStatusBarContent(items, iconItems),
+                    "profile bitmap changes must retain the fixed keyboard glyph and layout-picker action");
             }
             auto identical = data; if (identical.cpu) ++identical.cpu->revision;
             Require(SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "unchanged samples would repaint status bar content");
