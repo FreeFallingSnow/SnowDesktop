@@ -2,6 +2,7 @@
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu.h"
 #include "sort_menu.h"
+#include "shell/shell_new_menu.h"
 #include "navigation/search_match.h"
 #include "widget/preview/widget_preview_stage.h"
 #include "widget/runtime/widget_menu_catalogue.h"
@@ -1412,11 +1413,27 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         HasPasteableFileClipboardData()
             ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPasteCommand, _LW("app.menu.paste"));
-    AppendMenuW(menu, MF_STRING, kContextNewMenu, _LW("app.menu.new"));
     AppendMenuW(menu, MF_STRING, kContextRefreshCommand, _LW("app.menu.refresh"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+
+    // A stable host ID lets lazy preparation replace only this cascade's
+    // children. Keep the original Shell handler alive through invocation.
+    const std::wstring newItemDirectory = snowdesktop::desktop_source::Directory();
+    std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
+    bool newMenuPrepared = false;
+    HMENU newMenuPlaceholder = CreatePopupMenu();
+    if (newMenuPlaceholder)
+    {
+        AppendMenuW(newMenuPlaceholder, MF_STRING | MF_GRAYED, 0, _LW("settings.contextMenu.loading"));
+        AppendMenuW(menu, MF_POPUP | (newItemDirectory.empty() ? MF_GRAYED : 0),
+            reinterpret_cast<UINT_PTR>(newMenuPlaceholder), _LW("app.menu.new"));
+        MENUITEMINFOW newMenuId{sizeof(newMenuId)};
+        newMenuId.fMask = MIIM_ID;
+        newMenuId.wID = kContextNewMenu;
+        SetMenuItemInfoW(menu, GetMenuItemCount(menu) - 1, TRUE, &newMenuId);
+    }
 
     HMENU sortMenu = snowdesktop::sort_menu::Create(
         [](const char* key) { return _LW(key); });
@@ -1741,7 +1758,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     SetMenuItemIcon(menu, kContextPasteCommand, L"",
         MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::Paste);
     SetMenuItemQuickAction(menu, kContextPasteCommand);
-    SetMenuItemQuickAction(menu, kContextNewMenu);
     SetMenuItemQuickAction(menu, kContextRefreshCommand);
     SetMenuItemIcon(menu, kContextMoreCommand,
         snowdesktop::menu_fluent_glyphs::kMoreOptions,
@@ -1977,6 +1993,29 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     auto prepareWidgetSubmenu = [&](UINT submenuCommand,
         std::vector<snowdesktop::modern_menu::Item>& children) {
+        if (submenuCommand == kContextNewMenu)
+        {
+            if (newMenuPrepared) return;
+            newMenuPrepared = true;
+            shellNewMenu = std::make_unique<snowdesktop::ShellNewMenu>();
+            if (FAILED(shellNewMenu->Initialize(newItemDirectory)))
+            {
+                children = {snowdesktop::modern_menu::Item{}};
+                children.front().label = _LW("settings.contextMenu.failed");
+                children.front().enabled = false;
+            }
+            else if (shellNewMenu->CanDraw())
+                children = BuildShellNewMenuItems(shellNewMenu->Menu(), shellNewMenu->Context());
+            else
+            {
+                // Unsupported third-party drawing retains the native handoff.
+                children = {snowdesktop::modern_menu::Item{}};
+                children.front().command = kContextNewMenu;
+                children.front().label = _LW("app.menu.more_options");
+                children.front().glyph = snowdesktop::menu_fluent_glyphs::kMoreOptions;
+            }
+            return;
+        }
         if (!widgetMenu || luaWidgetCatalogueLoaded ||
             submenuCommand != static_cast<UINT>(
                 reinterpret_cast<UINT_PTR>(widgetMenu)))
@@ -2014,6 +2053,14 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     }
 
     bool needsDesktopFocus = true;
+    if (shellNewMenu && shellNewMenu->Contains(command))
+    {
+        InvokeNewMenuCommand(shellNewMenu->Context(), command, newItemDirectory);
+        RequestShellRefresh();
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
+        return;
+    }
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
     {
         SortIcons(sort->mode, sort->ascending);

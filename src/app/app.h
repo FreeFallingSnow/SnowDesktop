@@ -2137,6 +2137,10 @@ private:
     /** @brief 显示"新建"菜单并执行选择的命令。 @param screenPoint 屏幕坐标 @param targetDir 目标目录 */
     void ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
         bool folderOnly = false, std::wstring desktopFilesWidgetId = {});
+    std::vector<snowdesktop::modern_menu::Item> BuildShellNewMenuItems(
+        HMENU menu, IContextMenu* context);
+    void InvokeNewMenuCommand(IContextMenu* context, UINT command,
+        const std::wstring& targetDir);
     /** @brief 显示桌面背景的专用上下文菜单（含新建、显示设置等）。 @param screenPoint 屏幕坐标 */
     void ShowDesktopBackgroundContextMenu(POINT screenPoint);
     /** @brief 为指定路径显示外壳扩展上下文菜单。 @param folderPath 文件夹路径 @param screenPoint 屏幕坐标 */
@@ -2192,6 +2196,7 @@ private:
     void SetMenuItemTextInput(HMENU menu, UINT_PTR command,
         const std::wstring& text = {});
     /** @brief 将 HMENU 数据模型显示为完全自绘的现代弹窗，并返回命令 ID。 */
+    std::vector<snowdesktop::modern_menu::Item> BuildModernMenuItems(HMENU menu);
     UINT ShowModernMenu(HMENU menu, POINT screenPoint, HWND owner,
         bool placeOutsideDock = false,
         bool placeAwayFromTaskbar = false,

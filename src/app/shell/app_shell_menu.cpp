@@ -6,7 +6,9 @@
 #include "shell/shell_context_menu_site.h"
 #include "shell/shell_start_pin.h"
 #include "shell/shell_new_item_capture.h"
+#include "shell/shell_new_menu.h"
 #include "shell/shell_popup_menu_tracker.h"
+#include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 
 // Shell New menu, desktop host restoration and protected-icon handling.
@@ -114,96 +116,102 @@ BOOL DesktopApp::InvokeShellMenuCommand(
     return result;
 }
 
+std::vector<snowdesktop::modern_menu::Item> DesktopApp::BuildShellNewMenuItems(
+    HMENU menu, IContextMenu* context)
+{
+    for (int index = 0; index < GetMenuItemCount(menu); ++index)
+    {
+        MENUITEMINFOW item{sizeof(item)};
+        item.fMask = MIIM_ID | MIIM_SUBMENU | MIIM_FTYPE;
+        if (!GetMenuItemInfoW(menu, index, TRUE, &item) || (item.fType & MFT_SEPARATOR)) continue;
+        if (item.hSubMenu) BuildShellNewMenuItems(item.hSubMenu, context);
+        char verb[128]{};
+        if (context && item.wID >= snowdesktop::ShellNewMenu::FirstCommand &&
+            item.wID <= snowdesktop::ShellNewMenu::LastCommand)
+            context->GetCommandString(item.wID - snowdesktop::ShellNewMenu::FirstCommand,
+                GCS_VERBA, nullptr, verb, sizeof(verb));
+        SetMenuItemIcon(menu, item.hSubMenu ? reinterpret_cast<UINT_PTR>(item.hSubMenu) : item.wID,
+            lstrcmpiA(verb, "NewFolder") == 0 ? snowdesktop::menu_fluent_glyphs::kDesktopFiles :
+                (lstrcmpiA(verb, "NewLink") == 0 ? snowdesktop::menu_fluent_glyphs::kLinkAdd : L"\uF394"),
+            MenuIconFont::FluentRegular);
+    }
+    return BuildModernMenuItems(menu);
+}
+
+void DesktopApp::InvokeNewMenuCommand(IContextMenu* context, UINT command,
+    const std::wstring& targetDir)
+{
+    if (!context || command < snowdesktop::ShellNewMenu::FirstCommand ||
+        command > snowdesktop::ShellNewMenu::LastCommand) return;
+    CMINVOKECOMMANDINFOEX invoke{};
+    invoke.cbSize = sizeof(invoke);
+    invoke.fMask = CMIC_MASK_UNICODE;
+    invoke.hwnd = ShellDialogOwnerHwnd();
+    invoke.lpVerb = MAKEINTRESOURCEA(command - snowdesktop::ShellNewMenu::FirstCommand);
+    invoke.lpVerbW = MAKEINTRESOURCEW(command - snowdesktop::ShellNewMenu::FirstCommand);
+    std::string invocationDirectoryA;
+    snowdesktop::SetShellInvocationDirectory(invoke, targetDir, invocationDirectoryA);
+    invoke.nShow = SW_SHOWNORMAL;
+    InvokeShellMenuCommand(context, invoke);
+}
+
 void DesktopApp::ShowNewMenuAndInvoke(POINT screenPoint, const std::wstring& targetDir,
     bool folderOnly, std::wstring desktopFilesWidgetId)
 {
-    ComPtr<IContextMenu> ctxMenu;
-    if (FAILED(CoCreateInstance(CLSID_NewMenu, nullptr, CLSCTX_INPROC_SERVER,
-        IID_IContextMenu, reinterpret_cast<void**>(ctxMenu.GetAddressOf()))) || !ctxMenu)
-        return;
-
-    ComPtr<IShellExtInit> shellExtInit;
-    if (FAILED(ctxMenu.As(&shellExtInit)) || !shellExtInit)
-        return;
-
-    PIDLIST_ABSOLUTE pidl = nullptr;
-    if (FAILED(SHParseDisplayName(targetDir.c_str(), nullptr, &pidl, 0, nullptr)) || pidl == nullptr)
-        return;
-
-    HRESULT hr = shellExtInit->Initialize(pidl, nullptr, 0);
-    ILFree(pidl);
-    if (FAILED(hr)) return;
-
-    if (!desktopFilesWidgetId.empty())
+    snowdesktop::ShellNewMenu newMenu;
+    const auto attachCapture = [&](IContextMenu* context) -> HRESULT
     {
+        if (desktopFilesWidgetId.empty()) return S_OK;
         const size_t target = FindWidgetIndexById(desktopFilesWidgetId);
         if (target >= widgets_.size() ||
-            widgets_[target].type != DesktopWidgetType::FileCategories) return;
+            widgets_[target].type != DesktopWidgetType::FileCategories) return E_INVALIDARG;
         auto capture = std::make_shared<snowdesktop::ShellNewItemCapture>(
             targetDir, std::move(desktopFilesWidgetId), widgets_[target].itemKeys.size(),
             hwnd_, kShellChangeMessage);
-        if (FAILED(snowdesktop::AttachShellNewItemCapture(ctxMenu.Get(), capture)))
+        const HRESULT hr = snowdesktop::AttachShellNewItemCapture(context, capture);
+        if (FAILED(hr))
         {
             WriteDiagnosticLogEntry(L"New-menu item ownership site unavailable");
             MessageBeep(MB_ICONWARNING);
-            return;
+            return hr;
         }
         pendingNewItemCaptures_.push_back(std::move(capture));
-    }
+        return S_OK;
+    };
+    if (FAILED(newMenu.Initialize(targetDir, attachCapture))) return;
 
-    HMENU tmpMenu = CreatePopupMenu();
-    if (!tmpMenu) return;
-    hr = ctxMenu->QueryContextMenu(tmpMenu, 0, 1, 0x7FFF, CMF_NORMAL);
-    if (FAILED(hr)) { DestroyMenu(tmpMenu); return; }
-
-    HMENU newSub = GetSubMenu(tmpMenu, 0);
-    if (!newSub) { DestroyMenu(tmpMenu); return; }
-
-    ctxMenu.As(&newMenuContextMenu_);
-    const HWND menuOwner = ShellDialogOwnerHwnd();
-    SetForegroundWindow(menuOwner);
     UINT cmd = 0;
     if (folderOnly)
     {
         // Resolve the canonical Shell verb, never a localized label or a
         // position that a third-party New-menu extension can reorder.
-        if (newMenuContextMenu_)
-            newMenuContextMenu_->HandleMenuMsg(WM_INITMENUPOPUP,
-                reinterpret_cast<WPARAM>(newSub), 0);
-        cmd = snowdesktop::FindNewFolderCommand(ctxMenu.Get(), newSub);
+        cmd = newMenu.FolderCommand();
         if (!cmd) MessageBeep(MB_ICONWARNING);
+    }
+    else if (newMenu.CanDraw())
+    {
+        PrepareMenuIconsForPoint(screenPoint);
+        BuildShellNewMenuItems(newMenu.Menu(), newMenu.Context());
+        cmd = ShowModernMenu(newMenu.Menu(), screenPoint, hwnd_);
+        ClearMenuIcons();
     }
     else
     {
+        // Preserve the established native boundary for unreadable/owner-drawn
+        // third-party entries rather than inventing labels or commands.
+        newMenu.Context()->QueryInterface(IID_PPV_ARGS(newMenuContextMenu_.GetAddressOf()));
+        const HWND menuOwner = ShellDialogOwnerHwnd();
+        SetForegroundWindow(menuOwner);
         ShellPopupMenuLayerGuard shellMenuLayer(*this);
         cmd = TrackShellPopupMenuWithDesktopPump(
-            newSub,
+            newMenu.Menu(),
             TPM_RETURNCMD | TPM_LEFTALIGN | TPM_LEFTBUTTON,
             screenPoint, menuOwner);
     }
     newMenuContextMenu_.Reset();
 
-    if (cmd != 0 && cmd >= 1)
-    {
-        CMINVOKECOMMANDINFOEX invoke{};
-        invoke.cbSize = sizeof(invoke);
-        invoke.fMask = CMIC_MASK_UNICODE;
-        invoke.hwnd = ShellDialogOwnerHwnd();
-        invoke.lpVerb = MAKEINTRESOURCEA(cmd - 1);
-        invoke.lpVerbW = MAKEINTRESOURCEW(cmd - 1);
-        std::string invocationDirectoryA;
-        snowdesktop::SetShellInvocationDirectory(
-            invoke, targetDir, invocationDirectoryA);
-        invoke.nShow = SW_SHOWNORMAL;
-        InvokeShellMenuCommand(ctxMenu.Get(), invoke);
-    }
-
-    for (int i = GetMenuItemCount(tmpMenu) - 1; i >= 0; --i)
-    {
-        if (GetSubMenu(tmpMenu, i) == nullptr)
-            RemoveMenu(tmpMenu, i, MF_BYPOSITION);
-    }
-    DestroyMenu(tmpMenu);
+    if (newMenu.Contains(cmd))
+        InvokeNewMenuCommand(newMenu.Context(), cmd, targetDir);
     RestoreDesktopWindowLayer();
     RestoreInteractionInputFocus();
 }

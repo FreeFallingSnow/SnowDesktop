@@ -10,6 +10,7 @@
 #include "shell/shell_extension_nvidia_compat.h"
 #include "ui/menu/menu_label.h"
 #include "shell/shell_new_item_capture.h"
+#include "shell/shell_new_menu.h"
 #include "shell/shell_popup_menu_tracker.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "dock/floating_dock_rules.h"
@@ -338,44 +339,34 @@ void TestRealNewFolderCapture()
     auto capture = std::make_shared<snowdesktop::ShellNewItemCapture>(
         directory.path.wstring(), L"desktop-files", 7);
     {
-        Microsoft::WRL::ComPtr<IContextMenu> context;
-        Expect(SUCCEEDED(CoCreateInstance(CLSID_NewMenu, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(context.GetAddressOf()))), "real New handler");
-        Microsoft::WRL::ComPtr<IShellExtInit> initializer;
-        Expect(SUCCEEDED(context.As(&initializer)), "New handler initializer");
-        PIDLIST_ABSOLUTE folder = nullptr;
-        Expect(SUCCEEDED(SHParseDisplayName(directory.path.c_str(), nullptr, &folder, 0, nullptr)),
-            "isolated directory PIDL");
-        const auto initialized = initializer->Initialize(folder, nullptr, 0);
-        CoTaskMemFree(folder);
-        Expect(SUCCEEDED(initialized), "initialize isolated New menu");
-        Expect(SUCCEEDED(snowdesktop::AttachShellNewItemCapture(context.Get(), capture)),
-            "attach production New-item capture site");
-        HMENU root = CreatePopupMenu();
-        const auto queried = context->QueryContextMenu(root, 0, 1, 0x7FFF, CMF_NORMAL);
-        HMENU submenu = GetSubMenu(root, 0);
-        Microsoft::WRL::ComPtr<IContextMenu2> messages;
-        if (SUCCEEDED(context.As(&messages)))
-            messages->HandleMenuMsg(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(submenu), 0);
-        const UINT command = snowdesktop::FindNewFolderCommand(context.Get(), submenu);
-        Expect(SUCCEEDED(queried) && command != 0, "real NewFolder command resolves");
+        snowdesktop::ShellNewMenu menu;
+        Expect(SUCCEEDED(menu.Initialize(directory.path.wstring(), [&](IContextMenu* context) {
+            return snowdesktop::AttachShellNewItemCapture(context, capture);
+        })), "initialize production New-menu session with the capture site");
+        const UINT command = menu.FolderCommand();
+        Expect(command != 0 && menu.Contains(command), "real NewFolder resolves in the private command range");
+        Expect(!menu.Contains(0) && !menu.Contains(41400) && !menu.Contains(0x71000001),
+            "cancel, host commands and extension tokens cannot invoke New commands");
+        Expect(menu.CanDraw(), "the real Windows New submenu exposes readable custom-menu entries");
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask = CMIC_MASK_UNICODE;
         invoke.hwnd = CreateWindowExW(0, L"STATIC", L"New item test owner", 0,
             0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
-        invoke.lpVerb = MAKEINTRESOURCEA(command - 1);
-        invoke.lpVerbW = MAKEINTRESOURCEW(command - 1);
+        invoke.lpVerb = MAKEINTRESOURCEA(command - snowdesktop::ShellNewMenu::FirstCommand);
+        invoke.lpVerbW = MAKEINTRESOURCEW(command - snowdesktop::ShellNewMenu::FirstCommand);
         const std::wstring invocationDirectory = directory.path.wstring();
         std::string ansiDirectory;
         snowdesktop::SetShellInvocationDirectory(invoke, invocationDirectory, ansiDirectory);
         invoke.nShow = SW_SHOWNORMAL;
-        const HRESULT invoked = context->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        const HRESULT invoked = menu.Context()->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         DestroyWindow(invoke.hwnd);
-        DestroyMenu(root);
         if (FAILED(invoked)) std::cerr << "NewFolder HRESULT: " << std::hex << invoked << std::dec << '\n';
         Expect(SUCCEEDED(invoked),
             "real Windows NewFolder command succeeds");
+        EnableMenuItem(menu.Menu(), command, MF_BYCOMMAND | MF_GRAYED);
+        Expect(!menu.Contains(command) && menu.FolderCommand() == 0,
+            "a disabled command cannot be invoked after a custom menu selection");
     }
     std::vector<std::wstring> captured;
     const ULONGLONG deadline = GetTickCount64() + 5000;
