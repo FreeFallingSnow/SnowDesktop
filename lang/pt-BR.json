@@ -2595,5 +2595,7 @@
   "settings.dock.visibleItems": "Itens visíveis",
   "settings.dock.appearance": "Aparência do Dock",
   "settings.desktop.shortcutMatching": "Correspondência de atalhos",
-  "settings.dock.appearanceAndAnimation": "Aparência e animações"
+  "settings.dock.appearanceAndAnimation": "Aparência e animações",
+  "statusBar.layout": "Posição e escala",
+  "statusBar.visibleItems": "Itens visíveis"
 }

@@ -2595,5 +2595,7 @@
   "settings.dock.visibleItems": "Angezeigte Elemente",
   "settings.dock.appearance": "Dock-Darstellung",
   "settings.desktop.shortcutMatching": "Verknüpfungen zuordnen",
-  "settings.dock.appearanceAndAnimation": "Darstellung und Animationen"
+  "settings.dock.appearanceAndAnimation": "Darstellung und Animationen",
+  "statusBar.layout": "Position und Skalierung",
+  "statusBar.visibleItems": "Sichtbare Elemente"
 }

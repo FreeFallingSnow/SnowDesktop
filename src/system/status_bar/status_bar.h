@@ -24,7 +24,13 @@ struct TrayDragFeedback
     std::function<void(std::string_view, POINT)> move;
     std::function<void()> end;
 };
-enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter, TaskView, SystemCalendar, InputMethod, InputMethodMenu, InputMethodPanel };
+enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter, TaskView, SystemCalendar, InputMethod, InputMethodMenu, InputMethodPanel,
+    MenuTime, MenuTray, MenuNetwork, MenuAudio, MenuPower, MenuControlCenter, MenuQuickSearch, MenuSystem, MenuTaskView, MenuCpu, MenuMemory, MenuGpu, MenuTraffic };
+inline bool IsStatusBarContextMenuAction(StatusBarAction action)
+{
+    return action == StatusBarAction::Menu ||
+        (action >= StatusBarAction::MenuTime && action <= StatusBarAction::MenuTraffic);
+}
 struct StatusBarMonitor
 {
     std::wstring id;

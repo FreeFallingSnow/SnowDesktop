@@ -500,8 +500,8 @@ void CheckStatusBarKeyboardMessages()
     SendMessageW(window, WM_KEYDOWN, VK_LEFT, 1);
     SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
     Expect(probe.invoked.size() == 4 && !probe.invoked.back().isTray &&
-        probe.invoked.back().action == StatusBarAction::Menu && probe.invoked.back().bounds.left == 0,
-        "built-in control context requests still open the bar menu at the selected control");
+        probe.invoked.back().action == StatusBarAction::MenuSystem && probe.invoked.back().bounds.left == 0,
+        "built-in control context requests preserve the selected control for its quick settings");
     probe.input.focused.reset();
     SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
     probe.input.focused = 1; probe.items[1].bounds = {};
@@ -559,6 +559,40 @@ void CheckStatusBarKeyboardMessages()
     Expect(!probe.selected && probe.pointerPresses == expectedPresses + 2 &&
         !probe.input.Release(probe.items, {16, 16}, false).accepted,
         "Task View double-click clears selection without rearming the suppressed second activation");
+    // Regression: pointer WM_CONTEXTMENU previously discarded every non-IME
+    // item's identity, making its own quick settings impossible to select.
+    const std::pair<StatusBarAction, StatusBarAction> contexts[]{
+        {StatusBarAction::Calendar, StatusBarAction::MenuTime},
+        {StatusBarAction::Notifications, StatusBarAction::MenuTime},
+        {StatusBarAction::Network, StatusBarAction::MenuNetwork},
+        {StatusBarAction::Audio, StatusBarAction::MenuAudio},
+        {StatusBarAction::Power, StatusBarAction::MenuPower},
+        {StatusBarAction::Cpu, StatusBarAction::MenuCpu},
+        {StatusBarAction::Memory, StatusBarAction::MenuMemory},
+        {StatusBarAction::Gpu, StatusBarAction::MenuGpu},
+        {StatusBarAction::Traffic, StatusBarAction::MenuTraffic},
+        {StatusBarAction::ControlCenter, StatusBarAction::MenuControlCenter},
+        {StatusBarAction::QuickSearch, StatusBarAction::MenuQuickSearch},
+        {StatusBarAction::TaskView, StatusBarAction::MenuTaskView},
+        {StatusBarAction::Tray, StatusBarAction::MenuTray}};
+    for (const auto& [normal, context] : contexts)
+    {
+        StatusBarItem target{}; target.action = normal; target.bounds = {0, 0, 32, 32};
+        probe.items = {target}; probe.input.focused = 0;
+        const auto count = probe.invoked.size();
+        SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(16, 16));
+        SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+        Expect(probe.invoked.size() == count + 2 && probe.invoked[count].action == context &&
+            probe.invoked[count + 1].action == context,
+            "pointer and keyboard context menus preserve the same clicked information/button identity");
+        SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
+        Expect(probe.invoked.back().action == normal, "quick context settings do not replace normal activation");
+        probe.items[0].bounds = {};
+        const auto hiddenCount = probe.invoked.size();
+        SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(16, 16));
+        SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+        Expect(probe.invoked.size() == hiddenCount, "hidden information controls cannot open item quick settings");
+    }
     DestroyWindow(window);
     UnregisterClassW(definition.lpszClassName, definition.hInstance);
 }

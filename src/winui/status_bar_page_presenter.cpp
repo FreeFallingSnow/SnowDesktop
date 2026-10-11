@@ -26,7 +26,7 @@ struct StatusBarPagePresenter::Impl
     muxc::ContentControl independentHost;
     muxc::StackPanel independentBody;
     muxc::StackPanel root, basic, leftItems, infoItems;
-    muxc::Expander leftSection, infoSection, timeNotificationSection, controlCenterSection;
+    muxc::Expander layoutSection, leftSection, infoSection, timeNotificationSection, controlCenterSection;
     muxc::ComboBox edge, monitors, clockPanel, controlPanel, timeNotificationPosition;
     muxc::Slider scale;
     muxc::NumberBox scaleNumber;
@@ -183,6 +183,12 @@ struct StatusBarPagePresenter::Impl
         root.Spacing(8);
         basic = Card(style);
         ToggleRow(basic, "statusBar.enabled", "statusBar.enable", &StatusBarSettings::enabled);
+        muxc::StackPanel layout; layout.Spacing(12);
+        layoutSection.Content(layout);
+        layoutSection.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        layoutSection.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        layoutSection.IsExpanded(false);
+        root.Children().Append(layoutSection);
         edgeRow.Initialize(edge); monitorsRow.Initialize(monitors);
         edge.Width(200); monitors.Width(200);
         edgeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -205,9 +211,9 @@ struct StatusBarPagePresenter::Impl
         muxc::Grid::SetColumn(unit, 2); editor.Children().Append(unit);
         muxc::Grid::SetColumn(scaleReset, 3); editor.Children().Append(scaleReset);
         scaleRow.Initialize(editor);
-        for (auto row : {edgeRow.root, monitorsRow.root, scaleRow.root}) basic.Children().Append(row);
+        for (auto row : {edgeRow.root, monitorsRow.root, scaleRow.root}) layout.Children().Append(row);
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
-        basic.Children().Append(mergedHeight->Content());
+        layout.Children().Append(mergedHeight->Content());
         root.Children().Append(mergedNotice);
         root.Children().Append(dockAppearanceLink);
         root.Children().Append(independentAppearance);
@@ -395,6 +401,7 @@ struct StatusBarPagePresenter::Impl
         Flush();
         syncing = true;
         for (auto& toggle : toggles) toggle->row.SetText(L(toggle->key));
+        layoutSection.Header(winrt::box_value(L("statusBar.layout")));
         leftSection.Header(winrt::box_value(L("statusBar.leftItems")));
         infoSection.Header(winrt::box_value(L("statusBar.information")));
         timeNotificationSection.Header(winrt::box_value(L("statusBar.timeAndNotificationArea")));

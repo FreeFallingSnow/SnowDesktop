@@ -162,8 +162,29 @@ inline std::optional<StatusBarInvocation> ResolveStatusBarInvocation(
     if (!index || *index >= items.size()) return {};
     const auto& item = items[*index];
     if (item.action == StatusBarAction::None || IsRectEmpty(&item.bounds)) return {};
-    const auto action = context ? (item.action == StatusBarAction::InputMethod ?
-        StatusBarAction::InputMethodPanel : StatusBarAction::Menu) : item.action;
+    auto action = item.action;
+    if (context)
+    {
+        using Action = StatusBarAction;
+        switch (item.action)
+        {
+        case Action::InputMethod: action = Action::InputMethodPanel; break;
+        case Action::Calendar: case Action::SystemCalendar: case Action::Notifications: action = Action::MenuTime; break;
+        case Action::Tray: action = Action::MenuTray; break;
+        case Action::Network: action = Action::MenuNetwork; break;
+        case Action::Audio: action = Action::MenuAudio; break;
+        case Action::Power: action = Action::MenuPower; break;
+        case Action::ControlCenter: case Action::SystemControlCenter: action = Action::MenuControlCenter; break;
+        case Action::QuickSearch: action = Action::MenuQuickSearch; break;
+        case Action::SystemMenu: action = Action::MenuSystem; break;
+        case Action::TaskView: action = Action::MenuTaskView; break;
+        case Action::Cpu: action = Action::MenuCpu; break;
+        case Action::Memory: action = Action::MenuMemory; break;
+        case Action::Gpu: action = Action::MenuGpu; break;
+        case Action::Traffic: action = Action::MenuTraffic; break;
+        default: action = Action::Menu; break;
+        }
+    }
     return StatusBarInvocation{action,
         item.icon.has_value(), item.icon ? item.icon->key : std::string{},
         context ? tray::Activation::ContextKeyboard : tray::Activation::Keyboard, item.bounds};
@@ -171,7 +192,8 @@ inline std::optional<StatusBarInvocation> ResolveStatusBarInvocation(
 
 // Mouse context requests use hit geometry; keyboard requests use focus below.
 // Tray icons already receive their native right-button sequence. The IME is a
-// built-in control with its own context surface; other items keep the bar menu.
+// built-in control with its own system context surface. Other buttons retain
+// their identity so the bar menu can offer their own quick settings.
 template<class Invoke>
 bool DispatchStatusBarPointerContextMenu(const std::vector<StatusBarItem>& items,
     POINT client, Invoke&& invoke)
@@ -179,7 +201,6 @@ bool DispatchStatusBarPointerContextMenu(const std::vector<StatusBarItem>& items
     const auto hit = HitTestStatusBarItems(items, client);
     if (!hit) return false;
     if (items[*hit].icon) return true;
-    if (items[*hit].action != StatusBarAction::InputMethod) return false;
     invoke(*hit);
     return true;
 }

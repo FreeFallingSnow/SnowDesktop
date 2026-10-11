@@ -2915,8 +2915,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         {
             dockPage_->SetSupplementalContent(personalizationPage_->DockAppearanceContent(),
                 animationPage_->DockContent(), generalPage_->DockShortcutContent());
-            PageCards().Children().Append(dockPage_->DockAppearanceContent());
             PageCards().Children().Append(dockPage_->DockEnableContent());
+            PageCards().Children().Append(dockPage_->DockAppearanceContent());
             PageCards().Children().Append(dockPage_->DockContent());
             RegisterFocusTarget("personalization.dockAppearance", personalizationPage_->FocusTarget("personalization.dockAppearance"));
             personalizationPage_->Activate();

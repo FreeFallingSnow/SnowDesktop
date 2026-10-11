@@ -79,7 +79,7 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         Content() const noexcept;
-    /** Combined appearance/animation card, followed by the Dock enable row. */
+    /** Combined appearance/animation card, placed after the Dock enable row. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         DockAppearanceContent() const noexcept;
     void SetSupplementalContent(

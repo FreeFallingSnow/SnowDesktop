@@ -628,7 +628,6 @@ struct DesktopPagePresenter::Impl
     std::unique_ptr<ColorEditor> outlineColor;
 
     muxc::TextBlock categoryHint{nullptr};
-    muxc::Expander categoryRuleHelp{nullptr};
     muxc::TextBlock addCategoryHeading{nullptr};
     muxc::Expander addCategorySection{nullptr};
     muxc::StackPanel categoryRulePanel{nullptr};
@@ -1021,12 +1020,6 @@ struct DesktopPagePresenter::Impl
         categoryHint = muxc::TextBlock{};
         categoryHint.Opacity(0.72);
         categoryHint.TextWrapping(mux::TextWrapping::Wrap);
-        categoryHint.Margin({12, 0, 12, 8});
-        categoryRuleHelp = muxc::Expander{};
-        categoryRuleHelp.IsExpanded(false);
-        categoryRuleHelp.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        categoryRuleHelp.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        categoryRuleHelp.Content(categoryHint);
         categoryRulePanel = muxc::StackPanel{};
         categoryRulePanel.Spacing(10.0);
         categoryRulesCard.content.Children().Append(categoryRulePanel);
@@ -1039,7 +1032,6 @@ struct DesktopPagePresenter::Impl
         addCategoryBody.Spacing(12);
         addCategorySection.Content(addCategoryBody);
         categoryRulesCard.content.Children().Append(addCategorySection);
-        categoryRulesCard.content.Children().Append(categoryRuleHelp);
         newCategoryLabel = muxc::TextBox{};
         newCategoryExtensions = muxc::TextBox{};
         addCategory = muxc::Button{};
@@ -1060,6 +1052,7 @@ struct DesktopPagePresenter::Impl
         addCategoryBody.Children().Append(newCategoryLabelRow.root);
         addCategoryBody.Children().Append(
             newCategoryExtensionsRow.root);
+        addCategoryBody.Children().Append(categoryHint);
     }
 
     template <typename Edit>
@@ -1935,7 +1928,6 @@ struct DesktopPagePresenter::Impl
             L"Standard extensions also match shortcut file targets; "
             L".LNK:FOLDER matches folder shortcuts, .LNK:.PDF matches PDF shortcuts, "
             L".LNK:APP matches application shortcuts, and .URL:STEAM matches Steam launch links."));
-        categoryRuleHelp.Header(winrt::box_value(L("settings.desktop.shortcutMatching", L"Shortcut matching")));
         collectProgramsRow.SetText(
             L("app.settings.collect_programs", L"Collect programs"));
         muxa::AutomationProperties::SetName(collectPrograms, collectProgramsRow.label.Text());

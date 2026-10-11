@@ -2595,5 +2595,7 @@
   "settings.dock.visibleItems": "Visible items",
   "settings.dock.appearance": "Dock appearance",
   "settings.desktop.shortcutMatching": "Shortcut matching",
-  "settings.dock.appearanceAndAnimation": "Appearance and animation"
+  "settings.dock.appearanceAndAnimation": "Appearance and animation",
+  "statusBar.layout": "Position and scale",
+  "statusBar.visibleItems": "Visible items"
 }

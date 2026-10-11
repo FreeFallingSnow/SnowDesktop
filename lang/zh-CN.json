@@ -2595,5 +2595,7 @@
   "settings.dock.visibleItems": "显示项目",
   "settings.dock.appearance": "Dock 外观",
   "settings.desktop.shortcutMatching": "快捷方式匹配",
-  "settings.dock.appearanceAndAnimation": "外观与动效"
+  "settings.dock.appearanceAndAnimation": "外观与动效",
+  "statusBar.layout": "位置与缩放",
+  "statusBar.visibleItems": "显示项目"
 }

@@ -139,7 +139,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         ? snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() : -1;
     TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
     const HWND activeMenu = snowdesktop::modern_menu::ActiveRootWindow();
-    if ((action == Action::Menu || action == Action::SystemMenu) &&
+    if ((snowdesktop::IsStatusBarContextMenuAction(action) || action == Action::SystemMenu) &&
         action == statusBarMenuAction_ && statusBarMenuMonitor_ == statusBarActivationMonitor_ &&
         statusBarMenuOwner_ && activeMenu && GetWindow(activeMenu, GW_OWNER) == statusBarMenuOwner_)
         action = Action::Dismiss;
@@ -362,7 +362,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         systemPanel_->Hide();
         return;
     }
-    const bool externalSurface = action == Action::SystemMenu || action == Action::Menu ||
+    const bool externalSurface = action == Action::SystemMenu || snowdesktop::IsStatusBarContextMenuAction(action) ||
         action == Action::QuickSearch || action == Action::Settings ||
         action == Action::Notifications || action == Action::SystemControlCenter ||
         action == Action::TaskView || action == Action::SystemCalendar ||
@@ -608,7 +608,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             }
         }
     }
-    else if (action == Action::Menu)
+    else if (snowdesktop::IsStatusBarContextMenuAction(action))
     {
         if (systemPanel_) systemPanel_->Hide();
         PrepareMenuIconsForPoint({anchor.left,anchor.bottom});
@@ -622,6 +622,108 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             SetMenuItemIcon(menu,1,L"\uF6A9",MenuIconFont::FluentRegular);
             SetMenuItemIcon(menu,2,L"\uE49D",MenuIconFont::FluentRegular);
         }
+        // Use the clicked item's identity for direct quick settings. All changes
+        // go through the same controller as the settings window, after dismissal.
+        using Settings = snowdesktop::StatusBarSettings;
+        struct Flag { const char* key; bool Settings::* member; Action context; };
+        const Flag flags[]{
+            {"statusBar.menu", &Settings::menu, Action::MenuSystem},
+            {"statusBar.quickSearch", &Settings::quickSearch, Action::MenuQuickSearch},
+            {"statusBar.taskView", &Settings::taskView, Action::MenuTaskView},
+            {"statusBar.inputMethod", &Settings::inputMethod, Action::InputMethodPanel},
+            {"statusBar.cpu", &Settings::cpu, Action::MenuCpu},
+            {"statusBar.memory", &Settings::memory, Action::MenuMemory},
+            {"statusBar.gpu", &Settings::gpu, Action::MenuGpu},
+            {"statusBar.traffic", &Settings::traffic, Action::MenuTraffic},
+            {"statusBar.clock", &Settings::clock, Action::MenuTime},
+            {"statusBar.clockShowSeconds", &Settings::clockShowSeconds, Action::MenuTime},
+            {"statusBar.audioControls", &Settings::audioControls, Action::MenuControlCenter},
+            {"statusBar.brightnessControls", &Settings::brightnessControls, Action::MenuControlCenter},
+            {"statusBar.wifiControls", &Settings::wifiControls, Action::MenuControlCenter},
+            {"statusBar.bluetoothControls", &Settings::bluetoothControls, Action::MenuControlCenter},
+            {"statusBar.mediaControls", &Settings::mediaControls, Action::MenuControlCenter},
+            {"statusBar.powerControls", &Settings::powerControls, Action::MenuControlCenter}};
+        constexpr UINT positionBase = 42000, monitorBase = 42010, scaleBase = 42020;
+        constexpr UINT flagBase = 42100, clockBase = 42200, timePositionBase = 42210, controlBase = 42220;
+        const Settings currentSettings = generalSettings_.statusBar;
+        const auto addChoice = [&](HMENU target, UINT command, const wchar_t* label, bool selected, bool disabled = false) {
+            AppendMenuW(target, MF_STRING | (selected ? MF_CHECKED : 0) | (disabled ? MF_GRAYED : 0), command, label);
+        };
+        const auto addFlag = [&](HMENU target, std::size_t index) {
+            addChoice(target, flagBase + static_cast<UINT>(index), _LW(flags[index].key),
+                currentSettings.*(flags[index].member), merged && flags[index].member == &Settings::quickSearch);
+        };
+        const auto submenu = [&](HMENU parent, const char* label) {
+            const auto child = CreatePopupMenu();
+            if (!child) return static_cast<HMENU>(nullptr);
+            if (!AppendMenuW(parent, MF_POPUP, reinterpret_cast<UINT_PTR>(child), _LW(label)))
+            { DestroyMenu(child); return static_cast<HMENU>(nullptr); }
+            SetMenuItemIcon(parent, reinterpret_cast<UINT_PTR>(child), L"\uF6A9", MenuIconFont::FluentRegular);
+            return child;
+        };
+        const auto addTimeChoices = [&](HMENU target) {
+            if (const auto panel = submenu(target, "statusBar.clockPanel"))
+            {
+                addChoice(panel, clockBase, _LW("statusBar.panelCustom"), !currentSettings.clockSystemPanel);
+                addChoice(panel, clockBase + 1, _LW(snowdesktop::StatusBarSupportsSystemQuickSettings() ?
+                    "statusBar.panelSystemCalendar" : "statusBar.panelSystemDateTime"), currentSettings.clockSystemPanel);
+            }
+            if (const auto position = submenu(target, "statusBar.timeNotificationPosition"))
+            {
+                addChoice(position, timePositionBase, _LW("app.settings.taskbar_center"), !merged && !currentSettings.timeNotificationRightAligned, merged);
+                addChoice(position, timePositionBase + 1, _LW("app.dock.right"), merged || currentSettings.timeNotificationRightAligned, merged);
+            }
+        };
+        const auto addControlChoices = [&](HMENU target) {
+            if (snowdesktop::StatusBarSupportsSystemQuickSettings())
+                if (const auto panel = submenu(target, "statusBar.controlCenterPanel"))
+                {
+                    addChoice(panel, controlBase, _LW("statusBar.panelCustom"), !currentSettings.controlCenterSystemPanel);
+                    addChoice(panel, controlBase + 1, _LW("statusBar.panelSystemControls"), currentSettings.controlCenterSystemPanel);
+                }
+        };
+        if (action != Action::Menu)
+        {
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            for (std::size_t index = 0; index < std::size(flags); ++index)
+                if (flags[index].context == action) addFlag(menu, index);
+            if (action == Action::MenuTime) addTimeChoices(menu);
+            if (action == Action::MenuControlCenter) addControlChoices(menu);
+        }
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        if (const auto position = submenu(menu, "statusBar.layout"))
+        {
+            if (const auto edge = submenu(position, "statusBar.position"))
+            {
+                addChoice(edge, positionBase, _LW("app.dock.top"), currentSettings.position == DockPosition::Top);
+                addChoice(edge, positionBase + 1, _LW("app.dock.bottom"), currentSettings.position == DockPosition::Bottom);
+            }
+            if (const auto scope = submenu(position, "settings.dock.monitor"))
+            {
+                const char* labels[]{"app.dock.first_screen", "app.dock.last_screen", "app.dock.all_screens"};
+                for (UINT index = 0; index < std::size(labels); ++index)
+                    addChoice(scope, monitorBase + index, _LW(labels[index]), static_cast<UINT>(currentSettings.monitorScope) == index);
+            }
+            if (const auto scale = submenu(position, "statusBar.scale"))
+                for (UINT index = 0; index < 6; ++index)
+                {
+                    constexpr int percent[]{75, 100, 125, 150, 200, 300};
+                    const auto label = std::to_wstring(percent[index]) + L"%";
+                    addChoice(scale, scaleBase + index, label.c_str(), std::abs(currentSettings.scale * 100 - percent[index]) < .5f, merged);
+                }
+        }
+        if (const auto display = submenu(menu, "statusBar.visibleItems"))
+        {
+            const char* labels[]{"statusBar.leftItems", "statusBar.information", "statusBar.timeAndNotificationArea", "statusBar.controlCenter"};
+            const std::size_t boundaries[]{0, 3, 8, 10, std::size(flags)};
+            for (std::size_t group = 0; group < std::size(labels); ++group)
+                if (const auto section = submenu(display, labels[group]))
+                {
+                    for (auto index = boundaries[group]; index < boundaries[group + 1]; ++index) addFlag(section, index);
+                    if (group == 2) addTimeChoices(section);
+                    if (group == 3) addControlChoices(section);
+                }
+        }
         statusBarMenuMonitor_ = monitor;
         statusBarMenuOwner_ = owner;
         statusBarMenuAction_ = action;
@@ -632,6 +734,41 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         DestroyMenu(menu);
         ClearMenuIcons();
         if (!current()) return;
+        if (settingsController_)
+        {
+            auto settings = settingsController_->Snapshot()->values.general;
+            auto& bar = settings.statusBar;
+            bool changed = true;
+            if (command >= flagBase && command < flagBase + std::size(flags))
+            {
+                const auto member = flags[command - flagBase].member;
+                if (merged && member == &Settings::quickSearch) changed = false;
+                else bar.*member = !(bar.*member);
+            }
+            else if (command == positionBase || command == positionBase + 1)
+                bar.position = command == positionBase ? DockPosition::Top : DockPosition::Bottom;
+            else if (command >= monitorBase && command < monitorBase + 3)
+                bar.monitorScope = static_cast<DockMonitorScope>(command - monitorBase);
+            else if (command >= scaleBase && command < scaleBase + 6 && !merged)
+            {
+                constexpr float scales[]{.75f, 1.f, 1.25f, 1.5f, 2.f, 3.f};
+                bar.scale = scales[command - scaleBase];
+            }
+            else if (command == clockBase || command == clockBase + 1) bar.clockSystemPanel = command == clockBase + 1;
+            else if ((command == timePositionBase || command == timePositionBase + 1) && !merged)
+                bar.timeNotificationRightAligned = command == timePositionBase + 1;
+            else if ((command == controlBase || command == controlBase + 1) && snowdesktop::StatusBarSupportsSystemQuickSettings())
+                bar.controlCenterSystemPanel = command == controlBase + 1;
+            else changed = false;
+            if (changed)
+            {
+                settingsController_->UpdateGeneral(std::move(settings), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
+                uiAnimationScheduler_.ScheduleOnce(0, [this](auto) {
+                    if (settingsController_) (void)settingsController_->FlushPending();
+                });
+                return;
+            }
+        }
         ExecuteDockContextMenuCommand(command, owner);
     }
     else if (action == Action::QuickSearch)
