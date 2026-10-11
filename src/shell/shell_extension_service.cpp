@@ -1228,7 +1228,17 @@ struct MenuService::Impl
                         job.reply = Reply{false, {}, "query timeout"};
                 }
                 if (!job.reply) { ++i; continue; }
-                if (job.reply->ok && !job.startPinOnly)
+                bool verifiedSource = false;
+                {
+                    std::lock_guard lock(mutex);
+                    const auto completedRow = rows.find(job.key);
+                    verifiedSource = nativeFactory && completedRow != rows.end() &&
+                        !completedRow->second.request.sourceClsid.empty() && !completedRow->second.request.sourceKey.empty();
+                }
+                // The native metadata helper checks its exact live registration
+                // and enabled policy before and after querying. Unrelated registry
+                // scans must not delay that fresh, non-executable display payload.
+                if (job.reply->ok && !job.startPinOnly && !verifiedSource)
                 {
                     StartScopeVerification(job.contexts, job.verificationRevision);
                     std::lock_guard lock(mutex);
@@ -1356,15 +1366,19 @@ struct MenuService::Impl
                     // Classification and planning run on the worker. UI reads
                     // only this plan and immutable, separately keyed snapshots.
                     if (!row.inspection && priority != QueryPriority::Execute &&
-                        !row.fullMenuRequested && configured && !catalogueStale &&
-                        checkedRegistryRevision >= registryRevision &&
+                        !row.fullMenuRequested && configured &&
                         request.sourceClsid.empty() && !request.startPinOnly && !request.originalShortcutOnly)
                     {
-                        const auto plan = PlanDemandQueries(catalogue, available, preferences, request, contexts);
+                        auto plan = PlanDemandQueries(catalogue, available, preferences, request, contexts);
+                        const bool verifying = catalogueStale || scanning || checkedRegistryRevision < registryRevision;
+                        // While global attribution is being refreshed, retain a
+                        // full fallback even for a previously sources-only plan.
+                        // Known sources are freshly checked by the native helper.
+                        if (verifying) plan.full = true;
                         row.view.sources = plan.sources;
                         row.view.sourcesOnly = !plan.full;
                         row.view.contexts = contexts;
-                        for (const auto &source : plan.sources) Queue(source, priority, row.force);
+                        for (const auto &source : plan.sources) Queue(source, priority, row.force || verifying);
                         if (!plan.full)
                         {
                             row.view.pending = false; row.view.error.clear(); row.checkRequested = false;

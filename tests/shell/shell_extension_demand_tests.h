@@ -1,5 +1,6 @@
 #pragma once
 #include "shell/shell_extension_demand.h"
+#include "shell/shell_extension_source.h"
 
 namespace demand_tests
 {
@@ -232,6 +233,39 @@ inline void CancelQueued()
     Expect(disabledCalls == 0, "the disabled queued provider is never activated");
     service.Shutdown();
 }
+inline void LiveSourceRegistration()
+{
+    TemporaryDirectory temp;
+    struct Fixture {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        ~Fixture() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry{nullptr, L"Software\\SnowDesktopTests\\SourceRegistration-" + temp.path.filename().wstring()};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, registry.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &registry.key, &disposition) == ERROR_SUCCESS, "create isolated source registration root");
+    registry.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(registry.owned, "isolated source root is uniquely owned");
+    const std::wstring clsid = L"{185581d0-0f34-4419-9439-36d1032d9010}";
+    Expect(!ext::SourceRegistered(clsid, L"*", registry.key), "an absent source scope cannot authorize metadata");
+    HKEY key = nullptr;
+    const std::wstring path = L"*\\shellex\\ContextMenuHandlers\\Provider";
+    Expect(RegCreateKeyExW(registry.key, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &key, nullptr) == ERROR_SUCCESS,
+        "create an exact scope registration");
+    const auto write = RegSetValueExW(key, nullptr, 0, REG_SZ, reinterpret_cast<const BYTE *>(clsid.c_str()),
+        static_cast<DWORD>((clsid.size() + 1) * sizeof(wchar_t)));
+    RegCloseKey(key);
+    Expect(write == ERROR_SUCCESS && ext::SourceRegistered(clsid, L"*", registry.key), "a matching live CLSID is accepted");
+    Expect(!ext::SourceRegistered(clsid, L"Directory", registry.key), "file registration cannot prove a folder scope");
+    Expect(!ext::SourceRegistered(L"{185581d0-0f34-4419-9439-36d1032d9011}", L"*", registry.key),
+        "a different live provider cannot borrow a former routing record");
+    RegDeleteTreeW(registry.key, path.c_str());
+    Expect(!ext::SourceRegistered(clsid, L"*", registry.key), "removing a registration immediately revokes the proof");
+    const auto named = L"*\\shellex\\ContextMenuHandlers\\" + clsid;
+    Expect(RegCreateKeyExW(registry.key, named.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &key, nullptr) == ERROR_SUCCESS,
+        "create a CLSID-named registration without a default value");
+    RegCloseKey(key);
+    Expect(ext::SourceRegistered(clsid, L"*", registry.key), "CLSID-named registrations follow the catalogue rules");
+}
 inline void LearnFromOrdinaryMenus()
 {
     TemporaryDirectory temp;
@@ -339,7 +373,7 @@ inline void PreparationAfterRegistryNoise()
         return text.find(message) != std::string::npos;
     };
     std::atomic<unsigned> scans = 0;
-    std::atomic<bool> release = false;
+    std::atomic<bool> release = false, holdRefresh = false, releaseRefresh = false;
     const auto cache = temp.path / L"cache";
     std::filesystem::create_directory(cache);
     Write(cache / L"observed.dat", snowdesktop::settings_ipc::Pack(std::uint32_t(3), Observed(Inventory()).rows));
@@ -347,9 +381,10 @@ inline void PreparationAfterRegistryNoise()
     // failures. The real STA/process preparation remains under test.
     ext::MenuService service(cache, {}, [&] {
         if (++scans == 1) while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        if (holdRefresh) while (!releaseRefresh) std::this_thread::sleep_for(std::chrono::milliseconds(1));
         return Inventory();
     });
-    struct Release { std::atomic<bool> &value; ~Release() { value = true; } } cleanup{release};
+    struct Release { std::atomic<bool> &value, &refresh; ~Release() { value = true; refresh = true; } } cleanup{release, releaseRefresh};
     ext::Preferences prefs;
     ext::SetCommon(prefs, "verb:unmapped-enabled-command", ext::Category::Objects, true);
     for (int i = 0; i < 2; ++i) ext::SetCommon(prefs, Entry(i).provider, ext::Category::Objects, true);
@@ -367,19 +402,30 @@ inline void PreparationAfterRegistryNoise()
     std::ofstream(request.paths.front()) << "private native scheduler fixture";
     const auto plan = ext::PlanDemandQueries(Inventory(), Observed(Inventory()), prefs, request, 1);
     Expect(plan.full && plan.sources.size() == 2, "mixed native scheduling fixture has two sources and a fallback");
+    const auto previousScans = scans.load();
+    holdRefresh = true;
+    const DWORD laterNoise = 2;
+    Expect(RegSetValueExW(noise.key, L"Noise", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&laterNoise), sizeof(laterNoise)) == ERROR_SUCCESS,
+        "start unrelated global verification before the cold object query");
+    PumpUntil([&] { return scans > previousScans; }, "global verification remains held during the source queries");
     service.Query(request);
     PumpUntil([&] {
         return std::all_of(plan.sources.begin(), plan.sources.end(), [&](const auto &source) {
             const auto view = service.View(source);
             Expect(view.error.empty(), "a reserved prepared worker cannot cause metadata helper startup failure");
             return !view.pending && view.snapshot.has_value();
-        }) && service.View(request).snapshot.has_value();
-    }, "both metadata sources and the full query share the actual two-process pool without overflow");
+        });
+    }, "fresh verified sources publish independently of the held global inventory and reserved worker");
+    Expect(!service.View(request).snapshot, "the aggregate still waits for its own complete registration proof");
+    releaseRefresh = true;
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); },
+        "aggregate fallback completes after global verification without losing the early source results");
     service.Shutdown();
 }
 inline void Run()
 {
     Plan();
+    LiveSourceRegistration();
     for (int mode = 0; mode < 3; ++mode) Streams(mode);
     CancelQueued();
     LearnFromOrdinaryMenus();

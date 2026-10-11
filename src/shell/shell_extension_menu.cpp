@@ -1,5 +1,6 @@
 #include "shell_extension_menu.h"
 #include "shell_extension_menu_query.h"
+#include "shell_extension_source.h"
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_cache.h"
@@ -885,6 +886,8 @@ struct Host
             constexpr auto startHandler = L"{470C0EBD-5D73-4D58-9CED-E91E22E23282}";
             if (request.startPinOnly && !HandlerEnabled(startHandler)) return Reply{true, {}, {}};
             if (!request.sourceClsid.empty() && !HandlerEnabled(request.sourceClsid)) return Reply{true, {}, {}};
+            if (!request.sourceClsid.empty() && !request.sourceKey.empty() &&
+                !SourceRegistered(request.sourceClsid, request.sourceKey)) return Reply{true, {}, {}};
             CLSID clsid{};
             if (FAILED(CLSIDFromString(request.startPinOnly ? startHandler : request.sourceClsid.c_str(), &clsid))) return {};
             if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&native->context))))
@@ -899,6 +902,9 @@ struct Host
                 if (FAILED(command->GetTitle(selection.Get(), &title)) || !title) return {};
                 Entry entry; entry.label = DecodeMenuLabel(title).text; CoTaskMemFree(title);
                 wchar_t guid[40]{}; StringFromGUID2(canonical, guid, 40); entry.key = Utf8(guid);
+                if (!request.sourceKey.empty() &&
+                    (!HandlerEnabled(request.sourceClsid) || !SourceRegistered(request.sourceClsid, request.sourceKey)))
+                    return Reply{true, {}, {}};
                 Reply reply; reply.ok = true; reply.entries.push_back(std::move(entry)); return reply;
             }
             ComPtr<IDataObject> data;
@@ -1000,6 +1006,9 @@ struct Host
         if (count >= kMaximumEntries)
             return {};
         IdentifyEntries(reply.entries);
+        if (!request.sourceClsid.empty() && !request.sourceKey.empty() &&
+            (!HandlerEnabled(request.sourceClsid) || !SourceRegistered(request.sourceClsid, request.sourceKey)))
+            return Reply{true, {}, {}};
         reply.ok = true;
         menus.push_back(std::move(native));
         return reply;
