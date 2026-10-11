@@ -125,15 +125,16 @@ LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-HWND CreateFixtureWindow(const wchar_t* name, WNDPROC procedure, HWND owner = nullptr)
+HWND CreateFixtureWindow(const wchar_t* name, WNDPROC procedure,
+    DWORD extendedStyle = WS_EX_TOOLWINDOW)
 {
     WNDCLASSW type{};
     type.hInstance = GetModuleHandleW(nullptr);
     type.lpszClassName = name;
     type.lpfnWndProc = procedure;
     if (!RegisterClassW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return nullptr;
-    return CreateWindowExW(owner ? WS_EX_NOACTIVATE : WS_EX_TOOLWINDOW, name, name, WS_OVERLAPPEDWINDOW,
-        -20000, -20000, 240, 160, owner, nullptr, type.hInstance, nullptr);
+    return CreateWindowExW(extendedStyle, name, name, WS_OVERLAPPEDWINDOW,
+        -20000, -20000, 240, 160, nullptr, nullptr, type.hInstance, nullptr);
 }
 
 HWND WindowArgument(const wchar_t* argument)
@@ -485,7 +486,11 @@ int wmain(int argc, wchar_t** argv)
     if (argc == 3 && std::wstring(argv[1]) == L"--fixture")
     {
         const HWND receiver = reinterpret_cast<HWND>(ULongToHandle(wcstoul(argv[2], nullptr, 10)));
-        const HWND window = CreateFixtureWindow(L"SnowDesktopMinimizeFixture", FixtureProc, receiver);
+        // An application's window is not owned by the animation receiver.
+        // Cross-thread ownership implicitly attaches input queues, for which
+        // SendMessageTimeout is allowed to ignore its timeout altogether.
+        const HWND window = CreateFixtureWindow(L"SnowDesktopMinimizeFixture", FixtureProc,
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE);
         if (!window) return 1;
         ShowWindow(window, SW_SHOWNOACTIVATE);
         PostMessageW(receiver, kReady, reinterpret_cast<WPARAM>(window), 0);
@@ -530,6 +535,8 @@ int wmain(int argc, wchar_t** argv)
     std::filesystem::path restartCopies;
     if (ready)
     {
+        if (argc == 2) Check(!GetWindow(fixture, GW_OWNER),
+            "native application fixture has an input queue independent of the receiver");
         std::filesystem::path dll = argv[1];
         if (!std::filesystem::is_regular_file(dll))
             dll = dll.parent_path() / L"SnowDesktop.Runtime" / dll.filename();
