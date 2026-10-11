@@ -678,9 +678,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             { DestroyMenu(child); return static_cast<HMENU>(nullptr); }
             const std::string_view key(label);
             const wchar_t* glyph = L"\uF587"; // options_20
-            if (key == "statusBar.layout" || key == "statusBar.position" || key == "statusBar.timeNotificationPosition")
+            if (key == "statusBar.position" || key == "statusBar.timeNotificationPosition")
                 glyph = L"\uF8E5"; // arrow_move_20
-            else if (key == "statusBar.visibleItems") glyph = L"\uE5F2"; // eye_20
             else if (key == "statusBar.leftItems") glyph = L"\uF133"; // apps_20
             else if (key == "statusBar.information") glyph = L"\uE45F"; // data_usage_20
             else if (key == "statusBar.timeAndNotificationArea") glyph = L"\uF2DD"; // clock_20
@@ -720,33 +719,31 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             if (action == Action::MenuControlCenter) addControlChoices(menu);
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        if (const auto position = submenu(menu, "statusBar.layout"))
+        if (const auto settings = submenu(menu, "settings.nav.statusBar"))
         {
-            if (const auto edge = submenu(position, "statusBar.position"))
+            if (const auto edge = submenu(settings, "statusBar.position"))
             {
                 addChoice(edge, positionBase, _LW("app.dock.top"), currentSettings.position == DockPosition::Top);
                 addChoice(edge, positionBase + 1, _LW("app.dock.bottom"), currentSettings.position == DockPosition::Bottom);
             }
-            if (const auto scope = submenu(position, "settings.dock.monitor"))
+            if (const auto scope = submenu(settings, "settings.dock.monitor"))
             {
                 const char* labels[]{"app.dock.first_screen", "app.dock.last_screen", "app.dock.all_screens"};
                 for (UINT index = 0; index < std::size(labels); ++index)
                     addChoice(scope, monitorBase + index, _LW(labels[index]), static_cast<UINT>(currentSettings.monitorScope) == index);
             }
-            if (const auto scale = submenu(position, "statusBar.scale"))
+            if (const auto scale = submenu(settings, "statusBar.scale"))
                 for (UINT index = 0; index < 6; ++index)
                 {
                     constexpr int percent[]{75, 100, 125, 150, 200, 300};
                     const auto label = std::to_wstring(percent[index]) + L"%";
                     addChoice(scale, scaleBase + index, label.c_str(), std::abs(currentSettings.scale * 100 - percent[index]) < .5f, merged);
                 }
-        }
-        if (const auto display = submenu(menu, "statusBar.visibleItems"))
-        {
+            AppendMenuW(settings, MF_SEPARATOR, 0, nullptr);
             const char* labels[]{"statusBar.leftItems", "statusBar.information", "statusBar.timeAndNotificationArea", "statusBar.controlCenter"};
             const std::size_t boundaries[]{0, 3, 8, 10, std::size(flags)};
             for (std::size_t group = 0; group < std::size(labels); ++group)
-                if (const auto section = submenu(display, labels[group]))
+                if (const auto section = submenu(settings, labels[group]))
                 {
                     for (auto index = boundaries[group]; index < boundaries[group + 1]; ++index) addFlag(section, index);
                     if (group == 2) addTimeChoices(section);
