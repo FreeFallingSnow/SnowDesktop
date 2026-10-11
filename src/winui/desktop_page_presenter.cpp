@@ -77,6 +77,18 @@ void SetHeader(
     muxa::AutomationProperties::SetName(control, label.Text());
 }
 
+void InitializeCategoryTextRow(SettingRow& row, const mux::UIElement& control)
+{
+    row.Initialize(control, 600.0);
+    row.root.SizeChanged([](const auto& sender, const mux::SizeChangedEventArgs& args) {
+        const auto grid = sender.template try_as<muxc::Grid>();
+        const double width = args.NewSize().Width;
+        if (!grid || width < presenter_controls::kSettingRowStackThreshold) return;
+        grid.ColumnDefinitions().GetAt(1).Width(mux::GridLengthHelper::FromValueAndType(
+            std::min(600.0, width * .65), mux::GridUnitType::Pixel));
+    });
+}
+
 void SetComboItems(
     const muxc::ComboBox& combo,
     const std::vector<std::wstring>& labels,
@@ -541,8 +553,8 @@ struct RuleRow
 
 struct DesktopPagePresenter::Impl
 {
-    explicit Impl(LocalizeCallback callback, const mux::Style& style)
-        : localize(std::move(callback)), cardStyle(style)
+    explicit Impl(LocalizeCallback callback, const mux::Style& style, std::function<void(SettingsRoute)> navigateCallback)
+        : localize(std::move(callback)), navigate(std::move(navigateCallback)), cardStyle(style)
     {
         BuildControls();
         HookEvents();
@@ -550,6 +562,7 @@ struct DesktopPagePresenter::Impl
     }
 
     LocalizeCallback localize;
+    std::function<void(SettingsRoute)> navigate;
     DesktopPageActions actions;
     mux::Style cardStyle{nullptr};
     muxc::StackPanel root{nullptr};
@@ -635,6 +648,7 @@ struct DesktopPagePresenter::Impl
     muxc::TextBox newCategoryLabel{nullptr};
     muxc::TextBox newCategoryExtensions{nullptr};
     muxc::Button addCategory{nullptr};
+    muxc::Button revealAddCategory{nullptr};
     muxc::Grid newCategoryNameActions{nullptr};
     SettingRow newCategoryLabelRow;
     SettingRow newCategoryExtensionsRow;
@@ -659,6 +673,7 @@ struct DesktopPagePresenter::Impl
     winrt::event_token filterEnabledToken{};
     winrt::event_token outlineEnabledToken{};
     winrt::event_token addCategoryToken{};
+    winrt::event_token revealAddCategoryToken{};
 
     [[nodiscard]] std::wstring L(
         std::string_view key,
@@ -1009,6 +1024,26 @@ struct DesktopPagePresenter::Impl
         finish.Children().Append(filterEnabledRow.root); finish.Children().Append(filterDetails);
 
         InitializeCard(categoryRulesCard, cardStyle, categoryRoot);
+        muxc::Grid categoryHeader;
+        categoryHeader.ColumnSpacing(12);
+        muxc::ColumnDefinition titleColumn;
+        titleColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+        muxc::ColumnDefinition actionColumn;
+        actionColumn.Width(mux::GridLengthHelper::Auto());
+        categoryHeader.ColumnDefinitions().Append(titleColumn);
+        categoryHeader.ColumnDefinitions().Append(actionColumn);
+        categoryRulesCard.content.Children().RemoveAt(0);
+        categoryRulesCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
+        categoryHeader.Children().Append(categoryRulesCard.title);
+        revealAddCategory = muxc::Button{};
+        muxc::FontIcon addIcon;
+        addIcon.FontFamily(winrt::Microsoft::UI::Xaml::Media::FontFamily{L"Segoe Fluent Icons"});
+        addIcon.Glyph(L"\uE710");
+        addIcon.FontSize(16);
+        revealAddCategory.Content(addIcon);
+        muxc::Grid::SetColumn(revealAddCategory, 1);
+        categoryHeader.Children().Append(revealAddCategory);
+        categoryRulesCard.content.Children().InsertAt(0, categoryHeader);
         const auto makeSubsectionHeading = [] {
             muxc::TextBlock heading{};
             heading.FontWeight(
@@ -1031,7 +1066,7 @@ struct DesktopPagePresenter::Impl
         muxc::StackPanel addCategoryBody;
         addCategoryBody.Spacing(12);
         addCategorySection.Content(addCategoryBody);
-        categoryRulesCard.content.Children().Append(addCategorySection);
+        categoryRoot.Children().Append(addCategorySection);
         newCategoryLabel = muxc::TextBox{};
         newCategoryExtensions = muxc::TextBox{};
         addCategory = muxc::Button{};
@@ -1047,8 +1082,8 @@ struct DesktopPagePresenter::Impl
         newCategoryNameActions.Children().Append(newCategoryLabel);
         muxc::Grid::SetColumn(addCategory, 1);
         newCategoryNameActions.Children().Append(addCategory);
-        newCategoryLabelRow.Initialize(newCategoryNameActions);
-        newCategoryExtensionsRow.Initialize(newCategoryExtensions);
+        InitializeCategoryTextRow(newCategoryLabelRow, newCategoryNameActions);
+        InitializeCategoryTextRow(newCategoryExtensionsRow, newCategoryExtensions);
         addCategoryBody.Children().Append(newCategoryLabelRow.root);
         addCategoryBody.Children().Append(
             newCategoryExtensionsRow.root);
@@ -1244,6 +1279,11 @@ struct DesktopPagePresenter::Impl
             });
         addCategoryToken = addCategory.Click(
             [this](const auto&, const auto&) { AddCategoryRule(); });
+        revealAddCategoryToken = revealAddCategory.Click([this](const auto&, const auto&) {
+            if (closed || !active) return;
+            addCategorySection.IsExpanded(true);
+            if (navigate) navigate(SettingsRoute::ForPage(SettingsPage::DesktopCategories, "desktop.category.add"));
+        });
     }
 
     std::wstring RuleLabel(const CategoryRule& rule) const
@@ -1412,7 +1452,7 @@ struct DesktopPagePresenter::Impl
                 muxc::Grid::SetColumn(row->restoreName, 1);
                 row->nameActions.Children().Append(row->restoreName);
             }
-            row->labelRow.Initialize(row->nameActions);
+            InitializeCategoryTextRow(row->labelRow, row->nameActions);
             muxc::Grid extensionActions{};
             extensionActions.ColumnSpacing(8.0);
             muxc::ColumnDefinition extensionColumn{};
@@ -1427,7 +1467,7 @@ struct DesktopPagePresenter::Impl
                 muxc::Grid::SetColumn(row->restoreExtensions, 1);
                 extensionActions.Children().Append(row->restoreExtensions);
             }
-            row->extensionsRow.Initialize(extensionActions);
+            InitializeCategoryTextRow(row->extensionsRow, extensionActions);
             row->content.Children().Append(row->labelRow.root);
             row->content.Children().Append(row->extensionsRow.root);
             row->section = muxc::Expander{};
@@ -1933,6 +1973,8 @@ struct DesktopPagePresenter::Impl
         muxa::AutomationProperties::SetName(collectPrograms, collectProgramsRow.label.Text());
         addCategoryHeading.Text(
             L("app.settings.add_category", L"Add category type"));
+        muxa::AutomationProperties::SetName(revealAddCategory, L("app.settings.add_category", L"Add category"));
+        muxc::ToolTipService::SetToolTip(revealAddCategory, winrt::box_value(L("app.settings.add_category", L"Add category")));
         newCategoryLabelRow.SetText(
             L("app.settings.category_name", L"Category name"));
         newCategoryExtensionsRow.SetText(
@@ -2084,19 +2126,22 @@ struct DesktopPagePresenter::Impl
             filterEnabled.Toggled(filterEnabledToken);
             outlineEnabled.Toggled(outlineEnabledToken);
             addCategory.Click(addCategoryToken);
+            revealAddCategory.Click(revealAddCategoryToken);
         }
         catch (...)
         {
         }
         actions = {};
+        navigate = {};
         localize = {};
     }
 };
 
 DesktopPagePresenter::DesktopPagePresenter(
     LocalizeCallback localize,
-    const mux::Style& cardStyle)
-    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle))
+    const mux::Style& cardStyle,
+    std::function<void(SettingsRoute)> navigate)
+    : impl_(std::make_unique<Impl>(std::move(localize), cardStyle, std::move(navigate)))
 {
 }
 

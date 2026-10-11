@@ -608,7 +608,9 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
             return;
         desktopPage_ =
             std::make_unique<snowdesktop::winui::DesktopPagePresenter>(
-                localize, cardStyle());
+                localize, cardStyle(), [weak = get_weak()](const SettingsRoute& route) {
+                    if (const auto self = weak.get()) (void)self->Navigate(route, true);
+                });
         desktopPage_->SetActions(desktopPageActions_);
     };
     const auto ensureDock = [&]() {

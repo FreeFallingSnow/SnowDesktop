@@ -58,7 +58,8 @@ public:
 
     DesktopPagePresenter(
         LocalizeCallback localize,
-        const winrt::Microsoft::UI::Xaml::Style& cardStyle);
+        const winrt::Microsoft::UI::Xaml::Style& cardStyle,
+        std::function<void(SettingsRoute)> navigate = {});
     ~DesktopPagePresenter();
 
     DesktopPagePresenter(const DesktopPagePresenter&) = delete;
