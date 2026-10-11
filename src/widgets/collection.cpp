@@ -690,9 +690,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         const DesktopItem& di = *item;
                         if (privacyActive)
                             DrawPrivacyPlaceholder(context, tile,
-                                di.name, false,
-                                !titlelessLargeFolder,
-                                titlelessLargeFolder);
+                                di.name, false, false);
                         else
                             DrawThumbnail(context, di, tile, di.selected);
                     }
