@@ -112,6 +112,7 @@ inline void Streams(int mode)
     ext::SetCommon(prefs, "verb:action1", ext::Category::Objects, true);
     if (mode == 1) ext::SetCommon(prefs, "verb:compatibility", ext::Category::Objects, true);
     std::atomic<unsigned> first = 0, second = 0, full = 0, invoked = 0;
+    std::atomic<bool> fullAfterSources = false;
     std::atomic<bool> releaseSecond = false, releaseFull = false, completed = false, succeeded = false;
     ext::MenuService service(cachePath, [&](const ext::Request &target) -> ext::QueryWork {
         if (target.paths != request.paths) return {[] { return ext::Reply{true, {}, {}}; }, {}};
@@ -125,6 +126,7 @@ inline void Streams(int mode)
                 return ext::Reply{true, {Entry(index)}, {}};
             }, [](UINT, POINT) { throw std::runtime_error("metadata source must never invoke"); }};
         }
+        fullAfterSources = first >= 1 && second >= 1;
         ++full;
         return {[&]() -> std::optional<ext::Reply> {
             if (!releaseFull) return {};
@@ -144,10 +146,14 @@ inline void Streams(int mode)
     auto actions = [&] { return std::count_if(items.begin(), items.end(), [](const auto &item) { return !item.separator; }); };
     PumpUntil([&] { poll(); return actions() == 2; }, "first provider publishes while another provider remains held");
     Expect(items.front().label == Entry(0).label && items.back().command == 7 &&
-        first == 1 && (mode == 1 ? full == 1 : full == 0) && !options.pollItemsFinished(),
+        first == 1 && (mode == 1 ? full <= 1 : full == 0) && !options.pollItemsFinished(),
         "independent publication preserves the More footer and does not wait for the slow stream");
     const auto firstCommand = items.front().command;
     PumpUntil([&] { return second == 1; }, "second requested provider is scheduled");
+    if (mode == 1) {
+        PumpUntil([&] { return full == 1; }, "compatibility fallback starts after the independent streams");
+        Expect(fullAfterSources, "known enabled sources are dispatched before the compatibility aggregate");
+    }
     releaseSecond = true;
     if (mode == 2)
         PumpUntil([&] { poll(); return full == 1; }, "a failed source triggers one real aggregate compatibility query");
@@ -229,6 +235,15 @@ inline void CancelQueued()
 inline void LearnFromOrdinaryMenus()
 {
     TemporaryDirectory temp;
+    struct Fixture {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        ~Fixture() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } noise{nullptr, L"Software\\Classes\\Local Settings\\SnowDesktopRouting-" + temp.path.filename().wstring()};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, noise.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &noise.key, &disposition) == ERROR_SUCCESS, "create private routing notification fixture");
+    noise.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(noise.owned, "routing notification fixture has a unique owner");
     const auto cache = temp.path / L"cache";
     ext::Request first, second;
     first.paths = {(temp.path / L"first.txt").wstring()};
@@ -241,13 +256,21 @@ inline void LearnFromOrdinaryMenus()
     legacy.width = legacy.height = 1; legacy.pixels = {9, 8, 7, 255};
     const std::wstring clsid0(catalogue.rows[0].verbs.front().begin(), catalogue.rows[0].verbs.front().end());
     std::atomic<unsigned> aggregate = 0, probes = 0;
+    std::atomic<bool> notified = false;
     ext::Preferences prefs;
     ext::SetCommon(prefs, canonical.provider, ext::Category::Objects, true);
     ext::SetCommon(prefs, legacy.provider, ext::Category::Objects, true);
     auto factory = [&](const ext::Request &request) -> ext::QueryWork {
         ext::Reply reply{true, {}, {}};
         if (request.sourceClsid.empty()) { ++aggregate; reply.entries = {canonical, legacy}; }
-        else { ++probes; reply.entries = {request.sourceClsid == clsid0 ? canonical : legacy}; }
+        else {
+            ++probes; reply.entries = {request.sourceClsid == clsid0 ? canonical : legacy};
+            if (!notified.exchange(true)) {
+                const DWORD value = 1;
+                Expect(RegSetValueExW(noise.key, L"Noise", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value), sizeof(value)) == ERROR_SUCCESS,
+                    "invalidate the first in-flight routing probe with an unrelated notification");
+            }
+        }
         return {[reply] { return reply; }, {}};
     };
     {

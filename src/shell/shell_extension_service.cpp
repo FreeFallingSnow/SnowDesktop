@@ -181,6 +181,7 @@ struct MenuService::Impl
         Request request;
         Registration source;
         Reply actual;
+        std::vector<Key> attempts;
         QueryWork work;
         std::uint64_t revision = 0, menuRevision = 0, started = 0;
     };
@@ -352,6 +353,8 @@ struct MenuService::Impl
         row.snapshotTargetChecked = true;
         if (row.queued) row.queued = row.view.pending = row.inspection = false;
         ++row.view.revision;
+        sourcePending |= AnyEnabled();
+        SetEvent(wake);
         MenuTrace("schedule", "registry_snapshot_reused");
         return true;
     }
@@ -606,7 +609,7 @@ struct MenuService::Impl
         for (const auto &[key, row] : rows)
         {
             if (row.request.startPinOnly || !row.request.sourceClsid.empty()) continue;
-            if (!inspected && (row.request.extended || row.request.originalShortcutOnly)) continue;
+            if (!inspected && (row.request.background || row.request.extended || row.request.originalShortcutOnly)) continue;
             if (!row.view.snapshot || row.view.pending || row.invalid || row.expires <= MenuSnapshotCache::Now() || !Local(row.request)) continue;
             const auto visible = VisibleSnapshot(preferences, *row.view.snapshot, row.view.contexts);
             const auto routable = [](const auto &entry) {
@@ -642,6 +645,7 @@ struct MenuService::Impl
                 sourceAttempts.insert(attempts.begin(), attempts.end());
                 auto job = std::make_unique<SourceJob>();
                 job->key = key; job->request = row.request; job->source = source; job->actual = *row.view.snapshot;
+                job->attempts = std::move(attempts);
                 // Attribution is metadata-only, independent of the original-file
                 // executable recovery lane that produced these observed rows.
                 job->request.originalShortcutOnly = false;
@@ -661,8 +665,16 @@ struct MenuService::Impl
             static_cast<unsigned>(reply.entries.size()));
         if (!reply.ok && !reply.error.empty()) failedSources.insert(job.source.id);
         const auto current = rows.find(job.key);
-        if (!reply.ok || catalogue.revision != job.revision || current == rows.end() || current->second.invalid ||
-            current->second.view.revision != job.menuRevision) return;
+        if (!reply.ok) return;
+        if (catalogue.revision != job.revision || current == rows.end() || current->second.invalid ||
+            current->second.view.revision != job.menuRevision)
+        {
+            // A notification can invalidate a reply without changing its
+            // provider. Do not permanently mark an unaccepted proof as tried.
+            for (const auto &attempt : job.attempts) sourceAttempts.erase(attempt);
+            sourcePending |= inspected || AnyEnabled();
+            return;
+        }
         for (const auto &provider : MatchSourceCommands(job.actual, reply))
             if (const auto found = observed.find(provider); found != observed.end() && found->second.kind == RegistrationKind::Observed)
             {
@@ -951,6 +963,12 @@ struct MenuService::Impl
                     RebuildAvailable();
                     MenuTrace("catalogue", changed.empty() ? "unchanged" : "dependencies_changed", 0, static_cast<unsigned>(affected.size()));
                 }
+                // Resume learning from exact snapshots only after the live
+                // inventory and target checks restore their original proof.
+                if (sourcePending)
+                    for (auto &[key, row] : rows)
+                        if (row.registryInvalid && row.view.snapshot && !row.view.pending)
+                            row.checkRequested = true;
             }
             for (const auto &request : affected) cache.Erase(request);
             if (retirePreparation)
@@ -1150,7 +1168,8 @@ struct MenuService::Impl
                 // Preparation also needs verification before it has acquired a
                 // worker. Otherwise an unrelated notification leaves it behind
                 // catalogueStale forever, until a foreground click starts the scan.
-                scanRequested |= prepared || (nativeFactory && preparationRequested && ObjectPreparationEnabled());
+                scanRequested |= prepared || (nativeFactory && preparationRequested && ObjectPreparationEnabled()) ||
+                    sourcePending || static_cast<bool>(sourceJob);
                 for (auto &[key, row] : rows)
                 {
                     row.registryInvalid = row.view.snapshot && (!row.invalid || row.registryInvalid);
@@ -1347,6 +1366,16 @@ struct MenuService::Impl
                             row.view.pending = false; row.view.error.clear(); row.checkRequested = false;
                             row.force = false; ++row.view.revision;
                             MenuTrace("schedule", "sources_only", 0, static_cast<unsigned>(plan.sources.size()));
+                            continue;
+                        }
+                        if (!plan.sources.empty())
+                        {
+                            // Start useful partial results before the aggregate
+                            // fallback. A concurrent background query may already
+                            // occupy the other slot; consuming both with full
+                            // queries would defeat incremental display entirely.
+                            row.fullMenuRequested = true;
+                            row.queued = true; row.due = GetTickCount64() + 1;
                             continue;
                         }
                     }
