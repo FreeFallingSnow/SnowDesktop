@@ -1435,15 +1435,32 @@ WidgetSystemDataProvider::SampleNetworkStatus()
     {
         ConnectionProfile selected{ nullptr };
         int selectedRank = -1;
+        NetworkConnectivityLevel selectedConnectivity = NetworkConnectivityLevel::None;
+        std::string selectedTransport = "unknown";
+        struct ProfileDetails
+        {
+            winrt::guid adapterId;
+            int rank;
+            std::string connectivity, name;
+        };
+        std::vector<ProfileDetails> profileDetails;
         const auto profiles = NetworkInformation::GetConnectionProfiles();
         for (const auto& profile : profiles)
         {
-            const int rank = ConnectivityRank(
-                profile.GetNetworkConnectivityLevel());
+            // WinRT properties can cross a service boundary. Read each once,
+            // rather than repeating them for every IP Helper interface.
+            const auto level = profile.GetNetworkConnectivityLevel();
+            const int rank = ConnectivityRank(level);
+            const auto adapter = profile.NetworkAdapter();
+            if (adapter)
+                profileDetails.push_back({adapter.NetworkAdapterId(), rank,
+                    ConnectivityName(level), winrt::to_string(profile.ProfileName())});
             if (rank > selectedRank)
             {
                 selected = profile;
                 selectedRank = rank;
+                selectedConnectivity = level;
+                selectedTransport = adapter ? TransportName(adapter.IanaInterfaceType()) : "unknown";
             }
         }
         snapshot.available = true;
@@ -1461,17 +1478,13 @@ WidgetSystemDataProvider::SampleNetworkStatus()
                 connection.connectivity = row.AdminStatus == NET_IF_ADMIN_STATUS_DOWN ? "disabled" :
                     row.OperStatus == IfOperStatusUp && row.MediaConnectState == MediaConnectStateConnected ? "connected" : "disconnected";
                 int profileRank = -1;
-                for (const auto& profile : profiles)
+                for (const auto& profile : profileDetails)
                 {
-                    const auto adapter = profile.NetworkAdapter();
-                    if (!adapter || adapter.NetworkAdapterId() != winrt::guid(row.InterfaceGuid)) continue;
-                    const auto level = profile.GetNetworkConnectivityLevel();
-                    const int rank = ConnectivityRank(level);
-                    if (rank <= profileRank || connection.connectivity == "disabled" || connection.connectivity == "disconnected") continue;
-                    profileRank = rank;
-                    connection.connectivity = ConnectivityName(level);
-                    const auto name = profile.ProfileName();
-                    if (!name.empty()) connection.name = winrt::to_string(name);
+                    if (profile.adapterId != winrt::guid(row.InterfaceGuid) || profile.rank <= profileRank ||
+                        connection.connectivity == "disabled" || connection.connectivity == "disconnected") continue;
+                    profileRank = profile.rank;
+                    connection.connectivity = profile.connectivity;
+                    if (!profile.name.empty()) connection.name = profile.name;
                 }
                 snapshot.connections.push_back(std::move(connection));
             }
@@ -1481,10 +1494,8 @@ WidgetSystemDataProvider::SampleNetworkStatus()
         if (!selected)
             return snapshot;
 
-        snapshot.connectivity = ConnectivityName(
-            selected.GetNetworkConnectivityLevel());
-        if (const auto adapter = selected.NetworkAdapter())
-            snapshot.transport = TransportName(adapter.IanaInterfaceType());
+        snapshot.connectivity = ConnectivityName(selectedConnectivity);
+        snapshot.transport = std::move(selectedTransport);
         const auto cost = selected.GetConnectionCost();
         if (cost)
         {
