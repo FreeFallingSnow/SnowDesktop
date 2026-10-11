@@ -590,27 +590,42 @@ struct MenuService::Impl
         row.view.snapshot = std::move(reply); row.view.contexts = contexts; ++row.view.revision;
         row.used = ++clock;
         RebuildAvailable();
-        sourcePending |= inspected;
+        sourcePending |= inspected || AnyEnabled();
     }
     std::unique_ptr<SourceJob> NextSource()
     {
         // Called only by the worker after ordinary menu/execute work has been
         // dispatched. One metadata probe leaves the other process slot free.
         std::lock_guard lock(mutex);
-        if (!inspected || !sourcePending || scanning || scanRequested || !catalogue.revision) return {};
+        if (!sourcePending || scanning || scanRequested || !catalogue.revision) return {};
+        // Normal usage learns routing too, but idle learning must not postpone
+        // the prepared foreground worker or take its reserved process slot.
+        if (!inspected && nativeFactory && ObjectPreparationEnabled() &&
+            Session::PollPreparedMenuWorker() != Session::PreparationState::Ready)
+            return {};
         for (const auto &[key, row] : rows)
         {
             if (row.request.startPinOnly || !row.request.sourceClsid.empty()) continue;
+            if (!inspected && (row.request.extended || row.request.originalShortcutOnly)) continue;
             if (!row.view.snapshot || row.view.pending || row.invalid || row.expires <= MenuSnapshotCache::Now() || !Local(row.request)) continue;
-            const bool missing = std::any_of(row.view.snapshot->entries.begin(), row.view.snapshot->entries.end(), [&](const auto &entry) {
+            const auto visible = VisibleSnapshot(preferences, *row.view.snapshot, row.view.contexts);
+            const auto routable = [](const auto &entry) {
+                return !entry.separator && !entry.provider.empty() && entry.registration.empty() &&
+                    !StatePairForVerb(entry.key) && (!entry.key.empty() || !entry.pixels.empty());
+            };
+            if (!inspected && !std::any_of(visible.begin(), visible.end(), routable)) continue;
+            const bool missingApplication = inspected && std::any_of(row.view.snapshot->entries.begin(), row.view.snapshot->entries.end(), [&](const auto &entry) {
                 const auto found = observed.find(entry.registration.empty() ? entry.provider : entry.registration);
                 return found != observed.end() && found->second.application.id.empty();
             });
-            if (missing) sourceSelections.insert(key);
+            const bool missingRoute = std::any_of(visible.begin(), visible.end(), [&](const auto &entry) {
+                return routable(entry) && !DemandSource(catalogue, available, entry.provider, row.view.contexts);
+            });
+            if (missingApplication || missingRoute) sourceSelections.insert(key);
             if (!sourceSelections.contains(key)) continue;
             for (const auto &source : catalogue.rows)
             {
-                if ((source.kind != RegistrationKind::Handler && source.kind != RegistrationKind::Packaged) || !source.systemEnabled || source.application.id.empty() ||
+                if ((source.kind != RegistrationKind::Handler && (source.kind != RegistrationKind::Packaged || !inspected)) || !source.systemEnabled ||
                     source.verbs.empty() || failedSources.contains(source.id) || !DependsOn(source, row.request, row.view.contexts)) continue;
                 // Repeated file suffixes share many already-inspected root
                 // actions. Probe again only when this source sees a new action
@@ -620,7 +635,8 @@ struct MenuService::Impl
                     attempts.push_back(settings_ipc::Pack(entry.provider, row.view.contexts, source.id, source.revision));
                 if (std::all_of(attempts.begin(), attempts.end(), [&](const auto &attempt) { return sourceAttempts.contains(attempt); })) continue;
                 std::wstring typeKey;
-                for (const auto &path : source.sources)
+                if (!inspected) typeKey = DemandSourceKey(source, row.request, row.view.contexts);
+                else for (const auto &path : source.sources)
                     if (const auto at = path.find(L"\\shellex\\ContextMenuHandlers\\"); at != std::wstring::npos) { typeKey = path.substr(0, at); break; }
                 if (typeKey.empty() && source.kind != RegistrationKind::Packaged) continue;
                 sourceAttempts.insert(attempts.begin(), attempts.end());
@@ -649,7 +665,13 @@ struct MenuService::Impl
             current->second.view.revision != job.menuRevision) return;
         for (const auto &provider : MatchSourceCommands(job.actual, reply))
             if (const auto found = observed.find(provider); found != observed.end() && found->second.kind == RegistrationKind::Observed)
+            {
                 RecordSourceApplication(found->second, job.source, catalogue);
+                const auto proof = L"routing:" + std::to_wstring(current->second.view.contexts) + L":" +
+                    std::wstring(job.source.id.begin(), job.source.id.end());
+                if (std::find(found->second.sources.begin(), found->second.sources.end(), proof) == found->second.sources.end())
+                    found->second.sources.push_back(proof);
+            }
         RebuildAvailable();
     }
     void Complete(Running &job, Reply reply, MenuSnapshotCache &cache)
@@ -876,7 +898,7 @@ struct MenuService::Impl
                     catalogue.folderRevision = value.folderRevision;
                     catalogue.backgroundRevisions = value.backgroundRevisions;
                     scanning = false;
-                    sourcePending |= inspected;
+                    sourcePending |= inspected || AnyEnabled();
                     MenuTrace("catalogue", "unchanged");
                 }
                 else
@@ -892,7 +914,7 @@ struct MenuService::Impl
                     for (const auto &a : catalogue.associations)
                         if (std::any_of(value.rows.begin(), value.rows.end(), [&](auto &r) { if (r.id != a.registration || !r.systemEnabled) return false; r.linked = true; return true; })) value.associations.push_back(a);
                     catalogue = std::move(value); scanning = false; catalogueDirty = true;
-                    sourcePending |= inspected;
+                    sourcePending |= inspected || AnyEnabled();
                     if (!changed.empty()) { sourceAttempts.clear(); sourceSelections.clear(); failedSources.clear(); }
                     if (!initial && !changed.empty())
                     {
@@ -1554,6 +1576,7 @@ void MenuService::Configure(Preferences preferences)
         const bool objectPreparation = impl_->ObjectPreparationEnabled();
         impl_->preferences = std::move(preferences); impl_->configured = true;
         for (int i = 0; i < 4; ++i) impl_->shown[i] = EffectiveShownIds(impl_->preferences, static_cast<Context>(i));
+        impl_->sourcePending |= impl_->AnyEnabled();
         if (!objectPreparation && impl_->ObjectPreparationEnabled()) impl_->preparationRequested = true;
         if (!enabled && impl_->AnyEnabled()) { impl_->scanRequested = true; MenuTrace("catalogue", "request.configure"); }
         if (!desktop && !impl_->shown[static_cast<int>(Context::Desktop)].empty()) impl_->startupWarm = true;

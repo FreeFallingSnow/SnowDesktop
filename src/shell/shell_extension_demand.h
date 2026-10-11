@@ -18,14 +18,28 @@ inline const Registration *DemandSource(const Catalogue &catalogue, const Catalo
     std::set<std::string> ids;
     for (const auto &item : observed.rows)
         if (item.id == id && (item.contexts & contexts) == contexts &&
-            !item.display.key.empty() && item.display.provider == "verb:" + AttributionVerb(item.display.key))
+            ((!item.display.key.empty() && item.display.provider == "verb:" + AttributionVerb(item.display.key)) ||
+             (item.display.key.empty() && item.display.provider == id && id.starts_with("menu:") &&
+              !item.display.pixels.empty())))
             for (const auto &path : item.sources)
-                if (path.starts_with(L"attribution:"))
+                if (path.starts_with(L"routing:"))
                 {
+                    // Application attribution may have been learned in another
+                    // context. Only a routing proof from this selection scope
+                    // can authorize an independent metadata query.
+                    const auto colon = path.find(L':', 8);
+                    if (colon == std::wstring::npos || colon == 8 || colon > 10) continue;
+                    unsigned scope = 0;
+                    for (const auto c : std::wstring_view(path).substr(8, colon - 8))
+                    {
+                        if (c < L'0' || c > L'9') { scope = 0; break; }
+                        scope = scope * 10 + static_cast<unsigned>(c - L'0');
+                    }
+                    if (!scope || (scope & ~15u) || (scope & contexts) != contexts) continue;
                     // Registration IDs used here contain ASCII CLSIDs. Reject
                     // malformed evidence instead of narrowing arbitrary Unicode.
                     std::string registration;
-                    for (const auto c : std::wstring_view(path).substr(12))
+                    for (const auto c : std::wstring_view(path).substr(colon + 1))
                     {
                         if (c > 0x7f) { registration.clear(); break; }
                         registration.push_back(static_cast<char>(c));

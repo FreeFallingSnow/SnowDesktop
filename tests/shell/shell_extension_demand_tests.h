@@ -36,7 +36,7 @@ inline ext::Catalogue Observed(const ext::Catalogue &catalogue)
         ext::Registration item; item.display = Entry(i); item.id = item.display.provider;
         item.kind = ext::RegistrationKind::Observed; item.contexts = 3; item.linked = true;
         const auto &id = catalogue.rows[i].id;
-        item.sources = {L"attribution:" + std::wstring(id.begin(), id.end())};
+        item.sources = {L"routing:3:" + std::wstring(id.begin(), id.end())};
         result.rows.push_back(std::move(item));
     }
     return result;
@@ -54,6 +54,10 @@ inline void Plan()
     auto folder = ext::PlanDemandQueries(catalogue, observed, prefs, request, 2);
     Expect(!folder.full && folder.sources.front().sourceKey == L"Directory",
         "folder selection uses its own initialization key, not the first merged registration");
+    observed.rows.front().sources = {L"routing:1:" + std::wstring(catalogue.rows[0].id.begin(), catalogue.rows[0].id.end())};
+    Expect(ext::DemandSource(catalogue, observed, observed.rows.front().id, 2) == nullptr,
+        "file-only routing evidence cannot authorize a folder query even when observations cover both contexts");
+    observed = Observed(catalogue);
     auto mixed = ext::PlanDemandQueries(catalogue, observed, prefs, request, 3);
     Expect(mixed.full && mixed.sources.empty(), "mixed selection cannot borrow a file-only or directory-only key");
     ext::SetOverride(prefs, "verb:action1", ext::Context::File, ext::Visibility::Hide);
@@ -71,6 +75,15 @@ inline void Plan()
     catalogue = Inventory(); observed.rows.front().display.key.clear();
     Expect(ext::PlanDemandQueries(catalogue, observed, prefs, request, 1).sources.empty(),
         "a caption-only command cannot bypass aggregate command identification");
+    auto &legacy = observed.rows.front();
+    legacy.id = legacy.display.provider = "menu:legacy";
+    legacy.display.width = legacy.display.height = 1; legacy.display.pixels = {1, 2, 3, 255};
+    ext::SetCommon(prefs, legacy.id, ext::Category::Objects, true);
+    Expect(ext::PlanDemandQueries(catalogue, observed, prefs, request, 1).sources.size() == 1,
+        "an exact legacy icon/tree attribution can route a command without a canonical verb");
+    legacy.sources.clear();
+    Expect(ext::PlanDemandQueries(catalogue, observed, prefs, request, 1).sources.empty(),
+        "an icon and caption without verified provider evidence cannot route a legacy command");
     observed = Observed(catalogue); catalogue.rows.front().sources = {L"Other.ProgID\\shellex\\ContextMenuHandlers\\Provider"};
     Expect(ext::PlanDemandQueries(catalogue, observed, prefs, request, 1).sources.empty(),
         "unknown ProgID applicability preserves the aggregate path");
@@ -213,6 +226,64 @@ inline void CancelQueued()
     Expect(disabledCalls == 0, "the disabled queued provider is never activated");
     service.Shutdown();
 }
+inline void LearnFromOrdinaryMenus()
+{
+    TemporaryDirectory temp;
+    const auto cache = temp.path / L"cache";
+    ext::Request first, second;
+    first.paths = {(temp.path / L"first.txt").wstring()};
+    second.paths = {(temp.path / L"second.txt").wstring()};
+    std::ofstream(first.paths.front()) << "private";
+    std::ofstream(second.paths.front()) << "private";
+    auto catalogue = Inventory(); catalogue.rows.resize(2);
+    auto canonical = Entry(0), legacy = Entry(1);
+    legacy.key.clear(); legacy.provider = "menu:legacy-enabled";
+    legacy.width = legacy.height = 1; legacy.pixels = {9, 8, 7, 255};
+    const std::wstring clsid0(catalogue.rows[0].verbs.front().begin(), catalogue.rows[0].verbs.front().end());
+    std::atomic<unsigned> aggregate = 0, probes = 0;
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, canonical.provider, ext::Category::Objects, true);
+    ext::SetCommon(prefs, legacy.provider, ext::Category::Objects, true);
+    auto factory = [&](const ext::Request &request) -> ext::QueryWork {
+        ext::Reply reply{true, {}, {}};
+        if (request.sourceClsid.empty()) { ++aggregate; reply.entries = {canonical, legacy}; }
+        else { ++probes; reply.entries = {request.sourceClsid == clsid0 ? canonical : legacy}; }
+        return {[reply] { return reply; }, {}};
+    };
+    {
+        ext::MenuService service(cache, factory, [catalogue] { return catalogue; });
+        service.Configure(prefs); service.Query(first);
+        PumpUntil([&] {
+            if (probes < 2) return false;
+            try {
+                std::ifstream in(cache / L"observed.dat", std::ios::binary);
+                std::vector<char> data{std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+                snowdesktop::settings_ipc::Bytes bytes(data.size());
+                if (!data.empty()) memcpy(bytes.data(), data.data(), data.size());
+                auto [schema, rows] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t, std::vector<ext::Registration>>>(bytes);
+                ext::Catalogue observed; observed.rows = std::move(rows);
+                const auto plan = ext::PlanDemandQueries(catalogue, observed, prefs, second, 1);
+                return schema == 3 && !plan.full && plan.sources.size() == 2;
+            } catch (...) { return false; }
+        }, "ordinary use learns and persists canonical and legacy sources without opening settings");
+        Expect(aggregate == 1, "source learning does not repeat the aggregate query");
+        service.Shutdown();
+    }
+    // A new service and a different uncached selection must consume the real
+    // learned evidence. No test-only catalogue/observed seed is supplied.
+    ext::MenuService reopened(cache, factory, [catalogue] { return catalogue; });
+    reopened.Configure(prefs);
+    ext::Presentation popup(second, prefs, L"", L"", reopened);
+    std::vector<snowdesktop::modern_menu::Item> items;
+    snowdesktop::modern_menu::Options options; popup.Attach(items, options, 0);
+    PumpUntil([&] {
+        if (options.pollItems) if (auto updated = options.pollItems(items, true)) items = std::move(*updated);
+        return std::count_if(items.begin(), items.end(), [](const auto &item) { return !item.separator; }) == 2;
+    }, "new cold selection publishes both learned sources after service reconstruction");
+    Expect(aggregate == 1 && reopened.View(second).sourcesOnly,
+        "persisted ordinary-use evidence enables demand querying without an aggregate fallback");
+    reopened.Shutdown();
+}
 inline void PreparationAfterRegistryNoise()
 {
     TemporaryDirectory temp;
@@ -272,6 +343,7 @@ inline void Run()
     Plan();
     for (int mode = 0; mode < 3; ++mode) Streams(mode);
     CancelQueued();
+    LearnFromOrdinaryMenus();
     PreparationAfterRegistryNoise();
 }
 }
