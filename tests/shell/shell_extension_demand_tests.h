@@ -213,10 +213,65 @@ inline void CancelQueued()
     Expect(disabledCalls == 0, "the disabled queued provider is never activated");
     service.Shutdown();
 }
+inline void PreparationAfterRegistryNoise()
+{
+    TemporaryDirectory temp;
+    struct Fixture
+    {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        ~Fixture() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } noise{nullptr, L"Software\\Classes\\Local Settings\\SnowDesktopPreparation-" + temp.path.filename().wstring()};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, noise.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &noise.key, &disposition) == ERROR_SUCCESS, "create private preparation notification fixture");
+    noise.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(noise.owned, "preparation notification fixture has a unique owner");
+    struct TraceEnvironment
+    {
+        std::wstring previous;
+        TraceEnvironment(const std::wstring &path)
+        {
+            wchar_t value[32768]{};
+            GetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", value, static_cast<DWORD>(std::size(value)));
+            previous = value;
+            SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", path.c_str());
+        }
+        ~TraceEnvironment() { SetEnvironmentVariableW(L"SNOWDESKTOP_MENU_TRACE", previous.empty() ? nullptr : previous.c_str()); }
+    } environment((temp.path / L"preparation").wstring());
+    const auto trace = temp.path / (L"preparation." + std::to_wstring(GetCurrentProcessId()) + L".log");
+    auto logged = [&](const char *message) {
+        std::ifstream input(trace, std::ios::binary);
+        const std::string text{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+        return text.find(message) != std::string::npos;
+    };
+    std::atomic<unsigned> scans = 0;
+    std::atomic<bool> release = false;
+    // Release the held reader before service destruction, including assertion
+    // failures. The real STA/process preparation remains under test.
+    ext::MenuService service(temp.path / L"cache", {}, [&] {
+        if (++scans == 1) while (!release) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        return Inventory();
+    });
+    struct Release { std::atomic<bool> &value; ~Release() { value = true; } } cleanup{release};
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:unmapped-enabled-command", ext::Category::Objects, true);
+    service.Configure(prefs);
+    PumpUntil([&] { return scans == 1; }, "initial preparation inventory starts without an open menu");
+    const DWORD value = 1;
+    Expect(RegSetValueExW(noise.key, L"Noise", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value), sizeof(value)) == ERROR_SUCCESS,
+        "emit an unrelated Classes notification during the held inventory scan");
+    PumpUntil([&] { return logged("reason=stale.registry"); }, "the preparation service observes the registry notification");
+    release = true;
+    PumpUntil([&] { return scans >= 2 && logged("phase=preparation reason=ready"); },
+        "pending preparation verifies registry noise and becomes ready without a foreground query");
+    Expect(!logged("phase=helper_start"), "background preparation does not need a user query to unblock itself");
+    service.Shutdown();
+}
 inline void Run()
 {
     Plan();
     for (int mode = 0; mode < 3; ++mode) Streams(mode);
     CancelQueued();
+    PreparationAfterRegistryNoise();
 }
 }

@@ -1125,9 +1125,10 @@ struct MenuService::Impl
                 // popup until the inventory confirms an actual registration change.
                 catalogueStale = true;
                 ++registryRevision;
-                // Verify a prepared provider inventory even when no visible
-                // selection currently needs a refresh.
-                scanRequested |= prepared;
+                // Preparation also needs verification before it has acquired a
+                // worker. Otherwise an unrelated notification leaves it behind
+                // catalogueStale forever, until a foreground click starts the scan.
+                scanRequested |= prepared || (nativeFactory && preparationRequested && ObjectPreparationEnabled());
                 for (auto &[key, row] : rows)
                 {
                     row.registryInvalid = row.view.snapshot && (!row.invalid || row.registryInvalid);
