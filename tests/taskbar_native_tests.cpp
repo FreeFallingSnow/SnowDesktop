@@ -19,7 +19,7 @@ namespace
 UINT_PTR appBarState = 0;
 bool rejectAppBarChange = false;
 snowdesktop::taskbar_hook::SharedState* connectionState = nullptr;
-HANDLE firstConnectionReady = nullptr;
+bool acknowledgeConnection = true;
 struct MenuProbe
 {
     HWND taskbar = nullptr;
@@ -83,9 +83,15 @@ LRESULT CALLBACK TestConnectionHook(int code, WPARAM wParam, LPARAM lParam)
         {
             snowdesktop::taskbar_hook::native::Attach(
                 message->hwnd, connectionState, false, TestAppBarMessage);
-            // Only XAML discovery is substituted. The production connector,
-            // thread hook, native subclass and DWM cloaking remain real.
-            if (firstConnectionReady) SetEvent(firstConnectionReady);
+            // Substitute only native owner publication; XAML never becomes
+            // ready. Connector, thread hook, native subclass and DWM are real.
+            if (acknowledgeConnection)
+            {
+                SetPropW(message->hwnd, snowdesktop::taskbar_hook::kHookOwnerProperty,
+                    GetModuleHandleW(nullptr));
+                SetPropW(message->hwnd, snowdesktop::taskbar_hook::kHookHostProcessProperty,
+                    reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(GetCurrentProcessId())));
+            }
         }
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
@@ -658,50 +664,58 @@ int RunNativeTaskbarTests()
         shared.enabled = FALSE;
         SendMessageW(window, apply, 0, 0);
 
-        HANDLE ready = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         HANDLE cancel = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        check(ready && cancel, "create private connection events");
-        if (ready && cancel)
+        check(cancel != nullptr, "create private cancellation event");
+        if (cancel)
         {
             const std::array<HWND, 2> windows{window, secondary};
             connectionState = &shared;
             shared.enabled = TRUE;
             shared.targets[0].shellPanelVisible = FALSE;
             shared.targets[1].suppressTaskbar = TRUE;
-            firstConnectionReady = ready;
             check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
-                nullptr, TestConnectionHook, ready, nullptr, cancel, false, 0) == ERROR_SUCCESS &&
+                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel) == ERROR_SUCCESS &&
                 cloaked() && secondaryCloaked(),
-                "initial XAML notification completes native attachment on both taskbars");
+                "both taskbars must connect without any XAML ready notification");
+            check(!AreTaskbarThreadsConnected(windows, GetCurrentProcessId(), GetCurrentProcessId() + 1),
+                "a previous host's resident callbacks cannot acknowledge the current host");
             shared.enabled = FALSE;
             SendMessageW(window, apply, 0, 0);
             SendMessageW(secondary, apply, 0, 0);
 
-            // Exact reconnect condition: personalization is already connected,
-            // suppression was disabled, and the one-time Ready event is reset.
-            ResetEvent(ready);
-            firstConnectionReady = nullptr;
+            // Native suppression can reconnect after being disabled while
+            // appearance remains unavailable throughout the host session.
             shared.enabled = TRUE;
             check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
-                nullptr, TestConnectionHook, ready, nullptr, cancel, true, 0) == ERROR_SUCCESS &&
-                WaitForSingleObject(ready, 0) == WAIT_TIMEOUT && cloaked() && secondaryCloaked(),
-                "enabling suppression after personalization must not wait for a second XAML notification");
+                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel) == ERROR_SUCCESS &&
+                cloaked() && secondaryCloaked(),
+                "re-enabling native suppression must remain independent of appearance readiness");
             check(ReadSharedSnapshot(&shared, connectionSnapshot) &&
                 AreSuppressedTaskbarsControlled(connectionSnapshot),
                 "reconnected Dock displays immediately report completed suppression");
+            RemovePropW(secondary, kHookHostProcessProperty);
+            acknowledgeConnection = false;
+            check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
+                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel) == ERROR_DLL_INIT_FAILED,
+                "successful message delivery without secondary owner acknowledgement is not a connection");
+            acknowledgeConnection = true;
             shared.enabled = FALSE;
             SendMessageW(window, apply, 0, 0);
             SendMessageW(secondary, apply, 0, 0);
             shared.enabled = TRUE;
             SetEvent(cancel);
             check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
-                nullptr, TestConnectionHook, ready, nullptr, cancel, true, 0) == ERROR_CANCELLED &&
+                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel) == ERROR_CANCELLED &&
                 !cloaked() && !secondaryCloaked(),
                 "cancelled reconnect cannot reattach native taskbars");
             connectionState = nullptr;
             shared.enabled = FALSE;
+            for (const HWND attached : windows)
+            {
+                RemovePropW(attached, kHookHostProcessProperty);
+                RemovePropW(attached, kHookOwnerProperty);
+            }
         }
-        if (ready) CloseHandle(ready);
         if (cancel) CloseHandle(cancel);
         using snowdesktop::dock_settings_rules::ShouldRevealTaskbarForShellPanel;
         for (bool classic : {false, true})

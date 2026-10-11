@@ -1,19 +1,36 @@
 #pragma once
 
 #include "taskbar_native.h"
+#include "taskbar_hook_lifecycle.h"
 #include <dwmapi.h>
 #include <array>
 #include <span>
 
 namespace snowdesktop::taskbar_hook
 {
-// Reuse the XAML connection while attaching native suppression on every owner
-// thread. Ready is a one-time XAML notification, not an acknowledgement of each
-// subsequent native attachment (for example after toggling suppression).
+inline bool AreTaskbarThreadsConnected(std::span<const HWND> taskbars,
+    DWORD processId, DWORD hostProcessId) noexcept
+{
+    if (taskbars.empty() || !processId || !hostProcessId) return false;
+    HANDLE instance = nullptr;
+    for (const HWND window : taskbars)
+    {
+        DWORD owner = 0;
+        if (!GetWindowThreadProcessId(window, &owner) || owner != processId) return false;
+        const HANDLE module = GetPropW(window, kHookOwnerProperty);
+        if (!module || (instance && module != instance) ||
+            reinterpret_cast<std::uintptr_t>(GetPropW(window, kHookHostProcessProperty)) != hostProcessId)
+            return false;
+        instance = module;
+    }
+    return true;
+}
+
+// WH_CALLWNDPROC installs the native owner synchronously on each taskbar
+// thread. XAML may fail or never become ready; it does not own this connection.
 inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
-    DWORD processId, HMODULE module, HOOKPROC procedure, HANDLE ready,
-    HANDLE explorer, HANDLE cancel, bool appearanceConnected,
-    DWORD readyTimeout = 35000)
+    DWORD processId, DWORD hostProcessId, HMODULE module, HOOKPROC procedure,
+    HANDLE explorer, HANDLE cancel)
 {
     const auto interrupted = [&]() -> DWORD {
         if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0)
@@ -36,7 +53,9 @@ inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
             const DWORD error = GetLastError();
             return error ? error : ERROR_TIMEOUT;
         }
-        return ERROR_SUCCESS;
+        const std::array<HWND, 1> attached{window};
+        return AreTaskbarThreadsConnected(attached, processId, hostProcessId)
+            ? ERROR_SUCCESS : ERROR_DLL_INIT_FAILED;
     };
     struct ScopedHook
     {
@@ -44,7 +63,6 @@ inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
         ~ScopedHook() { if (value) UnhookWindowsHookEx(value); }
     } primaryHook;
     if (const DWORD error = attach(primary, primaryHook.value)) return error;
-    // Do not gate secondary attachment on the first-ever XAML ready event.
     // The caller also supplies cached handles for temporarily reparented bars.
     for (HWND window : taskbars)
     {
@@ -53,21 +71,8 @@ inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
         if (const DWORD error = attach(window, hook.value)) return error;
     }
     if (const DWORD error = interrupted()) return error;
-    if (appearanceConnected) return ERROR_SUCCESS;
-
-    std::array<HANDLE, 3> handles{};
-    DWORD count = 0;
-    const DWORD cancelIndex = cancel ? count : MAXDWORD;
-    if (cancel) handles[count++] = cancel;
-    const DWORD explorerIndex = explorer ? count : MAXDWORD;
-    if (explorer) handles[count++] = explorer;
-    const DWORD readyIndex = count;
-    handles[count++] = ready;
-    const DWORD result = WaitForMultipleObjects(count, handles.data(), FALSE, readyTimeout);
-    if (cancelIndex != MAXDWORD && result == WAIT_OBJECT_0 + cancelIndex) return ERROR_CANCELLED;
-    if (explorerIndex != MAXDWORD && result == WAIT_OBJECT_0 + explorerIndex) return ERROR_PROCESS_ABORTED;
-    if (result == WAIT_OBJECT_0 + readyIndex) return ERROR_SUCCESS;
-    return result == WAIT_TIMEOUT ? ERROR_TIMEOUT : GetLastError();
+    return AreTaskbarThreadsConnected(taskbars, processId, hostProcessId)
+        ? ERROR_SUCCESS : ERROR_DLL_INIT_FAILED;
 }
 
 inline bool AreSuppressedTaskbarsControlled(const Snapshot& snapshot)

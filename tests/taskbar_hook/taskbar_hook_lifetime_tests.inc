@@ -1,6 +1,7 @@
 // Included by taskbar_native_tests.cpp; runs the actual Hook export in an
 // isolated explorer.exe fixture, never the user's Explorer or desktop host.
 #include "../../src/taskbar_hook/taskbar_hook_lifecycle.h"
+#include "../../src/taskbar_hook/taskbar_connection.h"
 #include <commctrl.h>
 #include <shellapi.h>
 #include <tlhelp32.h>
@@ -100,8 +101,33 @@ int RunLifetimeChild(const std::filesystem::path& root,
     const HWND window = CreateWindowExW(0, registration.lpszClassName, L"Hook lifetime fixture",
         WS_POPUP, -32000, -32000, 120, 48, nullptr, nullptr, registration.hInstance, nullptr);
     if (!window) return fail("create private hidden taskbar");
-    shared->targetCount = 1;
+    registration.lpszClassName = L"Shell_SecondaryTrayWnd";
+    if (!RegisterClassW(&registration)) return fail("register private secondary taskbar class");
+    const HWND secondary = CreateWindowExW(0, registration.lpszClassName, L"Secondary hook lifetime fixture",
+        WS_POPUP, -32000, -32000, 120, 48, nullptr, nullptr, registration.hInstance, nullptr);
+    if (!secondary) return fail("create private hidden secondary taskbar");
+    const std::array<HWND, 2> windows{window, secondary};
+    shared->targetCount = 2;
     shared->targets[0].taskbar = reinterpret_cast<std::uintptr_t>(window);
+    shared->targets[1].taskbar = reinterpret_cast<std::uintptr_t>(secondary);
+    for (auto& target : shared->targets) target.protectAutoHideActivation = TRUE;
+    const auto observeActivation = [&](bool expected) {
+        std::array<AutoHideTraceRecord, kAutoHideTraceCapacity> records;
+        LONG dropped = 0;
+        DrainAutoHideTrace(shared->autoHideTrace, records, dropped);
+        for (const HWND target : windows) SendMessageW(target, WM_ACTIVATE, WA_ACTIVE, 0);
+        const LONG count = DrainAutoHideTrace(shared->autoHideTrace, records, dropped);
+        if (dropped || count != (expected ? 4 : 0)) return false;
+        for (std::size_t i = 0; expected && i < windows.size(); ++i)
+        {
+            const auto& before = records[i * 2];
+            const auto& after = records[i * 2 + 1];
+            if (before.kind != AutoHideTraceKind::ActivateBefore || after.kind != AutoHideTraceKind::ActivateAfter ||
+                before.taskbar != reinterpret_cast<std::uintptr_t>(windows[i]) || after.taskbar != before.taskbar ||
+                before.activation != WA_ACTIVE || after.activation != WA_ACTIVE) return false;
+        }
+        return true;
+    };
     const auto attach = [&](const std::filesystem::path& path, HMODULE& resident) -> bool {
         ResetEvent(ready);
         const HMODULE library = LoadLibraryW(path.c_str());
@@ -113,9 +139,12 @@ int RunLifetimeChild(const std::filesystem::path& root,
         // masked the old DLL's defect. Only caller/worker references are owned
         // here, so their release deterministically checks the subclass lifetime.
         CWPSTRUCT message{};
-        message.hwnd = window;
         message.message = WM_NULL;
-        hookProc(HC_ACTION, 0, reinterpret_cast<LPARAM>(&message));
+        for (const HWND target : windows)
+        {
+            message.hwnd = target;
+            hookProc(HC_ACTION, 0, reinterpret_cast<LPARAM>(&message));
+        }
         const bool failedSafely = WaitForSingleObject(ready, 5000) == WAIT_OBJECT_0 &&
             shared->status == kStatusFailed && shared->lastError == ERROR_ALREADY_EXISTS &&
             GetPropW(window, kHookOwnerProperty) == library;
@@ -129,6 +158,23 @@ int RunLifetimeChild(const std::filesystem::path& root,
     HMODULE first = nullptr;
     if (!attach(root / L"SnowDesktopTaskbarHook.dll", first))
         return fail("failed TAP must retain owner callback code after caller/worker references are released");
+    if (!observeActivation(true))
+        return fail("failed XAML must not prevent native activation dispatch on either taskbar");
+    if (!AreTaskbarThreadsConnected(windows, GetCurrentProcessId(), GetCurrentProcessId()))
+        return fail("failed XAML must still acknowledge native connection for this host on both taskbars");
+    // A late symbol helper result must reach the observer through the owner
+    // callback even though no VisualTreeWatcher was ever constructed. The
+    // fixture deliberately fails ABI compatibility rather than hook real Shell.
+    shared->autoHideResolutionError = ERROR_NOT_SUPPORTED;
+    for (const HWND target : windows)
+        SendMessageW(target, RegisterWindowMessageW(kApplyMessageName), 0, 0);
+    std::array<AutoHideTraceRecord, kAutoHideTraceCapacity> symbols;
+    LONG dropped = 0;
+    const LONG symbolCount = DrainAutoHideTrace(shared->autoHideTrace, symbols, dropped);
+    if (std::none_of(symbols.begin(), symbols.begin() + symbolCount, [](const auto& record) {
+            return record.kind == AutoHideTraceKind::Adapter && record.request == ERROR_NOT_SUPPORTED;
+        }) || shared->status != kStatusFailed || shared->lastError != ERROR_ALREADY_EXISTS)
+        return fail("late adapter Apply must be consumed without clearing the separate XAML failure");
     RECT rect{};
     const auto query = [&] {
         rect = {};
@@ -141,17 +187,27 @@ int RunLifetimeChild(const std::filesystem::path& root,
     // A fresh DLL instance must retire the failed one on its window thread.
     HMODULE replacement = nullptr;
     if (!attach(root / L"ReplacementTaskbarHook.dll", replacement) || replacement == first ||
-        GetPropW(window, kHookOwnerProperty) != replacement || !query())
+        GetPropW(window, kHookOwnerProperty) != replacement || !query() || !observeActivation(true))
         return fail("replacement must safely retire a failed owner and handle the same query");
     shared->enabled = FALSE;
-    SendMessageW(window, RegisterWindowMessageW(kApplyMessageName), 0, 0);
-    if (!query()) return fail("host disable must preserve ordinary taskbar message delivery");
-    if (SendMessageW(window, RegisterWindowMessageW(kRetireHookMessageName),
-            reinterpret_cast<WPARAM>(replacement), 0) != 1 ||
-        GetPropW(window, kHookOwnerProperty) || !query())
-        return fail("retirement must remove ownership and preserve the original window procedure");
+    for (const HWND target : windows)
+        SendMessageW(target, RegisterWindowMessageW(kApplyMessageName), 0, 0);
+    if (!query() || !observeActivation(false)) return fail("host disable must stop observation and preserve ordinary messages");
+    shared->enabled = TRUE;
+    for (const HWND target : windows)
+        SendMessageW(target, RegisterWindowMessageW(kApplyMessageName), 0, 0);
+    if (!observeActivation(true)) return fail("re-enable must restore observation without XAML reinjection");
+    for (const HWND target : windows)
+        if (SendMessageW(target, RegisterWindowMessageW(kRetireHookMessageName),
+                reinterpret_cast<WPARAM>(replacement), 0) != 1 ||
+            GetPropW(target, kHookOwnerProperty) || GetPropW(target, kHookHostProcessProperty))
+            return fail("retirement must remove native owner acknowledgement from every taskbar");
+    if (!query() || !observeActivation(false))
+        return fail("retirement must stop observation and preserve the original window procedure");
+    DestroyWindow(secondary);
     DestroyWindow(window);
     UnregisterClassW(registration.lpszClassName, registration.hInstance);
+    UnregisterClassW(L"Shell_TrayWnd", registration.hInstance);
     if (!GetModuleHandleW((root / L"SnowDesktopTaskbarHook.dll").c_str()) ||
         !GetModuleHandleW((root / L"ReplacementTaskbarHook.dll").c_str()))
         return fail("retired callback code must remain safe for calls already in flight");
@@ -159,7 +215,7 @@ int RunLifetimeChild(const std::filesystem::path& root,
     UnmapViewOfFile(shared);
     CloseHandle(mapping);
     FreeLibrary(sentinel);
-    report << "PASS: failed TAP release, foreign query, replacement, disable and retirement\n";
+    report << "PASS: failed TAP release, independent all-taskbar activation, late adapter Apply, foreign query, replacement, disable, re-enable and retirement\n";
     return 0;
 }
 

@@ -635,9 +635,10 @@ public:
         // A retained mapping/TAP from an earlier host is not this launch's
         // connection. Inject once per host/Explorer pair to retire that DLL
         // and bind activation observation and native entry points together.
-        const bool ownsConnection = injectedExplorerProcessId_ == explorerProcessId;
-        const bool alreadyInjected = ownsConnection && !nativeMissing && state_->explorerProcessId == explorerProcessId &&
-            state_->status >= snowdesktop::taskbar_hook::kStatusInjecting;
+        const bool ownsConnection = injectedExplorerProcessId_ == explorerProcessId &&
+            snowdesktop::taskbar_hook::AreTaskbarThreadsConnected(
+                taskbars, explorerProcessId, GetCurrentProcessId());
+        const bool alreadyInjected = ownsConnection && !nativeMissing;
         if (alreadyInjected && !resolveSymbols)
             return true;
         if (injectionInFlight_.load(std::memory_order_acquire))
@@ -647,8 +648,6 @@ public:
             now - lastInjectionAttemptTick_ < kFailedInjectionRetryDelayMs)
             return false;
 
-        const bool appearanceConnected = ownsConnection && state_->explorerProcessId == explorerProcessId &&
-            state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
         state_->explorerProcessId = explorerProcessId;
         lastInjectionAttemptTick_ = now;
         if (resolveSymbols)
@@ -661,10 +660,14 @@ public:
             MemoryBarrier();
             InterlockedIncrement(&state_->generation);
         }
-        if (!appearanceConnected)
+        // Symbol retries and native reattachment must not erase the independent
+        // XAML failure/status reported by Explorer.
+        if (!ownsConnection)
+        {
             InterlockedExchange(&state_->status,
                 snowdesktop::taskbar_hook::kStatusInjecting);
-        InterlockedExchange(&state_->lastError, ERROR_SUCCESS);
+            InterlockedExchange(&state_->lastError, ERROR_SUCCESS);
+        }
         if (injectionCancelEvent_)
             ResetEvent(injectionCancelEvent_);
         injectionInFlight_.store(true, std::memory_order_release);
@@ -675,10 +678,10 @@ public:
             const auto executable = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktop.exe";
             const auto symbolCache = std::filesystem::path(GetDataDirectoryPath()) / L"ShellHookSymbols";
             injectionThread_ = std::thread([this, primaryTaskbar, explorerProcessId,
-                    appearanceConnected, alreadyInjected, resolveSymbols, executable, symbolCache,
+                    alreadyInjected, resolveSymbols, executable, symbolCache,
                     taskbars = std::move(taskbars)] {
                 const bool injected = alreadyInjected || Inject(primaryTaskbar, explorerProcessId,
-                    taskbars, appearanceConnected);
+                    taskbars);
                 if (injected && resolveSymbols)
                     ResolveAdapter(explorerProcessId, taskbars, executable, symbolCache);
                 {
@@ -792,7 +795,7 @@ private:
     }
 
     bool Inject(HWND taskbar, DWORD expectedExplorerProcessId,
-        const std::vector<HWND>& taskbars, bool appearanceConnected)
+        const std::vector<HWND>& taskbars)
     {
         const std::filesystem::path hookPath =
             snowdesktop::deployment::GetTaskbarHookPath();
@@ -800,12 +803,6 @@ private:
         {
             return Fail(expectedExplorerProcessId, ERROR_FILE_NOT_FOUND);
         }
-
-        HANDLE readyEvent = CreateEventW(nullptr, TRUE, FALSE,
-            snowdesktop::taskbar_hook::kReadyEventName);
-        if (!readyEvent)
-            return Fail(expectedExplorerProcessId, GetLastError());
-        ResetEvent(readyEvent);
 
         HANDLE explorerProcess = OpenProcess(SYNCHRONIZE, FALSE,
             expectedExplorerProcessId);
@@ -816,20 +813,18 @@ private:
             const DWORD error = GetLastError();
             if (explorerProcess)
                 CloseHandle(explorerProcess);
-            CloseHandle(readyEvent);
             return Fail(expectedExplorerProcessId, error);
         }
         auto hookProc = reinterpret_cast<HOOKPROC>(
             GetProcAddress(module, "SnowDesktopTaskbarHookProc"));
         const DWORD error = hookProc
             ? snowdesktop::taskbar_hook::ConnectTaskbarThreads(taskbar, taskbars,
-                expectedExplorerProcessId, module, hookProc, readyEvent,
-                explorerProcess, injectionCancelEvent_, appearanceConnected)
+                expectedExplorerProcessId, GetCurrentProcessId(), module, hookProc,
+                explorerProcess, injectionCancelEvent_)
             : ERROR_INVALID_FUNCTION;
         FreeLibrary(module);
         if (explorerProcess)
             CloseHandle(explorerProcess);
-        CloseHandle(readyEvent);
 
         if (error == ERROR_CANCELLED) return false;
         if (error != ERROR_SUCCESS) return Fail(expectedExplorerProcessId, error);
@@ -837,7 +832,8 @@ private:
         std::lock_guard lock(mutex_);
         const bool connected = state_ &&
             state_->explorerProcessId == expectedExplorerProcessId &&
-            state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
+            snowdesktop::taskbar_hook::AreTaskbarThreadsConnected(
+                taskbars, expectedExplorerProcessId, GetCurrentProcessId());
         if (connected) injectedExplorerProcessId_ = expectedExplorerProcessId;
         return connected;
     }
