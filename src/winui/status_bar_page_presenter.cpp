@@ -208,6 +208,9 @@ struct StatusBarPagePresenter::Impl
         for (auto row : {edgeRow.root, monitorsRow.root, scaleRow.root}) basic.Children().Append(row);
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         basic.Children().Append(mergedHeight->Content());
+        root.Children().Append(mergedNotice);
+        root.Children().Append(dockAppearanceLink);
+        root.Children().Append(independentAppearance);
         for (auto section : {leftSection, infoSection, timeNotificationSection, controlCenterSection})
         {
             section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -269,9 +272,7 @@ struct StatusBarPagePresenter::Impl
         independentAppearance.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         independentBody.Spacing(12);
         mergedNotice.TextWrapping(mux::TextWrapping::Wrap);
-        root.Children().Append(mergedNotice);
         dockAppearanceLink.HorizontalAlignment(mux::HorizontalAlignment::Left);
-        root.Children().Append(dockAppearanceLink);
         const auto appearanceLinkToken = dockAppearanceLink.Click([this](const auto&, const auto&) {
             if (active && navigate) navigate(SettingsRoute::ForPage(SettingsPage::Dock, "personalization.dockAppearance"));
         });
@@ -279,7 +280,6 @@ struct StatusBarPagePresenter::Impl
         independentHost.Content(independentBody);
         independentHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         independentAppearance.Content(independentHost);
-        root.Children().Append(independentAppearance);
         auto appearance = independentBody;
         Title(defaultThemeTitle); appearance.Children().Append(defaultThemeTitle);
         InitializeTheme(defaultTheme, appearance);
