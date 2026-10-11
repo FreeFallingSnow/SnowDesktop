@@ -12,7 +12,6 @@
 #include <dwrite.h>
 #include <shellapi.h>
 #include <wrl/client.h>
-#include <array>
 #include <cmath>
 #include <utility>
 
@@ -77,57 +76,31 @@ bool DrawNotificationBell(ID2D1RenderTarget* context, ID2D1SolidColorBrush* brus
 }
 
 void DrawCenteredBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, IDWriteTextFormat* format,
-    std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush, bool informationOpticalDescent = false,
-    bool separateLabelValue = false)
+    std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush, bool fixedInformationBaseline = false)
 {
     ComPtr<IDWriteTextLayout> layout;
     if (FAILED(factory->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format,
             bounds.right - bounds.left, bounds.bottom - bounds.top, &layout))) return;
-    DWRITE_OVERHANG_METRICS ink{};
-    const bool measured = SUCCEEDED(layout->GetOverhangMetrics(&ink));
-    // Balance the smaller information text against the surrounding icons.
-    // Measure the displayed ink: a synthetic cap reference has different
-    // extents at larger font sizes and moves dates farther than intended.
-    const float descent = informationOpticalDescent ? format->GetFontSize() / 12.f : 0;
-    const float vertical = (measured ? (ink.top - ink.bottom) / 2 : 0) + descent;
-    const auto origin = D2D1::Point2F(bounds.left + (measured ? (ink.left - ink.right) / 2 : 0),
-        bounds.top + vertical);
-    std::array<ComPtr<IDWriteTextLayout>, 2> fragments;
-    std::array<DWRITE_OVERHANG_METRICS, 2> fragmentInk{};
-    std::array<float, 2> fragmentX{};
-    const auto separator = value.rfind(L' ');
-    bool separated = separateLabelValue && separator != std::wstring_view::npos && separator + 1 < value.size();
-    if (separated)
+    auto origin = D2D1::Point2F(bounds.left, bounds.top);
+    if (fixedInformationBaseline)
     {
-        // Keep the full layout's horizontal positions and spacing, but center
-        // the label and value vertically using their own ink. CJK labels are
-        // taller than the adjacent Latin digits, which otherwise look raised.
-        const std::size_t split = separator + 1;
-        for (std::size_t i = 0; i < fragments.size(); ++i)
+        // One line box and baseline for every readout, independent of the
+        // current digits. Keep labels and values together on that baseline.
+        const float size = format->GetFontSize();
+        if (FAILED(layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, size * 4.f / 3.f, size))) return;
+        origin.y += size / 12.f;
+    }
+    else
+    {
+        DWRITE_OVERHANG_METRICS ink{};
+        if (SUCCEEDED(layout->GetOverhangMetrics(&ink)))
         {
-            const auto part = i == 0 ? value.substr(0, split) : value.substr(split);
-            float unusedY = 0;
-            float partX = 0;
-            DWRITE_HIT_TEST_METRICS hit{};
-            if (FAILED(factory->CreateTextLayout(part.data(), static_cast<UINT32>(part.size()), format,
-                    bounds.right - bounds.left, bounds.bottom - bounds.top, &fragments[i])) ||
-                FAILED(fragments[i]->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING)) ||
-                FAILED(fragments[i]->GetOverhangMetrics(&fragmentInk[i])) ||
-                FAILED(layout->HitTestTextPosition(i == 0 ? 0 : static_cast<UINT32>(split), FALSE,
-                    &fragmentX[i], &unusedY, &hit)) ||
-                FAILED(fragments[i]->HitTestTextPosition(0, FALSE, &partX, &unusedY, &hit)))
-            { separated = false; break; }
-            // The logical first character need not be the leftmost character
-            // in a bidirectional label; retain its original anchor either way.
-            fragmentX[i] -= partX;
+            origin.x += (ink.left - ink.right) / 2;
+            origin.y += (ink.top - ink.bottom) / 2;
         }
     }
     context->PushAxisAlignedClip(bounds, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    if (separated)
-        for (std::size_t i = 0; i < fragments.size(); ++i)
-            context->DrawTextLayout(D2D1::Point2F(origin.x + fragmentX[i],
-                bounds.top + (fragmentInk[i].top - fragmentInk[i].bottom) / 2 + descent), fragments[i].Get(), brush);
-    else context->DrawTextLayout(origin, layout.Get(), brush);
+    context->DrawTextLayout(origin, layout.Get(), brush);
     context->PopAxisAlignedClip();
 }
 
@@ -273,7 +246,7 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         const auto value = snapshot.memory;
         const auto usage = value && value->available && value->totalBytes ?
             Percent(100. * value->usedBytes / value->totalBytes) : L"—";
-        add("memory", _LW("statusBar.memory") + std::wstring(L" ") + usage, StatusBarAction::Memory, L"", true);
+        add("memory", L"RAM " + usage, StatusBarAction::Memory, L"", true);
         items.back().tip = std::wstring(_LW("statusBar.memory")) + L"  " + usage;
     }
     if (s.gpu)
@@ -411,7 +384,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
             if (item.icon || item.inputIcon || item.text.empty()) return 28.f * scale;
             auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
-            if (item.key == "memory") reserved = std::wstring(_LW("statusBar.memory")) + L" 100%";
+            if (item.key == "memory") reserved = L"RAM 100%";
             if (item.key == "cpu") reserved = L"CPU 100%";
             if (item.key == "gpu") reserved = L"GPU 100%";
             // Reserve equal digit advances for the date/time too.
@@ -617,7 +590,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                     const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
                     DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get(),
                         item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
-                        item.key == "gpu" || item.key == "traffic", item.key == "memory");
+                        item.key == "gpu" || item.key == "traffic");
                 }
             }
             if (keyboardFocusVisible && &item == &items[std::min(focused, items.size() - 1)])
