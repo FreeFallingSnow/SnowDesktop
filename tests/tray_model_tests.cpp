@@ -97,6 +97,11 @@ int RunTrayModelTests()
     }
     {
         namespace input = snowdesktop::status_bar_input_method;
+        check(input::detail::LayoutLabel(L"Microsoft Pinyin", L"ZH") == L"拼" &&
+            input::detail::LayoutLabel(L"微软拼音", L"ZH") == L"拼" &&
+            input::detail::LayoutLabel(L"US keyboard", L"EN") == L"EN" &&
+            input::detail::LayoutLabel(L"Other Chinese input program", L"ZH") == L"ZH",
+            "the layout symbol identifies Pinyin without inventing that profile for other keyboards");
         TF_INPUTPROCESSORPROFILE first{}, second{};
         first.dwProfileType=second.dwProfileType=TF_PROFILETYPE_INPUTPROCESSOR;
         first.langid=second.langid=0x0804;
@@ -134,6 +139,18 @@ int RunTrayModelTests()
         input::detail::DisplayCache display;
         check(display.Get({}, {}, false).label.empty(), "startup has no fabricated input mode");
         old.label = L"A";
+        input::detail::DisplayCache layoutDisplay;
+        auto layoutOnly = old; layoutOnly.label.clear(); layoutOnly.layoutLabel = L"拼";
+        check(layoutDisplay.Get(layoutOnly, layoutOnly, false).layoutLabel == L"拼" &&
+            layoutDisplay.Get(layoutOnly, layoutOnly, false).label.empty(),
+            "an available keyboard layout is shown without inventing an unavailable conversion mode");
+        auto withMode = layoutOnly; withMode.label = L"中";
+        layoutDisplay.Get(withMode, withMode, false);
+        check(layoutDisplay.Get(layoutOnly, layoutOnly, false).label == L"中",
+            "an unavailable conversion query retains the same target's last successful mode");
+        auto newLayoutTarget = layoutOnly; newLayoutTarget.foreground = reinterpret_cast<HWND>(2);
+        check(layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false).label.empty(),
+            "a valid new layout target cannot inherit another application's conversion mode");
         check(display.Get(old, old, false).label == L"A", "first valid input mode is presented immediately");
         auto other = old; other.foreground = reinterpret_cast<HWND>(2); other.label = L"B";
         check(display.Get(old, other, false).label == L"A" &&

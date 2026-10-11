@@ -114,11 +114,9 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         if (!AppendMenuW(parent, MF_POPUP, reinterpret_cast<UINT_PTR>(styles), _LW("settings.desktopStyle.title")))
         { DestroyMenu(styles); return; }
         SetMenuItemIcon(parent, reinterpret_cast<UINT_PTR>(styles), L"\uF359", MenuIconFont::FluentRegular);
-        const wchar_t* glyphs[]{L"\uF8B5", L"\uF133", L"\uF587", L"\uF587", L"\uF15B"};
         for (UINT index = 0; index < std::size(kDesktopStyles); ++index)
         {
             AppendMenuW(styles, MF_STRING, kDesktopStyleFirst + index, _LW(kDesktopStyleLabels[index]));
-            SetMenuItemIcon(styles, kDesktopStyleFirst + index, glyphs[index], MenuIconFont::FluentRegular);
         }
     };
     addChoice(positionMenu, kContextDockPositionBottom, _LW("app.dock.bottom"), dockSettings_.position == DockPosition::Bottom, L"\uF148");
@@ -247,7 +245,7 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         { DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
         SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(appearanceMenu), L"\uF592", MenuIconFont::FluentRegular);
         SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(menu), L"\uE445", MenuIconFont::FluentRegular);
-        addDesktopStyles(mergedMenu);
+        addDesktopStyles(root);
         const HMENU heightMenu = CreatePopupMenu();
         const HMENU iconMenu = CreatePopupMenu();
         if (!heightMenu || !iconMenu)

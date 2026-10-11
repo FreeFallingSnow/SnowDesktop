@@ -1284,10 +1284,10 @@ void StatusBar::ReleaseGraphicsResources()
     }
     self.composition.Reset(); self.text.Reset();
 }
-HRESULT StatusBar::ShowInputMethod(RECT anchor, bool context)
+HRESULT StatusBar::ShowInputMethod(RECT anchor, bool context, bool layoutPanel)
 {
     return impl_->settings.enabled && impl_->settings.inputMethod && impl_->inputMethod ?
-        impl_->inputMethod->Show(anchor, context) : E_UNEXPECTED;
+        impl_->inputMethod->Show(anchor, context, layoutPanel) : E_UNEXPECTED;
 }
 std::shared_ptr<tray::Service> StatusBar::Tray() const { return impl_->tray; }
 void StatusBar::SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,

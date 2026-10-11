@@ -204,13 +204,20 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         // back to its bar, independently for every monitor.
         items.back().flipGlyph = (s.position == DockPosition::Bottom) != snapshot.trayExpanded;
     }
-    if (s.inputMethod && !snapshot.inputMethod.label.empty())
+    if (s.inputMethod && (!snapshot.inputMethod.label.empty() || !snapshot.inputMethod.layoutLabel.empty()))
     {
         const auto& input = snapshot.inputMethod;
-        add("inputMethod", input.label, StatusBarAction::InputMethod);
-        items.back().tip = std::wstring(_LW("statusBar.inputMethod"));
+        const auto& layoutLabel = input.layoutLabel.empty() ? input.label : input.layoutLabel;
+        if (!input.label.empty() && input.label != layoutLabel)
+        {
+            add("inputMethod", input.label, StatusBarAction::InputMethod);
+            items.back().tip = std::wstring(_LW("statusBar.inputMethod"));
+            if (!input.description.empty()) items.back().tip += L"  " + input.description;
+            items.back().tip += L"\n" + std::wstring(_LW("statusBar.inputMethod.switch"));
+        }
+        add("inputMethodLayout", layoutLabel, StatusBarAction::InputMethodPanel);
+        items.back().tip = std::wstring(_LW("statusBar.inputMethodPanel"));
         if (!input.description.empty()) items.back().tip += L"  " + input.description;
-        items.back().tip += L"\n" + std::wstring(_LW("statusBar.inputMethod.switch"));
     }
     const auto audio = snapshot.audio;
     const auto power = snapshot.power;

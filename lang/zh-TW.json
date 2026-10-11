@@ -2399,7 +2399,7 @@
   "start.statusBarEnable.instructions": "1. 在狀態列設定中啟用狀態列。\n2. 選擇頂端或底端，以及要顯示的螢幕。\n3. 調整縮放，讓列內文字和圖示適合目前螢幕；不需要時可關閉狀態列。",
   "start.statusBarContents.title": "選擇狀態列內容",
   "start.statusBarContents.description": "選擇常用入口和效能資訊，並調整點擊行為。",
-  "start.statusBarContents.instructions": "在「左側」選擇系統選單、快速搜尋和工作檢視，在「資訊區」選擇輸入法、CPU、記憶體、GPU 和網路速度。時間、系統匣及系統控制依裝置能力顯示。在「點擊行為」中選擇點擊時間或控制中心時開啟的面板；可用選項因 Windows 版本而異。",
+  "start.statusBarContents.instructions": "在「左側」選擇系統選單、快速搜尋和工作檢視，在「資訊區」選擇 CPU、記憶體、GPU 和網路速度。在「控制中心」設定輸入法顯示及鍵盤配置面板，選擇音量、亮度等控制。時間、系統匣及系統控制依裝置能力顯示；時間、控制中心和鍵盤配置可分別選擇 SnowDesktop 或系統面板，可用選項因 Windows 版本而異。",
   "statusBar.inputMethodMenu": "輸入法選單",
   "statusBar.inputLanguageSettings": "語言設定",
   "statusBar.inputKeyboardSettings": "鍵盤設定",
@@ -2608,5 +2608,7 @@
   "app.dock.start_button": "開始按鈕",
   "settings.bars.mergedBar": "融合列",
   "settings.bars.positionAndAppearance": "位置與外觀",
-  "settings.bars.dockActions": "Dock 操作"
+  "settings.bars.dockActions": "Dock 操作",
+  "statusBar.inputMethodPanel": "鍵盤配置面板",
+  "statusBar.panelSystemInput": "系統鍵盤配置面板"
 }

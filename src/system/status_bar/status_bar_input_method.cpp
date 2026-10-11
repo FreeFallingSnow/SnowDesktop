@@ -109,6 +109,23 @@ Snapshot Read()
     wchar_t imeName[256]{};
     if (ImmGetDescriptionW(result.layout, imeName, static_cast<UINT>(std::size(imeName))) && imeName[0])
         result.description = imeName;
+    // TSF input programs may share a language/HKL. Prefer the active profile's
+    // own name so the layout button is distinct from the IME conversion mode.
+    Microsoft::WRL::ComPtr<ITfInputProcessorProfiles> profiles;
+    Microsoft::WRL::ComPtr<ITfInputProcessorProfileMgr> manager;
+    TF_INPUTPROCESSORPROFILE active{};
+    if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&profiles))) && SUCCEEDED(profiles.As(&manager)) &&
+        manager->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &active) == S_OK &&
+        active.langid == language && active.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+    {
+        BSTR description = nullptr;
+        if (SUCCEEDED(profiles->GetLanguageProfileDescription(active.clsid, active.langid,
+                active.guidProfile, &description)) && description)
+            result.description.assign(description, SysStringLen(description));
+        SysFreeString(description);
+    }
+    result.layoutLabel = detail::LayoutLabel(result.description, abbreviation);
     std::optional<bool> open;
     std::optional<DWORD> conversion;
     const auto primary = PRIMARYLANGID(language);
@@ -370,7 +387,7 @@ Snapshot Service::Current() const
     return impl_->display.Get(impl_->snapshot, current,
         current.menuActive || modern_menu::ActiveRootWindow() != nullptr);
 }
-HRESULT Service::Show(RECT anchor, bool context)
+HRESULT Service::Show(RECT anchor, bool context, bool layoutPanel)
 {
     if (IsRectEmpty(&anchor)) return E_INVALIDARG;
     if (context && !impl_->nativeModeName.empty() && native_menu::HasModernTaskbar())
@@ -409,10 +426,11 @@ HRESULT Service::Show(RECT anchor, bool context)
         anchor.top + (anchor.bottom - anchor.top) / 2};
     // The mode indicator differs from the language-list button: left toggles
     // conversion mode, right opens the active IME's own menu on both OS versions.
-    auto hr = picker->ClickImeModeItem(context ? 1 : 0, point, &anchor);
+    auto hr = layoutPanel ? picker->ShowInputSwitch(&anchor) :
+        picker->ClickImeModeItem(context ? 1 : 0, point, &anchor);
     // A plain keyboard layout may have no IME mode item. Keep its language
     // picker available without synthesizing a key or changing input mode.
-    if (hr == S_FALSE || hr == E_NOTIMPL)
+    if (!layoutPanel && (hr == S_FALSE || hr == E_NOTIMPL))
         hr = picker->ShowInputSwitch(&anchor);
     if (FAILED(hr) && native->picker.Get() == picker.Get())
         native->picker.Reset(); // Allow recovery after Shell restart.

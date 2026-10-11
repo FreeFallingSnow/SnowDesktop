@@ -31,6 +31,8 @@ inline StatusBarAction ResolveStatusBarClick(StatusBarAction action, bool contro
     const StatusBarSettings& settings, bool systemQuickSettings)
 {
     if (action == StatusBarAction::Calendar && settings.clockSystemPanel) return StatusBarAction::SystemCalendar;
+    if (action == StatusBarAction::InputMethodPanel && (controlDown || settings.inputMethodSystemPanel))
+        return StatusBarAction::SystemInputMethodPanel;
     if (action == StatusBarAction::ControlCenter && systemQuickSettings &&
         (controlDown || settings.controlCenterSystemPanel)) return StatusBarAction::SystemControlCenter;
     if (action == StatusBarAction::SystemControlCenter && !systemQuickSettings) return StatusBarAction::ControlCenter;

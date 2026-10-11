@@ -566,6 +566,16 @@ int main(int argc, char** argv)
         Check(firstEnable.taskView && !firstEnable.clockSystemPanel && !firstEnable.controlCenterSystemPanel,
             "task view starts visible while existing clock and controls retain the SnowDesktop panels");
         Check(firstEnable.inputMethod, "existing profiles gain the input indicator by default");
+        Check(!value.statusBar.inputMethodSystemPanel && !firstEnable.inputMethodSystemPanel,
+            "new and existing bars default to the SnowDesktop keyboard layout panel");
+        for (const bool systemInput : {true, false})
+        {
+            firstEnable.inputMethodSystemPanel = systemInput;
+            JsonValue stored; StatusBarSettings restored;
+            Check(ParseJson(EncodeStatusBarSettings(firstEnable), stored) &&
+                DecodeStatusBarSettings(stored, restored) && restored.inputMethodSystemPanel == systemInput,
+                "the chosen keyboard layout panel survives a settings reload");
+        }
         Check(!value.statusBar.clockShowSeconds && !firstEnable.clockShowSeconds,
             "new and existing profiles keep seconds hidden until enabled");
         Check(!value.statusBar.timeNotificationRightAligned && !firstEnable.timeNotificationRightAligned,

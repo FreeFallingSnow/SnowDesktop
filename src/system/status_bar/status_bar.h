@@ -25,7 +25,7 @@ struct TrayDragFeedback
     std::function<void()> end;
 };
 enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter, TaskView, SystemCalendar, InputMethod, InputMethodMenu, InputMethodPanel,
-    MenuTime, MenuTray, MenuNetwork, MenuAudio, MenuPower, MenuControlCenter, MenuQuickSearch, MenuSystem, MenuTaskView, MenuCpu, MenuMemory, MenuGpu, MenuTraffic };
+    MenuTime, MenuTray, MenuNetwork, MenuAudio, MenuPower, MenuControlCenter, MenuQuickSearch, MenuSystem, MenuTaskView, MenuCpu, MenuMemory, MenuGpu, MenuTraffic, SystemInputMethodPanel };
 inline bool IsStatusBarContextMenuAction(StatusBarAction action)
 {
     return action == StatusBarAction::Menu ||
@@ -100,7 +100,7 @@ public:
     // Icon/bar sizing excludes this merged strip's own reservation. Actual
     // desktop placement still uses the Shell-constrained work area above.
     RECT MergedSizingWorkArea(HMONITOR monitor, RECT screenWorkArea) const;
-    HRESULT ShowInputMethod(RECT anchor, bool context);
+    HRESULT ShowInputMethod(RECT anchor, bool context, bool layoutPanel = false);
     std::shared_ptr<tray::Service> Tray() const;
     void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
         std::function<bool(std::string_view, POINT)> dropOutside);

@@ -2399,7 +2399,7 @@
   "start.statusBarEnable.instructions": "1. Ative a barra de status nas suas configurações.\n2. Escolha a borda superior ou inferior e as telas em que ela aparecerá.\n3. Ajuste a escala do texto e dos ícones para sua tela. Desative a barra quando não precisar dela.",
   "start.statusBarContents.title": "Escolher o conteúdo da barra de status",
   "start.statusBarContents.description": "Escolha atalhos e informações de desempenho e ajuste a ação ao clicar.",
-  "start.statusBarContents.instructions": "Em Esquerda, escolha o menu do sistema, a busca rápida e a visão de tarefas. Em Área de informações, escolha o método de entrada, CPU, memória, GPU e velocidade da rede. Hora, bandeja e controles do sistema aparecem conforme os recursos do dispositivo. Em Ação ao clicar, escolha o painel aberto ao clicar na hora ou na central de controle; as opções dependem da versão do Windows.",
+  "start.statusBarContents.instructions": "Em Lado esquerdo, escolha o menu do sistema, a busca rápida e a Visão de Tarefas. Em Informações, escolha CPU, memória, GPU e velocidade da rede. Em Central de controle, configure os indicadores de entrada e o painel de layouts de teclado, além dos controles de volume, brilho e outros. A hora, a bandeja e os controles do sistema dependem dos recursos do dispositivo. Escolha separadamente os painéis do SnowDesktop ou do sistema para a hora, a central de controle e os layouts de teclado; as opções variam conforme a versão do Windows.",
   "statusBar.inputMethodMenu": "Menu do método de entrada",
   "statusBar.inputLanguageSettings": "Configurações de idioma",
   "statusBar.inputKeyboardSettings": "Configurações do teclado",
@@ -2608,5 +2608,7 @@
   "app.dock.start_button": "Botão Iniciar",
   "settings.bars.mergedBar": "Barra combinada",
   "settings.bars.positionAndAppearance": "Posição e aparência",
-  "settings.bars.dockActions": "Ações do Dock"
+  "settings.bars.dockActions": "Ações do Dock",
+  "statusBar.inputMethodPanel": "Painel de layouts de teclado",
+  "statusBar.panelSystemInput": "Painel do sistema de layouts de teclado"
 }

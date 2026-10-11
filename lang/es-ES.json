@@ -2399,7 +2399,7 @@
   "start.statusBarEnable.instructions": "1. Activa la barra de estado en su configuración.\n2. Elige el borde superior o inferior y las pantallas donde se mostrará.\n3. Ajusta la escala del texto y los iconos a tu pantalla. Puedes desactivarla cuando no la necesites.",
   "start.statusBarContents.title": "Elegir el contenido de la barra de estado",
   "start.statusBarContents.description": "Elige accesos e información de rendimiento y ajusta la acción al hacer clic.",
-  "start.statusBarContents.instructions": "En Izquierda, elige el menú del sistema, la búsqueda rápida y la vista de tareas. En Área de información, elige el método de entrada, CPU, memoria, GPU y velocidad de red. La hora, la bandeja y los controles del sistema aparecen según las capacidades del dispositivo. En Acción al hacer clic, elige qué panel se abre al pulsar la hora o el centro de control; las opciones dependen de la versión de Windows.",
+  "start.statusBarContents.instructions": "En Lado izquierdo, elija el menú del sistema, la búsqueda rápida y la Vista de tareas. En Información, elija CPU, memoria, GPU y velocidad de red. En Centro de control, configure los indicadores de entrada y el panel de distribuciones del teclado, además del volumen, el brillo y otros controles. La hora, la bandeja y los controles del sistema dependen de las capacidades del dispositivo. Elija por separado paneles de SnowDesktop o del sistema para la hora, el centro de control y las distribuciones del teclado; las opciones varían según la versión de Windows.",
   "statusBar.inputMethodMenu": "Menú del método de entrada",
   "statusBar.inputLanguageSettings": "Configuración de idioma",
   "statusBar.inputKeyboardSettings": "Configuración del teclado",
@@ -2608,5 +2608,7 @@
   "app.dock.start_button": "Botón Inicio",
   "settings.bars.mergedBar": "Barra combinada",
   "settings.bars.positionAndAppearance": "Posición y apariencia",
-  "settings.bars.dockActions": "Acciones del Dock"
+  "settings.bars.dockActions": "Acciones del Dock",
+  "statusBar.inputMethodPanel": "Panel de distribuciones del teclado",
+  "statusBar.panelSystemInput": "Panel del sistema de distribuciones del teclado"
 }

@@ -2399,7 +2399,7 @@
   "start.statusBarEnable.instructions": "1. ステータスバー設定でステータスバーを有効にします。\n2. 上端または下端と、表示するモニターを選びます。\n3. 文字やアイコンが画面に合うように倍率を調整します。不要になったら無効にできます。",
   "start.statusBarContents.title": "ステータスバーの内容を選ぶ",
   "start.statusBarContents.description": "ショートカットやパフォーマンス情報を選び、クリック時の動作を調整します。",
-  "start.statusBarContents.instructions": "「左側」でシステムメニュー、クイック検索、タスクビューを選びます。「情報エリア」で入力方式、CPU、メモリ、GPU、通信速度を選びます。時刻、トレイ、システム操作はデバイスの機能に応じて表示されます。「クリック時の動作」で時刻やコントロールセンターをクリックしたときに開くパネルを選びます。選択肢は Windows のバージョンによって異なります。",
+  "start.statusBarContents.instructions": "「左側」でシステムメニュー、クイック検索、タスクビューを選択し、「情報」で CPU、メモリ、GPU、ネットワーク速度を選択します。「コントロールセンター」で入力インジケーターの表示とキーボードレイアウトパネルを設定し、音量、明るさなどの操作項目を選択します。時刻、トレイ、システム操作の表示はデバイスの機能に応じて変わります。時刻、コントロールセンター、キーボードレイアウトには、それぞれ SnowDesktop またはシステムのパネルを選択できます。利用可能な項目は Windows のバージョンによって異なります。",
   "statusBar.inputMethodMenu": "入力方式メニュー",
   "statusBar.inputLanguageSettings": "言語の設定",
   "statusBar.inputKeyboardSettings": "キーボードの設定",
@@ -2608,5 +2608,7 @@
   "app.dock.start_button": "スタートボタン",
   "settings.bars.mergedBar": "統合バー",
   "settings.bars.positionAndAppearance": "位置と外観",
-  "settings.bars.dockActions": "Dock の操作"
+  "settings.bars.dockActions": "Dock の操作",
+  "statusBar.inputMethodPanel": "キーボードレイアウトパネル",
+  "statusBar.panelSystemInput": "システムのキーボードレイアウトパネル"
 }

@@ -2399,7 +2399,7 @@
   "start.statusBarEnable.instructions": "1. Activez la barre d’état dans ses paramètres.\n2. Choisissez le bord supérieur ou inférieur et les écrans à utiliser.\n3. Ajustez l’échelle du texte et des icônes à votre écran. Désactivez la barre lorsque vous n’en avez plus besoin.",
   "start.statusBarContents.title": "Choisir le contenu de la barre d’état",
   "start.statusBarContents.description": "Choisissez des raccourcis et des informations de performances, puis ajustez l’action au clic.",
-  "start.statusBarContents.instructions": "Dans Gauche, choisissez le menu système, la recherche rapide et l’affichage des tâches. Dans Zone d’informations, choisissez la méthode de saisie, le processeur, la mémoire, le GPU et le débit réseau. L’heure, la zone de notification et les commandes système apparaissent selon les capacités de l’appareil. Dans Action au clic, choisissez le panneau ouvert par un clic sur l’heure ou le centre de contrôle ; les options dépendent de la version de Windows.",
+  "start.statusBarContents.instructions": "Dans Côté gauche, choisissez le menu système, la recherche rapide et la Vue des tâches. Dans Informations, choisissez le processeur, la mémoire, le GPU et le débit réseau. Dans Centre de contrôle, configurez les indicateurs de saisie et le panneau des dispositions du clavier, puis les commandes de volume, de luminosité et autres. L’heure, la zone de notification et les commandes système dépendent des capacités de l’appareil. Choisissez séparément les panneaux SnowDesktop ou système pour l’heure, le centre de contrôle et les dispositions du clavier ; les options varient selon la version de Windows.",
   "statusBar.inputMethodMenu": "Menu de la méthode de saisie",
   "statusBar.inputLanguageSettings": "Paramètres de langue",
   "statusBar.inputKeyboardSettings": "Paramètres du clavier",
@@ -2608,5 +2608,7 @@
   "app.dock.start_button": "Bouton Démarrer",
   "settings.bars.mergedBar": "Barre fusionnée",
   "settings.bars.positionAndAppearance": "Position et apparence",
-  "settings.bars.dockActions": "Actions du Dock"
+  "settings.bars.dockActions": "Actions du Dock",
+  "statusBar.inputMethodPanel": "Panneau des dispositions du clavier",
+  "statusBar.panelSystemInput": "Panneau système des dispositions du clavier"
 }

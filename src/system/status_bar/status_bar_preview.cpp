@@ -56,6 +56,7 @@ StatusBarSnapshot Fixture()
     StatusBarSnapshot data;
     data.clock = L"2026/09/26   09:09";
     data.inputMethod.label = L"中"; // l10n-allow: fixed Chinese IME preview sample
+    data.inputMethod.layoutLabel = L"拼"; // l10n-allow: fixed Pinyin profile preview sample
     data.inputMethod.description = L"中文"; // l10n-allow: fixed native language-name preview data
     data.cpu.emplace(); data.cpu->available = true; data.cpu->warmingUp = false; data.cpu->usagePercent = 9;
     data.memory.emplace(); data.memory->available = true; data.memory->totalBytes = 32ull << 30; data.memory->usedBytes = 12ull << 30;
@@ -278,14 +279,16 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 const auto overflow = std::find_if(items.begin(), items.end(), [](const auto& item) {
                     return item.key == "tray" && !item.icon;
                 });
-                Require(overflow != items.end() && std::distance(overflow, items.end()) >= 3 &&
-                    (overflow + 1)->key == "inputMethod" && (overflow + 2)->key == "controlCenter",
-                    "input indicator must sit between tray expansion and control center");
+                Require(overflow != items.end() && std::distance(overflow, items.end()) >= 4 &&
+                    (overflow + 1)->key == "inputMethod" && (overflow + 1)->action == StatusBarAction::InputMethod &&
+                    (overflow + 2)->key == "inputMethodLayout" && (overflow + 2)->action == StatusBarAction::InputMethodPanel &&
+                    (overflow + 3)->key == "controlCenter",
+                    "distinct input-mode and layout-picker buttons must sit between tray expansion and control center");
                 auto hiddenInput = settings; hiddenInput.inputMethod = false;
                 const auto hiddenItems = BuildStatusBarItems(hiddenInput, data);
                 Require(std::none_of(hiddenItems.begin(), hiddenItems.end(), [](const auto& item) {
-                    return item.action == StatusBarAction::InputMethod;
-                }), "hidden input indicator must have no rendered or accessible click target");
+                    return item.action == StatusBarAction::InputMethod || item.action == StatusBarAction::InputMethodPanel;
+                }), "hidden input indicators must have no rendered or accessible click target");
                 auto switchedInput = data; switchedInput.inputMethod.label = L"英"; // l10n-allow: fixed Chinese IME mode-transition sample
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, switchedInput)),
                     "IME mode changes must refresh the indicator without a layout change");

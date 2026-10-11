@@ -2399,7 +2399,7 @@
   "start.statusBarEnable.instructions": "1. Aktiviere die Statusleiste in ihren Einstellungen.\n2. Wähle den oberen oder unteren Rand und die gewünschten Bildschirme.\n3. Passe die Skalierung von Text und Symbolen an deinen Bildschirm an. Bei Bedarf kannst du die Statusleiste wieder deaktivieren.",
   "start.statusBarContents.title": "Inhalte der Statusleiste auswählen",
   "start.statusBarContents.description": "Schnellzugriffe und Leistungsdaten auswählen und das Klickverhalten anpassen.",
-  "start.statusBarContents.instructions": "Wähle unter Links das Systemmenü, die Schnellsuche und die Aufgabenansicht. Wähle im Informationsbereich Eingabemethode, CPU, Arbeitsspeicher, GPU und Netzwerkgeschwindigkeit. Uhrzeit, Infobereich und Systemsteuerungen erscheinen je nach Gerätefunktionen. Unter Klickverhalten wählst du das Fenster, das ein Klick auf Uhrzeit oder Kontrollzentrum öffnet; die Optionen hängen von der Windows-Version ab.",
+  "start.statusBarContents.instructions": "Wählen Sie unter Linke Seite das Systemmenü, die Schnellsuche und die Aufgabenansicht. Wählen Sie unter Informationen CPU, Arbeitsspeicher, GPU und Netzwerkgeschwindigkeit. Konfigurieren Sie unter Kontrollzentrum die Eingabeanzeigen und die Tastaturlayout-Auswahl sowie Lautstärke, Helligkeit und weitere Steuerelemente. Uhrzeit, Infobereich und Systemsteuerung hängen von den Gerätefunktionen ab. Wählen Sie für Uhrzeit, Kontrollzentrum und Tastaturlayouts jeweils SnowDesktop oder das System; die verfügbaren Optionen hängen von der Windows-Version ab.",
   "statusBar.inputMethodMenu": "Eingabemethodenmenü",
   "statusBar.inputLanguageSettings": "Spracheinstellungen",
   "statusBar.inputKeyboardSettings": "Tastatureinstellungen",
@@ -2608,5 +2608,7 @@
   "app.dock.start_button": "Start-Schaltfläche",
   "settings.bars.mergedBar": "Zusammengeführte Leiste",
   "settings.bars.positionAndAppearance": "Position und Erscheinungsbild",
-  "settings.bars.dockActions": "Dock-Aktionen"
+  "settings.bars.dockActions": "Dock-Aktionen",
+  "statusBar.inputMethodPanel": "Tastaturlayout-Auswahl",
+  "statusBar.panelSystemInput": "Systemauswahl für Tastaturlayouts"
 }

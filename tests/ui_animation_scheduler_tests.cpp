@@ -585,6 +585,14 @@ void TestStatusBarShellShortcuts()
         ResolveStatusBarClick(Action::Dismiss, true) == Action::Dismiss,
         "ordinary click opens the local panel and blank click still dismisses with Ctrl held");
     StatusBarSettings settings;
+    Check(ResolveStatusBarClick(Action::InputMethodPanel, false, settings, true) == Action::InputMethodPanel &&
+        ResolveStatusBarClick(Action::InputMethodPanel, true, settings, true) == Action::SystemInputMethodPanel &&
+        ResolveStatusBarClick(Action::InputMethod, true, settings, true) == Action::InputMethod,
+        "the default layout picker and Ctrl override are separate from input-mode toggling");
+    settings.inputMethodSystemPanel = true;
+    Check(ResolveStatusBarClick(Action::InputMethodPanel, false, settings, false) == Action::SystemInputMethodPanel &&
+        ResolveStatusBarClick(Action::SystemInputMethodPanel, false, settings, true) == Action::SystemInputMethodPanel,
+        "the saved system layout picker works independently of Quick Settings support and preserves resolved intent");
     Check(ResolveStatusBarClick(Action::Calendar, false, settings, true) == Action::Calendar &&
         ResolveStatusBarClick(Action::ControlCenter, false, settings, true) == Action::ControlCenter,
         "new click options preserve the existing local-panel defaults");

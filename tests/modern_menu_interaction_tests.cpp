@@ -515,15 +515,22 @@ void CheckStatusBarKeyboardMessages()
     SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(48, 16));
     SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), MAKELPARAM(-1, -1));
     Expect(probe.invoked.size() == 6 &&
-        probe.invoked[4].action == StatusBarAction::InputMethodPanel &&
-        probe.invoked[5].action == StatusBarAction::InputMethodPanel && probe.invoked[4].bounds.left == 32,
-        "mouse and keyboard IME context requests open the picker panel without invoking the native menu");
+        probe.invoked[4].action == StatusBarAction::InputMethodMenu &&
+        probe.invoked[5].action == StatusBarAction::InputMethodMenu && probe.invoked[4].bounds.left == 32,
+        "mouse and keyboard context requests on the mode button use the active IME menu");
     SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
     Expect(probe.invoked.size() == 7 && probe.invoked.back().action == StatusBarAction::InputMethod,
         "normal IME activation remains distinct from the context menu request");
     probe.items[2].bounds = {};
     SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(48, 16));
     Expect(probe.invoked.size() == 7, "a hidden IME control cannot respond to context clicks");
+    StatusBarItem layout{}; layout.key = "inputMethodLayout"; layout.action = StatusBarAction::InputMethodPanel;
+    layout.bounds = {64, 0, 100, 32}; probe.items.push_back(layout); probe.input.focused = 3;
+    SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
+    SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+    Expect(probe.invoked.size() == 9 && probe.invoked[7].action == StatusBarAction::InputMethodPanel &&
+        probe.invoked[8].action == StatusBarAction::MenuControlCenter,
+        "the separate layout button opens the picker, with visibility and panel options in its control-center context menu");
     Expect(SetKeyboardState(saved) != FALSE, "thread-local key state is restored");
     // A real no-activate bar used to keep desktop/Dock selection because tray
     // and blank presses bypass action activation. Record only the host effect;

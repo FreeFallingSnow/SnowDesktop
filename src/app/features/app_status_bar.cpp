@@ -135,7 +135,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     statusBarActivationMonitor_ = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
     const double shortcutStarted = action == Action::Notifications || action == Action::SystemControlCenter ||
         action == Action::TaskView || action == Action::SystemCalendar ||
-        action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::InputMethodPanel
+        action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::InputMethodPanel || action == Action::SystemInputMethodPanel
         ? snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() : -1;
     TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
     const HWND activeMenu = snowdesktop::modern_menu::ActiveRootWindow();
@@ -366,7 +366,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         action == Action::QuickSearch || action == Action::Settings ||
         action == Action::Notifications || action == Action::SystemControlCenter ||
         action == Action::TaskView || action == Action::SystemCalendar ||
-        action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::InputMethodPanel;
+        action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::InputMethodPanel || action == Action::SystemInputMethodPanel;
     if (externalSurface && systemPanel_ && systemPanel_->IsOpen())
     {
         TraceStatusBarShellActivation(action, generation, L"wait-system-panel", hold->shortcutStartedMilliseconds);
@@ -479,12 +479,13 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             MessageBoxW(hwnd_, _LW("statusBar.inputMethodFailed"), _LW("statusBar.inputMethod"), MB_OK | MB_ICONINFORMATION);
         }
     }
-    else if (action == Action::InputMethod || action == Action::InputMethodMenu)
+    else if (action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::SystemInputMethodPanel)
     {
-        const HRESULT result = statusBar_->ShowInputMethod(anchor, action == Action::InputMethodMenu);
+        const HRESULT result = statusBar_->ShowInputMethod(anchor, action == Action::InputMethodMenu,
+            action == Action::SystemInputMethodPanel);
         wchar_t message[192]{};
         swprintf_s(message, L"StatusBar input method %ls hr=0x%08lX anchor=%ld,%ld,%ld,%ld",
-            action == Action::InputMethodMenu ? L"context" : L"toggle", static_cast<unsigned long>(result),
+            action == Action::SystemInputMethodPanel ? L"layout-panel" : action == Action::InputMethodMenu ? L"context" : L"toggle", static_cast<unsigned long>(result),
             anchor.left, anchor.top, anchor.right, anchor.bottom);
         WriteDiagnosticLogEntry(message);
         hold->shortcutFinished = true;
@@ -631,13 +632,13 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.menu", &Settings::menu, Action::MenuSystem, L"\uF133"}, // apps
             {"statusBar.quickSearch", &Settings::quickSearch, Action::MenuQuickSearch, L"\uF68F"}, // search
             {"statusBar.taskView", &Settings::taskView, Action::MenuTaskView, L"\uE05D"}, // app_recent
-            {"statusBar.inputMethod", &Settings::inputMethod, Action::InputMethodPanel, L"\uF4B8"}, // keyboard
             {"statusBar.cpu", &Settings::cpu, Action::MenuCpu, L"\uE4AC"}, // developer_board
             {"statusBar.memory", &Settings::memory, Action::MenuMemory, L"\uE9F3"}, // ram
             {"statusBar.gpu", &Settings::gpu, Action::MenuGpu, L"\uF359"}, // desktop
             {"statusBar.traffic", &Settings::traffic, Action::MenuTraffic, L"\uE45F"}, // data_usage
             {"statusBar.clock", &Settings::clock, Action::MenuTime, L"\uE24E"}, // calendar_ltr
             {"statusBar.clockShowSeconds", &Settings::clockShowSeconds, Action::MenuTime, L"\uF2DD"}, // clock
+            {"statusBar.inputMethod", &Settings::inputMethod, Action::MenuControlCenter, L"\uF4B8"}, // keyboard
             {"statusBar.audioControls", &Settings::audioControls, Action::MenuControlCenter, L"\uEB42"}, // speaker_2
             {"statusBar.brightnessControls", &Settings::brightnessControls, Action::MenuControlCenter, L"\uF8A1"}, // weather_sunny
             {"statusBar.wifiControls", &Settings::wifiControls, Action::MenuControlCenter, L"\uF8AC"}, // wifi_1
@@ -645,7 +646,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.mediaControls", &Settings::mediaControls, Action::MenuControlCenter, L"\uF605"}, // play
             {"statusBar.powerControls", &Settings::powerControls, Action::MenuControlCenter, L"\uF60E"}}; // power
         constexpr UINT positionBase = 42000, monitorBase = 42010, scaleBase = 42020;
-        constexpr UINT flagBase = 42100, clockBase = 42200, timePositionBase = 42210, controlBase = 42220;
+        constexpr UINT flagBase = 42100, clockBase = 42200, timePositionBase = 42210, controlBase = 42220, inputPanelBase = 42230;
         const Settings currentSettings = generalSettings_.statusBar;
         const auto addChoice = [&](HMENU target, UINT command, const wchar_t* label, bool selected, bool disabled = false) {
             std::wstring text = label;
@@ -704,6 +705,11 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             }
         };
         const auto addControlChoices = [&](HMENU target) {
+            if (const auto panel = submenu(target, "statusBar.inputMethodPanel"))
+            {
+                addChoice(panel, inputPanelBase, _LW("statusBar.panelCustom"), !currentSettings.inputMethodSystemPanel);
+                addChoice(panel, inputPanelBase + 1, _LW("statusBar.panelSystemInput"), currentSettings.inputMethodSystemPanel);
+            }
             if (snowdesktop::StatusBarSupportsSystemQuickSettings())
                 if (const auto panel = submenu(target, "statusBar.controlCenterPanel"))
                 {
@@ -764,7 +770,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 }
             if (!merged) AppendMenuW(settingsMenu, MF_SEPARATOR, 0, nullptr);
             const char* labels[]{"statusBar.leftItems", "statusBar.information", "statusBar.timeAndNotificationArea", "statusBar.controlCenter"};
-            const std::size_t boundaries[]{0, 3, 8, 10, std::size(flags)};
+            const std::size_t boundaries[]{0, 3, 7, 9, std::size(flags)};
             for (std::size_t group = 0; group < std::size(labels); ++group)
                 if (const auto section = submenu(settingsMenu, labels[group]))
                 {
@@ -828,6 +834,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                 bar.scale = scales[command - scaleBase];
             }
             else if (command == clockBase || command == clockBase + 1) bar.clockSystemPanel = command == clockBase + 1;
+            else if (command == inputPanelBase || command == inputPanelBase + 1) bar.inputMethodSystemPanel = command == inputPanelBase + 1;
             else if ((command == timePositionBase || command == timePositionBase + 1) && !merged)
                 bar.timeNotificationRightAligned = command == timePositionBase + 1;
             else if ((command == controlBase || command == controlBase + 1) && snowdesktop::StatusBarSupportsSystemQuickSettings())

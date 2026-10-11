@@ -3,6 +3,8 @@
 #include <imm.h>
 #include <msctf.h>
 #include "ui/render/ui_animation_scheduler.h"
+#include <algorithm>
+#include <cwctype>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -19,7 +21,7 @@ struct Snapshot
     DWORD thread = 0;
     HKL layout = nullptr;
     bool menuActive = false;
-    std::wstring label, description;
+    std::wstring label, description, layoutLabel;
     friend bool operator==(const Snapshot&, const Snapshot&) = default;
 };
 
@@ -137,6 +139,16 @@ inline bool SameProfile(const TF_INPUTPROCESSORPROFILE& a, const TF_INPUTPROCESS
 
 namespace detail
 {
+inline std::wstring LayoutLabel(std::wstring description, std::wstring abbreviation)
+{
+    std::transform(description.begin(), description.end(), description.begin(),
+        [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
+    if (description.find(L"pinyin") != std::wstring::npos ||
+        description.find(L"拼音") != std::wstring::npos)
+        return L"拼"; // l10n-allow: intrinsic Pinyin input-method symbol, independent of UI language
+    return abbreviation;
+}
+
 // A language is not a conversion mode. A failed IME query is not a successful
 // mode sample; retain the last successful presentation instead of showing ZH.
 inline std::wstring Label(LANGID language, std::wstring abbreviation,
@@ -167,8 +179,17 @@ class DisplayCache
 public:
     Snapshot Get(const Snapshot& sample, const Snapshot& target, bool menu)
     {
-        if (!menu && !sample.label.empty() &&
-            Matches(sample, target.foreground, target.thread, target.layout, target.focus)) shown_ = sample;
+        if (!menu && (!sample.label.empty() || !sample.layoutLabel.empty()) &&
+            Matches(sample, target.foreground, target.thread, target.layout, target.focus))
+        {
+            const auto previous = shown_;
+            shown_ = sample;
+            // A layout can be sampled even when its conversion-mode query is
+            // unavailable. Retain a known mode only for the same typing target.
+            if (sample.label.empty() && Matches(previous, target.foreground,
+                    target.thread, target.layout, target.focus))
+                shown_.label = previous.label;
+        }
         return shown_;
     }
 private:
@@ -187,7 +208,7 @@ public:
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
     Snapshot Current() const;
-    HRESULT Show(RECT anchor, bool context);
+    HRESULT Show(RECT anchor, bool context, bool layoutPanel = false);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
