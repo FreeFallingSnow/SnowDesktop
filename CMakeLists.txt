@@ -199,6 +199,7 @@ set(SNOWDESKTOP_SOURCES
     src/ui/render/native_tooltip_state.h
     src/ui/render/native_control_geometry.h
     src/system/tray/tray_model.cpp
+    src/system/tray/tray_change_notifications.h
     src/system/tray/tray_service.h
     src/system/tray/tray_focus.h
     src/taskbar_hook/tray_protocol.h

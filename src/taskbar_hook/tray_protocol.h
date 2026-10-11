@@ -15,6 +15,9 @@ inline constexpr std::size_t kCapacity = 128, kGeometries = 512, kIconSize = 64;
 // Optional collector supplement, not a Shell_NotifyIcon command. An older
 // receiver safely ignores it; the shared-memory layout remains unchanged.
 inline constexpr DWORD kBootstrapIcon = 0x53440001;
+// Private event flag: an explicit Shell NIF_ICON/hIcon=null update. A failed
+// copy/conversion of a nonnull handle must preserve the previous image.
+inline constexpr DWORD kClearIcon = 0x80000000u;
 inline constexpr wchar_t kAttachMessage[] = L"SnowDesktop.Tray.Attach.v2";
 inline constexpr wchar_t kDetachMessage[] = L"SnowDesktop.Tray.Detach.v2";
 inline constexpr wchar_t kReregisterMessage[] = L"SnowDesktop.Tray.Reregister.v2";
@@ -241,7 +244,7 @@ inline bool Decode(const void* bytes, std::size_t size, Notification& output, HI
     if (wire.operation != NIM_SETFOCUS && (data.flags & NIF_STATE) && !contains(offsetof(NotifyIcon32, stateMask) + sizeof(DWORD))) return false;
     if (wire.operation == NIM_SETVERSION && !contains(offsetof(NotifyIcon32, version) + sizeof(DWORD))) return false;
     output = {};
-    output.operation = wire.operation; output.flags = data.flags;
+    output.operation = wire.operation; output.flags = data.flags & ~kClearIcon;
     output.identity.window = data.window; output.identity.id = data.id;
     if (data.flags & NIF_GUID) output.identity.guid = data.guid;
     // This operation only identifies an icon; ignore stale image/state bits.
@@ -255,6 +258,8 @@ inline bool Decode(const void* bytes, std::size_t size, Notification& output, HI
         std::copy_n(data.tip, count, output.tip);
     }
     icon = data.flags & NIF_ICON ? reinterpret_cast<HICON>(static_cast<ULONG_PTR>(data.icon)) : nullptr;
+    if ((wire.operation == NIM_ADD || wire.operation == NIM_MODIFY) &&
+        (data.flags & NIF_ICON) && !icon) output.flags |= kClearIcon;
     return true;
 }
 struct Callback { WPARAM wp = 0; LPARAM lp = 0; };

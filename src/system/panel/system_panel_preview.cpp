@@ -538,6 +538,33 @@ void CheckTrayInput(const ui::Scene& scene)
         "a removed tray application retained a captured drag action");
 }
 
+void CheckTrayBlink(const tray::Snapshot& fixture)
+{
+    auto state = std::make_shared<PreviewState>(); state->tray = fixture;
+    auto& icon = state->tray.icons.at(1);
+    icon.identity = {GUID{}, 42, 7, 99}; icon.key = tray::Key(icon.identity);
+    const auto id = "tray:" + icon.key;
+    const auto bright = state->tray;
+    SystemPanelModel model(FixtureSource(state), {}, StatusBarAction::Tray); model.Refresh(400);
+    const auto brightScene = model.View();
+    const auto bounds = Node(brightScene, id).bounds;
+    tray::Event off; off.operation = NIM_MODIFY; off.identity = icon.identity;
+    off.flags = NIF_ICON | tray::kClearIcon;
+    Require(tray::Apply(state->tray.icons, off), "overflow blink-off update missed the real model");
+    model.Refresh(400);
+    const auto& blank = Node(model.View(), id);
+    Require(blank.image && blank.image->width == 1 && blank.image->height == 1 &&
+        blank.image->pixels == std::vector<std::uint32_t>{0} && model.View().nodes.size() == brightScene.nodes.size() &&
+        blank.bounds.left == bounds.left && blank.bounds.right == bounds.right &&
+        blank.bounds.top == bounds.top && blank.bounds.bottom == bounds.bottom &&
+        !brightScene.SameContent(model.View()),
+        "overflow blink-off must repaint a transparent image while keeping its original grid slot");
+    ui::Input input; const auto point = VisibleCenter(model.View(), id);
+    Require(input.Press(model.View(), point, true) && input.Release(model.View(), point, true).id == id,
+        "the transparent overflow frame lost its application context target");
+    state->tray = bright; model.Refresh(400);
+    Require(brightScene.SameContent(model.View()), "overflow bright frame failed to restore its original presentation");
+}
 void CheckTrayDropTargets(const tray::Snapshot& fixture)
 {
     auto state=std::make_shared<PreviewState>();state->tray=fixture;
@@ -2602,7 +2629,7 @@ native_component_preview::Result ExportSystemPanelPreview(const native_component
                 Require(model.View().cards.size() == 1 && model.View().height <= withMedia && !model.View().Find("media.title"),
                     "ended media kept its card or reserved empty space");
             }
-            if (trayPanel && preset == "grid") { CheckTrayInput(model.View());CheckTrayDropTargets(trayFixture); }
+            if (trayPanel && preset == "grid") { CheckTrayInput(model.View());CheckTrayDropTargets(trayFixture);CheckTrayBlink(trayFixture); }
             if (calendarPanel && preset == "agenda") CheckCalendarResponsive();
             if (calendarPanel && preset == "agenda") {CheckTimePickerInput();CheckCalendarManagement();CheckCalendarSeriesManagement();CheckCalendarPageVisuals(device,text,request,result,appearance,background,stage);}
             if (resources && preset == "gpu")

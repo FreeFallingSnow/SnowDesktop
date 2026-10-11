@@ -177,6 +177,8 @@ struct StatusBar::Impl
         NativeTooltip tooltip;
         std::optional<std::size_t> tooltipControlPart;
         std::vector<StatusBarItem> items;
+        StatusBarSnapshot dataSnapshot;
+        bool snapshotReady = false;
         StatusBarInteraction interaction;
         bool keyboardFocusVisible = false;
         std::string pressedTray;
@@ -199,7 +201,7 @@ struct StatusBar::Impl
             CancelTrayMenu();
             // Owner ends cross-window feedback before erasing this map entry.
             trayPreview = false;
-            if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
+            if (owner.tray) { owner.tray->UnsubscribeChanges(hwnd); owner.tray->CancelFocusReturn(hwnd); }
             ClearHover(); interaction.CancelPointer();
             liveBars.erase(hwnd);
             if (owner.hidden) owner.hidden(monitor);
@@ -510,37 +512,41 @@ struct StatusBar::Impl
             }
             if (moved && owner.dockChanged) owner.dockChanged(true);
         }
-        void BuildItems()
+        void BuildItems(bool trayOnly)
         {
-            StatusBarSnapshot snapshot;
-            wchar_t time[64]{}, date[96]{};
-            GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, nullptr, nullptr, time, 64);
-            GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, nullptr, nullptr, date, 96, nullptr);
-            snapshot.clock = std::wstring(date) + L"   " + time;
-            snapshot.cpu = owner.data->Cpu(); snapshot.memory = owner.data->Memory();
-            snapshot.gpu = owner.data->Gpu(true); snapshot.traffic = owner.data->NetworkTraffic();
-            snapshot.network = owner.data->NetworkStatus(); snapshot.audio = owner.data->AudioOutputVolume();
-            snapshot.wifi = owner.data->Controls()->Current("network.wifi");
-            snapshot.notifications = status_bar_notification::Current();
-            if (owner.volumeWheel.task && (!snapshot.audio || !snapshot.audio->available ||
-                owner.volumeWheel.endpoint != snapshot.audio->endpointId))
+            auto& snapshot = dataSnapshot;
+            if (!trayOnly || !snapshotReady)
             {
-                owner.data->Controls()->Cancel(owner.volumeWheel.task);
-                owner.volumeWheel.Reset();
+                wchar_t time[64]{}, date[96]{};
+                GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, nullptr, nullptr, time, 64);
+                GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, nullptr, nullptr, date, 96, nullptr);
+                snapshot.clock = std::wstring(date) + L"   " + time;
+                snapshot.cpu = owner.data->Cpu(); snapshot.memory = owner.data->Memory();
+                snapshot.gpu = owner.data->Gpu(true); snapshot.traffic = owner.data->NetworkTraffic();
+                snapshot.network = owner.data->NetworkStatus(); snapshot.audio = owner.data->AudioOutputVolume();
+                snapshot.wifi = owner.data->Controls()->Current("network.wifi");
+                snapshot.notifications = status_bar_notification::Current();
+                if (owner.volumeWheel.task && (!snapshot.audio || !snapshot.audio->available ||
+                    owner.volumeWheel.endpoint != snapshot.audio->endpointId))
+                {
+                    owner.data->Controls()->Cancel(owner.volumeWheel.task);
+                    owner.volumeWheel.Reset();
+                }
+                snapshot.power = owner.data->Power();
+                snapshotReady = true;
             }
-            snapshot.power = owner.data->Power();
             if (owner.tray) snapshot.tray = owner.tray->Current().icons;
             snapshot.trayExpanded = trayExpanded;
             if (owner.inputMethod) snapshot.inputMethod = owner.inputMethod->Current();
             items = BuildStatusBarItems(owner.settings, snapshot);
         }
 
-        void Paint(bool prepareHidden = false)
+        void Paint(bool prepareHidden = false, bool trayOnly = false)
         {
             if (closing || painting || failed || (!prepareHidden && (fullscreen || !IsWindowVisible(hwnd))) ||
                 !owner.composition || !owner.text) return;
             auto previousItems = std::move(items);
-            BuildItems();
+            BuildItems(trayOnly);
             if (interaction.Reconcile(previousItems, items))
             {
                 ClearHover();
@@ -820,6 +826,12 @@ struct StatusBar::Impl
                     message == WM_SYSKEYDOWN || message == WM_SYSKEYUP || message == WM_SYSCHAR)) return 0;
             if (message == tray::FocusReturnMessage())
             { self->ReturnTrayFocus(static_cast<std::uint64_t>(wp)); return 0; }
+            if (message == tray::ChangeMessage())
+            {
+                if (self->owner.tray && self->owner.tray->AcknowledgeChange(window, static_cast<std::uint64_t>(wp)))
+                    self->Paint(false, true);
+                return 0;
+            }
             if (message == self->owner.taskbarCreated)
             {
                 DWORD pid = 0;
@@ -1625,6 +1637,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
                 continue;
             }
             liveBars.emplace(window->hwnd, false);
+            self.tray->SubscribeChanges(window->hwnd);
             GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr), &window->explorerPid);
             SetTimer(window->hwnd, kClockTimer, 1000, nullptr);
         }

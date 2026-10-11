@@ -105,6 +105,12 @@ LRESULT CALLBACK ClientProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
         else if (wp == 6)
         { iconData.uFlags = NIF_GUID | NIF_STATE; iconData.dwStateMask = NIS_HIDDEN; iconData.dwState = 0; Notify(NIM_MODIFY); }
         else if (wp == 7) AddCold();
+        else if (wp == 8 || wp == 9)
+        {
+            iconData.uFlags = NIF_GUID | NIF_ICON;
+            iconData.hIcon = wp == 8 ? nullptr : LoadIcon(nullptr, IDI_WARNING);
+            Notify(NIM_MODIFY);
+        }
         return 1;
     }
     if (message == WM_TIMER)
@@ -348,6 +354,47 @@ int TryRunTrayLiveTests()
             const auto original=find(service.Current()).value();
             fixture.Command(1);
             Check(Await([&]{auto icon=find(service.Current());return icon && icon->tip==L"SnowDesktop updated tray fixture" && icon->pixels!=original.pixels;}),"modify updates tooltip and dynamic pixels");
+            {
+                // A message-only subscriber exercises the real Service ->
+                // PostMessage path without a desktop host or third-party UI.
+                const auto bright = *find(service.Current());
+                struct Subscriber
+                {
+                    Service& service;
+                    HWND window = CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0,
+                        HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+                    ~Subscriber() { service.UnsubscribeChanges(window); if (window) DestroyWindow(window); }
+                    bool Drain()
+                    {
+                        bool arrived = false; MSG message{};
+                        while (PeekMessageW(&message, window, ChangeMessage(), ChangeMessage(), PM_REMOVE))
+                            arrived = service.AcknowledgeChange(window, static_cast<std::uint64_t>(message.wParam)) || arrived;
+                        return arrived;
+                    }
+                } subscriber{service};
+                Check(subscriber.window != nullptr, "message-only tray subscriber created");
+                service.SubscribeChanges(subscriber.window);
+                Check(Await([&] { return subscriber.Drain(); }), "tray subscription posts its initial snapshot notification");
+                for (unsigned frame = 0; frame < 3; ++frame)
+                {
+                    fixture.Command(8);
+                    bool notified = false;
+                    Check(Await([&] {
+                        notified = subscriber.Drain() || notified;
+                        const auto blank = find(service.Current());
+                        return notified && blank && blank->width == 1 && blank->height == 1 &&
+                            blank->pixels == std::vector<std::uint32_t>{0} && blank->version == bright.version &&
+                            blank->callback == bright.callback && blank->persistentKey == bright.persistentKey &&
+                            !(blank->state & NIS_HIDDEN);
+                    }), "real Shell null-icon update delivers a transparent frame and UI notification");
+                    subscriber.Drain(); fixture.Command(9); notified = false;
+                    Check(Await([&] {
+                        notified = subscriber.Drain() || notified;
+                        const auto restored = find(service.Current());
+                        return notified && restored && restored->pixels == bright.pixels;
+                    }), "real Shell bright-icon update restores pixels and posts the next UI notification");
+                }
+            }
             fixture.Command(2);
             Check(Await([&]{auto icon=find(service.Current());return icon && (icon->state & NIS_HIDDEN);}),"hidden state arrives without dropping icon");
             Check(!service.Activate(original.key,Activation::Keyboard,{136,56}),"hidden icon rejects stale activation");

@@ -16,6 +16,86 @@ int RunTrayModelTests()
         if (!value) { ++failures; std::cerr << "FAIL tray: " << message << '\n'; }
     };
     {
+        // Real Weixin trace: MODIFY/NIF_ICON alternates null and a normal
+        // handle every ~500 ms. Do not confuse its blank frame with a failed
+        // CopyIcon/GetIconInfo of a nonnull handle.
+        ShellTrayData packet{};
+        packet.operation = NIM_MODIFY;
+        packet.icon.size = sizeof(NotifyIcon32);
+        packet.icon.window = 42; packet.icon.id = 7;
+        packet.icon.flags = NIF_MESSAGE | NIF_ICON;
+        packet.icon.callback = WM_USER + 9;
+        Notification notification;
+        HICON handle = nullptr;
+        check(Decode(&packet, sizeof(packet), notification, handle) && !handle && (notification.flags & kClearIcon),
+            "an explicit null Shell icon becomes a clear-image event");
+        Event blank; static_cast<Notification&>(blank) = notification;
+        blank.identity.process = 99;
+        std::vector<Icon> blinking;
+        check(!Apply(blinking, blank) && blinking.empty(), "a blank partial MODIFY cannot manufacture an icon");
+        Event bright = blank;
+        bright.operation = NIM_ADD; bright.flags &= ~kClearIcon;
+        bright.width = bright.height = 2;
+        std::fill_n(bright.pixels.begin(), 4, 0xff00ff00u);
+        check(Apply(blinking, bright), "the blinking icon registers through the real model");
+        blinking.front().version = 4; blinking.front().persistentKey = "saved-pin";
+        const auto initial = blinking.front();
+        for (unsigned frame = 0; frame < 3; ++frame)
+        {
+            check(Apply(blinking, blank) && blinking.size() == 1 && blinking.front().width == 1 &&
+                blinking.front().height == 1 && blinking.front().pixels == std::vector<std::uint32_t>{0} &&
+                SameFocusIdentity(blinking.front().identity, initial.identity) && blinking.front().callback == initial.callback &&
+                blinking.front().version == 4 && blinking.front().persistentKey == "saved-pin" && !(blinking.front().state & NIS_HIDDEN),
+                "a blink-off frame paints transparent pixels without losing its pin, slot or callback");
+            bright.operation = NIM_MODIFY;
+            check(Apply(blinking, bright) && blinking.front().pixels == initial.pixels,
+                "the following bright frame restores the original image");
+        }
+        packet.icon.icon = 1; packet.icon.flags |= kClearIcon;
+        check(Decode(&packet, sizeof(packet), notification, handle) && handle && !(notification.flags & kClearIcon),
+            "a sender cannot forge the collector's private clear flag for a nonnull icon");
+        Event failed; static_cast<Notification&>(failed) = notification;
+        failed.identity.process = 99;
+        check(Apply(blinking, failed) && blinking.front().pixels == initial.pixels,
+            "failed nonnull icon conversion preserves the last successful image");
+        packet.icon.flags = NIF_TIP | kClearIcon; packet.icon.icon = 0;
+        check(Decode(&packet, sizeof(packet), notification, handle) && !(notification.flags & kClearIcon),
+            "a tooltip-only update never clears the image");
+        Event initialBlank = blank; initialBlank.operation = NIM_ADD;
+        blinking.clear();
+        check(Apply(blinking, initialBlank) && blinking.size() == 1 && blinking.front().pixels == std::vector<std::uint32_t>{0},
+            "an initially blank ADD keeps a transparent actionable registration");
+    }
+    {
+        // Coalescing preserves independent monitors and rejects stale queued
+        // messages after the overflow HWND closes/reopens.
+        std::vector<std::pair<HWND, std::uint64_t>> posted;
+        bool allowPost = true;
+        ChangeNotifications changes([&](HWND window, std::uint64_t token) {
+            if (!allowPost) return false;
+            posted.emplace_back(window, token); return true;
+        });
+        const auto first = reinterpret_cast<HWND>(1), second = reinterpret_cast<HWND>(2);
+        changes.Subscribe(first); changes.Subscribe(second);
+        changes.Publish(); changes.Publish();
+        check(posted.size() == 2, "a burst queues at most one update per tray presenter");
+        const auto firstToken = posted[0].second, secondToken = posted[1].second;
+        check(changes.Acknowledge(first, firstToken) && !changes.Acknowledge(first, firstToken),
+            "each change ticket can be acknowledged only once");
+        changes.Publish();
+        check(posted.size() == 3 && posted.back().first == first,
+            "one monitor's paint cannot consume another monitor's pending update");
+        changes.Unsubscribe(second); changes.Subscribe(second); changes.Publish();
+        check(posted.size() == 4 && !changes.Acknowledge(second, secondToken) &&
+            changes.Acknowledge(second, posted.back().second), "reopened overflow ignores its old queued notification");
+        changes.Unsubscribe(first); changes.Unsubscribe(second); changes.Publish();
+        check(posted.size() == 4, "closed presenters stop receiving updates");
+        changes.Subscribe(first); allowPost = false; changes.Publish();
+        allowPost = true; changes.Publish();
+        check(posted.size() == 5 && changes.Acknowledge(first, posted.back().second),
+            "failed posting does not permanently suppress later image changes");
+    }
+    {
         namespace input = snowdesktop::status_bar_input_method;
         TF_INPUTPROCESSORPROFILE first{}, second{};
         first.dwProfileType=second.dwProfileType=TF_PROFILETYPE_INPUTPROCESSOR;

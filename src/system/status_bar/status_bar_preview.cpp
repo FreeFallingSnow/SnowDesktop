@@ -322,6 +322,20 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),
                     "a changed tray bitmap would be skipped");
                 changedTray = data;
+                changedTray.tray.front().identity = {GUID{}, 42, 7, 99};
+                changedTray.tray.front().key = tray::Key(changedTray.tray.front().identity);
+                const auto originalTray = changedTray.tray.front();
+                const auto brightItems = BuildStatusBarItems(settings, changedTray);
+                tray::Event off;
+                off.operation = NIM_MODIFY; off.identity = originalTray.identity;
+                off.flags = NIF_ICON | tray::kClearIcon;
+                Require(tray::Apply(changedTray.tray, off), "blink-off event did not reach the tray model");
+                const auto offItems = BuildStatusBarItems(settings, changedTray);
+                Require(offItems.size() == brightItems.size() && !SameStatusBarContent(brightItems, offItems) &&
+                    std::any_of(offItems.begin(), offItems.end(), [&](const auto& item) {
+                        return item.icon && item.icon->key == originalTray.key && item.icon->pixels == std::vector<std::uint32_t>{0};
+                    }), "blank tray frame must repaint while retaining the same pinned click target");
+                changedTray = data;
                 changedTray.tray.front().state |= NIS_HIDDEN;
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),
                     "hiding a pinned tray icon would leave its pixels visible");

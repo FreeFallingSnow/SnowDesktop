@@ -262,6 +262,7 @@ struct SystemPanel::Impl
         // move or reshape the HWND, so Arrange alone may not publish them.
         PublishGeometry();
         Paint();Animate(true);backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);if(Glass())backdrop.ShowPopupWindowPair(window);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);SetFocus(window);if(!r.confirmPower.empty())FocusControlPage(false);SetTimer(window,1,500,nullptr);
+        if(r.action==StatusBarAction::Tray&&r.tray)r.tray->SubscribeChanges(window);
         ReportTrayState(showing&&!closing&&current&&current->action==StatusBarAction::Tray&&IsWindowVisible(window)?monitor:nullptr);
     }
     void ReportTrayState(HMONITOR expanded)
@@ -390,6 +391,7 @@ struct SystemPanel::Impl
         // Detach the old model/request before callbacks. Reentrant requests
         // stay queued until this guard ends and cannot be cleared below.
         auto oldModel=std::move(model);auto oldRequest=std::move(current);current.reset();
+        if(oldRequest&&oldRequest->tray&&oldRequest->action==StatusBarAction::Tray)oldRequest->tray->UnsubscribeChanges(window);
         ReportTrayState(nullptr);
         EndDragFeedback();dropIndicator.reset();
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;input.Cancel();scrollbarDragging=false;hovered.clear();Tip(nullptr);if(GetCapture()==window)ReleaseCapture();
@@ -633,6 +635,13 @@ struct SystemPanel::Impl
             {self->transition.Cancel();self->afterClose={};++self->closeGeneration;}
             if(m==WM_ACTIVATE&&LOWORD(wp)==WA_INACTIVE&&!self->modal&&self->showing&&!self->closing)
             {if(!self->RetainTrayMenu(reinterpret_cast<HWND>(lp)))self->Animate(false);}
+            if(m==tray::ChangeMessage())
+            {
+                if(self->current&&self->current->tray&&self->current->tray->AcknowledgeChange(w,static_cast<std::uint64_t>(wp))&&
+                    self->model&&self->showing&&!self->closing&&!self->modal&&self->current->action==StatusBarAction::Tray)
+                {self->Arrange();if(self->paintDirty)self->Paint();}
+                return 0;
+            }
             if(!self->model||self->closing||self->modal)return DefWindowProcW(w,m,wp,lp);
             if(m==WM_THEMECHANGED||m==WM_SETTINGCHANGE){self->paintDirty=true;self->Arrange();self->Paint();return 0;}
             if(m==WM_TIMER&&(wp==1||wp==kTrayMenuTimer))

@@ -81,7 +81,14 @@ bool Apply(std::vector<Icon>& icons, const Event& event)
     if (event.flags & NIF_MESSAGE) found->callback = event.callback;
     if (event.flags & NIF_TIP) found->tip.assign(event.tip, wcsnlen_s(event.tip, std::size(event.tip)));
     if (event.flags & NIF_STATE) found->state = (found->state & ~event.stateMask) | (event.state & event.stateMask);
-    if (image)
+    if ((event.flags & (NIF_ICON | kClearIcon)) == (NIF_ICON | kClearIcon))
+    {
+        // Keep a valid transparent bitmap so every tray presenter retains the
+        // slot and callback target without drawing a fallback glyph.
+        found->width = found->height = 1;
+        found->pixels.assign(1, 0);
+    }
+    else if (image)
     {
         found->width = event.width; found->height = event.height;
         found->pixels.assign(event.pixels.begin(), event.pixels.begin() + event.width * event.height);
