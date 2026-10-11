@@ -2605,5 +2605,6 @@
   "statusBar.networkNoInternet": "无法访问 Internet",
   "statusBar.networkDisconnected": "未连接",
   "statusBar.networkDisabled": "已禁用",
-  "app.dock.start_button": "开始按钮"
+  "app.dock.start_button": "开始按钮",
+  "settings.bars.mergedBar": "融合栏"
 }

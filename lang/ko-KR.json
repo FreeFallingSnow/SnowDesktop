@@ -2605,5 +2605,6 @@
   "statusBar.networkNoInternet": "인터넷 액세스 없음",
   "statusBar.networkDisconnected": "연결되지 않음",
   "statusBar.networkDisabled": "사용 안 함",
-  "app.dock.start_button": "시작 버튼"
+  "app.dock.start_button": "시작 버튼",
+  "settings.bars.mergedBar": "통합 표시줄"
 }

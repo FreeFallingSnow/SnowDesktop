@@ -2605,5 +2605,6 @@
   "statusBar.networkNoInternet": "無法存取 Internet",
   "statusBar.networkDisconnected": "未連線",
   "statusBar.networkDisabled": "已停用",
-  "app.dock.start_button": "開始按鈕"
+  "app.dock.start_button": "開始按鈕",
+  "settings.bars.mergedBar": "融合列"
 }

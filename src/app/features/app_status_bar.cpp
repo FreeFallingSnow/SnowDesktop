@@ -671,10 +671,14 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             AppendMenuW(target, MF_STRING | (disabled ? MF_GRAYED : 0), command, label.c_str());
             SetMenuItemIcon(target, command, flags[index].glyph, MenuIconFont::FluentRegular);
         };
-        const auto submenu = [&](HMENU parent, const char* label) {
+        const auto submenu = [&](HMENU parent, const char* label, UINT position = static_cast<UINT>(-1)) {
             const auto child = CreatePopupMenu();
             if (!child) return static_cast<HMENU>(nullptr);
-            if (!AppendMenuW(parent, MF_POPUP, reinterpret_cast<UINT_PTR>(child), _LW(label)))
+            const bool attached = position == static_cast<UINT>(-1)
+                ? AppendMenuW(parent, MF_POPUP, reinterpret_cast<UINT_PTR>(child), _LW(label)) != FALSE
+                : InsertMenuW(parent, position, MF_BYPOSITION | MF_POPUP,
+                    reinterpret_cast<UINT_PTR>(child), _LW(label)) != FALSE;
+            if (!attached)
             { DestroyMenu(child); return static_cast<HMENU>(nullptr); }
             const std::string_view key(label);
             const wchar_t* glyph = L"\uF587"; // options_20
@@ -689,17 +693,18 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             SetMenuItemIcon(parent, reinterpret_cast<UINT_PTR>(child), glyph, MenuIconFont::FluentRegular);
             return child;
         };
-        const auto addTimeChoices = [&](HMENU target) {
+        const auto addTimeChoices = [&](HMENU target, HMENU independentTarget = nullptr) {
             if (const auto panel = submenu(target, "statusBar.clockPanel"))
             {
                 addChoice(panel, clockBase, _LW("statusBar.panelCustom"), !currentSettings.clockSystemPanel);
                 addChoice(panel, clockBase + 1, _LW(snowdesktop::StatusBarSupportsSystemQuickSettings() ?
                     "statusBar.panelSystemCalendar" : "statusBar.panelSystemDateTime"), currentSettings.clockSystemPanel);
             }
-            if (const auto position = submenu(target, "statusBar.timeNotificationPosition"))
+            if (!merged || independentTarget)
+            if (const auto position = submenu(independentTarget ? independentTarget : target, "statusBar.timeNotificationPosition"))
             {
-                addChoice(position, timePositionBase, _LW("app.settings.taskbar_center"), !merged && !currentSettings.timeNotificationRightAligned, merged);
-                addChoice(position, timePositionBase + 1, _LW("app.dock.right"), merged || currentSettings.timeNotificationRightAligned, merged);
+                addChoice(position, timePositionBase, _LW("app.settings.taskbar_center"), !currentSettings.timeNotificationRightAligned, merged);
+                addChoice(position, timePositionBase + 1, _LW("app.dock.right"), currentSettings.timeNotificationRightAligned, merged);
             }
         };
         const auto addControlChoices = [&](HMENU target) {
@@ -718,40 +723,83 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             if (action == Action::MenuTime) addTimeChoices(menu);
             if (action == Action::MenuControlCenter) addControlChoices(menu);
         }
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        if (const auto settings = submenu(menu, "settings.nav.statusBar"))
+        HMENU settingsMenu = nullptr;
+        HMENU independentDock = nullptr;
+        if (merged)
         {
-            if (const auto edge = submenu(settings, "statusBar.position"))
+            // The merged root has one settings popup. Reuse it, keeping active
+            // settings on this level and saved standalone-only options below.
+            for (int index = 0; index < GetMenuItemCount(menu) && !settingsMenu; ++index)
+                settingsMenu = GetSubMenu(menu, index);
+            if (settingsMenu)
+            {
+                const int last = GetMenuItemCount(settingsMenu) - 1;
+                independentDock = GetSubMenu(settingsMenu, last);
+                if (independentDock && !RemoveMenu(settingsMenu, static_cast<UINT>(last), MF_BYPOSITION))
+                    independentDock = nullptr;
+            }
+        }
+        else
+        {
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+            settingsMenu = submenu(menu, "settings.nav.statusBar");
+        }
+        if (settingsMenu)
+        {
+            if (const auto edge = submenu(settingsMenu, "statusBar.position", merged ? 0 : static_cast<UINT>(-1)))
             {
                 addChoice(edge, positionBase, _LW("app.dock.top"), currentSettings.position == DockPosition::Top);
                 addChoice(edge, positionBase + 1, _LW("app.dock.bottom"), currentSettings.position == DockPosition::Bottom);
             }
-            if (const auto scope = submenu(settings, "settings.dock.monitor"))
+            if (const auto scope = submenu(settingsMenu, "settings.dock.monitor", merged ? 1 : static_cast<UINT>(-1)))
             {
                 const char* labels[]{"app.dock.first_screen", "app.dock.last_screen", "app.dock.all_screens"};
                 for (UINT index = 0; index < std::size(labels); ++index)
                     addChoice(scope, monitorBase + index, _LW(labels[index]), static_cast<UINT>(currentSettings.monitorScope) == index);
             }
-            if (const auto scale = submenu(settings, "statusBar.scale"))
+            HMENU independentStatus = merged ? CreatePopupMenu() : settingsMenu;
+            if (const auto scale = independentStatus ? submenu(independentStatus, "statusBar.scale") : nullptr)
                 for (UINT index = 0; index < 6; ++index)
                 {
                     constexpr int percent[]{75, 100, 125, 150, 200, 300};
                     const auto label = std::to_wstring(percent[index]) + L"%";
                     addChoice(scale, scaleBase + index, label.c_str(), std::abs(currentSettings.scale * 100 - percent[index]) < .5f, merged);
                 }
-            AppendMenuW(settings, MF_SEPARATOR, 0, nullptr);
+            if (!merged) AppendMenuW(settingsMenu, MF_SEPARATOR, 0, nullptr);
             const char* labels[]{"statusBar.leftItems", "statusBar.information", "statusBar.timeAndNotificationArea", "statusBar.controlCenter"};
             const std::size_t boundaries[]{0, 3, 8, 10, std::size(flags)};
             for (std::size_t group = 0; group < std::size(labels); ++group)
-                if (const auto section = submenu(settings, labels[group]))
+                if (const auto section = merged ? settingsMenu : submenu(settingsMenu, labels[group]))
                 {
-                    for (auto index = boundaries[group]; index < boundaries[group + 1]; ++index) addFlag(section, index);
-                    if (group == 2) addTimeChoices(section);
+                    if (merged && group != 0) AppendMenuW(section, MF_SEPARATOR, 0, nullptr);
+                    for (auto index = boundaries[group]; index < boundaries[group + 1]; ++index)
+                    {
+                        const HMENU target = merged && flags[index].member == &Settings::quickSearch ? independentStatus : section;
+                        if (target) addFlag(target, index);
+                    }
+                    if (group == 2) addTimeChoices(section, merged ? independentStatus : nullptr);
                     if (group == 3) addControlChoices(section);
                 }
-            AppendMenuW(settings, MF_SEPARATOR, 0, nullptr);
-            AppendMenuW(settings, MF_STRING, 1, _LW("statusBar.menu.detailed"));
-            SetMenuItemIcon(settings, 1, L"\uF6A9", MenuIconFont::FluentRegular);
+            if (merged)
+            {
+                AppendMenuW(settingsMenu, MF_SEPARATOR, 0, nullptr);
+                if (independentDock)
+                {
+                    if (!AppendMenuW(settingsMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(independentDock), _LW("app.settings.dock_bar")))
+                        DestroyMenu(independentDock);
+                    else SetMenuItemIcon(settingsMenu, reinterpret_cast<UINT_PTR>(independentDock), L"\uF133", MenuIconFont::FluentRegular);
+                }
+                if (independentStatus)
+                {
+                    if (!AppendMenuW(settingsMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(independentStatus), _LW("settings.nav.statusBar")))
+                        DestroyMenu(independentStatus);
+                    else SetMenuItemIcon(settingsMenu, reinterpret_cast<UINT_PTR>(independentStatus), L"\uF587", MenuIconFont::FluentRegular);
+                }
+            }
+            AppendMenuW(settingsMenu, MF_SEPARATOR, 0, nullptr);
+            const UINT detailedCommand = merged ? 41869 : 1;
+            AppendMenuW(settingsMenu, MF_STRING, detailedCommand, _LW("statusBar.menu.detailed"));
+            SetMenuItemIcon(settingsMenu, detailedCommand, L"\uF6A9", MenuIconFont::FluentRegular);
         }
         statusBarMenuMonitor_ = monitor;
         statusBarMenuOwner_ = owner;
@@ -791,6 +839,16 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             else changed = false;
             if (changed)
             {
+                if (merged && (command == positionBase || command == positionBase + 1 ||
+                    (command >= monitorBase && command < monitorBase + 3)))
+                {
+                    // Queue both domains before the controller applies its
+                    // pending snapshot, preserving fusion on every monitor.
+                    auto dock = settingsController_->Snapshot()->values.dock;
+                    if (command == positionBase || command == positionBase + 1) dock.position = bar.position;
+                    else dock.monitorScope = bar.monitorScope;
+                    settingsController_->UpdateDock(std::move(dock), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
+                }
                 settingsController_->UpdateGeneral(std::move(settings), snowdesktop::SettingsUpdateMode::PreviewAndCommit);
                 uiAnimationScheduler_.ScheduleOnce(0, [this](auto) {
                     if (settingsController_) (void)settingsController_->FlushPending();

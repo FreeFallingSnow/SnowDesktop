@@ -2605,5 +2605,6 @@
   "statusBar.networkNoInternet": "Kein Internetzugriff",
   "statusBar.networkDisconnected": "Nicht verbunden",
   "statusBar.networkDisabled": "Deaktiviert",
-  "app.dock.start_button": "Start-Schaltfläche"
+  "app.dock.start_button": "Start-Schaltfläche",
+  "settings.bars.mergedBar": "Zusammengeführte Leiste"
 }

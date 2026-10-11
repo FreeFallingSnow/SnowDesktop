@@ -2605,5 +2605,6 @@
   "statusBar.networkNoInternet": "インターネット アクセスなし",
   "statusBar.networkDisconnected": "未接続",
   "statusBar.networkDisabled": "無効",
-  "app.dock.start_button": "スタートボタン"
+  "app.dock.start_button": "スタートボタン",
+  "settings.bars.mergedBar": "統合バー"
 }

@@ -2605,5 +2605,6 @@
   "statusBar.networkNoInternet": "Pas d’accès Internet",
   "statusBar.networkDisconnected": "Déconnecté",
   "statusBar.networkDisabled": "Désactivé",
-  "app.dock.start_button": "Bouton Démarrer"
+  "app.dock.start_button": "Bouton Démarrer",
+  "settings.bars.mergedBar": "Barre fusionnée"
 }

@@ -2605,5 +2605,6 @@
   "statusBar.networkNoInternet": "No Internet access",
   "statusBar.networkDisconnected": "Disconnected",
   "statusBar.networkDisabled": "Disabled",
-  "app.dock.start_button": "Start button"
+  "app.dock.start_button": "Start button",
+  "settings.bars.mergedBar": "Merged bar"
 }
