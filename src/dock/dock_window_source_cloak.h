@@ -99,9 +99,14 @@ inline HRESULT StartRecoveryTimer(HWND source) noexcept
     if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
             reinterpret_cast<LPCWSTR>(&RecoverOnSourceThread), &module))
         return HRESULT_FROM_WIN32(GetLastError());
-    const UINT_PTR timer = SetTimer(source,
-        reinterpret_cast<UINT_PTR>(&RecoverOnSourceThread), 100, RecoverOnSourceThread);
-    if (!timer) return HRESULT_FROM_WIN32(GetLastError() ? GetLastError() : ERROR_GEN_FAILURE);
+    // With a non-null HWND, KillTimer and TIMERPROC use nIDEvent; SetTimer's
+    // return value is only a success indicator, not the cancellation contract.
+    const UINT_PTR timer = reinterpret_cast<UINT_PTR>(&RecoverOnSourceThread);
+    if (!SetTimer(source, timer, 100, RecoverOnSourceThread))
+    {
+        const DWORD error = GetLastError();
+        return HRESULT_FROM_WIN32(error ? error : ERROR_GEN_FAILURE);
+    }
     if (!SetPropW(source, TimerProperty, reinterpret_cast<HANDLE>(timer)))
     {
         const DWORD error = GetLastError();
