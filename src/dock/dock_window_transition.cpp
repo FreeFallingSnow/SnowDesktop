@@ -1614,8 +1614,41 @@ bool DockWindowTransition::OnAnimationFrame(
         // 保持为真，此时必须中止动画而不是无限等待，否则过渡层会永久停留
         // 在窗口位置，表现为 Dock 卡死。
         RECT restoredFrame{};
-        if (RestoreGeometryReady(restoredFrame) && EqualRect(&restoredFrame, &windowRect_))
+        if (RestoreGeometryReady(restoredFrame))
         {
+            if (!EqualRect(&restoredFrame, &windowRect_))
+            {
+                // An app can finish its native border/layout update during the
+                // animation. Align the final live image instead of waiting for
+                // the real window to return to the earlier, now stale bounds.
+                windowRect_ = restoredFrame;
+                fromRect_ = toRect_ = windowRect_;
+                const auto safeHost = ResolveDockWindowNonFullscreenHostRect(
+                    ResolveDockWindowImageHostRect(dockRect_, windowRect_), animationMonitorRects_);
+                bool aligned = safeHost.has_value();
+                if (aligned)
+                {
+                    imageHostRect_ = *safeHost;
+                    aligned = SetWindowPos(hwnd_, nullptr, imageHostRect_.left, imageHostRect_.top,
+                        imageHostRect_.right - imageHostRect_.left,
+                        imageHostRect_.bottom - imageHostRect_.top, SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
+                }
+                if (aligned)
+                {
+                    ClearGenieStrips();
+                    compositionWindowImage_.Reset();
+                    aligned = SUCCEEDED(compositionVisual_->RemoveAllVisuals()) && CreateSharedWindowImage();
+                }
+                hasLastFrame_ = false;
+                compositionTimelineActive_ = false;
+                if (aligned) aligned = ApplyFrame(1.0);
+                if (!aligned)
+                {
+                    CompleteRestoreAfterRenderFailure();
+                    Finish();
+                    return false;
+                }
+            }
             ActivateRestoredWindowForHandoff();
             // A failed cross-process release retains ownership; do not retire
             // the only visible image while its source is still cloaked.
@@ -1703,12 +1736,9 @@ bool DockWindowTransition::RestoreGeometryReady(RECT& frame) const
     // are valid: preparation rebinds the live image at the current geometry.
     // Reject only the recognizable temporary iconic bar after IsIconic clears.
     const UINT dpi = GetDpiForWindow(sourceWindow_);
-    const int barWidth = GetSystemMetricsForDpi(SM_CXMINIMIZED, dpi ? dpi : 96);
     const int barHeight = GetSystemMetricsForDpi(SM_CYMINIMIZED, dpi ? dpi : 96);
-    if (actualWindow.right - actualWindow.left <= barWidth &&
-        actualWindow.bottom - actualWindow.top <= barHeight &&
-        (windowRect_.right - windowRect_.left > barWidth ||
-            windowRect_.bottom - windowRect_.top > barHeight))
+    if (actualWindow.bottom - actualWindow.top <= barHeight &&
+        windowRect_.bottom - windowRect_.top > barHeight)
         return false;
     // DWM's frame bounds may lag the native HWND during restore. A usable
     // current HWND rectangle is sufficient while the shared image catches up.

@@ -24,6 +24,10 @@ struct DockWindowTransitionTestAccess
     {
         transition.compositionImageSize_ = size;
     }
+    static RECT TargetBounds(const DockWindowTransition& transition)
+    {
+        return transition.windowRect_;
+    }
 };
 
 namespace
@@ -607,7 +611,7 @@ void CheckRetainedWindowImage()
                         "framed fixture distinguishes invisible borders from the visible image");
                     for (const int effect : {1, 2, 3})
                     {
-                        for (const bool changedSize : {false, true})
+                        for (const int sizeCase : {0, 1, 2})
                         {
                             snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                                 2, 0, 60, false, false, effect);
@@ -615,12 +619,21 @@ void CheckRetainedWindowImage()
                             DwmFlush();
                             int requested = 0, activated = 0, fallback = 0;
                             bool prepared = false;
+                            bool resized = false;
+                            snowdesktop::UiScheduleToken resizeToken = 0;
                             double preparedAt = 0, activatedAt = 0;
                             transition.SetDiagnosticCallback([&](const wchar_t* message) {
                                 if (std::wstring(message).find(L"Dock restore prepared:") == 0)
                                 {
                                     prepared = true;
                                     preparedAt = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                                    if (sizeCase == 2)
+                                    {
+                                        resizeToken = scheduler.ScheduleOnce(80, [&](snowdesktop::UiScheduleToken) {
+                                            resized = SetWindowPos(framedSource, nullptr, -20011, -20009,
+                                                707, 493, SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
+                                        });
+                                    }
                                 }
                             });
                             const bool started = transition.StartRestore(framedSource, dock,
@@ -634,13 +647,22 @@ void CheckRetainedWindowImage()
                                     {
                                         ++activated;
                                         activatedAt = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+                                        if (sizeCase == 2)
+                                        {
+                                            RECT current{};
+                                            DwmGetWindowAttribute(window, DWMWA_EXTENDED_FRAME_BOUNDS, &current, sizeof(current));
+                                            const RECT target = DockWindowTransitionTestAccess::TargetBounds(transition);
+                                            Check(resized && EqualRect(&current, &target),
+                                                "late native geometry update aligns the final image before source exposure");
+                                        }
                                     }
                                     else ++fallback;
                                 });
                             Check(started, "framed restore starts through the production entry");
                             DockWindowTransitionTestAccess::SetRetainedImageSize(transition,
-                                changedSize ? SIZE{737, 511} : SIZE{legacy.right - legacy.left, legacy.bottom - legacy.top});
+                                sizeCase == 1 ? SIZE{737, 511} : SIZE{legacy.right - legacy.left, legacy.bottom - legacy.top});
                             if (started) drain();
+                            if (resizeToken) scheduler.Cancel(resizeToken);
                             const double visibleDuration = (effect == 3 ? 360.0 : effect == 2 ? 180.0 : 240.0) *
                                 snowdesktop::animation::RuntimeDurationScale();
                             Check(prepared && requested == 1 && activated == 1 && fallback == 0 &&
@@ -648,6 +670,11 @@ void CheckRetainedWindowImage()
                                 "retained border or size mismatch rebinds the live image instead of skipping restore");
                             Check(prepared && activatedAt - preparedAt >= visibleDuration - 15.0,
                                 "size-mismatched restore plays its complete visible timeline");
+                            Check(prepared && activatedAt - preparedAt < visibleDuration + 400.0,
+                                "late size changes do not consume the restore cleanup timeout");
+                            SetWindowPos(framedSource, nullptr, legacy.left, legacy.top,
+                                legacy.right - legacy.left, legacy.bottom - legacy.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                            DwmFlush();
                         }
                     }
                     DestroyWindow(framedSource);

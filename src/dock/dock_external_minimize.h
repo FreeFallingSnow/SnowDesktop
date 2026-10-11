@@ -14,6 +14,7 @@ public:
     void UpdateTargets(std::span<const HWND> windows);
     void Stop() noexcept;
     bool OwnsTarget(HWND window) const noexcept;
+    bool IsMinimizeButtonPress(HWND window, POINT screenPoint) const noexcept;
 
 private:
     void StartHelper();

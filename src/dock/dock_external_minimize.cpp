@@ -34,6 +34,31 @@ bool DockExternalMinimize::OwnsTarget(HWND window) const noexcept
         GetPropW(window, snowdesktop::dock_minimize::kTargetProperty) == receiver_;
 }
 
+bool DockExternalMinimize::IsMinimizeButtonPress(HWND window, POINT screenPoint) const noexcept
+{
+    if (!OwnsTarget(window) || !IsWindowVisible(window) || IsIconic(window)) return false;
+    // The CBT request arrives on release. Classify the caption press before
+    // the outside-pointer sampler can demote the Dock on button-down. Bound
+    // each query so an unresponsive application cannot stall the desktop.
+    constexpr UINT timeoutMs = 8;
+    constexpr UINT flags = SMTO_ABORTIFHUNG | SMTO_BLOCK;
+    DWORD_PTR hit = HTNOWHERE;
+    if (!SendMessageTimeoutW(window, WM_NCHITTEST, 0,
+            MAKELPARAM(screenPoint.x, screenPoint.y), flags, timeoutMs, &hit)) return false;
+    if (static_cast<LRESULT>(hit) == HTMINBUTTON) return true;
+    if (static_cast<LRESULT>(hit) != HTCLIENT && static_cast<LRESULT>(hit) != HTCAPTION) return false;
+    // Custom frames can report HTCLIENT while retaining the system caption
+    // button bounds. Use the actual minimize rectangle, never a guessed third
+    // of the caption, so maximize/close and ordinary client clicks still dismiss.
+    TITLEBARINFOEX title{sizeof(title)};
+    DWORD_PTR result = 0;
+    if (!SendMessageTimeoutW(window, WM_GETTITLEBARINFOEX, 0,
+            reinterpret_cast<LPARAM>(&title), flags, timeoutMs, &result)) return false;
+    constexpr DWORD unavailable = STATE_SYSTEM_INVISIBLE | STATE_SYSTEM_OFFSCREEN | STATE_SYSTEM_UNAVAILABLE;
+    return !(title.rgstate[2] & unavailable) &&
+        !IsRectEmpty(&title.rgrect[2]) && PtInRect(&title.rgrect[2], screenPoint);
+}
+
 void DockExternalMinimize::UpdateTargets(std::span<const HWND> windows)
 {
     if (!receiver_) return;

@@ -20,6 +20,7 @@ constexpr UINT kAction = WM_APP + 2;
 constexpr UINT kHostReady = WM_APP + 3;
 constexpr UINT kCrashHost = WM_APP + 4;
 constexpr UINT kSetSlowReceiver = WM_APP + 5;
+constexpr UINT kSetClientCaption = WM_APP + 6;
 HWND fixture = nullptr;
 HWND hostReceiver = nullptr;
 HWND observationReceiver = nullptr;
@@ -31,6 +32,7 @@ bool acceptReceiver = false;
 int failures = 0;
 DockWindowTransition* transitionForRequest = nullptr;
 bool nativeGenieStarted = false;
+bool clientCaption = false;
 
 void Check(bool condition, const char* name)
 {
@@ -104,6 +106,8 @@ LRESULT CALLBACK ReceiverProc(HWND window, UINT message, WPARAM wParam, LPARAM l
 
 LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (message == kSetClientCaption) { clientCaption = wParam != 0; return 1; }
+    if (message == WM_NCHITTEST && clientCaption) return HTCLIENT;
     if (message == kAction)
     {
         if (wParam == 0) return DefWindowProcW(window, WM_SYSCOMMAND, SC_MINIMIZE, 0);
@@ -116,15 +120,15 @@ LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lP
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-HWND CreateFixtureWindow(const wchar_t* name, WNDPROC procedure)
+HWND CreateFixtureWindow(const wchar_t* name, WNDPROC procedure, HWND owner = nullptr)
 {
     WNDCLASSW type{};
     type.hInstance = GetModuleHandleW(nullptr);
     type.lpszClassName = name;
     type.lpfnWndProc = procedure;
     if (!RegisterClassW(&type) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return nullptr;
-    return CreateWindowExW(WS_EX_TOOLWINDOW, name, name, WS_OVERLAPPEDWINDOW,
-        -20000, -20000, 240, 160, nullptr, nullptr, type.hInstance, nullptr);
+    return CreateWindowExW(owner ? WS_EX_NOACTIVATE : WS_EX_TOOLWINDOW, name, name, WS_OVERLAPPEDWINDOW,
+        -20000, -20000, 240, 160, owner, nullptr, type.hInstance, nullptr);
 }
 
 HWND WindowArgument(const wchar_t* argument)
@@ -213,6 +217,48 @@ void CheckCrossProcessGenie()
         cancellations = 0;
     }
     if (previousDpi) SetThreadDpiAwarenessContext(previousDpi);
+}
+
+void CheckMinimizeButtonPress(DockExternalMinimize& monitor, HWND target)
+{
+    // The real external-minimize request happens after release. The pointer
+    // sampler must recognize the earlier caption press, including negative
+    // screen coordinates, without suppressing unrelated outside clicks.
+    TITLEBARINFOEX title{sizeof(title)};
+    DWORD_PTR result = 0;
+    const bool queried = SendMessageTimeoutW(target, WM_GETTITLEBARINFOEX, 0,
+        reinterpret_cast<LPARAM>(&title), SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &result) != 0;
+    Check(queried && !IsRectEmpty(&title.rgrect[2]), "child exposes real minimize button bounds");
+    if (!queried || IsRectEmpty(&title.rgrect[2])) return;
+    const auto center = [](const RECT& rect) {
+        return POINT{(rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2};
+    };
+    Check(monitor.IsMinimizeButtonPress(target, center(title.rgrect[2])),
+        "tracked child's minimize press preserves Dock promotion before the CBT request");
+    Check(!monitor.IsMinimizeButtonPress(target, center(title.rgrect[3])) &&
+        !monitor.IsMinimizeButtonPress(target, center(title.rgrect[5])),
+        "maximize and close presses remain ordinary outside clicks");
+    RECT native{};
+    GetWindowRect(target, &native);
+    Check(!monitor.IsMinimizeButtonPress(target, center(native)),
+        "ordinary application content still dismisses the promoted Dock");
+    // Both native and x86 child fixtures retain real caption bounds while
+    // emulating a custom frame's HTCLIENT result.
+    Check(SendMessageTimeoutW(target, kSetClientCaption, 1, 0,
+        SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &result) && result == 1,
+        "child switches to the custom-frame hit-test path");
+    Check(monitor.IsMinimizeButtonPress(target, center(title.rgrect[2])) &&
+        !monitor.IsMinimizeButtonPress(target, center(title.rgrect[5])) &&
+        !monitor.IsMinimizeButtonPress(target, center(native)),
+        "custom-frame caption bounds preserve only the minimize press");
+    Check(SendMessageTimeoutW(target, kSetClientCaption, 0, 0,
+        SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &result) && result == 1,
+        "child restores native hit testing after caption regression");
+    DockExternalMinimize untracked;
+    Check(!untracked.IsMinimizeButtonPress(target, center(title.rgrect[2])),
+        "unmonitored applications do not acquire a Dock minimize press exception");
+    Check(requests == 0 && !IsIconic(target),
+        "classification does not submit a minimize or change the application's state");
 }
 
 void CheckHostRestart(HWND receiver, const std::wstring& executable,
@@ -310,7 +356,7 @@ int wmain(int argc, wchar_t** argv)
     if (argc == 3 && std::wstring(argv[1]) == L"--fixture")
     {
         const HWND receiver = reinterpret_cast<HWND>(ULongToHandle(wcstoul(argv[2], nullptr, 10)));
-        const HWND window = CreateFixtureWindow(L"SnowDesktopMinimizeFixture", FixtureProc);
+        const HWND window = CreateFixtureWindow(L"SnowDesktopMinimizeFixture", FixtureProc, receiver);
         if (!window) return 1;
         ShowWindow(window, SW_SHOWNOACTIVATE);
         PostMessageW(receiver, kReady, reinterpret_cast<WPARAM>(window), 0);
@@ -373,6 +419,7 @@ int wmain(int argc, wchar_t** argv)
                 "32-bit helper installs the matching in-process hook");
         Check(monitor.OwnsTarget(fixture), "tracked window is marked with validated process identity");
 
+        CheckMinimizeButtonPress(monitor, fixture);
         CheckCrossProcessGenie();
 
         PostMessageW(fixture, kAction, 0, 0);

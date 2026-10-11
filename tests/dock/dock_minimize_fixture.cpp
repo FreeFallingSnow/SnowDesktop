@@ -3,8 +3,11 @@
 
 namespace
 {
+bool clientCaption = false;
 LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (message == WM_APP + 6) { clientCaption = wParam != 0; return 1; }
+    if (message == WM_NCHITTEST && clientCaption) return HTCLIENT;
     if (message == WM_APP + 2)
     {
         if (wParam == 0) return DefWindowProcW(window, WM_SYSCOMMAND, SC_MINIMIZE, 0);
@@ -27,8 +30,8 @@ int wmain(int argc, wchar_t** argv)
     type.lpszClassName = L"SnowDesktopMinimizeFixture32";
     type.lpfnWndProc = FixtureProc;
     if (!RegisterClassW(&type)) return 1;
-    const HWND window = CreateWindowExW(WS_EX_TOOLWINDOW, type.lpszClassName, type.lpszClassName,
-        WS_OVERLAPPEDWINDOW, -20000, -20000, 240, 160, nullptr, nullptr, type.hInstance, nullptr);
+    const HWND window = CreateWindowExW(WS_EX_NOACTIVATE, type.lpszClassName, type.lpszClassName,
+        WS_OVERLAPPEDWINDOW, -20000, -20000, 240, 160, receiver, nullptr, type.hInstance, nullptr);
     if (!window) return 1;
     ShowWindow(window, SW_SHOWNOACTIVATE);
     PostMessageW(receiver, WM_APP + 1, reinterpret_cast<WPARAM>(window), 0);

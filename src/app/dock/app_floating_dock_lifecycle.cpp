@@ -538,8 +538,16 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
     const bool passiveDragRevealedThisSample =
         UpdatePassiveDragRevealHosts(cursor);
 
+    const bool minimizeButtonPress = floatingDockVisible_ && leftButtonPressed &&
+        (buttonsDown & (rightButtonBit | middleButtonBit)) == 0 &&
+        dockExternalMinimize_ && dockWindowTransition_ &&
+        !dockWindowTransition_->IsActive() &&
+        snowdesktop::animation::RuntimeAnimationsEnabled() &&
+        snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect &&
+        dockExternalMinimize_->IsMinimizeButtonPress(
+            GetAncestor(WindowFromPoint(cursor), GA_ROOT), cursor);
     if ((floatingDockVisible_ || statusBar_) && pointerPressed &&
-        !passiveDragRevealedThisSample)
+        !passiveDragRevealedThisSample && !minimizeButtonPress)
     {
         if (floatingDockVisible_ && leftButtonPressed &&
             TryActivateDockPopupFromMenuPointerPress(
