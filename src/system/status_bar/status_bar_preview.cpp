@@ -554,7 +554,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                             invocation && invocation->action == StatusBarAction::TaskView,
                             "Task View must retain a complete independent hit target and keyboard action");
                     }
-                    if (date && ((!rightAligned && logicalWidth == 320) || (merged && logicalWidth <= 480)))
+                    if (date && ((!rightAligned && logicalWidth <= 280) || (merged && logicalWidth <= 320)))
                         Require(IsRectEmpty(&Item(compact, "clock").bounds),
                             "crowded date must yield as a whole while its notification target remains available");
                 };
@@ -586,6 +586,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 compactLayout(true, true, 320, 3.f);
                 compactLayout(true, true, 240, 3.f);
                 compactLayout(true, false, 320, scale);
+                compactLayout(true, false, 280, scale);
             }
             if (preset == "information" && width >= 1800 * scale)
                 for (const auto* key : {"cpu", "memory", "gpu", "traffic"})
