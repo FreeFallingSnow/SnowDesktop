@@ -224,24 +224,23 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         if (!root) { DestroyMenu(menu); DestroyMenu(independentMenu); return nullptr; }
         AppendMenuW(root, MF_STRING, kDockTaskManagerCommand, _LW("statusBar.taskManager"));
         AppendMenuW(root, MF_SEPARATOR, 0, nullptr);
-        const HMENU mergedMenu = CreatePopupMenu();
+        // Dock actions belong directly to the merged bar's settings level.
+        const HMENU mergedMenu = menu;
         const HMENU appearanceMenu = CreatePopupMenu();
-        if (!mergedMenu || !appearanceMenu)
+        if (!appearanceMenu)
         {
-            if (mergedMenu) DestroyMenu(mergedMenu);
-            if (appearanceMenu) DestroyMenu(appearanceMenu);
             DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr;
         }
         if (!AppendMenuW(root, MF_POPUP, reinterpret_cast<UINT_PTR>(mergedMenu), _LW("settings.bars.mergedBar")))
-        { DestroyMenu(mergedMenu); DestroyMenu(appearanceMenu); DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        { DestroyMenu(appearanceMenu); DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
         SetMenuItemIcon(root, kDockTaskManagerCommand, L"\uE49D", MenuIconFont::FluentRegular);
         SetMenuItemIcon(root, reinterpret_cast<UINT_PTR>(mergedMenu), L"\uF587", MenuIconFont::FluentRegular);
-        if (!AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(appearanceMenu), _LW("settings.bars.positionAndAppearance")))
-        { DestroyMenu(appearanceMenu); DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
-        if (!AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(menu), _LW("settings.bars.dockActions")))
-        { DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        if (!InsertMenuW(mergedMenu, 0, MF_BYPOSITION | MF_POPUP,
+            reinterpret_cast<UINT_PTR>(appearanceMenu), _LW("settings.bars.positionAndAppearance")))
+        { DestroyMenu(appearanceMenu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        if (edgeRevealEnabled)
+            InsertMenuW(mergedMenu, 1, MF_BYPOSITION | MF_SEPARATOR, 0, nullptr);
         SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(appearanceMenu), L"\uF592", MenuIconFont::FluentRegular);
-        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(menu), L"\uE445", MenuIconFont::FluentRegular);
         addDesktopStyles(root);
         const HMENU heightMenu = CreatePopupMenu();
         const HMENU iconMenu = CreatePopupMenu();
