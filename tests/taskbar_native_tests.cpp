@@ -9,6 +9,7 @@
 #include <array>
 #include <iostream>
 #include <cstring>
+#include <filesystem>
 #include <string>
 #include "taskbar_hook/taskbar_hook_lifetime_tests.inc"
 
@@ -671,13 +672,14 @@ int RunNativeTaskbarTests()
         if (cancel)
         {
             const std::array<HWND, 2> windows{window, secondary};
+            ConnectionStage connectionStage = ConnectionStage::RegisterHook;
             connectionState = &shared;
             shared.enabled = TRUE;
             shared.targets[0].shellPanelVisible = FALSE;
             shared.targets[1].suppressTaskbar = TRUE;
             check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
-                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel) == ERROR_SUCCESS &&
-                cloaked() && secondaryCloaked(),
+                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel, &connectionStage) == ERROR_SUCCESS &&
+                connectionStage == ConnectionStage::None && cloaked() && secondaryCloaked(),
                 "both taskbars must connect without any XAML ready notification");
             check(!AreTaskbarThreadsConnected(windows, GetCurrentProcessId(), GetCurrentProcessId() + 1),
                 "a previous host's resident callbacks cannot acknowledge the current host");
@@ -697,9 +699,21 @@ int RunNativeTaskbarTests()
                 "reconnected Dock displays immediately report completed suppression");
             acknowledgeConnection = false;
             check(ConnectTaskbarThreads(window, windows, GetCurrentProcessId(),
-                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel) == ERROR_DLL_INIT_FAILED,
+                GetCurrentProcessId(), nullptr, TestConnectionHook, nullptr, cancel, &connectionStage) == ERROR_DLL_INIT_FAILED &&
+                connectionStage == ConnectionStage::Acknowledge,
                 "stale owner properties cannot acknowledge a fresh connection request");
             acknowledgeConnection = true;
+            std::wstring missingRuntime = (std::filesystem::temp_directory_path() /
+                (L"SnowDesktop.missing-hook-" + std::to_wstring(GetCurrentProcessId())) /
+                L"Hook.dll").wstring();
+            unsigned fallbackCalls = 0;
+            const DWORD loadFailure = ConnectTaskbarRuntime(window, windows, GetCurrentProcessId(),
+                GetCurrentProcessId(), missingRuntime, nullptr, cancel, [&] {
+                    ++fallbackCalls;
+                    return std::wstring{};
+                }, &connectionStage);
+            check(loadFailure != ERROR_SUCCESS && connectionStage == ConnectionStage::LoadModule &&
+                !fallbackCalls, "module load failure records its stage without minting a fallback DLL path");
             shared.enabled = FALSE;
             SendMessageW(window, apply, 0, 0);
             SendMessageW(secondary, apply, 0, 0);

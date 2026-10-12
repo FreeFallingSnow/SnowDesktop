@@ -41,7 +41,8 @@ std::wstring GetRuntimeFilePath(const wchar_t* filename);
 /**
  * @brief 获取可供其他进程加载的运行时 DLL 路径。
  * @details 将随软件分发的 DLL 复制到 SnowDesktop 数据目录的 ShellHook
- * 按内容哈希保存的不可变共享目录后再返回，
+ * 每个 DLL 最多四个固定路径的共享槽位后再返回。同内容优先复用；只有无宿主租约且
+ * 未被目标进程加载的槽位才可更新。全部占用时返回空路径，不退回安装或构建目录，
  * 避免目标进程无法加载受保护的 MSIX 安装目录文件，也避免已注入模块继续锁住
  * 构建、便携或安装目录。
  * @param filename 不包含目录的 DLL 文件名。
@@ -55,7 +56,7 @@ std::wstring GetInjectableRuntimeFilePath(const wchar_t* filename);
 std::wstring GetTaskbarHookPath();
 
 // Used only when the shared Explorer instance cannot acknowledge attachment.
-// One immutable per-host copy avoids reviving retired TAP callbacks.
+// Another bounded slot avoids reviving retired TAP callbacks; no per-host path.
 std::wstring GetIsolatedTaskbarHookPath();
 
 struct UnvirtualizedRegistryValue

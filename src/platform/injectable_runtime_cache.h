@@ -3,18 +3,17 @@
 #include <windows.h>
 #include <bcrypt.h>
 #include <array>
-#include <atomic>
 #include <filesystem>
 #include <memory>
+#include <map>
 #include <string>
 #include <utility>
 #include <vector>
 
 namespace snowdesktop::deployment
 {
-// Windows registers hook DLL paths in a shared, bounded table. Reusing an
-// immutable copy prevents each host restart from consuming another path while
-// recovery callbacks keep the previous DLL loaded in other applications.
+// Bound the set of DLL paths presented to Windows, including across rebuilds.
+// A slot is immutable while leased or mapped; inactive slots can be reused.
 class InjectableRuntimeCache final
 {
     struct Lease
@@ -23,6 +22,8 @@ class InjectableRuntimeCache final
         ~Lease() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
     };
 public:
+    static constexpr unsigned kSlotCount = 4;
+    DWORD LastError() const noexcept { return lastError_; }
     explicit InjectableRuntimeCache(std::filesystem::path root) : root_(std::move(root)) {}
     InjectableRuntimeCache(const InjectableRuntimeCache&) = delete;
     InjectableRuntimeCache& operator=(const InjectableRuntimeCache&) = delete;
@@ -62,52 +63,97 @@ public:
         return result;
     }
 
-    std::filesystem::path Deploy(const std::filesystem::path& source)
+    std::filesystem::path Deploy(const std::filesystem::path& source,
+        const std::filesystem::path& excluded = {})
     {
         std::error_code error;
         if (root_.empty() || Reparse(root_.parent_path()) || Reparse(root_) ||
-            !std::filesystem::is_regular_file(source, error) || error) return {};
+            !std::filesystem::is_regular_file(source, error) || error)
+        { return Fail(ERROR_FILE_NOT_FOUND); }
         const auto digest = Digest(source);
-        if (digest.empty()) return {};
-        const auto directory = root_ / digest;
+        if (digest.empty()) return Fail(GetLastError() ? GetLastError() : ERROR_INVALID_DATA);
+        const auto pool = root_ / L"slots-v1";
+        const auto directory = pool / source.filename();
+        if (Reparse(pool) || Reparse(directory)) return Fail(ERROR_ACCESS_DENIED);
         std::filesystem::create_directories(directory, error);
-        if (error || Reparse(root_) || Reparse(directory)) return {};
-        auto lease = std::make_unique<Lease>();
-        // All hosts may hold read leases on the same file. A DELETE probe
-        // fails until the final host releases it; startup cleanup cannot remove
-        // a copy between another host selecting and loading it.
-        const auto ownerLock = directory / L".owner.lock";
-        if (Reparse(ownerLock)) return {};
-        lease->value = CreateFileW(ownerLock.c_str(), GENERIC_READ,
-            FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_HIDDEN, nullptr);
-        if (lease->value == INVALID_HANDLE_VALUE) return {};
-        const auto target = directory / source.filename();
-        if (Reparse(target)) return {};
-        if (!std::filesystem::exists(target, error) && !error)
+        if (error || Reparse(root_) || Reparse(pool) || Reparse(directory))
+        { return Fail(ERROR_ACCESS_DENIED); }
+
+        // Serialize publication across processes, including the transition
+        // from an exclusive writer lease to a shared host lease.
+        Lease publisher;
+        const auto publishLock = directory / L".publish.lock";
+        if (Reparse(publishLock)) return Fail(ERROR_ACCESS_DENIED);
+        const auto deadline = GetTickCount64() + 2000;
+        do
         {
-            static std::atomic<unsigned> serial{0};
-            const auto temporary = directory / (source.filename().wstring() + L"." +
-                std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()) + L"-" +
-                std::to_wstring(++serial) + L".tmp");
-            if (!CopyFileW(source.c_str(), temporary.c_str(), TRUE)) return {};
-            const bool matching = Digest(temporary) == digest;
-            // Never replace an existing DLL: another process may have mapped
-            // it already. Concurrent publishers accept only the matching copy.
-            const bool published = matching && MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_WRITE_THROUGH);
-            if (!published) DeleteFileW(temporary.c_str());
+            publisher.value = CreateFileW(publishLock.c_str(), GENERIC_READ | GENERIC_WRITE,
+                0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_HIDDEN, nullptr);
+            if (publisher.value != INVALID_HANDLE_VALUE) break;
+            if (GetLastError() != ERROR_SHARING_VIOLATION) return Fail(GetLastError());
+            Sleep(10);
+        } while (GetTickCount64() < deadline);
+        if (publisher.value == INVALID_HANDLE_VALUE) return Fail(ERROR_BUSY);
+
+        const auto retain = [&](const std::filesystem::path& target) -> std::filesystem::path {
+            if (!leases_.contains(target))
+            {
+                auto lease = std::make_unique<Lease>();
+                lease->value = CreateFileW((target.parent_path() / L".owner.lock").c_str(),
+                    GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_HIDDEN, nullptr);
+                if (lease->value == INVALID_HANDLE_VALUE) return Fail(GetLastError());
+                leases_.emplace(target, std::move(lease));
+            }
+            lastError_ = ERROR_SUCCESS;
+            SetLastError(ERROR_SUCCESS);
+            return target;
+        };
+        for (unsigned slot = 0; slot < kSlotCount; ++slot)
+        {
+            const auto parent = directory / (L"slot-" + std::to_wstring(slot));
+            const auto target = parent / source.filename();
+            if (target == excluded || Reparse(parent) || Reparse(target) ||
+                Reparse(parent / L".owner.lock")) continue;
+            if (Digest(target) == digest) return retain(target);
         }
-        if (error || Digest(target) != digest) return {};
-        leases_.push_back(std::move(lease));
-        return target;
+        for (unsigned slot = 0; slot < kSlotCount; ++slot)
+        {
+            const auto parent = directory / (L"slot-" + std::to_wstring(slot));
+            const auto target = parent / source.filename();
+            if (target == excluded || Reparse(parent) || Reparse(target) ||
+                Reparse(parent / L".owner.lock")) continue;
+            error.clear();
+            std::filesystem::create_directories(parent, error);
+            if (error || Reparse(parent)) continue;
+            Lease writer;
+            writer.value = CreateFileW((parent / L".owner.lock").c_str(), GENERIC_READ | GENERIC_WRITE,
+                0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_HIDDEN, nullptr);
+            if (writer.value == INVALID_HANDLE_VALUE) continue;
+            // CopyFile refuses to overwrite a mapped image, even after its
+            // originating host has released the lease. Never rename/delete a
+            // mapped target to bypass that protection.
+            if (!CopyFileW(source.c_str(), target.c_str(), FALSE) || Digest(target) != digest) continue;
+            CloseHandle(writer.value);
+            writer.value = INVALID_HANDLE_VALUE;
+            return retain(target);
+        }
+        return Fail(ERROR_BUSY);
     }
 
 private:
+    std::filesystem::path Fail(DWORD error) noexcept
+    {
+        lastError_ = error;
+        SetLastError(error);
+        return {};
+    }
     static bool Reparse(const std::filesystem::path& path)
     {
         const DWORD attributes = GetFileAttributesW(path.c_str());
         return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
     }
     std::filesystem::path root_;
-    std::vector<std::unique_ptr<Lease>> leases_;
+    DWORD lastError_ = ERROR_SUCCESS;
+    std::map<std::filesystem::path, std::unique_ptr<Lease>> leases_;
 };
 }

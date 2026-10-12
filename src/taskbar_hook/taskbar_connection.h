@@ -9,6 +9,20 @@
 
 namespace snowdesktop::taskbar_hook
 {
+enum class ConnectionStage { None, Deployment, LoadModule, Export, RegisterHook, DeliverMessage, Acknowledge };
+inline const wchar_t* ConnectionStageName(ConnectionStage stage) noexcept
+{
+    switch (stage)
+    {
+    case ConnectionStage::Deployment: return L"deployment";
+    case ConnectionStage::LoadModule: return L"load-module";
+    case ConnectionStage::Export: return L"resolve-export";
+    case ConnectionStage::RegisterHook: return L"register-hook";
+    case ConnectionStage::DeliverMessage: return L"deliver-message";
+    case ConnectionStage::Acknowledge: return L"acknowledge";
+    default: return L"none";
+    }
+}
 inline bool AreTaskbarThreadsConnected(std::span<const HWND> taskbars,
     DWORD processId, DWORD hostProcessId) noexcept
 {
@@ -31,8 +45,9 @@ inline bool AreTaskbarThreadsConnected(std::span<const HWND> taskbars,
 // thread. XAML may fail or never become ready; it does not own this connection.
 inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
     DWORD processId, DWORD hostProcessId, HMODULE module, HOOKPROC procedure,
-    HANDLE explorer, HANDLE cancel)
+    HANDLE explorer, HANDLE cancel, ConnectionStage* stage = nullptr)
 {
+    if (stage) *stage = ConnectionStage::None;
     const UINT connectMessage = RegisterWindowMessageW(kConnectHookMessageName);
     if (!connectMessage) return GetLastError();
     // A fresh acknowledgement is required even when another DLL from this
@@ -51,12 +66,14 @@ inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
         DWORD owner = 0;
         const DWORD thread = GetWindowThreadProcessId(window, &owner);
         if (!thread || owner != processId) return ERROR_INVALID_WINDOW_HANDLE;
+        if (stage) *stage = ConnectionStage::RegisterHook;
         hook = SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread);
         if (!hook) return GetLastError();
         // Window-thread delivery is synchronous; clearing only our transient
         // acknowledgement cannot release the existing owner or native hooks.
         RemovePropW(window, kHookConnectionProperty);
         DWORD_PTR ignored = 0;
+        if (stage) *stage = ConnectionStage::DeliverMessage;
         if (!SendMessageTimeoutW(window, connectMessage, nonce, 0,
                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &ignored))
         {
@@ -64,6 +81,7 @@ inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
             return error ? error : ERROR_TIMEOUT;
         }
         const std::array<HWND, 1> attached{window};
+        if (stage) *stage = ConnectionStage::Acknowledge;
         return AreTaskbarThreadsConnected(attached, processId, hostProcessId) &&
             reinterpret_cast<std::uintptr_t>(GetPropW(window, kHookConnectionProperty)) == nonce
             ? ERROR_SUCCESS : ERROR_DLL_INIT_FAILED;
@@ -82,8 +100,9 @@ inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
         if (const DWORD error = attach(window, hook.value)) return error;
     }
     if (const DWORD error = interrupted()) return error;
-    return AreTaskbarThreadsConnected(taskbars, processId, hostProcessId)
-        ? ERROR_SUCCESS : ERROR_DLL_INIT_FAILED;
+    if (!AreTaskbarThreadsConnected(taskbars, processId, hostProcessId)) return ERROR_DLL_INIT_FAILED;
+    if (stage) *stage = ConnectionStage::None;
+    return ERROR_SUCCESS;
 }
 
 // Retry only an unacknowledged candidate, never a cancelled/hung/dead Shell.
@@ -91,23 +110,38 @@ inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
 template<typename ResolveIsolated>
 DWORD ConnectTaskbarRuntime(HWND primary, std::span<const HWND> taskbars,
     DWORD processId, DWORD hostProcessId, std::wstring& selectedPath,
-    HANDLE explorer, HANDLE cancel, ResolveIsolated&& resolveIsolated)
+    HANDLE explorer, HANDLE cancel, ResolveIsolated&& resolveIsolated,
+    ConnectionStage* stage = nullptr)
 {
     const auto connect = [&](const std::wstring& path) -> DWORD {
+        if (stage) *stage = ConnectionStage::None;
         if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return ERROR_CANCELLED;
         if (explorer && WaitForSingleObject(explorer, 0) == WAIT_OBJECT_0) return ERROR_PROCESS_ABORTED;
+        if (stage) *stage = ConnectionStage::LoadModule;
         const HMODULE module = LoadLibraryW(path.c_str());
         if (!module) return GetLastError();
+        if (stage) *stage = ConnectionStage::Export;
         const auto procedure = reinterpret_cast<HOOKPROC>(GetProcAddress(module, "SnowDesktopTaskbarHookProc"));
         const DWORD error = procedure ? ConnectTaskbarThreads(primary, taskbars,
-            processId, hostProcessId, module, procedure, explorer, cancel) : ERROR_INVALID_FUNCTION;
+            processId, hostProcessId, module, procedure, explorer, cancel, stage) : ERROR_INVALID_FUNCTION;
         FreeLibrary(module);
         return error;
     };
     const DWORD error = connect(selectedPath);
     if (error != ERROR_DLL_INIT_FAILED) return error;
+    SetLastError(ERROR_SUCCESS);
     const std::wstring isolated = resolveIsolated();
-    if (isolated.empty() || isolated == selectedPath) return error;
+    if (isolated.empty())
+    {
+        const DWORD deploymentError = GetLastError();
+        if (deploymentError)
+        {
+            if (stage) *stage = ConnectionStage::Deployment;
+            return deploymentError;
+        }
+        return error;
+    }
+    if (isolated == selectedPath) return error;
     // Keep the choice even after a failed retry: do not mint copies repeatedly.
     selectedPath = isolated;
     return connect(selectedPath);

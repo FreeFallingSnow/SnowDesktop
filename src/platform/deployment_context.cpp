@@ -6,6 +6,7 @@
 #include "deployment_context.h"
 #include "injectable_runtime_cache.h"
 #include "data/data_paths.h"
+#include "diagnostics/diagnostic_log.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
 
 #include <windows.h>
@@ -38,6 +39,7 @@ namespace
 constexpr wchar_t kStartupTaskId[] = L"SnowDesktopStartup";
 constexpr wchar_t kRuntimeDirectory[] = L"SnowDesktop.Runtime";
 constexpr wchar_t kTaskbarHookFilename[] = L"SnowDesktopTaskbarHook.dll";
+std::mutex injectableDeploymentMutex;
 constexpr wchar_t kRuntimeHookOwnerLockFilename[] = L".owner.lock";
 constexpr wchar_t kVersion[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_VERSION);
 constexpr wchar_t kStoreId[] = SNOWDESKTOP_WIDEN(SNOWDESKTOP_STORE_ID);
@@ -704,14 +706,18 @@ private:
     HANDLE ownerHandle_ = INVALID_HANDLE_VALUE;
 };
 
-std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename, bool isolated = false)
+std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename,
+    const std::filesystem::path& excluded = {})
 {
     const std::filesystem::path source =
         snowdesktop::deployment::GetRuntimeFilePath(filename);
     if (!std::filesystem::is_regular_file(source))
-        return isolated ? std::wstring{} : source.wstring();
+    {
+        SetLastError(ERROR_FILE_NOT_FOUND);
+        return {};
+    }
 
-    if (!isolated && _wcsicmp(source.extension().c_str(), L".dll") == 0)
+    if (_wcsicmp(source.extension().c_str(), L".dll") == 0)
     {
         static snowdesktop::deployment::InjectableRuntimeCache cache([] {
             const std::filesystem::path data = GetDataDirectoryPath();
@@ -719,14 +725,23 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename, bool isolated 
             CleanupLegacyRuntimeRootsOnce(data);
             return data / L"ShellHook" / L"shared";
         }());
-        const auto shared = cache.Deploy(source);
-        return shared.empty() ? source.wstring() : shared.wstring();
+        const auto shared = cache.Deploy(source, excluded);
+        if (shared.empty())
+        {
+            const DWORD code = cache.LastError();
+            const std::wstring message = L"[HookRuntimeDeployment] error=" + std::to_wstring(code) +
+                L" slots=" + std::to_wstring(snowdesktop::deployment::InjectableRuntimeCache::kSlotCount) +
+                L" source=" + source.wstring();
+            WriteDiagnosticLogEntry(message.c_str());
+            SetLastError(code);
+        }
+        return shared.wstring();
     }
 
     static const InjectableRuntimeDirectory runtimeDirectory;
     const std::filesystem::path& targetDirectory = runtimeDirectory.Path();
     if (targetDirectory.empty())
-        return isolated ? std::wstring{} : source.wstring();
+        return {};
 
     const std::filesystem::path target =
         targetDirectory / source.filename();
@@ -738,7 +753,7 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename, bool isolated 
         std::filesystem::copy_options::none, error);
     if (!error && std::filesystem::is_regular_file(target))
         return target.wstring();
-    return isolated ? std::wstring{} : source.wstring();
+    return {};
 }
 
 snowdesktop::deployment::PackagedAutoStartState ConvertStartupTaskState(
@@ -973,21 +988,32 @@ std::wstring GetInjectableRuntimeFilePath(const wchar_t* filename)
 {
     if (!IsBareFilename(filename))
         return {};
-    static std::mutex deploymentMutex;
-    std::lock_guard lock(deploymentMutex);
+    std::lock_guard lock(injectableDeploymentMutex);
     return DeployInjectableRuntimeCopy(filename);
 }
 
 std::wstring GetTaskbarHookPath()
 {
-    static const std::wstring deployedPath =
-        GetInjectableRuntimeFilePath(kTaskbarHookFilename);
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+    static std::wstring deployedPath;
+    // A busy pool is recoverable once its owners close. Do not cache failure.
+    if (deployedPath.empty()) deployedPath = GetInjectableRuntimeFilePath(kTaskbarHookFilename);
     return deployedPath;
 }
 
 std::wstring GetIsolatedTaskbarHookPath()
 {
-    static const std::wstring deployedPath = DeployInjectableRuntimeCopy(kTaskbarHookFilename, true);
+    static std::mutex mutex;
+    std::lock_guard lock(mutex);
+    static std::wstring deployedPath;
+    if (deployedPath.empty())
+    {
+        const auto previous = GetTaskbarHookPath();
+        if (previous.empty()) return {};
+        std::lock_guard deploymentLock(injectableDeploymentMutex);
+        deployedPath = DeployInjectableRuntimeCopy(kTaskbarHookFilename, previous);
+    }
     return deployedPath;
 }
 

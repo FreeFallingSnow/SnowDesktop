@@ -800,7 +800,15 @@ private:
     bool Inject(HWND taskbar, DWORD expectedExplorerProcessId,
         const std::vector<HWND>& taskbars)
     {
-        if (selectedHookPath_.empty()) selectedHookPath_ = snowdesktop::deployment::GetTaskbarHookPath();
+        if (selectedHookPath_.empty())
+        {
+            selectedHookPath_ = snowdesktop::deployment::GetTaskbarHookPath();
+            if (selectedHookPath_.empty())
+            {
+                const DWORD error = GetLastError();
+                return Fail(expectedExplorerProcessId, error ? error : ERROR_FILE_NOT_FOUND);
+            }
+        }
         if (!std::filesystem::is_regular_file(selectedHookPath_))
         {
             return Fail(expectedExplorerProcessId, ERROR_FILE_NOT_FOUND);
@@ -809,19 +817,22 @@ private:
         HANDLE explorerProcess = OpenProcess(SYNCHRONIZE, FALSE,
             expectedExplorerProcessId);
 
+        snowdesktop::taskbar_hook::ConnectionStage stage{};
         const DWORD error = snowdesktop::taskbar_hook::ConnectTaskbarRuntime(taskbar, taskbars,
             expectedExplorerProcessId, GetCurrentProcessId(), selectedHookPath_, explorerProcess,
             injectionCancelEvent_, [this] {
-                if (selectedHookPath_ != snowdesktop::deployment::GetTaskbarHookPath()) return std::wstring{};
-                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] shared instance did not acknowledge; selecting isolated runtime");
+                if (selectedHookPath_ != snowdesktop::deployment::GetTaskbarHookPath())
+                { SetLastError(ERROR_SUCCESS); return std::wstring{}; }
+                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] instance did not acknowledge; selecting another bounded slot");
                 return snowdesktop::deployment::GetIsolatedTaskbarHookPath();
-            });
+            }, &stage);
         if (explorerProcess)
             CloseHandle(explorerProcess);
         if (error != ERROR_SUCCESS && error != ERROR_CANCELLED)
         {
             const std::wstring message = L"[TaskbarHookConnection] explorerPid=" +
                 std::to_wstring(expectedExplorerProcessId) + L" error=" + std::to_wstring(error) +
+                L" stage=" + snowdesktop::taskbar_hook::ConnectionStageName(stage) +
                 L" runtime=" + selectedHookPath_;
             WriteDiagnosticLogEntry(message.c_str());
         }
