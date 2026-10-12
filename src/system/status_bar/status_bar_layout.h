@@ -11,6 +11,51 @@
 
 namespace snowdesktop
 {
+// Per-monitor, transient state. Neither scrolling nor resizing changes the
+// persisted pinned identities or their ordering.
+struct StatusBarTrayScroll
+{
+    RECT viewport{};
+    LONG contentWidth = 0, offset = 0;
+    int wheelRemainder = 0;
+
+    LONG Maximum() const { return std::max(0L, contentWidth - (viewport.right - viewport.left)); }
+    void Arrange(RECT bounds, LONG content)
+    {
+        viewport = bounds; contentWidth = std::max(0L, content);
+        offset = IsRectEmpty(&viewport) ? 0 : std::clamp(offset, 0L, Maximum());
+        if (!Maximum()) wheelRemainder = 0;
+    }
+    bool Move(LONG distance)
+    {
+        const LONG next = std::clamp(offset + distance, 0L, Maximum());
+        if (next == offset || IsRectEmpty(&viewport)) return false;
+        offset = next; return true;
+    }
+    bool Wheel(int delta, LONG step)
+    {
+        wheelRemainder += delta;
+        const int ticks = wheelRemainder / WHEEL_DELTA;
+        wheelRemainder %= WHEEL_DELTA;
+        return Move(-ticks * step);
+    }
+    int EdgeDirection(POINT point, LONG edge) const
+    {
+        if (!PtInRect(&viewport, point) || !Maximum()) return 0;
+        edge = std::min(edge, (viewport.right - viewport.left) / 3);
+        if (point.x < viewport.left + edge && offset > 0) return -1;
+        if (point.x >= viewport.right - edge && offset < Maximum()) return 1;
+        return 0;
+    }
+    bool Reveal(RECT contentBounds)
+    {
+        if (IsRectEmpty(&viewport) || IsRectEmpty(&contentBounds)) return false;
+        if (contentBounds.left < viewport.left) return Move(contentBounds.left - viewport.left);
+        if (contentBounds.right > viewport.right) return Move(contentBounds.right - viewport.right);
+        return false;
+    }
+};
+
 // Clip only the shared edge. Corners and panels separated by a gap keep it.
 inline std::vector<RECT> StatusBarEdgeSegments(RECT frame, DockPosition position, RECT dock)
 {

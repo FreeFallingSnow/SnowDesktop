@@ -40,7 +40,7 @@ namespace
 {
 constexpr UINT kAppBar = WM_APP + 41, kPlace = WM_APP + 42, kFullscreen = WM_APP + 43, kForeground = WM_APP + 44,
     kActivate = WM_APP + 45;
-constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4;
+constexpr UINT_PTR kClockTimer = 1, kTrayMenuTimer = 2, kPlacementTimer = 3, kInputMethodTimer = 4, kTrayScrollTimer = 5;
 std::map<HWND, bool> liveBars; // All access, including out-of-context hooks, on the UI thread.
 void CALLBACK WindowEvent(HWINEVENTHOOK, DWORD event, HWND target, LONG object, LONG, DWORD, DWORD time)
 {
@@ -191,15 +191,63 @@ struct StatusBar::Impl
         bool trayExpanded = false;
         bool trayPreview = false;
         std::optional<RECT> dropIndicator;
+        StatusBarTrayScroll trayScroll;
+        std::string scrollDragKey;
+        float TrayScale() const { return dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale); }
+        void StopTrayScroll()
+        {
+            scrollDragKey.clear();
+            if (hwnd) KillTimer(hwnd, kTrayScrollTimer);
+        }
+        void UpdateTrayScrollDrag(std::string_view key, POINT screen)
+        {
+            POINT point = screen; ScreenToClient(hwnd, &point);
+            if (key.empty() || !InputAvailable() || !trayScroll.EdgeDirection(point, static_cast<LONG>(std::ceil(18 * TrayScale()))))
+            { StopTrayScroll(); return; }
+            if (scrollDragKey.empty()) SetTimer(hwnd, kTrayScrollTimer, 30, nullptr);
+            scrollDragKey = key;
+        }
+        bool ScrollTray(LONG distance)
+        {
+            if (!trayScroll.Move(distance)) return false;
+            ClearHover(); interaction.hovered.reset();
+            if (!trayDragging)
+            {
+                interaction.CancelPointer();
+                if (!pressedTray.empty())
+                { pressedTray.clear(); if (GetCapture() == hwnd) ReleaseCapture(); }
+            }
+            paintDirty = true; Paint(); return true;
+        }
+        void TickTrayScroll()
+        {
+            if (scrollDragKey.empty()) return;
+            POINT screen{};
+            if (!InputAvailable() || !owner.tray || !(GetAsyncKeyState(VK_LBUTTON) & 0x8000) || !GetCursorPos(&screen))
+            { StopTrayScroll(); return; }
+            const auto snapshot = owner.tray->Current();
+            if (std::none_of(snapshot.icons.begin(), snapshot.icons.end(), [&](const auto& icon) {
+                return icon.key == scrollDragKey && !(icon.state & NIS_HIDDEN);
+            })) { StopTrayScroll(); return; }
+            POINT point = screen; ScreenToClient(hwnd, &point);
+            const auto direction = trayScroll.EdgeDirection(point, static_cast<LONG>(std::ceil(18 * TrayScale())));
+            if (!direction) { StopTrayScroll(); return; }
+            const auto key = scrollDragKey;
+            if (ScrollTray(direction * static_cast<LONG>(std::ceil(4 * TrayScale()))))
+                owner.PreviewDrop(key, screen); // Recompute ordering against the newly scrolled cells.
+            else StopTrayScroll();
+        }
         StatusBarActivationQueue activation;
         void EndDragFeedback()
         {
+            StopTrayScroll();
             if (std::exchange(trayPreview, false) && owner.dragFeedback.end) owner.dragFeedback.end();
         }
         explicit Window(Impl& value) : owner(value) {}
         ~Window()
         {
             closing = true;
+            StopTrayScroll();
             CancelTrayMenu();
             // Owner ends cross-window feedback before erasing this map entry.
             trayPreview = false;
@@ -560,10 +608,19 @@ struct StatusBar::Impl
                         return item.icon && item.icon->key == old.icon->key;
                     })) owner.tray->SetGeometry(old.icon->key, {});
             }
+            if (!pressedTray.empty() && std::none_of(items.begin(), items.end(), [&](const auto& item) {
+                return item.icon && item.icon->key == pressedTray;
+            }))
+            {
+                EndDragFeedback(); pressedTray.clear(); trayDragging = false;
+                if (GetCapture() == hwnd) ReleaseCapture();
+                interaction.CancelPointer();
+            }
             const bool same = SameStatusBarContent(items, previousItems);
             if (same && !paintDirty)
             {
-                for (std::size_t i = 0; i < items.size(); ++i) items[i].bounds = previousItems[i].bounds;
+                for (std::size_t i = 0; i < items.size(); ++i)
+                { items[i].bounds = previousItems[i].bounds; items[i].contentBounds = previousItems[i].contentBounds; }
                 SyncTooltip();
                 return;
             }
@@ -633,7 +690,7 @@ struct StatusBar::Impl
             const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
                 dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), a, palette, interaction.hovered,
                 keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
-                interaction.focused.value_or(0), mergedDockHeight > 0, owner.settings.timeNotificationRightAligned);
+                interaction.focused.value_or(0), mergedDockHeight > 0, owner.settings.timeNotificationRightAligned, &trayScroll);
             if (dropIndicator)
             {
                 ComPtr<ID2D1SolidColorBrush> brush;
@@ -749,6 +806,8 @@ struct StatusBar::Impl
         }
         void DismissSurfaces()
         {
+            EndDragFeedback(); pressedTray.clear(); trayDragging = false;
+            if (GetCapture() == hwnd) ReleaseCapture();
             CancelTrayMenu();
             if (owner.tray) owner.tray->CancelFocusReturn();
             keyboardFocusVisible = false;
@@ -817,6 +876,9 @@ struct StatusBar::Impl
             const auto delivery = owner.tray->TakeFocusReturn(hwnd, serial);
             if (!delivery) return;
             Paint(); // Reconcile pending icon removal/reordering before choosing a target.
+            for (const auto& item : items)
+                if (item.icon && item.icon->key == delivery->key && trayScroll.Reveal(item.contentBounds))
+                { paintDirty = true; Paint(); break; }
             const auto index = FindStatusBarTrayFocus(items, delivery->key);
             if (!index || !tray::RestoreFocus(*delivery)) return;
             interaction.focused = index;
@@ -867,6 +929,8 @@ struct StatusBar::Impl
                     [&] {
                         if (self->owner.tray) self->owner.tray->CancelFocusReturn();
                         const auto focused = self->interaction.focused;
+                        if (focused && *focused < self->items.size() && self->items[*focused].icon)
+                            self->trayScroll.Reveal(self->items[*focused].contentBounds);
                         const bool sameTray = focused && *focused < self->items.size() && self->items[*focused].icon &&
                             self->items[*focused].icon->key == self->trayMenuKey;
                         const bool canceledMenu = !sameTray && self->CancelTrayMenu();
@@ -925,6 +989,7 @@ struct StatusBar::Impl
                         self->Paint();
                     }
                 }
+                else if (wp == kTrayScrollTimer) self->TickTrayScroll();
                 else if (wp == kTrayMenuTimer) self->PollTrayMenu();
                 else if (wp == kPlacementTimer) self->Place();
                 return 0;
@@ -1077,6 +1142,7 @@ struct StatusBar::Impl
                     if (self->trayDragging)
                     {
                         if (self->owner.dragFeedback.move) self->owner.dragFeedback.move(self->pressedTray,screen);
+                        else self->owner.PreviewDrop(self->pressedTray, screen);
                         SetCursor(LoadCursorW(nullptr,IDC_SIZEALL));
                     }
                     return 0;
@@ -1112,9 +1178,24 @@ struct StatusBar::Impl
                 break;
             }
             case WM_MOUSEWHEEL:
+            case WM_MOUSEHWHEEL:
             {
                 POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 ScreenToClient(window, &point);
+                if (PtInRect(&self->trayScroll.viewport, point) && self->trayScroll.Maximum() > 0)
+                {
+                    const auto previous = self->trayScroll.offset;
+                    self->trayScroll.Wheel(message == WM_MOUSEHWHEEL ? -GET_WHEEL_DELTA_WPARAM(wp) : GET_WHEEL_DELTA_WPARAM(wp),
+                        static_cast<LONG>(std::ceil(56 * self->TrayScale())));
+                    const LONG distance = self->trayScroll.offset - previous;
+                    self->trayScroll.offset = previous;
+                    self->ScrollTray(distance);
+                    const auto dragKey = self->trayDragging ? self->pressedTray : self->owner.previewDragKey;
+                    if (!dragKey.empty())
+                    { POINT screen = point; ClientToScreen(window, &screen); self->owner.PreviewDrop(dragKey, screen); }
+                    return 0;
+                }
+                if (message == WM_MOUSEHWHEEL) break;
                 for (const auto& item : self->items)
                     if (item.key == "controlCenter" && PtInRect(&item.bounds, point))
                     {
@@ -1172,6 +1253,7 @@ struct StatusBar::Impl
     std::function<void(const StatusBarSettings&)> trayChanged;
     std::function<bool(std::string_view, POINT)> dropOutside;
     TrayDragFeedback dragFeedback;
+    std::string previewDragKey;
     std::function<void(bool)> dockChanged;
     std::function<void()> pointerPressed;
     std::function<StatusBarDockState(HMONITOR)> dockStateProvider;
@@ -1206,7 +1288,7 @@ struct StatusBar::Impl
                 return icon.key==item.icon->key&&!(icon.state&NIS_HIDDEN)&&!tray::DuplicatesControlCenter(icon)&&!icon.persistentKey.empty()&&
                     std::find(settings.pinnedTrayItems.begin(),settings.pinnedTrayItems.end(),icon.persistentKey)!=settings.pinnedTrayItems.end();
             });});
-            const auto target=ResolveStatusBarTrayDrop(visible,local,inset,stroke);
+            const auto target=ResolveStatusBarTrayDrop(visible,local,inset,stroke,window->trayScroll.viewport);
             if(!target)return {};
             auto probe=settings;
             if (!tray::PlaceIcon(probe,snapshot,key,target->pinned,target->before)) return {};
@@ -1217,10 +1299,12 @@ struct StatusBar::Impl
     bool PreviewDrop(std::string_view key,POINT point)
     {
         if(removingWindows)return false;
+        previewDragKey = key;
         const auto target=FindDrop(key,point);
         for(const auto& [id,window]:windows)
         {
             if(!window)continue;
+            window->UpdateTrayScrollDrag(key, point);
             const std::optional<RECT> next=target&&target->window==window.get()?std::optional(target->indicator):std::nullopt;
             if(next.has_value()!=window->dropIndicator.has_value() ||
                 (next&&!EqualRect(&*next,&*window->dropIndicator)))

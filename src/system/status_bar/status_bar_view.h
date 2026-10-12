@@ -1,5 +1,6 @@
 #pragma once
 #include "status_bar.h"
+#include "status_bar_layout.h"
 #include "system/tray/tray_service.h"
 #include "widget/data/widget_system_data_provider.h"
 #include "status_bar_battery.h"
@@ -27,6 +28,7 @@ struct StatusBarItem
     bool flipGlyph = false;
     bool batteryPluggedIn = false;
     std::optional<status_bar_input_method::ProfileIcon> inputIcon;
+    RECT contentBounds{}; // Full scrolled tray cell; bounds is its visible hit target.
 };
 
 // Data boundary only: no HWND, sampling, Explorer or device operations.
@@ -65,7 +67,7 @@ inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<Status
 HRESULT DrawStatusBarContent(ID2D1DeviceContext*, IDWriteFactory*, std::vector<StatusBarItem>&,
     UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
     std::optional<std::size_t> hovered = {}, bool keyboardFocusVisible = false, std::size_t focused = 0,
-    bool mergedDock = false, bool timeNotificationRightAligned = false);
+    bool mergedDock = false, bool timeNotificationRightAligned = false, StatusBarTrayScroll* trayScroll = nullptr);
 PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings&);
 // The desktop-facing halo occupies space within the existing AppBar allocation.
 void DrawStatusBarEdge(ID2D1DeviceContext*, RECT, const PersonalizationSettings&, float scale, DockPosition, RECT adjacentDock = {});

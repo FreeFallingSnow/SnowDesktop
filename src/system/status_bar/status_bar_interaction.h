@@ -12,17 +12,25 @@ struct StatusBarTrayDrop
 // Resolve against rendered hit rectangles. Pinned icons share the "tray"
 // presentation key with overflow; only the icon-less button means unpin.
 inline std::optional<StatusBarTrayDrop> ResolveStatusBarTrayDrop(
-    const std::vector<StatusBarItem>& items, POINT point, LONG inset, LONG stroke)
+    const std::vector<StatusBarItem>& items, POINT point, LONG inset, LONG stroke, RECT viewport = {})
 {
     StatusBarTrayDrop result;
     const auto overflow=std::find_if(items.begin(),items.end(),[&](const auto& item) {
         return !item.icon&&item.key=="tray"&&PtInRect(&item.bounds,point);
     });
-    for(const auto& item:items) if(item.icon&&!IsRectEmpty(&item.bounds))
+    if (!IsRectEmpty(&viewport) && !PtInRect(&viewport, point) && overflow == items.end()) return {};
+    for(const auto& item:items) if(item.icon &&
+        (!IsRectEmpty(&item.bounds) || (!IsRectEmpty(&viewport) && !IsRectEmpty(&item.contentBounds))))
     {
-        result.indicator={item.bounds.right-stroke/2,item.bounds.top+inset,item.bounds.right+stroke-stroke/2,item.bounds.bottom-inset};
-        if(point.x<(item.bounds.left+item.bounds.right)/2)
-        {result.before=item.icon->key;result.indicator.left=item.bounds.left-stroke/2;result.indicator.right=result.indicator.left+stroke;break;}
+        const auto bounds = IsRectEmpty(&item.contentBounds) ? item.bounds : item.contentBounds;
+        result.indicator={bounds.right-stroke/2,bounds.top+inset,bounds.right+stroke-stroke/2,bounds.bottom-inset};
+        if(point.x<(bounds.left+bounds.right)/2)
+        {result.before=item.icon->key;result.indicator.left=bounds.left-stroke/2;result.indicator.right=result.indicator.left+stroke;break;}
+    }
+    if (!IsRectEmpty(&viewport) && !IsRectEmpty(&result.indicator))
+    {
+        result.indicator.left = std::clamp(result.indicator.left, viewport.left, std::max(viewport.left, viewport.right - stroke));
+        result.indicator.right = std::min(viewport.right, result.indicator.left + stroke);
     }
     if(overflow!=items.end()) {result.pinned=false;result.indicator=overflow->bounds;}
     else if(IsRectEmpty(&result.indicator))
@@ -78,7 +86,8 @@ struct StatusBarInteraction
             (*focused + (backward ? items.size() - 1 : 1)) % items.size() : backward ? items.size() - 1 : 0;
         for (std::size_t count = 0; count < items.size(); ++count)
         {
-            if (items[next].action != StatusBarAction::None && !IsRectEmpty(&items[next].bounds))
+            if (items[next].action != StatusBarAction::None && (!IsRectEmpty(&items[next].bounds) ||
+                (items[next].icon && !IsRectEmpty(&items[next].contentBounds))))
             { focused = next; return; }
             next = (next + (backward ? items.size() - 1 : 1)) % items.size();
         }

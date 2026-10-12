@@ -1551,6 +1551,67 @@ void CheckStatusBarInteraction()
     state.Press(before, {70, 16}, false, true);
     Check(state.Release(before, {70, 16}, false).item == 1,
         "Task View suppression preserves tray double-click release delivery");
+
+    // Exercise scrolling, clipped hits and insertion together. In particular,
+    // dropping after the last visible icon must not append past hidden icons.
+    for (const LONG scale : {1L, 2L, 3L})
+    {
+        StatusBarTrayScroll scrolling;
+        const RECT viewport{100 * scale, 0, 170 * scale, 32 * scale};
+        scrolling.Arrange(viewport, 140 * scale);
+        Check(scrolling.Maximum() == 70 * scale && scrolling.offset == 0,
+            "tray overflow retains the entire content width without changing order");
+        Check(!scrolling.Wheel(-30, 28 * scale) && !scrolling.Wheel(-30, 28 * scale) &&
+            !scrolling.Wheel(-30, 28 * scale) && scrolling.Wheel(-30, 28 * scale) && scrolling.offset == 28 * scale,
+            "precision-wheel fragments accumulate to one complete tray scroll step");
+        Check(scrolling.EdgeDirection({101 * scale, 16 * scale}, 18 * scale) == -1 &&
+            scrolling.EdgeDirection({169 * scale, 16 * scale}, 18 * scale) == 1 &&
+            scrolling.EdgeDirection({135 * scale, 16 * scale}, 18 * scale) == 0 &&
+            scrolling.EdgeDirection({169 * scale, 40 * scale}, 18 * scale) == 0,
+            "only a real overflowing viewport edge requests drag auto-scroll");
+        Check(scrolling.Move(1000 * scale) && scrolling.offset == scrolling.Maximum() &&
+            !scrolling.Move(scale) && scrolling.EdgeDirection({169 * scale, 16 * scale}, 18 * scale) == 0,
+            "drag scrolling clamps and stops at the content end");
+        Check(scrolling.Reveal({30 * scale, 0, 58 * scale, 32 * scale}) && scrolling.offset == 0,
+            "keyboard reveal brings the first hidden tray cell back into view");
+        auto clipped = before;
+        clipped.clear();
+        for (int index = 0; index < 5; ++index)
+        {
+            auto value = item(("scroll-" + std::to_string(index)).c_str(), StatusBarAction::Tray, {}, true);
+            value.contentBounds = {viewport.left - 10 * scale + index * 28 * scale, 0,
+                viewport.left - 10 * scale + (index + 1) * 28 * scale, viewport.bottom};
+            IntersectRect(&value.bounds, &value.contentBounds, &viewport);
+            clipped.push_back(std::move(value));
+        }
+        clipped.push_back(item("tray", StatusBarAction::Tray, {170 * scale, 0, 198 * scale, 32 * scale}, false));
+        const auto drop = ResolveStatusBarTrayDrop(clipped, {169 * scale, 16 * scale}, 5 * scale, 2 * scale, viewport);
+        Check(drop && drop->pinned && drop->before == "scroll-3" && drop->indicator.right <= viewport.right,
+            "trailing clipped-cell drop inserts before the next hidden identity with an in-viewport marker");
+        Check(HitTestStatusBarItems(clipped, {171 * scale, 16 * scale}) == 5 &&
+            !HitTestStatusBarItems(clipped, {99 * scale, 16 * scale}),
+            "offscreen tray content cannot steal the chevron or a blank-area hit");
+        const auto unpin = ResolveStatusBarTrayDrop(clipped, {180 * scale, 16 * scale}, 5 * scale, 2 * scale, viewport);
+        Check(unpin && !unpin->pinned && EqualRect(&unpin->indicator, &clipped.back().bounds),
+            "scrollable tray retains the explicit chevron drop for unpinning");
+        state.focused = 2; state.MoveFocus(clipped, false);
+        Check(state.focused == 3 && !ResolveStatusBarInvocation(clipped, state.focused, false),
+            "keyboard traversal selects hidden tray identities but cannot invoke them before reveal");
+        state.Press(clipped, {110 * scale, 16 * scale}, false);
+        auto shifted = clipped;
+        for (auto& value : shifted) if (value.icon)
+        { OffsetRect(&value.contentBounds, -28 * scale, 0); IntersectRect(&value.bounds, &value.contentBounds, &viewport); }
+        Check(!state.Release(shifted, {110 * scale, 16 * scale}, false).accepted,
+            "scrolling between press and release cannot activate a replacement tray icon");
+        scrolling.Move(60 * scale); scrolling.Arrange(viewport, 84 * scale);
+        Check(scrolling.offset == 14 * scale, "removing tray icons clamps the previous scroll offset");
+        scrolling.Arrange(viewport, 28 * scale);
+        Check(scrolling.offset == 0 && !scrolling.Maximum() && !scrolling.wheelRemainder,
+            "overflow disappearing resets offset and wheel residue");
+        scrolling.Arrange({}, 140 * scale);
+        Check(!scrolling.Move(scale) && scrolling.offset == 0,
+            "an unavailable viewport never scrolls into invisible content");
+    }
 }
 
 struct StatusBarVisibilityTestState
