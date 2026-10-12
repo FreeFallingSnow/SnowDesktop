@@ -28,6 +28,7 @@ constexpr UINT kDockRevealGestureFirst = 41870;
 constexpr UINT kDockReserveDesktop = 41872;
 constexpr UINT kDockReserveMaximized = 41873;
 constexpr UINT kDockStartButton = 41874;
+constexpr UINT kDockQuickSearchButton = 41875;
 constexpr UINT kDesktopStyleFirst = 41880;
 constexpr wchar_t const* kDesktopStyles[]{L"native", L"taskbar-dock", L"island", L"merged", L"side"};
 constexpr char const* kDesktopStyleLabels[]{"settings.desktopStyle.native.title", "settings.desktopStyle.taskbar-dock.title",
@@ -175,6 +176,8 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     };
     addToggle(menu, kDockStartButton, _LW("app.dock.start_button"), dockSettings_.showWindowsButton,
         L"\uF133", true, true);
+    addToggle(menu, kDockQuickSearchButton, _LW("app.dock.quick_search"), dockSettings_.showQuickSearchButton,
+        L"\uF690", true, true); // search_20
     addToggle(menu, kContextDockSingleClickLaunch, _LW("app.dock.single_click_launch"),
         dockSettings_.singleClickLaunchItems, L"\uE445"); // cursor_click_20
     addToggle(menu, kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
@@ -380,6 +383,10 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         break;
     case kDockStartButton:
         updated.showWindowsButton = !updated.showWindowsButton;
+        layoutChanged = true;
+        break;
+    case kDockQuickSearchButton:
+        updated.showQuickSearchButton = !updated.showQuickSearchButton;
         layoutChanged = true;
         break;
     case kDockReserveDesktop:

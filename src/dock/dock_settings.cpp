@@ -1108,6 +1108,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         }
     }
     ReadBoolField(text, "showWindowsButton", settings.showWindowsButton);
+    ReadBoolField(text, "showQuickSearchButton", settings.showQuickSearchButton);
     ReadBoolField(text, "showRunningApps", settings.showRunningApps);
     ReadBoolField(text, "showWindowPreviews", settings.showWindowPreviews);
     ReadBoolField(text, "singleClickLaunchItems",
@@ -1264,6 +1265,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << static_cast<int>(settings.monitorScope) << ",\n";
     file << "  \"showWindowsButton\": "
          << (settings.showWindowsButton ? "true" : "false") << ",\n";
+    file << "  \"showQuickSearchButton\": "
+         << (settings.showQuickSearchButton ? "true" : "false") << ",\n";
     // Preserve the legacy keys for downgrade compatibility while migrating
     // every saved configuration to the unconditional feature behavior.
     file << "  \"showRunningApps\": true,\n";

@@ -405,6 +405,7 @@ struct DockPagePresenter::Impl
     std::vector<FullscreenExceptionRow> fullscreenExceptionRows;
     std::vector<DockFullscreenException> fullscreenExceptionValues;
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
+    muxc::ToggleSwitch showQuickSearchButtonToggle{nullptr};
     muxc::ToggleSwitch suppressTaskbarToggle{nullptr};
     muxc::ToggleSwitch taskbarSuppressToggle{nullptr};
     muxc::ToggleSwitch reserveScreenSpaceToggle{nullptr};
@@ -444,6 +445,7 @@ struct DockPagePresenter::Impl
     SettingRow singleClickLaunchItemsRow;
     SettingRow fullscreenPolicyRow;
     SettingRow showWindowsButtonRow;
+    SettingRow showQuickSearchButtonRow;
     SettingRow suppressTaskbarRow;
     SettingRow taskbarSuppressRow;
     SettingRow reserveScreenSpaceRow;
@@ -502,6 +504,7 @@ struct DockPagePresenter::Impl
     winrt::event_token singleClickLaunchItemsToken{};
     winrt::event_token fullscreenPolicyToken{};
     winrt::event_token showWindowsButtonToken{};
+    winrt::event_token showQuickSearchButtonToken{};
     winrt::event_token suppressTaskbarToken{};
     winrt::event_token taskbarSuppressToken{};
     winrt::event_token reserveScreenSpaceToken{};
@@ -627,6 +630,7 @@ struct DockPagePresenter::Impl
         singleClickLaunchItems = muxc::ToggleSwitch{};
         fullscreenPolicyCombo = NewCombo();
         showWindowsButtonToggle = muxc::ToggleSwitch{};
+        showQuickSearchButtonToggle = muxc::ToggleSwitch{};
         suppressTaskbarToggle = muxc::ToggleSwitch{};
         taskbarSuppressToggle = muxc::ToggleSwitch{};
         reserveScreenSpaceToggle = muxc::ToggleSwitch{};
@@ -638,6 +642,7 @@ struct DockPagePresenter::Impl
                  floatingShortcutToggle,
                  floatingEdgeSwipeToggle,
                  showWindowsButtonToggle,
+                 showQuickSearchButtonToggle,
                  suppressTaskbarToggle,
                  showFrequentItemsToggle,
                  keepWhenDesktopHiddenToggle,
@@ -655,6 +660,8 @@ struct DockPagePresenter::Impl
         fullscreenPolicyRow.Initialize(fullscreenPolicyCombo);
         fullscreenPolicyRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
+        showQuickSearchButtonRow.Initialize(showQuickSearchButtonToggle);
+        showQuickSearchButtonRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         suppressTaskbarRow.Initialize(suppressTaskbarToggle);
         suppressTaskbarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         showFrequentItemsRow.Initialize(showFrequentItemsToggle);
@@ -723,6 +730,7 @@ struct DockPagePresenter::Impl
         behaviorCard.content.Children().Append(singleClickLaunchItemsRow.root);
         behaviorCard.content.Children().Append(windowPreviewsRow.root);
         itemsCard.content.Children().Append(showWindowsButtonRow.root);
+        itemsCard.content.Children().Append(showQuickSearchButtonRow.root);
         itemsCard.content.Children().Append(showFrequentItemsRow.root);
         itemsCard.content.Children().Append(frequentItemCount.root);
         for (auto* card : {&layoutCard, &mergedCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
@@ -1333,6 +1341,14 @@ struct DockPagePresenter::Impl
                         settings.showWindowsButton = value;
                     });
             });
+        showQuickSearchButtonToken = showQuickSearchButtonToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = showQuickSearchButtonToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) {
+                        settings.showQuickSearchButton = value;
+                    });
+            });
         showFrequentItemsToken = showFrequentItemsToggle.Toggled(
             [this](const auto&, const auto&) {
                 UpdateDependentStates();
@@ -1927,6 +1943,7 @@ struct DockPagePresenter::Impl
         homeSize.IsOn(settings.lastMonitorUseHomeSize);
         reserveScreenSpaceToggle.IsOn(settings.reserveScreenSpace);
         showWindowsButtonToggle.IsOn(ShowDockWindowsButton(settings));
+        showQuickSearchButtonToggle.IsOn(settings.showQuickSearchButton);
         showFrequentItemsToggle.IsOn(settings.showFrequentItems);
         keepWhenDesktopHiddenToggle.IsOn(settings.keepWhenDesktopHidden);
         allowDesktopContentOverlapToggle.IsOn(
@@ -2000,6 +2017,7 @@ struct DockPagePresenter::Impl
         reserveScreenSpaceRow.SetEnabled(dockEnabled &&
             !showOnlyWhenSummonedToggle.IsOn() && !spaceReservedByStatusBar);
         showWindowsButtonRow.SetEnabled(dockEnabled);
+        showQuickSearchButtonRow.SetEnabled(dockEnabled);
         showFrequentItemsRow.SetEnabled(dockEnabled);
         allowDesktopContentOverlapRow.SetEnabled(dockEnabled && !spaceReservedByStatusBar && !showOnlyWhenSummonedToggle.IsOn());
         floatingEdgeSwipeRow.SetEnabled(dockEnabled && !showOnlyWhenSummonedToggle.IsOn());
@@ -2760,6 +2778,8 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(reserveScreenSpaceToggle, reserveScreenSpaceRow.label.Text());
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
+        showQuickSearchButtonRow.SetText(L(
+            "app.dock.show_quick_search_button", L"Show quick search button"));
         singleClickLaunchItemsRow.SetText(
             L("settings.dock.singleClickLaunchItems", L"Launch pinned and frequent icons with a single click"),
             L("settings.dock.singleClickLaunchItems.description",
@@ -2778,6 +2798,8 @@ struct DockPagePresenter::Impl
             showOnlyWhenSummonedRow.label.Text());
         muxa::AutomationProperties::SetName(
             showWindowsButtonToggle, showWindowsButtonRow.label.Text());
+        muxa::AutomationProperties::SetName(
+            showQuickSearchButtonToggle, showQuickSearchButtonRow.label.Text());
         muxa::AutomationProperties::SetName(
             showFrequentItemsToggle, showFrequentItemsRow.label.Text());
         SetContinuousText(frequentItemCount,
@@ -3010,6 +3032,8 @@ struct DockPagePresenter::Impl
         if (id == "dock.reserveScreenSpace") return reserveScreenSpaceToggle;
         if (id == "dock.showWindowsButton")
             return showWindowsButtonToggle;
+        if (id == "dock.showQuickSearchButton")
+            return showQuickSearchButtonToggle;
         if (id == "dock.showFrequentItems")
             return showFrequentItemsToggle;
         if (id == "dock.frequentItemCount")
@@ -3169,6 +3193,7 @@ struct DockPagePresenter::Impl
             fullscreenRunningApps.SelectionChanged(fullscreenRunningSelectToken);
             ClearFullscreenExceptionRows();
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
+            showQuickSearchButtonToggle.Toggled(showQuickSearchButtonToken);
             mergedHeight->Close();
             homeSize.Toggled(homeSizeToken);
             taskbarMode.SelectionChanged(taskbarModeToken);

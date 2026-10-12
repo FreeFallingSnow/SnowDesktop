@@ -263,6 +263,7 @@ void TestCodec()
     settings.values.dock.windowEffect = 3;
     settings.values.dock.suppressSystemTaskbar = true;
     settings.values.dock.showWindowsButton = false;
+    settings.values.dock.showQuickSearchButton = false;
     settings.values.general.language[0] = 'z';
     settings.values.general.language[1] = 'h';
     settings.values.general.language[2] = '\0';
@@ -330,7 +331,8 @@ void TestCodec()
     const auto runningCopy = Unpack<snowdesktop::SettingsActionResult>(Pack(runningApplications));
     Check(runningCopy.dockApplications == runningApplications.dockApplications,
         "existing Dock running-zone names and executable paths reach the exception selector through private IPC");
-    Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton,
+    Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton &&
+            !restored.values.dock.showQuickSearchButton,
         "suppression crosses private settings IPC without replacing the base Windows button preference");
     for (const int theme : {-1, 0, 1})
     {

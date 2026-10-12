@@ -87,6 +87,7 @@ JsonValue EncodeDockLayout(const DockLayoutSettings& settings)
         {"edgeAttached", BooleanValue(settings.edgeAttached)},
         {"monitorScope", NumberValue(static_cast<int>(settings.monitorScope))},
         {"showWindowsButton", BooleanValue(settings.showWindowsButton)},
+        {"showQuickSearchButton", BooleanValue(settings.showQuickSearchButton)},
         {"showFrequentItems", BooleanValue(settings.showFrequentItems)},
         {"keepWhenDesktopHidden", BooleanValue(settings.keepWhenDesktopHidden)},
         {"allowDesktopContentOverlap", BooleanValue(settings.allowDesktopContentOverlap)},
@@ -602,6 +603,7 @@ bool DecodeDockLayout(const JsonValue& root, Document& document,
         !ReadOptionalFloat(*value, "mergedIconScale", "dockLayout.mergedIconScale", mergedIconScale, error) ||
         !ReadBoolean(*value, "edgeAttached", "dockLayout.edgeAttached", decoded.edgeAttached, error) ||
         !ReadBoolean(*value, "showWindowsButton", "dockLayout.showWindowsButton", decoded.showWindowsButton, error) ||
+        !ReadBoolean(*value, "showQuickSearchButton", "dockLayout.showQuickSearchButton", decoded.showQuickSearchButton, error) ||
         !ReadBoolean(*value, "showFrequentItems", "dockLayout.showFrequentItems", decoded.showFrequentItems, error) ||
         !ReadBoolean(*value, "keepWhenDesktopHidden", "dockLayout.keepWhenDesktopHidden", decoded.keepWhenDesktopHidden, error) ||
         !ReadBoolean(*value, "allowDesktopContentOverlap", "dockLayout.allowDesktopContentOverlap", decoded.allowDesktopContentOverlap, error) ||

@@ -2611,5 +2611,6 @@
   "settings.bars.dockActions": "Dock actions",
   "statusBar.inputMethodPanel": "Keyboard layout panel",
   "statusBar.panelSystemInput": "System keyboard layout panel",
-  "settings.contextMenu.hideMoreManagement": "Hide the Show more options / Manage row"
+  "settings.contextMenu.hideMoreManagement": "Hide the Show more options / Manage row",
+  "app.dock.show_quick_search_button": "Show quick search button"
 }

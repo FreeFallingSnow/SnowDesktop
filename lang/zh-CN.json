@@ -2611,5 +2611,6 @@
   "settings.bars.dockActions": "Dock 操作",
   "statusBar.inputMethodPanel": "键盘布局面板",
   "statusBar.panelSystemInput": "系统键盘布局面板",
-  "settings.contextMenu.hideMoreManagement": "隐藏展开更多选项与管理行"
+  "settings.contextMenu.hideMoreManagement": "隐藏展开更多选项与管理行",
+  "app.dock.show_quick_search_button": "显示快捷搜索按钮"
 }

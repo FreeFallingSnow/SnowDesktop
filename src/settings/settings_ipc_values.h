@@ -35,7 +35,7 @@ SD_IPC_FIELDS(DockFullscreenApplication, v.name, v.executable);
 SD_IPC_FIELDS(DockSettings,
     v.position, v.edgeAttached, v.floatingShortcutMode, v.floatingHotkeyModifiers,
     v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.edgeRevealGesture, v.fullscreenPolicy, v.fullscreenExceptions, v.monitorScope, v.showWindowsButton,
-    v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.showFrequentItems, v.keepWhenDesktopHidden,
+    v.showQuickSearchButton, v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.showFrequentItems, v.keepWhenDesktopHidden,
     v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.reserveScreenSpace, v.lastMonitorUseHomeSize, v.mergedBarHeight, v.frequentItemCount, v.thicknessScale, v.mergedIconScale,
     v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,

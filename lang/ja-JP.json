@@ -2611,5 +2611,6 @@
   "settings.bars.dockActions": "Dock の操作",
   "statusBar.inputMethodPanel": "キーボードレイアウトパネル",
   "statusBar.panelSystemInput": "システムのキーボードレイアウトパネル",
-  "settings.contextMenu.hideMoreManagement": "その他のオプションを表示 / 管理の行を非表示にする"
+  "settings.contextMenu.hideMoreManagement": "その他のオプションを表示 / 管理の行を非表示にする",
+  "app.dock.show_quick_search_button": "クイック検索ボタンを表示"
 }

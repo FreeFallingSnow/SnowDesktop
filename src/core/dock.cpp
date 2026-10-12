@@ -631,16 +631,24 @@ RECT DockContainer::GetBounds() const
         ? app_->GetFrequentDockItemIndices().size() : 0;
     const size_t fixedCount = SortableEntryCount() + EmptyRunningDragFixedSlots();
     const bool showWindowsButton = app_ && ShowDockWindowsButton(app_->dockSettings_);
-    const float separatorUnits = static_cast<float>(fixedCount > 0) +
+    const bool showSearchButton = app_ && app_->dockSettings_.showQuickSearchButton;
+    const bool hasRecycleBin = count > 0 && app_ && app_->IsRecycleBinDockEntry(entries_->back());
+    const bool hasTrailingGroup = FolderEntryCount() + EmptyRunningDragFileSlots() > 0 ||
+        showSearchButton || hasRecycleBin;
+    float separatorUnits = static_cast<float>(fixedCount > 0) +
         snowdesktop::dock_running_animation::GroupAmount(runningUnits) +
         static_cast<float>(frequentCount > 0) + static_cast<float>(showWindowsButton);
+    if (!hasTrailingGroup)
+        separatorUnits -= frequentCount > 0 ? 1.0f : runningUnits > 0.0f
+            ? snowdesktop::dock_running_animation::GroupAmount(runningUnits)
+            : fixedCount > 0 ? 1.0f : static_cast<float>(showWindowsButton);
     const bool vertical = IsVertical();
     const int iconSize = ItemIconSize();
     const int slotLength = ItemPitch();
     const int spacing = ScaledSpacing();
     const int separatorGap = ScaledSeparatorGap();
     const int desiredLength = static_cast<int>(
-        (count + EmptyRunningDragFixedSlots() + EmptyRunningDragFileSlots() + frequentCount + 1 +
+        (count + EmptyRunningDragFixedSlots() + EmptyRunningDragFileSlots() + frequentCount + static_cast<size_t>(showSearchButton) +
             static_cast<size_t>(showWindowsButton)) * slotLength) + spacing +
         snowdesktop::dock_running_animation::AxisLength(runningUnits, slotLength) +
         snowdesktop::dock_running_animation::AxisLength(separatorUnits, separatorGap);
@@ -1635,9 +1643,13 @@ RECT DockContainer::GetVisualScrollViewport(POINT pointer) const
     const RECT leadingVisual = IsRectEmpty(&windowsButton)
         ? RECT{} : GetElementVisualRect(windowsButton, pointer);
     RECT trailingFixed = GetSearchRect();
+    if (IsRectEmpty(&trailingFixed) && entries_ && !entries_->empty() &&
+        app_->IsRecycleBinDockEntry(entries_->back()) && entries_->size() <= slots.size())
+        trailingFixed = slots[entries_->size() - 1]->GetBounds();
     if (IsEdgeAttached() && folderCount > 0 &&
         folderBegin < slots.size() && slots[folderBegin])
         trailingFixed = slots[folderBegin]->GetBounds();
+    if (IsRectEmpty(&trailingFixed)) return viewport;
     return snowdesktop::dock_magnification::FitOverflowViewportToFixedVisuals(
         viewport, app_->dockSettings_.position, leadingVisual,
         GetElementVisualRect(trailingFixed, pointer), ScaledSeparatorGap());
@@ -1658,10 +1670,14 @@ RECT DockContainer::GetScrollViewport(const RECT& bounds) const
     const float mainAmount = (SortableEntryCount() + EmptyRunningDragFixedSlots() > 0 || frequentCount > 0)
         ? 1.0f : snowdesktop::dock_running_animation::GroupAmount(runningUnits);
     const bool hasFolders = FolderEntryCount() > 0;
-    const int mainGap = snowdesktop::dock_running_animation::AxisLength(mainAmount, ScaledSeparatorGap());
+    const size_t searchSlots = app_ && app_->dockSettings_.showQuickSearchButton ? 1 : 0;
+    const bool hasTrailingGroup = searchSlots > 0 || hasRecycleBin ||
+        (IsEdgeAttached() && (hasFolders || EmptyRunningDragFileSlots() > 0));
+    const int mainGap = hasTrailingGroup
+        ? snowdesktop::dock_running_animation::AxisLength(mainAmount, ScaledSeparatorGap()) : 0;
     const int trailingLength = IsEdgeAttached()
-        ? static_cast<int>(FolderEntryCount() + EmptyRunningDragFileSlots() + 1 + static_cast<size_t>(hasRecycleBin)) * ItemPitch() + mainGap
-        : static_cast<int>(1 + hasRecycleBin) * ItemPitch() + (!hasFolders ? mainGap : 0);
+        ? static_cast<int>(FolderEntryCount() + EmptyRunningDragFileSlots() + searchSlots + static_cast<size_t>(hasRecycleBin)) * ItemPitch() + mainGap
+        : static_cast<int>(searchSlots + static_cast<size_t>(hasRecycleBin)) * ItemPitch() + (!hasFolders ? mainGap : 0);
     if (IsVertical())
     {
         viewport.top += halfGap + leadingLength;
@@ -1800,7 +1816,8 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         }
         return cell;
     };
-    const size_t trailingControlSlots = 1 + static_cast<size_t>(hasRecycleBin);
+    const bool showSearchButton = app_ && app_->dockSettings_.showQuickSearchButton;
+    const size_t trailingControlSlots = static_cast<size_t>(showSearchButton) + static_cast<size_t>(hasRecycleBin);
     auto makeTrailingCell = [&](size_t trailingIndex) {
         RECT cell{};
         if (IsVertical())
@@ -1854,7 +1871,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     {
         RECT cell{};
         if (hasRecycleBin && i + 1 == count)
-            cell = makeTrailingCell(1);
+            cell = makeTrailingCell(showSearchButton ? 1 : 0);
         else if (i >= folderBegin && i < folderBegin + folderCount)
             cell = makeFolderCell(i - folderBegin);
         else
@@ -1903,6 +1920,13 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
 
     const size_t searchIndex = count + runningCount + frequentCount;
     RECT searchCell = makeTrailingCell(0);
+    // Retain the synthetic insertion boundary for empty drag groups, without
+    // reserving an icon slot or an interactive area for a hidden button.
+    if (!showSearchButton)
+    {
+        if (IsVertical()) searchCell.bottom = searchCell.top;
+        else searchCell.right = searchCell.left;
+    }
     slots.push_back(std::make_unique<Slot>(this, searchCell, searchIndex));
     return slots;
 }
@@ -1971,7 +1995,7 @@ snowdesktop::dock_running_drag::Target DockContainer::GetRunningDragTarget(POINT
     const long lastRunningEnd = end(slots[count + runningCount - 1]->GetBounds());
     const long filesBegin = FolderEntryCount() > 0
         ? std::max(lastRunningEnd, start(slots[mainEnd]->GetBounds()) - ScaledSeparatorGap() / 2)
-        : std::max(lastRunningEnd, start(GetSearchRect()) - ScaledSeparatorGap() -
+        : std::max(lastRunningEnd, start(slots.back()->GetBounds()) - ScaledSeparatorGap() -
             static_cast<long>(EmptyRunningDragFileSlots()) * ItemPitch());
     running::Target result{ running::AreaAt(axis, runningBegin, filesBegin), 0, 0 };
     size_t begin = 0;
@@ -2028,7 +2052,7 @@ HitRegion DockContainer::RedirectDragToNearestInsertion(
         return HitRegion::SortAfter;
     }
 
-    // Search is always the final synthetic slot. It gives an empty sortable
+    // The trailing synthetic slot gives an empty sortable
     // group a stable presentation anchor while InsertIndexFor clamps the drop
     // back to that group's sole boundary.
     if (!slots.empty() && slots.back())
@@ -2061,7 +2085,7 @@ void DockContainer::DrawInsertionPreview(
     if (folderSource)
     {
         const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
-        RECT boundary = GetSearchRect();
+        RECT boundary = slots.empty() ? GetBounds() : slots.back()->GetBounds();
         if (insertIndex < end && insertIndex < slots.size() && slots[insertIndex])
             boundary = slots[insertIndex]->GetBounds();
         else if (end > begin && end - 1 < slots.size() && slots[end - 1])
@@ -2557,10 +2581,13 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             drawSeparatorBetween(
                 windowsButton, following);
     }
-    if (hasScrollableItems &&
+    if (hasScrollableItems && (!IsRectEmpty(&search) || hasRecycleBin ||
+            (IsEdgeAttached() && folderCount > 0)) &&
         (folderCount == 0 || IsEdgeAttached()))
     {
         RECT following = search;
+        if (IsRectEmpty(&following) && hasRecycleBin && count <= slots.size())
+            following = slots[count - 1]->GetBounds();
         if (IsEdgeAttached() && folderCount > 0 &&
             folderBegin < slots.size() && slots[folderBegin])
         {
@@ -2633,57 +2660,60 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         }
     }
 
-    const bool searchHovered = isFocused(search);
-    const RECT searchVisual = visualRectFor(search);
-    const int backgroundSize = GetElementIconSize(search, searchVisual);
-    const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
-    RECT searchBackground{
-        searchVisual.left +
-            (searchVisual.right - searchVisual.left - backgroundSize) / 2,
-        searchVisual.top +
-            (searchVisual.bottom - searchVisual.top - backgroundSize) / 2,
-        searchVisual.left +
-            (searchVisual.right - searchVisual.left + backgroundSize) / 2,
-        searchVisual.top +
-            (searchVisual.bottom - searchVisual.top + backgroundSize) / 2
-    };
-    app_->DrawDockControlBackground(
-        context, searchBackground, 0, !lt);
-
-    ComPtr<ID2D1SolidColorBrush> brush;
-    context->CreateSolidColorBrush(
-        lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
-           : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.92f), &brush);
-    if (brush)
+    if (!IsRectEmpty(&search))
     {
-        ComPtr<ID2D1Factory> factory;
-        ComPtr<ID2D1StrokeStyle> roundedStroke;
-        context->GetFactory(&factory);
-        if (factory)
+        const bool searchHovered = isFocused(search);
+        const RECT searchVisual = visualRectFor(search);
+        const int backgroundSize = GetElementIconSize(search, searchVisual);
+        const float searchScale = static_cast<float>(backgroundSize) / 52.0f;
+        RECT searchBackground{
+            searchVisual.left +
+                (searchVisual.right - searchVisual.left - backgroundSize) / 2,
+            searchVisual.top +
+                (searchVisual.bottom - searchVisual.top - backgroundSize) / 2,
+            searchVisual.left +
+                (searchVisual.right - searchVisual.left + backgroundSize) / 2,
+            searchVisual.top +
+                (searchVisual.bottom - searchVisual.top + backgroundSize) / 2
+        };
+        app_->DrawDockControlBackground(
+            context, searchBackground, 0, !lt);
+
+        ComPtr<ID2D1SolidColorBrush> brush;
+        context->CreateSolidColorBrush(
+            lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
+               : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.92f), &brush);
+        if (brush)
         {
-            const D2D1_STROKE_STYLE_PROPERTIES properties = D2D1::StrokeStyleProperties(
-                D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
-                D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_SOLID, 0.0f);
-            factory->CreateStrokeStyle(properties, nullptr, 0, &roundedStroke);
+            ComPtr<ID2D1Factory> factory;
+            ComPtr<ID2D1StrokeStyle> roundedStroke;
+            context->GetFactory(&factory);
+            if (factory)
+            {
+                const D2D1_STROKE_STYLE_PROPERTIES properties = D2D1::StrokeStyleProperties(
+                    D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
+                    D2D1_LINE_JOIN_ROUND, 10.0f, D2D1_DASH_STYLE_SOLID, 0.0f);
+                factory->CreateStrokeStyle(properties, nullptr, 0, &roundedStroke);
+            }
+            const float centerX = (searchBackground.left + searchBackground.right) / 2.0f -
+                2.7f * searchScale;
+            const float centerY = (searchBackground.top + searchBackground.bottom) / 2.0f -
+                2.7f * searchScale;
+            const float searchStroke = std::max(1.5f, 2.35f * searchScale);
+            context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, centerY),
+                9.2f * searchScale, 9.2f * searchScale),
+                brush.Get(), searchStroke, roundedStroke.Get());
+            context->DrawLine(D2D1::Point2F(centerX + 6.6f * searchScale,
+                    centerY + 6.6f * searchScale),
+                D2D1::Point2F(centerX + 13.5f * searchScale,
+                    centerY + 13.5f * searchScale),
+                brush.Get(), searchStroke, roundedStroke.Get());
         }
-        const float centerX = (searchBackground.left + searchBackground.right) / 2.0f -
-            2.7f * searchScale;
-        const float centerY = (searchBackground.top + searchBackground.bottom) / 2.0f -
-            2.7f * searchScale;
-        const float searchStroke = std::max(1.5f, 2.35f * searchScale);
-        context->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(centerX, centerY),
-            9.2f * searchScale, 9.2f * searchScale),
-            brush.Get(), searchStroke, roundedStroke.Get());
-        context->DrawLine(D2D1::Point2F(centerX + 6.6f * searchScale,
-                centerY + 6.6f * searchScale),
-            D2D1::Point2F(centerX + 13.5f * searchScale,
-                centerY + 13.5f * searchScale),
-            brush.Get(), searchStroke, roundedStroke.Get());
-    }
 
-    if (searchHovered && !IsMagnificationSuppressed())
-    {
-        hoveredTitle = _LW("app.dock.quick_search");
+        if (searchHovered && !IsMagnificationSuppressed())
+        {
+            hoveredTitle = _LW("app.dock.quick_search");
+        }
     }
 
     // Keep the floating-panel reflection above icons and Dock controls. The
@@ -2989,6 +3019,7 @@ void DockContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegi
 
 RECT DockContainer::GetSearchRect() const
 {
+    if (!app_ || !app_->dockSettings_.showQuickSearchButton) return RECT{};
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
     return slots.empty() ? RECT{} : slots.back()->GetBounds();
 }
@@ -3016,7 +3047,7 @@ bool DockContainer::IsWindowsButtonPoint(POINT pt) const
 bool DockContainer::IsSearchPoint(POINT pt) const
 {
     RECT rect = GetSearchRect();
-    return IsFocusedElementRect(rect, pt);
+    return !IsRectEmpty(&rect) && IsFocusedElementRect(rect, pt);
 }
 
 DockEntryItem* DockContainer::EntryAtPoint(POINT pt) const

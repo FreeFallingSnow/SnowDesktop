@@ -41,6 +41,7 @@ struct DockLayoutSettings
     bool edgeAttached = false;
     DockMonitorScope monitorScope = DockMonitorScope::First;
     bool showWindowsButton = true;
+    bool showQuickSearchButton = true;
     bool showFrequentItems = false;
     bool keepWhenDesktopHidden = false;
     bool allowDesktopContentOverlap = false;

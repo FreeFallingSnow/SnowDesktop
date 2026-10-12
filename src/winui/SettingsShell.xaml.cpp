@@ -2938,7 +2938,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "dock.floatingShortcutMode", "dock.floatingEdgeSwipe",
                 "dock.fullscreenPolicy",
                 "dock.fullscreenExceptions",
-                "dock.showWindowsButton", "dock.showFrequentItems",
+                "dock.showWindowsButton", "dock.showQuickSearchButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
                 "dock.allowDesktopContentOverlap", "dock.reserveScreenSpace",
                 "dock.showOnlyWhenSummoned"});
