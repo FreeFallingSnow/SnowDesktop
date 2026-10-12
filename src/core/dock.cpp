@@ -1631,10 +1631,11 @@ RECT DockContainer::GetVisualScrollViewport(POINT pointer) const
     const RECT visualOwner = app_->dockSettings_.hoverEffect == 1 ? singleMagnification_.CurrentRect() : focus;
     const bool scrollWaveControlsViewport = !UsesEdgeAnchoredMagnification() ||
         GetMagnificationZone(visualOwner) == MagnificationZone::Leading;
-    if (scrollWaveControlsViewport && !IsRectEmpty(&firstScrollable) &&
-        !IsRectEmpty(&lastScrollable))
+    const bool moveWithScrollableVisuals = scrollWaveControlsViewport &&
+        !IsRectEmpty(&firstScrollable) && !IsRectEmpty(&lastScrollable);
+    if (moveWithScrollableVisuals)
     {
-        return snowdesktop::dock_magnification::MoveOverflowViewportWithScrollableVisuals(
+        viewport = snowdesktop::dock_magnification::MoveOverflowViewportWithScrollableVisuals(
             viewport, app_->dockSettings_.position,
             firstScrollable, GetElementVisualRect(firstScrollable, pointer),
             lastScrollable, GetElementVisualRect(lastScrollable, pointer));
@@ -1649,10 +1650,24 @@ RECT DockContainer::GetVisualScrollViewport(POINT pointer) const
     if (IsEdgeAttached() && folderCount > 0 &&
         folderBegin < slots.size() && slots[folderBegin])
         trailingFixed = slots[folderBegin]->GetBounds();
-    if (IsRectEmpty(&trailingFixed)) return viewport;
-    return snowdesktop::dock_magnification::FitOverflowViewportToFixedVisuals(
-        viewport, app_->dockSettings_.position, leadingVisual,
-        GetElementVisualRect(trailingFixed, pointer), ScaledSeparatorGap());
+    if (!moveWithScrollableVisuals && !IsRectEmpty(&trailingFixed))
+        viewport = snowdesktop::dock_magnification::FitOverflowViewportToFixedVisuals(
+            viewport, app_->dockSettings_.position, leadingVisual,
+            GetElementVisualRect(trailingFixed, pointer), ScaledSeparatorGap());
+
+    // Begin the fade at the Start separator, rather than after the entire
+    // separator gap. Its fixed boundary must not follow an off-screen item.
+    if (!IsRectEmpty(&leadingVisual))
+    {
+        const int halfSeparatorGap = ScaledSeparatorGap() / 2;
+        if (IsVertical())
+            viewport.top = std::min(viewport.bottom,
+                leadingVisual.bottom + halfSeparatorGap);
+        else
+            viewport.left = std::min(viewport.right,
+                leadingVisual.right + halfSeparatorGap);
+    }
+    return viewport;
 }
 
 RECT DockContainer::GetScrollViewport(const RECT& bounds) const
@@ -2469,7 +2484,14 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             return;
         const RECT precedingVisual =
             visualRectFor(precedingBounds);
-        const RECT followingVisual = visualRectFor(followingBounds);
+        RECT followingVisual = visualRectFor(followingBounds);
+        if (hasOverflow && EqualRect(&precedingBounds, &windowsButton))
+        {
+            if (IsVertical())
+                followingVisual.top = precedingVisual.bottom + ScaledSeparatorGap();
+            else
+                followingVisual.left = precedingVisual.right + ScaledSeparatorGap();
+        }
         ComPtr<ID2D1SolidColorBrush> separatorBrush;
         context->CreateSolidColorBrush(
             lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.18f * opacity) :
