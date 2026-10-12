@@ -267,7 +267,10 @@ int RunLifetimeChild(const std::filesystem::path& root,
         for (HWND target : windows) RemovePropW(target, kHookHostProcessProperty);
         const DWORD resumed = ResumeTaskbarThreads(windows, GetCurrentProcessId(),
             restartedOwner.value.dwProcessId, nullptr);
-        const bool activation = observeActivation(true);
+        // The diagnostic observer is limited to 64 records/thread/second.
+        // Verify activation around the burst, not four trace records per
+        // reconnect; otherwise this test measures rate limiting, not liveness.
+        const bool activation = connection != 0 || observeActivation(true);
         if (resumed != ERROR_SUCCESS || fallbackCount != 1 ||
             GetPropW(window, kHookOwnerProperty) != recovery ||
             GetPropW(secondary, kHookOwnerProperty) != recovery || !activation)
@@ -281,6 +284,7 @@ int RunLifetimeChild(const std::filesystem::path& root,
             return fail("resident reconnect must reuse the same active DLL and freshly acknowledge every taskbar");
         }
     }
+    if (!observeActivation(true)) return fail("activation observation must remain live after the reconnect burst");
     SetPropW(window, kHookResumeProtocolProperty,
         reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(kSharedStateVersion + 1)));
     if (ResumeTaskbarThreads(windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId,
