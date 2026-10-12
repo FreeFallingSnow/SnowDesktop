@@ -58,7 +58,8 @@ public:
 
     DesktopPagePresenter(
         LocalizeCallback localize,
-        const winrt::Microsoft::UI::Xaml::Style& cardStyle);
+        const winrt::Microsoft::UI::Xaml::Style& cardStyle,
+        std::function<void(SettingsRoute)> navigate = {});
     ~DesktopPagePresenter();
 
     DesktopPagePresenter(const DesktopPagePresenter&) = delete;
@@ -68,7 +69,7 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         Content() const noexcept;
-    /** Shared layout spacing editor, hosted on Widgets & layout. */
+    /** Shared layout spacing editor, hosted on Interface & layout. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         LayoutSpacingContent() const noexcept;
     /** Icon rendering, typography, and shortcut-arrow controls. */

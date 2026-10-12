@@ -3,12 +3,14 @@
 #include "app/lifecycle/startup_diagnostics.h"
 #include "settings/animation_settings.h"
 #include "widgets/lua_logical_slot.h"
+#include "desktop/folder_mapping_visibility_rules.h"
 
 // Desktop-item layout and container rebuild.
 
 void DesktopApp::LayoutItems()
 {
     snowdesktop::startup_diagnostics::Scope startup(L"LayoutItems");
+    RefreshCollectedKeysCache();
     // Guide is a temporary empty-page placeholder. Do not mutate the model
     // during a live drag preview; the committed layout pass removes it once
     // another visible item or standalone widget actually occupies the page.
@@ -18,6 +20,12 @@ void DesktopApp::LayoutItems()
     for (auto& item : items_)
     {
         if (item.name.empty()) { item.bounds = {}; continue; }
+        if (IsItemInAnyWidget(item) &&
+            !snowdesktop::folder_mapping_visibility::HasExplicitOwner(item, widgets_, dockEntries_))
+        {
+            item.bounds = {};
+            continue;
+        }
         if (!gridPages_.empty() && item.gridCell.pageId.empty())
         {
             const GridPage* firstPage = GetFirstPageGridPage();
@@ -156,7 +164,8 @@ void DesktopApp::RebuildContainersAndItems()
     // Collect keys of items that belong to widgets.
     RefreshCollectedKeysCache();
     for (auto& item : items_)
-        if (item.largeIcon && (IsItemInAnyWidget(item) || item.gridCell.pageId == kDockPageId))
+        if (item.largeIcon && (snowdesktop::folder_mapping_visibility::HasExplicitOwner(
+                item, widgets_, dockEntries_) || item.gridCell.pageId == kDockPageId))
         {
             if (largeIconEdit_.key == item.layoutKey) largeIconEdit_ = {};
             item.largeIcon.reset();

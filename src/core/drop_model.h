@@ -380,11 +380,13 @@ struct DragSourceList
         bool collectionWidgetsOnly = false;
         bool folderMappingWidgetsOnly = false;
         bool fileSourceWidgetsOnly = false;
+        bool groupWidgetsOnly = false;
         if (hasWidgets)
         {
             collectionWidgetsOnly = true;
             folderMappingWidgetsOnly = true;
             fileSourceWidgetsOnly = true;
+            groupWidgetsOnly = true;
             bool sawWidget = false;
             for (const auto& entry : entries)
             {
@@ -393,6 +395,7 @@ struct DragSourceList
                 sawWidget = true;
                 if (entry.fromDock)
                 {
+                    groupWidgetsOnly = groupWidgetsOnly && IsGroupDockEntryType(entry.dockEntryType);
                     collectionWidgetsOnly = collectionWidgetsOnly &&
                         entry.dockEntryType == DockEntryType::Collection;
                     folderMappingWidgetsOnly = folderMappingWidgetsOnly &&
@@ -405,11 +408,13 @@ struct DragSourceList
                 if (entry.dockEntryType == DockEntryType::FolderMapping)
                 {
                     collectionWidgetsOnly = false;
+                    groupWidgetsOnly = false;
                     continue;
                 }
                 auto* widget = dynamic_cast<Widget*>(entry.item);
                 DesktopWidget* data =
                     widget ? widget->GetWidgetData() : nullptr;
+                groupWidgetsOnly = groupWidgetsOnly && data && IsGroupWidgetType(data->type);
                 collectionWidgetsOnly = collectionWidgetsOnly && data &&
                     data->type == DesktopWidgetType::Collection;
                 folderMappingWidgetsOnly =
@@ -423,6 +428,7 @@ struct DragSourceList
             folderMappingWidgetsOnly =
                 sawWidget && folderMappingWidgetsOnly;
             fileSourceWidgetsOnly = sawWidget && fileSourceWidgetsOnly;
+            groupWidgetsOnly = sawWidget && groupWidgetsOnly;
         }
         return snowdesktop::slot_contract::ClassifyPayload({
             hasDesktopIcons,
@@ -434,6 +440,7 @@ struct DragSourceList
             hasFileGroupEntries,
             folderMappingWidgetsOnly,
             fileSourceWidgetsOnly,
+            groupWidgetsOnly,
         });
     }
 

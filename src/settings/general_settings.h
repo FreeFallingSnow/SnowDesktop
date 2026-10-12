@@ -12,6 +12,7 @@
 #include <string>
 #include "animation_settings.h"
 #include "ui/render/app_font.h"
+#include "ui/render/native_tooltip_preferences.h"
 #include "system/calendar/calendar_display.h"
 #include "dock/dock_layout_settings.h"
 #include "theme/surface_theme.h"
@@ -25,6 +26,9 @@ struct GeneralSettings
     // not serialized into SnowDesktop.general.json.
     bool autoStartEnabled = false;
     bool softwareDesktopEnabled = true;
+    bool softwareDesktopHotkeyEnabled = false;
+    UINT softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_ALT;
+    UINT softwareDesktopHotkeyVirtualKey = 'S';
     bool demoModeEnabled = false;
     bool doubleClickHideDesktop = false;
     // The shortcut toggles temporary desktop/Dock passthrough; only this
@@ -61,6 +65,7 @@ struct GeneralSettings
     bool contextMenuExpandQuickActions = false;
     bool contextMenuHidePageManagement = false;
     snowdesktop::app_fonts::Selection font;
+    int tooltipFontSize = snowdesktop::kDefaultTooltipFontSize;
     char language[85] = "system";
 };
 

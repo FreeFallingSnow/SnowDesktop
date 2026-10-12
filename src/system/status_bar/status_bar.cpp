@@ -17,6 +17,7 @@
 #include "status_bar_presentation.h"
 #include "status_bar_notification.h"
 #include "ui/render/native_tooltip.h"
+#include "status_bar_tooltip.h"
 #include "system/controls/system_controls.h"
 #include "common/utils.h"
 
@@ -170,6 +171,7 @@ struct StatusBar::Impl
         DWORD dockFullscreenProcess = 0;
         bool appearanceDirty = true, paintDirty = true, painting = false;
         bool backgroundDirty = true;
+        RECT adjacentDockBounds{};
         PersonalizationSettings appearance;
         HRESULT lastPaintError = S_OK;
         status_bar_input_method::Snapshot lastInputMethod;
@@ -177,6 +179,8 @@ struct StatusBar::Impl
         NativeTooltip tooltip;
         std::optional<std::size_t> tooltipControlPart;
         std::vector<StatusBarItem> items;
+        StatusBarSnapshot dataSnapshot;
+        bool snapshotReady = false;
         StatusBarInteraction interaction;
         bool keyboardFocusVisible = false;
         std::string pressedTray;
@@ -199,7 +203,7 @@ struct StatusBar::Impl
             CancelTrayMenu();
             // Owner ends cross-window feedback before erasing this map entry.
             trayPreview = false;
-            if (owner.tray) owner.tray->CancelFocusReturn(hwnd);
+            if (owner.tray) { owner.tray->UnsubscribeChanges(hwnd); owner.tray->CancelFocusReturn(hwnd); }
             ClearHover(); interaction.CancelPointer();
             liveBars.erase(hwnd);
             if (owner.hidden) owner.hidden(monitor);
@@ -260,18 +264,15 @@ struct StatusBar::Impl
                 const auto part = *tooltipControlPart;
                 key += "/" + std::to_string(part); body = item.controlTips[part];
                 const float scale = dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale);
-                if (part == 0) anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(32 * scale)));
+                if (part == 0) anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(28 * scale)));
                 else if (part == 1)
                 {
-                    const float end = item.controlGlyphs[2].empty() ? 64.f : 60.f;
-                    anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(end * scale)));
-                    anchor.left += static_cast<LONG>(std::lround(32 * scale));
+                    anchor.right = std::min(anchor.right, anchor.left + static_cast<LONG>(std::lround(56 * scale)));
+                    anchor.left += static_cast<LONG>(std::lround(28 * scale));
                 }
-                else anchor.left += static_cast<LONG>(std::lround(60 * scale));
+                else anchor.left += static_cast<LONG>(std::lround(56 * scale));
                 if (part == 1 && owner.volumeWheel.pending)
-                    body = std::wstring(_LW("statusBar.volume")) + L"  " +
-                        std::to_wstring(static_cast<int>(std::lround(*owner.volumeWheel.pending * 100))) +
-                        L"%";
+                    body = StatusBarVolumeTooltip(dataSnapshot.audioDevice, dataSnapshot.audio, *owner.volumeWheel.pending);
             }
             MapWindowPoints(hwnd, nullptr, reinterpret_cast<POINT*>(&anchor), 2);
             tooltip.SetTarget(std::move(key), std::move(body), anchor,
@@ -510,37 +511,47 @@ struct StatusBar::Impl
             }
             if (moved && owner.dockChanged) owner.dockChanged(true);
         }
-        void BuildItems()
+        void BuildItems(bool trayOnly)
         {
-            StatusBarSnapshot snapshot;
-            wchar_t time[64]{}, date[96]{};
-            GetTimeFormatEx(LOCALE_NAME_USER_DEFAULT, TIME_NOSECONDS, nullptr, nullptr, time, 64);
-            GetDateFormatEx(LOCALE_NAME_USER_DEFAULT, DATE_SHORTDATE, nullptr, nullptr, date, 96, nullptr);
-            snapshot.clock = std::wstring(date) + L"   " + time;
-            snapshot.cpu = owner.data->Cpu(); snapshot.memory = owner.data->Memory();
-            snapshot.gpu = owner.data->Gpu(true); snapshot.traffic = owner.data->NetworkTraffic();
-            snapshot.network = owner.data->NetworkStatus(); snapshot.audio = owner.data->AudioOutputVolume();
-            snapshot.wifi = owner.data->Controls()->Current("network.wifi");
-            snapshot.notifications = status_bar_notification::Current();
-            if (owner.volumeWheel.task && (!snapshot.audio || !snapshot.audio->available ||
-                owner.volumeWheel.endpoint != snapshot.audio->endpointId))
+            auto& snapshot = dataSnapshot;
+            if (!trayOnly || !snapshotReady)
             {
-                owner.data->Controls()->Cancel(owner.volumeWheel.task);
-                owner.volumeWheel.Reset();
+                SYSTEMTIME localTime{};
+                GetLocalTime(&localTime);
+                snapshot.clock = StatusBarClockText(localTime, owner.settings.clockShowSeconds);
+                snapshot.cpu = owner.data->Cpu(); snapshot.memory = owner.data->Memory();
+                snapshot.gpu = owner.data->Gpu(true); snapshot.traffic = owner.data->NetworkTraffic();
+                snapshot.network = owner.data->NetworkStatus(); snapshot.audio = owner.data->AudioOutputVolume();
+                snapshot.audioDevice = owner.data->AudioOutputDefault();
+                snapshot.wifi = owner.data->Controls()->Current("network.wifi");
+                snapshot.notifications = status_bar_notification::Current();
+                if (owner.volumeWheel.task && (!snapshot.audio || !snapshot.audio->available ||
+                    owner.volumeWheel.endpoint != snapshot.audio->endpointId))
+                {
+                    owner.data->Controls()->Cancel(owner.volumeWheel.task);
+                    owner.volumeWheel.Reset();
+                }
+                snapshot.power = owner.data->Power();
+                snapshotReady = true;
             }
-            snapshot.power = owner.data->Power();
             if (owner.tray) snapshot.tray = owner.tray->Current().icons;
             snapshot.trayExpanded = trayExpanded;
             if (owner.inputMethod) snapshot.inputMethod = owner.inputMethod->Current();
             items = BuildStatusBarItems(owner.settings, snapshot);
         }
 
-        void Paint(bool prepareHidden = false)
+        void Paint(bool prepareHidden = false, bool trayOnly = false)
         {
             if (closing || painting || failed || (!prepareHidden && (fullscreen || !IsWindowVisible(hwnd))) ||
                 !owner.composition || !owner.text) return;
+            const RECT adjacent = owner.dockStateProvider ? owner.dockStateProvider(monitor).adjacentDockBounds : RECT{};
+            if (!EqualRect(&adjacent, &adjacentDockBounds))
+            {
+                adjacentDockBounds = adjacent;
+                backgroundDirty = paintDirty = true;
+            }
             auto previousItems = std::move(items);
-            BuildItems();
+            BuildItems(trayOnly);
             if (interaction.Reconcile(previousItems, items))
             {
                 ClearHover();
@@ -592,6 +603,15 @@ struct StatusBar::Impl
                 background->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(origin.x), static_cast<float>(origin.y)));
                 background->Clear(hc ? SystemColor(COLOR_WINDOW) : D2D1::ColorF(0, 0.f));
                 if (!hc && owner.drawBackground) owner.drawBackground(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale));
+                if (!hc)
+                {
+                    RECT adjacentClient = adjacentDockBounds;
+                    RECT screenFrame{};
+                    GetWindowRect(hwnd, &screenFrame);
+                    OffsetRect(&adjacentClient, -screenFrame.left, -screenFrame.top);
+                    DrawStatusBarEdge(background.Get(), client, a, dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale),
+                        owner.settings.position, adjacentClient);
+                }
                 background.Reset();
                 const auto drawn = backgroundSurface->EndDraw();
                 if (FAILED(drawn)) { PaintError(drawn); return; }
@@ -613,7 +633,7 @@ struct StatusBar::Impl
             const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
                 dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), a, palette, interaction.hovered,
                 keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
-                interaction.focused.value_or(0), mergedDockHeight > 0);
+                interaction.focused.value_or(0), mergedDockHeight > 0, owner.settings.timeNotificationRightAligned);
             if (dropIndicator)
             {
                 ComPtr<ID2D1SolidColorBrush> brush;
@@ -820,6 +840,12 @@ struct StatusBar::Impl
                     message == WM_SYSKEYDOWN || message == WM_SYSKEYUP || message == WM_SYSCHAR)) return 0;
             if (message == tray::FocusReturnMessage())
             { self->ReturnTrayFocus(static_cast<std::uint64_t>(wp)); return 0; }
+            if (message == tray::ChangeMessage())
+            {
+                if (self->owner.tray && self->owner.tray->AcknowledgeChange(window, static_cast<std::uint64_t>(wp)))
+                    self->Paint(false, true);
+                return 0;
+            }
             if (message == self->owner.taskbarCreated)
             {
                 DWORD pid = 0;
@@ -963,7 +989,8 @@ struct StatusBar::Impl
                 const bool doubleClick = message == WM_LBUTTONDBLCLK && self->interaction.IsDoubleClickTarget(self->items, point);
                 self->ClearHover();
                 if (self->owner.tray) self->owner.tray->CancelFocusReturn();
-                if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN, doubleClick) == StatusBarAction::Dismiss)
+                if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN, doubleClick,
+                    self->owner.pointerPressed) == StatusBarAction::Dismiss)
                 {
                     self->DismissSurfaces();
                     return 0;
@@ -1146,6 +1173,7 @@ struct StatusBar::Impl
     std::function<bool(std::string_view, POINT)> dropOutside;
     TrayDragFeedback dragFeedback;
     std::function<void(bool)> dockChanged;
+    std::function<void()> pointerPressed;
     std::function<StatusBarDockState(HMONITOR)> dockStateProvider;
     std::function<bool(HMONITOR)> interactionSessionProvider;
     std::function<PersonalizationSettings(HMONITOR)> mergedAppearanceProvider;
@@ -1255,10 +1283,10 @@ void StatusBar::ReleaseGraphicsResources()
     }
     self.composition.Reset(); self.text.Reset();
 }
-HRESULT StatusBar::ShowInputMethod(RECT anchor, bool context)
+HRESULT StatusBar::ShowInputMethod(RECT anchor, bool context, bool layoutPanel)
 {
     return impl_->settings.enabled && impl_->settings.inputMethod && impl_->inputMethod ?
-        impl_->inputMethod->Show(anchor, context) : E_UNEXPECTED;
+        impl_->inputMethod->Show(anchor, context, layoutPanel) : E_UNEXPECTED;
 }
 std::shared_ptr<tray::Service> StatusBar::Tray() const { return impl_->tray; }
 void StatusBar::SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
@@ -1348,6 +1376,7 @@ bool StatusBar::DismissMergedBackground(HMONITOR monitor, POINT screen)
         POINT local = screen;
         ScreenToClient(window->hwnd, &local);
         if (HitTestStatusBarItems(window->items, local)) return false;
+        window->interaction.Press(window->items, local, false, false, impl_->pointerPressed);
         window->DismissSurfaces();
         return true;
     }
@@ -1474,6 +1503,7 @@ void StatusBar::DismissTemporaryReveal(HMONITOR monitor)
     }
 }
 void StatusBar::SetGraphicsFailureHandler(std::function<void(HRESULT)> handler) { impl_->graphicsFailure = std::move(handler); }
+void StatusBar::SetPointerPressed(std::function<void()> pressed) { impl_->pointerPressed = std::move(pressed); }
 void StatusBar::SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> provider)
 {
     impl_->sceneProvider = std::move(provider);
@@ -1588,6 +1618,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
     self.Demand("network.wifi", true, 3000);
     self.Demand("system.power", true, 3000);
     self.Demand("audio.output.volume", true);
+    self.Demand("audio.output.default", true);
     for(const auto& [id,window]:self.windows)
         if(window&&std::none_of(monitors.begin(),monitors.end(),[&](const auto& monitor){return monitor.id==id;}))
             window->EndDragFeedback();
@@ -1621,6 +1652,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
                 continue;
             }
             liveBars.emplace(window->hwnd, false);
+            self.tray->SubscribeChanges(window->hwnd);
             GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr), &window->explorerPid);
             SetTimer(window->hwnd, kClockTimer, 1000, nullptr);
         }

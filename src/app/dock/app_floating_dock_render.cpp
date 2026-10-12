@@ -4,6 +4,9 @@
 #include "diagnostics/performance_trace.h"
 #include "drag_drop/drag_input_rules.h"
 #include "desktop/desktop_hover_rules.h"
+#include "app/popup/popup_window_pair_z_order.h"
+
+#include <utility>
 
 // Floating-Dock paint and window-message dispatch.
 
@@ -22,21 +25,56 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         bool& active;
         PersistentDockHost*& renderingHost;
         PersistentDockHost* previousHost;
+        bool& renderingFloating;
+        bool previousFloating;
         ~FloatingPaintScope()
         {
             active = false;
             renderingHost = previousHost;
+            renderingFloating = previousFloating;
         }
     } paintScope{
         host.compositionPaintInProgress,
         renderingPersistentDockHost_,
-        renderingPersistentDockHost_
+        renderingPersistentDockHost_,
+        renderingFloatingDock_, renderingFloatingDock_
     };
     renderingPersistentDockHost_ = &host;
+    const auto revision = ++host.presentationRevision;
+    const std::wstring diagnosticOwner = snowdesktop::performance::Enabled()
+        ? std::to_wstring(reinterpret_cast<UINT_PTR>(host.hwnd)) : std::wstring{};
+    snowdesktop::performance::Scope presentationScope("dock", "floating.presentation", diagnosticOwner, revision);
+    const bool recoveringBackdrop = host.backdropRecoveryPending;
+    if (recoveringBackdrop)
+    {
+        host.backdropRecoveryPending = false;
+        // Recreate only after an actual backend failure, never on ordinary
+        // animation geometry changes. Keep the helper hidden until ready.
+        (void)host.backdrop.InitializePopup(host.hwnd,
+            snowdesktop::popup_window_pair_z_order::IsTopmost(host.hwnd), false);
+    }
 
     const bool preserveExistingFrame =
         host.frameReady && host.dcompSurface &&
         host.dcompVisual;
+    const bool stagedBackdrop = host.backdrop.BeginStagedFrame();
+    struct BackdropCandidateScope
+    {
+        DesktopBackdropCompositor& backdrop;
+        ~BackdropCandidateScope() { backdrop.DiscardStagedFrame(); }
+    } backdropCandidateScope{host.backdrop};
+    // An available backend refusing collection must never fall through to
+    // AddPanel's ordinary live path while the content surface is unfinished.
+    if (!stagedBackdrop && host.backdrop.IsAvailable())
+    {
+        host.backdropRecoveryPending = true;
+        RecoverFloatingDockCompositionFailure(host, L"Backdrop collection busy", E_UNEXPECTED, preserveExistingFrame);
+        return false;
+    }
+    RECT guideLocal = host.guideOcclusionRect;
+    if (!IsRectEmpty(&guideLocal))
+        OffsetRect(&guideLocal, -host.sourceRect.left, -host.sourceRect.top);
+    if (stagedBackdrop) host.backdrop.SetOcclusionRect(guideLocal);
     ComPtr<IDCompositionSurface> frameSurface;
     HRESULT hr = snowdesktop::startup_diagnostics::Call(L"Dock.CreateOrResizeSurface", [&] {
         return CreateOrResizeFloatingDockCompositionSurface(host, frameSurface);
@@ -69,6 +107,16 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
         return false;
     }
 
+    struct SurfaceDrawScope
+    {
+        IDCompositionSurface* surface;
+        HRESULT Finish() noexcept
+        {
+            auto* pending = std::exchange(surface, nullptr);
+            return pending ? pending->EndDraw() : S_OK;
+        }
+        ~SurfaceDrawScope() { (void)Finish(); }
+    } surfaceDrawScope{frameSurface.Get()};
     ComPtr<ID2D1DeviceContext> context;
     context.Attach(rawContext);
     context->SetDpi(96.0f, 96.0f);
@@ -89,18 +137,32 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     brushCache_.clear();
     brushCacheContext_ = context.Get();
     renderingFloatingDock_ = true;
-    host.backdrop.BeginFrame(true);
-    if (host.container)
+    host.tooltipPaintDamage.BeginDraw();
+    try
     {
-        snowdesktop::startup_diagnostics::Call(L"Dock.DrawChrome", [&] {
-            host.container->DrawChrome(context.Get(), lastMousePoint_);
-        });
-        snowdesktop::startup_diagnostics::Call(L"Dock.DrawContents", [&] {
-            host.container->DrawContents(context.Get());
-        });
+        if (host.container)
+        {
+            snowdesktop::startup_diagnostics::Call(L"Dock.DrawChrome", [&] {
+                host.container->DrawChrome(context.Get(), lastMousePoint_);
+            });
+            snowdesktop::startup_diagnostics::Call(L"Dock.DrawContents", [&] {
+                host.container->DrawContents(context.Get());
+            });
+        }
+        DrawDynamicOverlays(context.Get());
     }
-    DrawDynamicOverlays(context.Get());
-    host.backdrop.EndFrame();
+    catch (...)
+    {
+        host.tooltipPaintDamage.EndDraw();
+        context.Reset();
+        brushCache_.clear();
+        brushCacheContext_ = nullptr;
+        const HRESULT finish = surfaceDrawScope.Finish();
+        RecoverFloatingDockCompositionFailure(host, L"Draw candidate",
+            FAILED(finish) ? finish : E_FAIL, preserveExistingFrame && replacingSurface);
+        return false;
+    }
+    host.tooltipPaintDamage.EndDraw();
     renderingFloatingDock_ = false;
 
     context->SetTransform(
@@ -109,7 +171,7 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
     brushCache_.clear();
     brushCacheContext_ = nullptr;
 
-    hr = snowdesktop::startup_diagnostics::Call(L"Dock.EndDraw", [&] { return frameSurface->EndDraw(); });
+    hr = snowdesktop::startup_diagnostics::Call(L"Dock.EndDraw", [&] { return surfaceDrawScope.Finish(); });
     if (FAILED(hr))
     {
         RecoverFloatingDockCompositionFailure(
@@ -151,6 +213,69 @@ bool DesktopApp::RenderFloatingDockCompositionFrame(
             host, L"Queue Commit", E_FAIL);
         return false;
     }
+    // Popup/menu dismissal can change tooltip visibility without running the
+    // pointer geometry path. Reconcile the HWND clip with the actual completed
+    // label frame before publishing its independently collected glass.
+    host.tooltipPaintDamage.UpdateWindowRegionBounds(host.tooltipRect, host.windowRegionPending);
+    if (!ApplyFloatingDockWindowRegion(host))
+    {
+        RecoverFloatingDockCompositionFailure(host, L"Window region", E_FAIL, true);
+        return false;
+    }
+    // Both backends now have complete candidate data. Publish from this same
+    // synchronous presentation endpoint, including native/menu message loops;
+    // do not leave content queued until the outer message pump returns.
+    // These independent devices cannot guarantee one common DWM display frame.
+    if (!FlushPendingCompositionCommit()) return false;
+    if (stagedBackdrop)
+    {
+        snowdesktop::performance::Scope backdropScope("dock", "floating.backdrop_apply", diagnosticOwner, revision);
+        if (!host.backdrop.ApplyStagedFrame())
+        {
+            std::wstring message = L"Floating Dock backdrop candidate failed: " + host.backdrop.LastError();
+            WriteDiagnosticLogEntry(message.c_str());
+            host.backdropRecoveryPending = true;
+            RecoverFloatingDockCompositionFailure(host, L"Backdrop candidate", E_FAIL, true);
+            return false;
+        }
+    }
+    if (recoveringBackdrop && host.backdrop.IsAvailable())
+    {
+        host.backdrop.SetVisible(IsWindowVisible(host.hwnd) != FALSE);
+        ApplyFloatingDockLayerPolicy(host);
+    }
+    if (snowdesktop::performance::Enabled())
+    {
+        if (host.container)
+        {
+            const RECT base = host.container->GetBounds();
+            const RECT visual = host.container->GetVisualPanelBounds(lastMousePoint_);
+            const bool vertical = dockSettings_.position == DockPosition::Left ||
+                dockSettings_.position == DockPosition::Right;
+            snowdesktop::performance::Value("dock", "floating.panel_axis_scale", diagnosticOwner,
+                vertical ? static_cast<double>(visual.bottom - visual.top) / std::max<LONG>(1, base.bottom - base.top)
+                    : static_cast<double>(visual.right - visual.left) / std::max<LONG>(1, base.right - base.left), revision);
+            const auto state = host.container->CapturePresentationState();
+            const bool focused = !IsRectEmpty(&state.focusRect);
+            const RECT focusedVisual = focused
+                ? host.container->GetElementVisualRect(state.focusRect, lastMousePoint_)
+                : RECT{};
+            snowdesktop::performance::Value("dock", "floating.focus_active", diagnosticOwner,
+                focused ? 1 : 0, revision);
+            snowdesktop::performance::Value("dock", "floating.focus_scale", diagnosticOwner,
+                focused ? static_cast<double>(focusedVisual.right - focusedVisual.left) /
+                    std::max<LONG>(1, state.focusRect.right - state.focusRect.left) : 1.0, revision);
+            snowdesktop::performance::Value("dock", "floating.pointer_x", diagnosticOwner,
+                lastMousePoint_.x, revision);
+            snowdesktop::performance::Value("dock", "floating.pointer_y", diagnosticOwner,
+                lastMousePoint_.y, revision);
+        }
+        snowdesktop::performance::Value("dock", "floating.frame_ready", diagnosticOwner, 1, revision);
+        snowdesktop::performance::Value("dock", "floating.topmost", diagnosticOwner,
+            snowdesktop::popup_window_pair_z_order::IsTopmost(host.hwnd) ? 1 : 0, revision);
+        snowdesktop::performance::Value("dock", "floating.visible", diagnosticOwner,
+            IsWindowVisible(host.hwnd) ? 1 : 0, revision);
+    }
     host.frameReady = true;
     host.compositionRenderRecoveryPending =
         false;
@@ -185,6 +310,15 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     PersistentDockHost& host,
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if ((msg == WM_MOUSEACTIVATE || msg == WM_NCHITTEST ||
+            (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_CONTEXTMENU ||
+            msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_CHAR) &&
+        FullscreenBlocksDockReveal(DockRevealSource::AssociatedSurface, host.monitor))
+    {
+        if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATEANDEAT;
+        if (msg == WM_NCHITTEST) return HTTRANSPARENT;
+        return 0;
+    }
     struct NativeMenuPresentationScope final
     {
         DesktopApp& app;
@@ -210,7 +344,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
                 dragSession_.IsActive(),
                 dragDropController_.IsTransportActive());
         const bool primaryButtonDown =
-            (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) & 0x8000) != 0;
+            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
         POINT point{};
         if (snowdesktop::drag_input_rules::
                 ShouldSampleFloatingWindowPointer(
@@ -267,6 +401,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     case WM_MOUSEMOVE:
     {
+        snowdesktop::performance::Scope pointerScope("dock.input", "mouse.move");
         SelectPersistentDockHost(&host);
         floatingDockHoverHandoffPending_ = false;
         floatingDockHoverHandoffRect_ = {};
@@ -282,9 +417,9 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
             &dragPreviewSynced);
         handlingFloatingDockInput_ = false;
         handlingPersistentDockHost_ = nullptr;
-        // Passive hover is presented once below. Updating the title/input
-        // region must not synchronously redraw the same large DComp surface.
-        UpdateFloatingDockWindowBounds(host, false);
+        // The pointer presenter refreshes both region and pixels at its
+        // deadline. An invalidation here would bypass that limit and feed
+        // stationary region-generated moves back into WM_PAINT.
         PresentPointerInteractionFrame(
             dragPreviewSynced);
         return 0;
@@ -315,18 +450,27 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         if (GetCursorPos(&cursorScreen))
         {
             const HWND hitWindow = WindowFromPoint(cursorScreen);
-            if (snowdesktop::desktop_hover_rules::RetainPairedSurfaceMouseLeave(
+            POINT desktopCursor = cursorScreen;
+            const bool pointerOnBaseDesktopDockSurface =
+                ShouldShowPersistentDockHost(host) &&
+                hitWindow == hwnd_ &&
+                ScreenToClient(hwnd_, &desktopCursor) &&
+                PtInRect(&host.dockRect, desktopCursor);
+            if (snowdesktop::desktop_hover_rules::RetainDockSurfaceMouseLeave(
                     hitWindow == hwnd,
                     host.backdrop.IsBackdropWindow(hitWindow),
-                    [hwnd]() {
+                    pointerOnBaseDesktopDockSurface,
+                    [this, hwnd](bool trackDockContent) {
                         TRACKMOUSEEVENT tracking{ sizeof(tracking) };
                         tracking.dwFlags = TME_LEAVE;
-                        tracking.hwndTrack = hwnd;
+                        tracking.hwndTrack = trackDockContent ? hwnd : hwnd_;
                         TrackMouseEvent(&tracking);
                     }))
             {
                 snowdesktop::dock_taskbar_diagnostics::Record(
-                    hitWindow == hwnd
+                    pointerOnBaseDesktopDockSurface
+                        ? L"Dock mouse-leave retained on desktop Dock surface"
+                        : hitWindow == hwnd
                         ? L"Dock mouse-leave retained on content"
                         : L"Dock mouse-leave retained on backdrop",
                     hitWindow);
@@ -342,6 +486,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     }
     case WM_LBUTTONDOWN:
     {
+        snowdesktop::performance::Scope clickScope("dock.input", "button.down");
         POINT screenPoint{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
         ClientToScreen(hwnd, &screenPoint);
         if (DismissMergedDockBackground(host, desktopPoint(), screenPoint)) return 0;
@@ -360,6 +505,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         return 0;
     }
     case WM_LBUTTONUP:
+    {
+        snowdesktop::performance::Scope clickScope("dock.input", "button.up");
         SelectPersistentDockHost(&host);
         handlingFloatingDockInput_ = true;
         handlingPersistentDockHost_ = &host;
@@ -368,8 +515,8 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingFloatingDockInput_ = false;
         handlingPersistentDockHost_ = nullptr;
         UpdateFloatingDockWindowBounds(host);
-        InvalidateFloatingDockWindow(host, true);
         return 0;
+    }
     case WM_CANCELMODE:
     case WM_CAPTURECHANGED:
         if (msg == WM_CANCELMODE) CancelRenameClick();
@@ -409,7 +556,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     case WM_RBUTTONDOWN:
     case WM_RBUTTONDBLCLK:
         SelectPersistentDockHost(&host);
-        OnRightButtonDown(&host);
+        OnRightButtonDown(&host, desktopPoint());
         return 0;
     case WM_RBUTTONUP:
         SelectPersistentDockHost(&host);
@@ -426,7 +573,6 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
         handlingFloatingDockInput_ = false;
         handlingPersistentDockHost_ = nullptr;
         UpdateFloatingDockWindowBounds(host);
-        InvalidateFloatingDockWindow(host, true);
         return 0;
     case WM_DPICHANGED:
         // Dock geometry is also already expressed in physical desktop pixels.

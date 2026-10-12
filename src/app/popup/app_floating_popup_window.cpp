@@ -3,6 +3,7 @@
 #include "popup_window_pair_z_order.h"
 #include "layout/popup_round_geometry.h"
 #include "theme/flat_glass_rim.h"
+#include "platform/shell_overlay_window.h"
 
 #include <array>
 #include <bit>
@@ -356,7 +357,7 @@ bool DesktopApp::CreateFloatingPopupWindow()
     if (!instance_)
         return false;
 
-    floatingPopupHwnd_ = CreateWindowExW(
+    floatingPopupHwnd_ = snowdesktop::CreateShellOverlayWindowEx(
         snowdesktop::floating_popup_rules::kWindowExStyle,
         kFloatingPopupWindowClassName,
         L"SnowDesktopFloatingPopup",
@@ -1249,7 +1250,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
                 dragSession_.IsActive(),
                 dragDropController_.IsTransportActive());
         const bool primaryButtonDown =
-            (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) & 0x8000) != 0;
+            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) != 0;
         POINT point{};
         if (snowdesktop::drag_input_rules::
                 ShouldSampleFloatingWindowPointer(
@@ -1379,7 +1380,7 @@ LRESULT DesktopApp::HandleFloatingPopupMessage(
         return 0;
     case WM_RBUTTONDOWN:
     case WM_RBUTTONDBLCLK:
-        OnRightButtonDown(nullptr);
+        OnRightButtonDown(nullptr, desktopPoint());
         return 0;
     case WM_RBUTTONUP:
         OnRightButtonUp(desktopLParam());

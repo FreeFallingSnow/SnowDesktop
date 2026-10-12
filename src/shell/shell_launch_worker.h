@@ -72,7 +72,7 @@ public:
         int showCommand = SW_SHOWNORMAL);
 
     /**
-     * @brief Dispatch a user-initiated Open and its shortcut elevation policy.
+     * @brief Dispatch Open using shortcut, manifest and compatibility elevation marks.
      *
      * Foreground eligibility is handed to a private helper STA. Shell/DDE
      * completion is synchronous there and never waited for on the desktop.
@@ -91,8 +91,8 @@ public:
         PCIDLIST_ABSOLUTE absolutePidl,
         int showCommand = SW_SHOWNORMAL);
 
-    /** @brief Whether a shortcut or its target requests administrator launch. */
-    static bool ShortcutRequestsAdministrator(
+    /** @brief Whether a runnable file or shortcut target requests elevation. */
+    static bool PathRequestsAdministrator(
         const std::wstring& path);
 
 private:

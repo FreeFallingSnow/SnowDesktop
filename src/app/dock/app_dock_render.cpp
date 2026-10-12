@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "dock_platform_helpers.h"
+#include "ui/menu/menu_fluent_glyphs.h"
 
 // Dock controls, entries and running-application rendering.
 
@@ -380,9 +381,37 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     DrawDockControlBackground(
         ctx, collectionLayout.background,
         0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
-    for (size_t i = 0; i < std::min<size_t>(4, widget.itemKeys.size()); ++i)
+    struct PreviewItem { const DesktopWidget* owner; const std::wstring* key; const FolderEntry* folder; };
+    std::vector<PreviewItem> previewItems;
+    auto appendPreview = [&](const DesktopWidget& source) {
+        if (source.type == DesktopWidgetType::FolderMapping)
+        {
+            for (const auto& folder : source.folderEntries)
+            {
+                if (previewItems.size() == 4) break;
+                previewItems.push_back({ &source, nullptr, &folder });
+            }
+        }
+        else
+            for (const auto& key : source.itemKeys)
+            {
+                if (previewItems.size() == 4) break;
+                if (FindItemIndexByKey(key) < items_.size() || initialShellReadPending_)
+                    previewItems.push_back({ &source, &key, nullptr });
+            }
+    };
+    if (IsGroupWidgetType(widget.type))
+        for (const auto& id : widget.childWidgetIds)
+        {
+            const size_t child = FindWidgetIndexById(id);
+            if (child < widgets_.size()) appendPreview(widgets_[child]);
+            if (previewItems.size() == 4) break;
+        }
+    else appendPreview(widget);
+    for (size_t i = 0; i < previewItems.size(); ++i)
     {
-        size_t itemIndex = FindItemIndexByKey(widget.itemKeys[i]);
+        const auto& preview = previewItems[i];
+        size_t itemIndex = preview.key ? FindItemIndexByKey(*preview.key) : items_.size();
         int col = static_cast<int>(i % 2);
         int row = static_cast<int>(i / 2);
         const RECT cell =
@@ -391,9 +420,55 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     collectionLayout,
                     col, row);
         if (itemIndex < items_.size())
-            drawDesktopItem(items_[itemIndex], cell, &widget);
+            drawDesktopItem(items_[itemIndex], cell, preview.owner);
+        else if (preview.folder && preview.folder->iconBitmap)
+        {
+            if (auto* bitmap = GetOrCreateD2DBitmap(ctx, preview.folder->iconBitmap,
+                    ShouldBeautifyIconBitmap(preview.folder->iconIsMediaThumbnail)))
+                DrawIconBitmap(ctx, bitmap, cell);
+        }
+        else if (preview.folder)
+            DrawPlaceholderIcon(ctx, preview.folder->sysIconIndex, cell, 1.0f);
         else if (initialShellReadPending_)
             DrawPlaceholderIcon(ctx, -1, cell, 1.0f);
+    }
+    if (IsGroupDockEntryType(entry.type))
+    {
+        // Match the beautified shortcut badge's geometry and palette.
+        const int iconHeight = std::max(1, static_cast<int>(iconRect.bottom - iconRect.top));
+        const int iconWidth = std::max(1, static_cast<int>(iconRect.right - iconRect.left));
+        const float scale = static_cast<float>(iconHeight) / 64.0f;
+        const int pad = std::max(1, static_cast<int>(std::round(2.0f * scale)));
+        const int badgeSize = std::clamp(static_cast<int>(std::round(17.0f * scale)),
+            9, std::max(9, iconWidth));
+        const RECT badge{iconRect.left + pad, iconRect.bottom - badgeSize - pad,
+            iconRect.left + pad + badgeSize, iconRect.bottom - pad};
+        const D2D1_ELLIPSE badgeEllipse = D2D1::Ellipse(
+            D2D1::Point2F((badge.left + badge.right) * 0.5f, (badge.top + badge.bottom) * 0.5f),
+            badgeSize * 0.5f, badgeSize * 0.5f);
+        ComPtr<ID2D1SolidColorBrush> fillBrush;
+        ComPtr<ID2D1SolidColorBrush> strokeBrush;
+        if (SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.86f, 0.89f, 0.94f, 0.96f), &fillBrush)) &&
+            fillBrush && SUCCEEDED(ctx->CreateSolidColorBrush(
+                D2D1::ColorF(0.54f, 0.61f, 0.72f, 0.58f), &strokeBrush)) && strokeBrush)
+        {
+            ctx->FillEllipse(badgeEllipse, fillBrush.Get());
+            ctx->DrawEllipse(badgeEllipse, strokeBrush.Get(), std::max(1.0f, 1.1f * scale));
+        }
+        const std::wstring glyph = L"\uE192"; // bookmark_multiple_16_regular
+        ComPtr<IDWriteTextLayout> layout;
+        ComPtr<ID2D1SolidColorBrush> brush;
+        if (fluentIconTextFormat_ && dwriteFactory_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
+                glyph.c_str(), static_cast<UINT32>(glyph.size()), fluentIconTextFormat_.Get(),
+                static_cast<float>(badgeSize), static_cast<float>(badgeSize), &layout)) &&
+            SUCCEEDED(ctx->CreateSolidColorBrush(D2D1::ColorF(0.18f, 0.30f, 0.48f, 0.92f), &brush)) && brush)
+        {
+            layout->SetFontSize(badgeSize * 0.66f, {0, static_cast<UINT32>(glyph.size())});
+            layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+            layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            ctx->DrawTextLayout(D2D1::Point2F(static_cast<float>(badge.left), static_cast<float>(badge.top)),
+                layout.Get(), brush.Get());
+        }
     }
     if (state == 2)
         DrawDockSelectionIndicator(ctx, iconRect, lt);
@@ -403,11 +478,14 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
     const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize)
 {
     if (!ctx) return;
+    const float presence = app.presence.Amount();
+    if (presence <= 0.0f) return;
     const int scaledSpacing = std::max(1, static_cast<int>(std::round(
         kDockSpacing * ClampDockScale(dockSettings_.thicknessScale))));
-    const int iconSize = requestedIconSize > 0 ? requestedIconSize :
+    const int baseIconSize = requestedIconSize > 0 ? requestedIconSize :
         std::max(1, static_cast<int>(std::min(
             rect.right - rect.left, rect.bottom - rect.top)) - scaledSpacing);
+    const int iconSize = std::max(1, static_cast<int>(std::lround(baseIconSize * presence)));
     RECT iconRect{
         rect.left + (rect.right - rect.left - iconSize) / 2,
         rect.top + (rect.bottom - rect.top - iconSize) / 2,
@@ -424,9 +502,9 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         DrawDemoIdentityIcon(ctx, identity, iconRect);
     }
     else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
-        DrawIconBitmap(ctx, bitmap, iconRect, 1.0f, reinterpret_cast<std::uintptr_t>(&app));
+        DrawIconBitmap(ctx, bitmap, iconRect, presence, reinterpret_cast<std::uintptr_t>(&app));
     else
-        DrawPlaceholderIcon(ctx, -1, iconRect, 1.0f, true);
+        DrawPlaceholderIcon(ctx, -1, iconRect, presence, true);
     if (state == 2)
     {
         DrawDockSelectionIndicator(ctx, iconRect, lt);
@@ -469,7 +547,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
             indicator.red,
             indicator.green,
             indicator.blue,
-            indicator.alpha);
+            indicator.alpha * presence);
     if (FAILED(ctx->CreateSolidColorBrush(color, &brush)) || !brush) return;
     if (app.minimized)
     {

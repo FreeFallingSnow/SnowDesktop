@@ -345,6 +345,87 @@ void TestGitHubReleasePublication(const std::filesystem::path& root)
     }
 }
 
+void TestDockHookPackaging(const std::filesystem::path& repository)
+{
+    // Execute the real packagers' required-file and copy loops. SDK assembly,
+    // signing and compression are outside this isolated runtime-file boundary.
+    // The independent expected files prevent a valid build with omitted hooks
+    // from silently producing a package that always uses system animations.
+    using namespace build_test;
+    const auto fixture = temporary("dock-hook-packaging");
+    const auto driver = fixture / L"copy-runtime.ps1";
+    write(driver, R"PS(param($Packager,$FixtureRoot,$Missing)
+$ErrorActionPreference = 'Stop'
+$tokens = $null; $parseErrors = $null
+$ast = [System.Management.Automation.Language.Parser]::ParseFile($Packager,[ref]$tokens,[ref]$parseErrors)
+if ($parseErrors.Count) { throw 'Packager syntax error' }
+$buildOutput = Join-Path $FixtureRoot 'build'
+$runtimeDirectory = 'SnowDesktop.Runtime'
+$distribution = Join-Path $FixtureRoot 'output'
+$Destination = $distribution
+$runtimeRoot = Join-Path $distribution $runtimeDirectory
+$null = New-Item -ItemType Directory -Path $runtimeRoot -Force
+function Invoke-Statement($Statement) { . ([scriptblock]::Create($Statement.Extent.Text)) }
+if ([IO.Path]::GetFileName($Packager) -eq 'package_steam.ps1') {
+    foreach ($variable in @('$runtimeFiles','$required')) {
+        $assignment = @($ast.EndBlock.Statements | Where-Object {
+            $_ -is [System.Management.Automation.Language.AssignmentStatementAst] -and $_.Left.Extent.Text -ceq $variable
+        })
+        if ($assignment.Count -ne 1) { throw 'Runtime inventory assignment not found' }
+        . ([scriptblock]::Create($assignment[0].Extent.Text))
+    }
+    foreach ($name in $required) {
+        $source = if ($runtimeFiles -contains $name) { Join-Path (Join-Path $buildOutput $runtimeDirectory) $name } else { Join-Path $buildOutput $name }
+        $null = New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($source)) -Force
+        [IO.File]::WriteAllText($source, 'fixture:' + $name)
+    }
+    $loops = @($ast.EndBlock.Statements | Where-Object {
+        $_ -is [System.Management.Automation.Language.ForEachStatementAst] -and $_.Condition.Extent.Text -ceq '$required'
+    })
+    if ($loops.Count -ne 2) { throw 'Required-file validation and copy loops not found' }
+} else {
+    $copyPayload = $ast.Find({ param($node)
+        $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq 'Copy-Payload'
+    }, $true)
+    $loops = @($copyPayload.Body.EndBlock.Statements | Where-Object {
+        $_ -is [System.Management.Automation.Language.ForEachStatementAst] -and $_.Variable.VariablePath.UserPath -eq 'name'
+    })
+    if ($loops.Count -ne 1) { throw 'Release runtime copy loop not found' }
+    $runtimeDestination = $runtimeRoot
+    foreach ($name in (. ([scriptblock]::Create($loops[0].Condition.Extent.Text)))) {
+        $source = Join-Path (Join-Path $buildOutput $runtimeDirectory) $name
+        $null = New-Item -ItemType Directory -Path ([IO.Path]::GetDirectoryName($source)) -Force
+        [IO.File]::WriteAllText($source, 'fixture:' + $name)
+    }
+}
+if ($Missing) {
+    $missingPath = Join-Path (Join-Path $buildOutput $runtimeDirectory) $Missing
+    if (Test-Path -LiteralPath $missingPath) { Remove-Item -LiteralPath $missingPath }
+}
+foreach ($loop in $loops) { Invoke-Statement $loop }
+)PS", true);
+    Bridge bridge(repository, fixture);
+    for (const auto* packager : {"package_steam.ps1", "package_release.ps1"})
+    {
+        const auto script = repository / "scripts" / packager;
+        const auto output = fixture / packager;
+        auto result = bridge.invoke(driver, {utf8(script.wstring()), utf8(output.wstring())});
+        require(result.code == 0, result.out + result.err);
+        for (const auto* hook : {"SnowDesktopDockMinimizeHook.dll",
+                 "SnowDesktopDockMinimizeHook32.dll", "SnowDesktopDockMinimizeHost32.exe"})
+        {
+            const auto packaged = output / "output" / "SnowDesktop.Runtime" / hook;
+            require(fs::is_regular_file(packaged) && read(packaged) == "fixture:" + std::string(hook),
+                std::string(packager) + " omitted or changed " + hook);
+            require(!fs::exists(output / "output" / hook), "Dock hook escaped the private runtime");
+            const auto missing = fixture / (std::string(packager) + "-missing-" + hook);
+            result = bridge.invoke(driver, {utf8(script.wstring()), utf8(missing.wstring()), hook});
+            require(result.code != 0 && result.err.find(hook) != std::string::npos,
+                std::string(packager) + " accepted a build without " + hook);
+        }
+    }
+}
+
 void TestSteamPipeAutomation(const std::string& steamPipe,
     const std::string& steamPipeConfiguration,
     const std::string& manager,
@@ -528,10 +609,8 @@ void TestOwnedRuntimeStaging(const std::string& dropExtraction,
     const std::string& workshopManager, const std::string& workshopSource,
     const std::string& workshopProjects)
 {
-    Check(dropExtraction.find("GetTempPathW") == std::string::npos &&
-            dropExtraction.find("GetDataSubdirectoryPath(L\"DropContent\")") !=
-                std::string::npos,
-        "non-file drop content is materialized only below the SnowDesktop data root");
+    Check(dropExtraction.find("GetDataSubdirectoryPath(L\"DropContent\")") == std::string::npos,
+        "transient non-file drop payloads must never be persisted below the user data root");
     Check(widgetPackages.find("temp_directory_path") == std::string::npos &&
             widgetPackages.find("CreateStagingPath(\"validation\")") !=
                 std::string::npos,
@@ -588,6 +667,11 @@ int main(int argc, char** argv)
             ReadText(root / "scripts/release_manager.ps1"),
             ReadText(root / "packaging/README.md"));
         TestGitHubReleasePublication(root);
+        try { TestDockHookPackaging(root); }
+        catch (const std::exception& error) {
+            std::cerr << error.what() << '\n';
+            Check(false, "Dock animation hooks are copied and required by every packager");
+        }
         TestSteamPipeAutomation(
             ReadText(root / "scripts/steam_pipe.ps1"),
             ReadText(root / "packaging/steam-pipe.json"),

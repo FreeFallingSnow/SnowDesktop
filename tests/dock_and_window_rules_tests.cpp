@@ -4,9 +4,11 @@
 #include "dock/dock_magnification.h"
 #include "desktop/desktop_hover_rules.h"
 #include "dock/dock_launch_animation.h"
+#include "dock/dock_running_animation.h"
 #include "dock/dock_rename_layout.h"
 #include "ui/input/rename_edit_layout.h"
 #include "dock/dock_drop_rules.h"
+#include "dock/dock_running_drag_rules.h"
 #include "dock/dock_pin_cleanup.h"
 #include <fstream>
 #include "dock/dock_folder_rules.h"
@@ -30,8 +32,6 @@
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_transition.h"
 #include "dock/dock_genie_rules.h"
-#include "dock/dock_snapshot_warmup.h"
-#include "dock/dock_snapshot_warmup_rules.h"
 #include "dock/dock_app_identity_rules.h"
 #include "../src/app/dock/dock_running_app_pin_rules.h"
 #include "../src/app/dock/dock_explorer_pin.h"
@@ -53,6 +53,7 @@
 #include "system/status_bar/status_bar_appbar.h"
 #include "dock/merged_dock_presentation.h"
 #include "system/status_bar/status_bar_layout.h"
+#include "system/status_bar/status_bar_tooltip.h"
 #include "system/status_bar/status_bar_presentation.h"
 #include "system/status_bar/status_bar_interaction.h"
 #include "layout/floating_popup_rules.h"
@@ -96,19 +97,13 @@ std::optional<int> TryRunTaskbarSymbolTestHelper();
 #include <vector>
 #include <unordered_map>
 
-// As in settings_update_rules_tests, replace only the unrelated appearance
-// value factory; the actual DockSettings type and protection decision run.
-PersonalizationSettings PersonalizationSettings::AcrylicDarkPreset()
-{
-    return {};
-}
-
 namespace rules = snowdesktop::dock_window_rules;
 namespace identityRules = snowdesktop::dock_app_identity_rules;
 
 int RunDesktopBackdropCompositorTests();
 int RunNativeTaskbarTests();
 int RunTrayModelTests();
+int RunDockWindowPinTests();
 int TryRunTrayLiveTests();
 
 namespace
@@ -121,6 +116,69 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+void CheckRunningDockDrag()
+{
+    namespace drag = snowdesktop::dock_running_drag;
+    // A running application can own several windows and one bitmap. Sorting
+    // must move that ownership intact, not reconstruct a launcher or a window.
+    struct App
+    {
+        std::wstring identityKey;
+        snowdesktop::dock_running_animation::Presence presence;
+        std::unique_ptr<int> bitmap;
+        std::vector<int> windows;
+    };
+    std::vector<App> apps;
+    for (int i = 0; i < 3; ++i)
+    {
+        App app;
+        app.identityKey = std::wstring(1, static_cast<wchar_t>(L'A' + i));
+        app.presence.SetVisible(true, 0, false);
+        app.bitmap = std::make_unique<int>(10 + i);
+        app.windows = {100 + i, 200 + i};
+        apps.push_back(std::move(app));
+    }
+    const int* bitmapA = apps[0].bitmap.get();
+    Check(drag::Reorder(apps, L"A", 3) && apps[0].identityKey == L"B" &&
+        apps[1].identityKey == L"C" && apps[2].identityKey == L"A",
+        "running application drops after the final running slot");
+    Check(apps[2].bitmap.get() == bitmapA && apps[2].windows == std::vector<int>({100, 200}) && apps.size() == 3,
+        "running reorder preserves icon ownership and every sibling window");
+    Check(drag::Reorder(apps, L"C", 0) && apps[0].identityKey == L"C" &&
+        apps[1].identityKey == L"B" && apps[2].identityKey == L"A",
+        "running application drops before the first running slot");
+    Check(!drag::Reorder(apps, L"B", 1) && !drag::Reorder(apps, L"B", 2) &&
+        !drag::Reorder(apps, L"missing", 0) && !drag::Reorder(apps, L"A", 4),
+        "same-slot drops and stale identities cannot change the running order");
+    apps[0].presence.SetVisible(false, 0, false);
+    Check(!drag::Reorder(apps, L"C", 3) && apps[0].identityKey == L"C",
+        "an exiting running application cannot be reordered");
+
+    Check(drag::AreaAt(99, 100, 250) == drag::Area::Fixed &&
+        drag::AreaAt(100, 100, 250) == drag::Area::Running &&
+        drag::AreaAt(249, 100, 250) == drag::Area::Running &&
+        drag::AreaAt(250, 100, 250) == drag::Area::Files,
+        "running sort and fixed/file pin areas have independent boundaries including empty groups");
+
+    const DockEntry fixedA{DockEntryType::DesktopItem, L"A"};
+    const DockEntry fixedB{DockEntryType::DesktopItem, L"B"};
+    const DockEntry folder{DockEntryType::FolderMapping, L"F"};
+    const DockEntry newPin{DockEntryType::DesktopItem, L"NEW"};
+    const std::vector<DockEntry> entries{newPin, fixedA, fixedB, folder};
+    drag::PinPosition between{drag::Area::Fixed, 1, fixedB, fixedA};
+    drag::PinPosition fileStart{drag::Area::Files, 2, folder, {}};
+    Check(between.Resolve(entries, 3, 4) == 2 && fileStart.Resolve(entries, 3, 4) == 3,
+        "independent asynchronous pin completions retain their actual destination neighbors");
+    const std::vector<DockEntry> removed{fixedA, folder};
+    Check(between.Resolve(removed, 1, 2) == 1,
+        "a removed following pin falls back to the surviving previous neighbor");
+    drag::PinPosition staleFiles{drag::Area::Files, 0, {}, {}};
+    drag::PinPosition staleFixed{drag::Area::Fixed, 99, {}, {}};
+    Check(staleFiles.Resolve(entries, 3, 4) == 3 && staleFixed.Resolve(entries, 3, 4) == 3 &&
+        staleFiles.Resolve({}, 0, 0) == 0,
+        "a stale or empty destination never crosses the fixed/file boundary");
 }
 
 void CheckCatalogOnlyDockPin()
@@ -1730,6 +1788,104 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    {
+        SYSTEMTIME time{};
+        time.wYear = 2026; time.wMonth = 10; time.wDay = 11;
+        time.wHour = 13; time.wMinute = 5; time.wSecond = 7;
+        for (const auto* locale : {L"de-DE", L"en-US"})
+        {
+            const auto minutes = snowdesktop::StatusBarClockText(time, false, locale);
+            const auto seconds = snowdesktop::StatusBarClockText(time, true, locale);
+            Check(minutes.find(L":05") != std::wstring::npos && minutes.find(L":07") == std::wstring::npos &&
+                seconds.find(L":05:07") != std::wstring::npos,
+                "clock seconds follow the preference in both 24-hour and 12-hour locales");
+            Check(minutes.substr(0, minutes.find(L"   ")) == seconds.substr(0, seconds.find(L"   ")),
+                "showing seconds preserves the localized date");
+            Check(snowdesktop::StatusBarClockDisplay(seconds, false) == seconds &&
+                snowdesktop::StatusBarClockDisplay(seconds, true) ==
+                    seconds.substr(seconds.find(L"   ") + 3) + L"\n" + seconds.substr(0, seconds.find(L"   ")),
+                "independent clock retains one line; merged clock places time above date without changing either format");
+            time.wSecond = 8;
+            Check(snowdesktop::StatusBarClockText(time, false, locale) == minutes &&
+                snowdesktop::StatusBarClockText(time, true, locale).find(L":05:08") != std::wstring::npos,
+                "a second tick changes the seconds clock while the minute clock stays stable");
+            time.wSecond = 7;
+        }
+        time.wHour = 0; time.wMinute = 0; time.wSecond = 0;
+        Check(snowdesktop::StatusBarClockText(time, true, L"de-DE").ends_with(L"00:00:00"),
+            "midnight retains zero-padded minutes and seconds");
+    }
+    {
+        namespace presence = snowdesktop::dock_running_animation;
+        presence::Presence item;
+        item.SetVisible(true, 1000.0, true);
+        Check(item.Amount() == 0.0f && item.IsAnimating() && !item.Interactive(),
+            "a newly discovered running app starts without changing Dock length or accepting a tiny hit target");
+        item.Advance(1016.0);
+        Check(item.Amount() > 0.15f,
+            "the first normal animation frame is already visible rather than adding a slow ease-in delay");
+        float previous = item.Amount();
+        for (int frame = 2; frame <= 22; ++frame)
+        {
+            item.Advance(1000.0 + frame * 10.0);
+            Check(item.Amount() >= previous && item.Amount() <= 1.0f,
+                "entrance increases icon scale and slot occupancy monotonically without overshoot");
+            previous = item.Amount();
+        }
+        Check(item.Amount() == 1.0f && !item.IsAnimating() && item.Interactive(),
+            "entrance settles at the normal interactive slot and leaves no perpetual animation");
+        item.SetVisible(false, 1220.0, true);
+        Check(!item.Interactive() && item.Amount() == 1.0f && !item.IsHidden(),
+            "a closed app immediately stops accepting input but keeps its presentation for the exit");
+        item.Advance(1330.0);
+        Check(std::abs(item.Amount() - 0.5f) < 0.0001f,
+            "exit shrinks the retained presentation and axis share together");
+        const float reversal = item.Amount();
+        item.SetVisible(true, 1330.0, true);
+        Check(item.Amount() == reversal,
+            "reopening during exit reverses from the currently drawn scale without a size jump");
+        item.Advance(1440.0);
+        Check(item.Amount() == 1.0f && !item.IsAnimating(),
+            "a reversed transition reaches its new target in proportion to the remaining distance");
+        item.SetVisible(false, 1440.0, true);
+        item.Advance(1660.0);
+        Check(item.IsHidden() && item.Amount() == 0.0f,
+            "the bitmap and retired slot may be removed only after exit reaches zero occupancy");
+
+        item.SetVisible(true, 2000.0, false);
+        Check(item.Amount() == 1.0f && !item.IsAnimating(),
+            "initial discovery and disabled animations show the full slot immediately");
+        item.SetVisible(false, 2000.0, false);
+        Check(item.IsHidden(), "disabled animations remove a closed app immediately");
+        item.SetVisible(true, 3000.0, true, 2.0);
+        item.Advance(3220.0);
+        const float midpoint = item.Amount();
+        item.SetVisible(true, 3220.0, true, 2.0);
+        item.Advance(3440.0);
+        Check(std::abs(midpoint - 0.875f) < 0.0001f && item.Amount() == 1.0f,
+            "global animation speed is honored and rediscovery does not restart an entrance");
+
+        // At either endpoint the animated layout must exactly match the old
+        // full-slot layout, including folders and an absent running section.
+        for (std::size_t fixed : {0U, 2U})
+            for (std::size_t frequent : {0U, 3U})
+                for (std::size_t folders : {0U, 1U})
+                    for (std::size_t running : {0U, 1U, 4U})
+                        Check(presence::ScrollableExtent(fixed, frequent, folders,
+                                static_cast<float>(running), 64, 16) ==
+                            snowdesktop::dock_folder_rules::SharedScrollableExtent(
+                                fixed, running, frequent, folders, 64, 16),
+                            "animated layout endpoints retain the established group and overflow geometry");
+        Check(presence::ScrollableExtent(2, 0, 0, 0.0f, 64, 16) == 128 &&
+                presence::ScrollableExtent(2, 0, 0, 0.5f, 64, 16) == 168 &&
+                presence::ScrollableExtent(2, 0, 0, 1.0f, 64, 16) == 208,
+            "first/last running app animates both its slot width and the new group separator");
+        Check(presence::ScrollableExtent(0, 0, 0, 0.001f, 64, 16) == 0 &&
+                presence::ScrollableExtent(2, 0, 0, 0.001f, 64, 16) == 128 &&
+                presence::ScrollableExtent(2, 0, 0, 0.999f, 64, 16) == 208,
+            "adding or retiring the first running slot causes no endpoint jump in width or separator space");
+
+    }
     // Focus/geometry fixtures, including WinComp's background windows, run on
     // isolated desktops. This executable never tests IME composition and must
     // not connect those desktops to the user's input-desktop CTF monitor.
@@ -1788,6 +1944,7 @@ int main(int argc, char** argv)
     if (const auto result = TryRunTaskbarSymbolTestHelper()) return *result;
     if (const int result = TryRunTrayLiveTests(); result >= 0) return result;
     CheckCatalogOnlyDockPin();
+    CheckRunningDockDrag();
     // These are real settings predicates shared by all three entry points.
     // First/last scopes coincide on one display but only partially overlap on two.
     {
@@ -1960,6 +2117,46 @@ int main(int argc, char** argv)
             std::array<LONG, 3>{60, 80, 32});
         Check(narrow[1].left == 110 && IsRectEmpty(&narrow[3]) && narrow[4].right == 392 && narrow[0].right < narrow[1].left,
             "narrow bars keep the clock and last system control visible without overlapping targets");
+        const auto joined = snowdesktop::StatusBarEdgeSegments({0, 0, 1920, 32}, DockPosition::Top, {0, 32, 80, 1080});
+        snowdesktop::widget_runtime::WidgetAudioOutputDefaultDataSnapshot output;
+        output.available = true; output.id = "headphones"; output.name = "Headphones (REDMI Buds 8 Pro)";
+        snowdesktop::widget_runtime::WidgetAudioOutputVolumeDataSnapshot outputVolume;
+        outputVolume.available = true; outputVolume.endpointId = "headphones"; outputVolume.volume = .49;
+        Check(snowdesktop::StatusBarVolumeTooltip(output, outputVolume) == L"Headphones (REDMI Buds 8 Pro): 49%" &&
+                snowdesktop::StatusBarVolumeTooltip(output, outputVolume, .5) == L"Headphones (REDMI Buds 8 Pro): 50%",
+            "audio hover shows the active endpoint name with sampled or pending wheel volume");
+        outputVolume.endpointId = "speakers";
+        Check(snowdesktop::StatusBarVolumeTooltip(output, outputVolume).find(L"REDMI") == std::wstring::npos,
+            "a device switch cannot pair an old endpoint name with a new endpoint volume");
+        const std::vector<snowdesktop::widget_runtime::WidgetNetworkConnectionDataSnapshot> adapters{
+            {1, "FIClash", "internet"}, {2, "HIT-WLAN", "connected"}, {3, "Ethernet 4", "local"}};
+        const auto networkTip = snowdesktop::StatusBarNetworkTooltip(adapters, L"fallback");
+        Check(networkTip.find(L"FIClash\n") != std::wstring::npos && networkTip.find(L"HIT-WLAN\n") != std::wstring::npos &&
+                networkTip.find(L"Ethernet 4\n") != std::wstring::npos && networkTip.find(L"fallback") == std::wstring::npos,
+            "network hover lists each adapter instead of substituting aggregate connectivity");
+        Check(joined.size() == 1 && joined.front().left == 80 && joined.front().right == 1920,
+            "a side Dock removes only its contact segment from the top status bar border");
+        const auto hoveringPanel = snowdesktop::dock_magnification::ExtendPanelAlongDockAxis(
+            {0, 32, 80, 1080}, {0, 18, 80, 1100}, DockPosition::Left, 6);
+        const auto clippedHover = snowdesktop::dock_magnification::ClipPanelToWorkArea(hoveringPanel, {0, 32, 1920, 1080});
+        const auto hoverJoin = snowdesktop::StatusBarEdgeSegments({0, 0, 1920, 32}, DockPosition::Top, clippedHover);
+        Check(clippedHover.top == 32 && clippedHover.bottom == 1080 && hoverJoin.size() == 1 && hoverJoin.front().left == 80,
+            "hover magnification retains the original material contact with the top status bar");
+        const auto clippedBottom = snowdesktop::dock_magnification::ClipPanelToWorkArea({1840, -20, 1920, 1080}, {0, 0, 1920, 1048});
+        const auto clippedLeft = snowdesktop::dock_magnification::ClipPanelToWorkArea({0, 0, 1950, 80}, {32, 0, 1920, 1080});
+        const auto clippedRight = snowdesktop::dock_magnification::ClipPanelToWorkArea({-20, 1000, 1920, 1080}, {0, 0, 1888, 1080});
+        Check(clippedBottom.bottom == 1048 && clippedLeft.left == 32 && clippedRight.right == 1888,
+            "hover panel growth respects bottom, left and right status bar reservations");
+        const auto separated = snowdesktop::StatusBarEdgeSegments({0, 0, 1920, 32}, DockPosition::Top, {0, 40, 80, 1080});
+        Check(separated.size() == 1 && separated.front().left == 0,
+            "panels with a real gap preserve the full border");
+        const auto bottomJoin = snowdesktop::StatusBarEdgeSegments({0, 1048, 1920, 1080}, DockPosition::Bottom, {1840, 0, 1920, 1048});
+        Check(bottomJoin.size() == 1 && bottomJoin.front().right == 1840,
+            "bottom status bars trim the contact with a right-side Dock");
+        const auto leftJoin = snowdesktop::StatusBarEdgeSegments({0, 0, 32, 1080}, DockPosition::Left, {32, 0, 1920, 80});
+        const auto rightJoin = snowdesktop::StatusBarEdgeSegments({1888, 0, 1920, 1080}, DockPosition::Right, {0, 1000, 1888, 1080});
+        Check(leftJoin.size() == 1 && leftJoin.front().top == 80 && rightJoin.size() == 1 && rightJoin.front().bottom == 1000,
+            "vertical status bars trim only their shared Dock edge");
         const auto buttons = snowdesktop::StatusBarHorizontalLayout(400, 32, 12,
             std::array<LONG, 2>{32, 32}, 180, std::array<LONG, 2>{48, 32});
         Check(buttons[0].left == 12 && buttons[0].right == buttons[1].left && buttons[1].right == 76 &&
@@ -1986,6 +2183,22 @@ int main(int argc, char** argv)
         for (const LONG scale : {1L, 2L, 3L})
         {
             const std::array<LONG, 4> right{32 * scale, 32 * scale, 32 * scale, 92 * scale};
+            const auto standaloneRight = snowdesktop::LayoutRightStatusBar(1920 * scale, 32 * scale,
+                static_cast<float>(scale), 12 * scale, 180 * scale, 32 * scale, right, 3);
+            Check(IsRectEmpty(&standaloneRight.center) && standaloneRight.notifications.right == 1908 * scale &&
+                standaloneRight.clock.left == 1696 * scale && standaloneRight.clock.right == standaloneRight.notifications.left &&
+                standaloneRight.right.back().right == standaloneRight.clock.left,
+                "independent right alignment puts controls before the clock and notifications without reserving a Dock center");
+            const auto narrowRight = snowdesktop::LayoutRightStatusBar(320 * scale, 32 * scale,
+                static_cast<float>(scale), 12 * scale, 180 * scale, 32 * scale, right, 3);
+            Check(IsRectEmpty(&narrowRight.clock) && narrowRight.notifications.right == 308 * scale &&
+                narrowRight.right.back().right == narrowRight.notifications.left,
+                "narrow right-aligned bars omit the whole clock while retaining complete notification and control targets");
+            const auto noRightClock = snowdesktop::LayoutRightStatusBar(640 * scale, 32 * scale,
+                static_cast<float>(scale), 12 * scale, 0, 32 * scale, right, 3);
+            Check(IsRectEmpty(&noRightClock.clock) && noRightClock.notifications.right == 628 * scale &&
+                noRightClock.right.back().right == noRightClock.notifications.left,
+                "hiding a right-aligned clock leaves its notification at the right edge");
             const auto wide = snowdesktop::LayoutMergedStatusBar(1920 * scale, 64 * scale,
                 static_cast<float>(scale), 12 * scale, 104 * scale, 32 * scale, right, 3);
             Check(wide.notifications.right == 1908 * scale && wide.clock.right == wide.notifications.left &&
@@ -2056,6 +2269,7 @@ int main(int argc, char** argv)
     failures += RunDesktopBackdropCompositorTests();
     failures += RunNativeTaskbarTests();
     failures += RunTrayModelTests();
+    failures += RunDockWindowPinTests();
     CheckSingleLineRenameEditor();
     CheckMenuProtectedHostPositionChanges();
     CheckDockWindowPreviewLateOwnerPromotion();
@@ -3044,6 +3258,38 @@ int main(int argc, char** argv)
             popupLayout::ResolveMaximumHeight(
                 standardPopupMetrics, 480) == 456,
         "collection popups must scroll at a scaled 640-pixel cap while still fitting smaller work areas");
+    const int visiblePopupControls = 38 + 35 + 38;
+    Check(
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080, visiblePopupControls) -
+            visiblePopupControls == popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080),
+        "source, search and category rows must preserve the baseline scrolling height when space permits");
+    Check(
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080, 0) == 640 &&
+            popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080, -38) == 640,
+        "hidden controls must not reserve extra popup height");
+    Check(
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 480, visiblePopupControls) == 456 &&
+            popupLayout::ResolveMaximumHeight(standardPopupMetrics, 720, visiblePopupControls) == 696,
+        "control compensation must stay within small and partially constrained work areas");
+    const int groupPopupOverhead = standardPopupMetrics.headerHeight + visiblePopupControls +
+        popupLayout::ResolveDetailsHeaderHeight(standardPopupMetrics) + 4 + standardPopupMetrics.bottomPadding;
+    const int groupTabsOnlyOverhead = standardPopupMetrics.headerHeight + 38 + 4 +
+        standardPopupMetrics.bottomPadding;
+    Check(
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080, groupPopupOverhead) -
+            groupPopupOverhead == standardPopupMetrics.maximumHeight &&
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 1080, groupTabsOnlyOverhead) -
+            groupTabsOnlyOverhead == standardPopupMetrics.maximumHeight,
+        "group popup budgets must preserve content height after title, group tabs, optional controls and bottom insets");
+    Check(
+        popupLayout::ResolveMaximumHeight(standardPopupMetrics, 480, groupPopupOverhead) == 456,
+        "complete group popup compensation must still fit a short screen work area");
+    Check(
+        popupLayout::ResolveGridColumnCount(552, 84, 1.0f) == 5 &&
+            popupLayout::ResolveGridColumnCount(300, 84, 1.0f) == 3 &&
+            popupLayout::ResolveGridColumnCount(40, 84, 1.0f) == 1 &&
+            popupLayout::ResolveGridColumnCount(828, 126, 1.0f) == 5,
+        "native popup grids must fit their own width and scaled icon metrics instead of desktop widget spans");
     Check(
         popupLayout::DetailsVisible(
             true, true, false, false) &&
@@ -4130,6 +4376,33 @@ int main(int argc, char** argv)
             collectionLastCell.bottom <=
                 collectionIconLayout.content.bottom,
         "all four collection cells must stay inside the inset content area");
+    // At 64 px the old two-stage rounding left 9/11 px margins. Odd
+    // sizes also need equal margins as Dock magnification changes the frame.
+    for (const int side : {40, 52, 63, 64, 65, 68, 69, 72, 91, 92, 96, 128})
+    {
+        const RECT bounds{100, -80, 100 + side, -80 + side};
+        const auto layout =
+            snowdesktop::dock_collection_icon_rules::CalculateLayout(bounds);
+        const auto first =
+            snowdesktop::dock_collection_icon_rules::CellRect(layout, 0, 0);
+        const auto last =
+            snowdesktop::dock_collection_icon_rules::CellRect(layout, 1, 1);
+        Check(first.left - bounds.left == bounds.right - last.right &&
+                first.top - bounds.top == bounds.bottom - last.bottom,
+            "Dock collection previews must have equal opposite margins at odd and even icon sizes");
+        Check(last.left - first.right == last.top - first.bottom &&
+                last.left > first.right && last.top > first.bottom,
+            "centered Dock collection previews must retain equal positive row and column gaps");
+    }
+    int previousCollectionCellSize = 0;
+    for (int side = 8; side <= 256; ++side)
+    {
+        const auto layout =
+            snowdesktop::dock_collection_icon_rules::CalculateLayout({0, 0, side, side});
+        Check(layout.cellSize >= previousCollectionCellSize,
+            "Dock collection thumbnails must not shrink as magnification enlarges their frame");
+        previousCollectionCellSize = layout.cellSize;
+    }
     constexpr float compactScale =
         92.0f / 116.0f;
     Check(
@@ -5418,6 +5691,33 @@ int main(int argc, char** argv)
             floatingDock::RemainingPointerFrameDelay(
                 100, 200) == 0,
         "a throttled Dock hover sample schedules its final tail frame at the remaining deadline");
+    ULONGLONG lastHoverPresent = 0;
+    unsigned hoverPresents = 0;
+    for (ULONGLONG tick = 1000; tick < 2000; ++tick)
+    {
+        // Every sample may select another icon in the same host. These are
+        // passive updates, not 1000 independent forced presentation requests.
+        if (floatingDock::ShouldPresentDockPointerFrame(
+                tick, lastHoverPresent, false, false))
+        {
+            lastHoverPresent = tick;
+            ++hoverPresents;
+        }
+    }
+    Check(hoverPresents == 125 && lastHoverPresent == 1992 &&
+            floatingDock::RemainingPointerFrameDelay(1999, lastHoverPresent) == 1 &&
+            floatingDock::ShouldPresentDockPointerFrame(2000, lastHoverPresent, false, false),
+        "a sustained 1000 Hz icon sweep stays within 125 synchronous Dock frames and retains its final deadline");
+    Check(floatingDock::ShouldPresentDockPointerFrame(1993, lastHoverPresent, true, false) &&
+            floatingDock::ShouldPresentDockPointerFrame(1993, lastHoverPresent, false, true),
+        "drag feedback and crossing Dock hosts must bypass passive throttling");
+    int previousDock = 0, currentDock = 0, unrelatedDock = 0;
+    Check(floatingDock::ShouldPresentPointerHost(false, &previousDock, &previousDock, &currentDock) &&
+            floatingDock::ShouldPresentPointerHost(false, &currentDock, &previousDock, &currentDock) &&
+            !floatingDock::ShouldPresentPointerHost(false, &unrelatedDock, &previousDock, &currentDock) &&
+            !floatingDock::ShouldPresentPointerHost(false, &currentDock, nullptr, nullptr) &&
+            floatingDock::ShouldPresentPointerHost(true, &unrelatedDock, nullptr, nullptr),
+        "passive pointer updates redraw only the entered and departed Dock hosts while drag feedback can redraw all hosts");
     Check(floatingDock::ShouldCloseCollectionPopup(
             3, 3),
         "clicking the collection that owns the open popup must close it");
@@ -6048,6 +6348,20 @@ int main(int argc, char** argv)
                 L"C:\\APPS\\EDITOR.EXE", L"", L"",
                 L"C:\\APPS\\OTHER.EXE", L""),
         "running executable identities must match only the same normalized executable path");
+    Check(identityRules::IsPackagedAppId(L"OPENAI.CODEX_123!APP") &&
+            !identityRules::IsPackagedAppId(L"MSEDGE") &&
+            !identityRules::IsPackagedAppId(L"C:\\APPS\\EDITOR!APP.EXE") &&
+            !identityRules::IsPackagedAppId(L"APP!") &&
+            !identityRules::IsPackagedAppId(L"!APP") &&
+            !identityRules::IsPackagedAppId(L"APP!APP!OTHER"),
+        "packaged shortcut fast identity accepts an exact app ID without interpreting executable paths as IDs");
+    Check(identityRules::MatchesRunningApp(DockAppIdentityKind::Executable,
+            L"C:\\PROGRAM FILES\\WINDOWSAPPS\\OPENAI_1\\APP.EXE", L"OPENAI_123!APP", L"",
+            L"C:\\PROGRAM FILES\\WINDOWSAPPS\\OPENAI_2\\APP.EXE", L"OPENAI_123!APP") &&
+            !identityRules::MatchesRunningApp(DockAppIdentityKind::Executable,
+                L"C:\\PROGRAM FILES\\WINDOWSAPPS\\OPENAI_1\\APP.EXE", L"OPENAI_123!APP", L"",
+                L"C:\\PROGRAM FILES\\WINDOWSAPPS\\OTHER_2\\APP.EXE", L"OTHER_123!APP"),
+        "an explicit application identity matches a versioned EXE pin before Shell artwork refinement without absorbing a different app");
     const std::vector<std::wstring> launcherAncestors{
         L"C:\\PROGRAMS\\SUITE\\LAUNCHER.EXE",
         L"C:\\WINDOWS\\EXPLORER.EXE",
@@ -6408,18 +6722,6 @@ int main(int argc, char** argv)
             true, false, true, false, true, false, false) ==
             ObservationAction::Stop,
         "a visible-window activation request must not wait forever if the window becomes minimized");
-    Check(rules::RequiresFloatingDockMinimizeCaptureIsolation(
-            true, rules::DockClickAction::Minimize),
-        "floating minimize animations must exclude the top-level Dock");
-    Check(!rules::RequiresFloatingDockMinimizeCaptureIsolation(
-            false, rules::DockClickAction::Minimize) &&
-            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
-                true, rules::DockClickAction::Activate) &&
-            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
-                true, rules::DockClickAction::Restore) &&
-            !rules::RequiresFloatingDockMinimizeCaptureIsolation(
-                true, rules::DockClickAction::Launch),
-        "desktop-layer Docks, restore, foreground activation and launches must keep the floating Dock visible");
     Check(rules::ResolveDockRestoreShowCommand(
             WPF_RESTORETOMAXIMIZED,
             SW_SHOWMINIMIZED) == SW_SHOWMAXIMIZED,
@@ -6497,62 +6799,13 @@ int main(int argc, char** argv)
             &transitionEnd, &transitionTo),
         "window transition must end at the Dock icon rectangle");
     const RECT snapshotHost =
-        ResolveDockWindowSnapshotHostRect(
+        ResolveDockWindowImageHostRect(
             transitionFrom, transitionTo);
     Check(snapshotHost.left == 100 &&
             snapshotHost.top == 100 &&
             snapshotHost.right == 900 &&
             snapshotHost.bottom == 1080,
         "snapshot animation must use one fixed host surface covering both endpoints");
-    const SIZE fullHdSnapshot =
-        ConstrainDockWindowSnapshotSize(
-            { 1920, 1080 });
-    Check(fullHdSnapshot.cx == 1920 &&
-            fullHdSnapshot.cy == 1080,
-        "ordinary high-resolution windows must retain native snapshot detail");
-    const SIZE portraitSnapshot =
-        ConstrainDockWindowSnapshotSize(
-            { 2160, 3840 });
-    Check(portraitSnapshot.cx == 2160 &&
-            portraitSnapshot.cy == 3840,
-        "portrait windows up to 4K must retain native snapshot detail");
-    const SIZE eightKSnapshot =
-        ConstrainDockWindowSnapshotSize(
-            { 7680, 4320 });
-    Check(eightKSnapshot.cx == 4096 &&
-            eightKSnapshot.cy == 2304,
-        "extreme snapshots must remain bounded while preserving aspect ratio");
-    const SIZE compactSnapshot =
-        ConstrainDockWindowSnapshotSize(
-            { 800, 600 });
-    Check(compactSnapshot.cx == 800 &&
-            compactSnapshot.cy == 600,
-        "small window snapshots must not be enlarged");
-    const RECT largeWarmupWindows[] = {
-        {0, 0, 7680, 4320}, {0, 0, 4320, 32000}, {0, 0, 32000, 32000}};
-    for (const auto& bounds : largeWarmupWindows)
-    {
-        const SIZE pixels = snowdesktop::dock_snapshot_warmup::detail::PixelSize(bounds);
-        Check(pixels.cx > 0 && pixels.cy > 0 && pixels.cx <= 1600 && pixels.cy <= 1600 &&
-                static_cast<std::uint64_t>(pixels.cx) * pixels.cy <= 1600000,
-            "background capture must bound both the longest edge and allocated pixel count for huge windows");
-    }
-    const SIZE smallWarmup = snowdesktop::dock_snapshot_warmup::detail::PixelSize(
-        {-300, -200, 500, 400});
-    Check(smallWarmup.cx == 800 && smallWarmup.cy == 600,
-        "background capture must preserve small-window dimensions without enlargement");
-    const RECT invalidWarmupWindows[] = {
-        {}, {10, 0, 0, 20}, {0, 20, 10, 0}, {LONG_MIN, 0, LONG_MAX, 10}};
-    for (const auto& bounds : invalidWarmupWindows)
-    {
-        const SIZE pixels = snowdesktop::dock_snapshot_warmup::detail::PixelSize(bounds);
-        Check(pixels.cx == 0 && pixels.cy == 0,
-            "invalid or overflowing source bounds must not allocate a background snapshot");
-    }
-    Check(kDockWindowSnapshotRenderDpi == 96.0f,
-        "snapshot render coordinates must remain physical pixels at every monitor DPI");
-    Check(kDockWindowSnapshotUsesComposition,
-        "normal snapshot frames must use the composition visual path");
     Check(kDockWindowTransitionCornerPreference ==
                 DWMWCP_DONOTROUND &&
             kDockWindowTransitionNcRenderingPolicy ==
@@ -6569,122 +6822,6 @@ int main(int argc, char** argv)
             (kDockWindowTransitionExStyle &
                 WS_EX_NOACTIVATE) != 0,
         "the transition host must use a transparent no-redirection composition surface without a DWM shadow");
-    Check(ResolveDockWindowTransitionSurface(
-            true, true) ==
-            DockWindowTransitionSurface::Snapshot,
-        "a captured frame must be preferred over a live DWM thumbnail");
-    Check(ResolveDockWindowTransitionSurface(
-            false, true) ==
-            DockWindowTransitionSurface::LiveThumbnail,
-        "live DWM rendering must remain available when no snapshot exists");
-    Check(ResolveDockWindowTransitionSurface(
-            false, false) ==
-            DockWindowTransitionSurface::None,
-        "a transition must stop safely when neither rendering surface is available");
-    Check(ResolveDockWindowTransitionSurface(
-            true, true,
-            DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
-            DockWindowTransitionSurface::LiveThumbnail,
-        "floating minimize must prefer the target-only DWM thumbnail over a screen snapshot");
-    Check(ResolveDockWindowTransitionSurface(
-            true, false,
-            DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
-            DockWindowTransitionSurface::None,
-        "floating minimize must reject a screen snapshot when no DWM thumbnail is available");
-    const auto genieCapture = ResolveDockWindowCapturePolicy(
-        3, DockWindowTransitionCapturePolicy::LiveThumbnailOnly);
-    Check(genieCapture == DockWindowTransitionCapturePolicy::SnapshotPreferred &&
-            ResolveDockWindowTransitionSurface(true, true, genieCapture) ==
-                DockWindowTransitionSurface::Snapshot,
-        "floating Genie must try an isolated snapshot instead of silently selecting DWM scale");
-    Check(ResolveDockWindowTransitionSurface(false, true, genieCapture) ==
-            DockWindowTransitionSurface::LiveThumbnail &&
-            snowdesktop::dock_genie::EffectiveEffect(3, false) == 1 &&
-            ResolveDockWindowTransitionSurface(false, false, genieCapture) ==
-                DockWindowTransitionSurface::None,
-        "real snapshot failure must retain live scale and native-operation fallbacks");
-    Check(ResolveDockWindowCapturePolicy(
-            1, DockWindowTransitionCapturePolicy::LiveThumbnailOnly) ==
-                DockWindowTransitionCapturePolicy::LiveThumbnailOnly &&
-            ResolveDockWindowCapturePolicy(
-                2, DockWindowTransitionCapturePolicy::SnapshotPreferred) ==
-                DockWindowTransitionCapturePolicy::SnapshotPreferred,
-        "non-deforming effects must retain their requested capture policy");
-    Check(PreferDockSnapshotEviction(false, 300, true, 100) &&
-            !PreferDockSnapshotEviction(true, 100, false, 300) &&
-            PreferDockSnapshotEviction(true, 100, true, 200),
-        "cache pressure must evict recapturable windows before minimized ones, then use LRU");
-    namespace warmup = snowdesktop::dock_snapshot_warmup_rules;
-    Check(warmup::CanOfferForeground(true, true, false, false),
-        "visible eligible Dock presentation may offer its tracked foreground");
-    Check(!warmup::CanOfferForeground(true, false, false, false) &&
-            !warmup::CanOfferForeground(false, true, false, false) &&
-            !warmup::CanOfferForeground(true, true, true, false) &&
-            !warmup::CanOfferForeground(true, true, false, true),
-        "hidden/disabled Dock, drag or active panel must not offer new warmup work");
-    Check(warmup::ShouldStart(true, false, true, false, 1000, 0, 250),
-        "the first eligible warmup may start after foreground has settled");
-    Check(!warmup::ShouldStart(false, false, true, false, 5000, 3000, 250) &&
-            !warmup::ShouldStart(true, true, true, false, 5000, 3000, 250) &&
-            !warmup::ShouldStart(true, false, false, false, 5000, 3000, 250) &&
-            !warmup::ShouldStart(true, false, true, true, 5000, 3000, 250),
-        "disabled, active-transition, ineligible or already-pending states must not start background capture");
-    Check(!warmup::ShouldStart(true, false, true, false, 5000, 3000, 249) &&
-            warmup::ShouldStart(true, false, true, false, 5000, 3000, 250),
-        "foreground must settle for the complete 250ms before warmup");
-    Check(!warmup::ShouldStart(true, false, true, false, 4999, 3000, 250) &&
-            warmup::ShouldStart(true, false, true, false, 5000, 3000, 250) &&
-            !warmup::ShouldStart(true, false, true, false, 2999, 3000, 250),
-        "warmup attempts must stay at least 2000ms apart and reject clock rollback");
-    constexpr auto maximumTick = std::numeric_limits<std::uint64_t>::max();
-    Check(!warmup::ShouldStart(true, false, true, false, maximumTick, maximumTick - 1999, 250) &&
-            warmup::ShouldStart(true, false, true, false, maximumTick, maximumTick - 2000, 250),
-        "warmup throttling must not overflow when the monotonic timestamp is near its limit");
-    Check(warmup::ShouldAccept(1000, 1000, false, 0) &&
-            warmup::ShouldAccept(1000, 4000, false, 0) &&
-            !warmup::ShouldAccept(1000, 4001, false, 0) &&
-            !warmup::ShouldAccept(1000, 999, false, 0),
-        "asynchronous captures may be accepted for at most 3000ms and never from a future timestamp");
-    Check(!warmup::ShouldAccept(1000, 2000, true, 1001) &&
-            !warmup::ShouldAccept(1000, 2000, true, 1000) &&
-            warmup::ShouldAccept(1001, 2000, true, 1000) &&
-            warmup::ShouldAccept(1000, 2000, false, 1001),
-        "late or duplicate background results must not replace a newer Dock capture");
-    Check(!warmup::CanEvict(true, true) && warmup::CanEvict(false, true) &&
-            warmup::CanEvict(true, false) && warmup::CanEvict(false, false),
-        "background warmup must preserve minimized windows' only restore images without blocking foreground cache eviction");
-    WINDOWPLACEMENT capturedPlacement{};
-    capturedPlacement.length = sizeof(WINDOWPLACEMENT);
-    capturedPlacement.showCmd = SW_SHOWNORMAL;
-    capturedPlacement.rcNormalPosition = {100, 200, 900, 700};
-    WINDOWPLACEMENT minimizedPlacement = capturedPlacement;
-    minimizedPlacement.showCmd = SW_SHOWMINIMIZED;
-    Check(warmup::HasSameRestorePlacement(capturedPlacement, minimizedPlacement),
-        "minimizing a normal window must retain its matching cached restore placement");
-    WINDOWPLACEMENT maximizedPlacement = capturedPlacement;
-    maximizedPlacement.showCmd = SW_SHOWMAXIMIZED;
-    WINDOWPLACEMENT restoreMaximizedPlacement = minimizedPlacement;
-    restoreMaximizedPlacement.flags = WPF_RESTORETOMAXIMIZED;
-    Check(warmup::HasSameRestorePlacement(maximizedPlacement, restoreMaximizedPlacement),
-        "a minimized window that will restore maximized must match its maximized capture");
-    Check(!warmup::HasSameRestorePlacement(capturedPlacement, restoreMaximizedPlacement) &&
-            !warmup::HasSameRestorePlacement(maximizedPlacement, minimizedPlacement),
-        "a change in the effective maximized restore state must invalidate cached placement");
-    const RECT changedBounds[] = {
-        {120, 200, 920, 700}, {100, 220, 900, 720}, // Moved without resizing.
-        {120, 200, 900, 700}, {100, 220, 900, 700}, // Resized from left or top.
-        {100, 200, 920, 700}, {100, 200, 900, 720}}; // Resized from right or bottom.
-    for (const auto& bounds : changedBounds)
-    {
-        WINDOWPLACEMENT changedPlacement = minimizedPlacement;
-        changedPlacement.rcNormalPosition = bounds;
-        Check(!warmup::HasSameRestorePlacement(capturedPlacement, changedPlacement),
-            "moving or resizing any window edge must invalidate the old snapshot endpoint");
-    }
-    const WINDOWPLACEMENT missingPlacement{};
-    Check(!warmup::HasSameRestorePlacement(missingPlacement, minimizedPlacement) &&
-            !warmup::HasSameRestorePlacement(capturedPlacement, missingPlacement),
-        "missing captured or current placement must never validate an old snapshot");
     const RECT occlusionHost{-1920, -200, 0, 880};
     const std::vector<RECT> dockOccluders{
         {-1600, 760, -320, 850}, // panel
@@ -6726,10 +6863,10 @@ int main(int argc, char** argv)
         "icon resolution must fail safely when no source is available");
     Check(RequiresDockWindowTransitionCompositionBarrier(
             DockWindowTransitionDirection::Minimize),
-        "snapshot minimize must commit disabled native transitions before changing window state");
+        "minimize commits the shared presentation before changing source visibility");
     Check(!RequiresDockWindowTransitionCompositionBarrier(
             DockWindowTransitionDirection::Restore),
-        "snapshot restore changes the native window state only after its custom animation");
+        "restore requests the native state before its visual timeline and prepares it asynchronously");
     Check(ResolveDockWindowTransitionStartAction(
             false, false, false) ==
             DockWindowTransitionStartAction::StartNew &&
@@ -7369,6 +7506,15 @@ int main(int argc, char** argv)
             },
             singleCards.front(), 96),
         "thumbnail content must not be mistaken for the close button");
+    const RECT previewPinButton = CalculateDockWindowPreviewPinButtonRect(singleCards.front(), 96);
+    Check(!IsRectEmpty(&previewPinButton) && previewPinButton.right < previewCloseButton.left &&
+            previewPinButton.top == previewCloseButton.top &&
+            previewPinButton.bottom == previewCloseButton.bottom,
+        "pin and close actions have separate aligned title-bar hit targets");
+    const POINT previewPinCenter{(previewPinButton.left + previewPinButton.right) / 2,
+        (previewPinButton.top + previewPinButton.bottom) / 2};
+    Check(!IsPointInDockWindowPreviewCloseButton(previewPinCenter, singleCards.front(), 96),
+        "clicking the pin must not request application close");
 
     const DockWindowPreviewGrid multi =
         CalculateDockWindowPreviewGrid(2, 1200, 700, 96);
@@ -7424,6 +7570,11 @@ int main(int argc, char** argv)
             previewCloseButton.right -
                 previewCloseButton.left,
         "the preview close target must scale with monitor DPI");
+    const RECT highDpiPinButton = CalculateDockWindowPreviewPinButtonRect(highDpiCards.front(), 144);
+    Check(highDpiPinButton.right < highDpiCloseButton.left &&
+            highDpiPinButton.right - highDpiPinButton.left >
+                previewPinButton.right - previewPinButton.left,
+        "pin hit targets stay separate from close and scale at higher DPI");
 
     DockWindowPreview clearedPreview;
     Check(clearedPreview.IsCleared(),
@@ -7658,12 +7809,16 @@ int main(int argc, char** argv)
             {"src/app/lifecycle/app_lifecycle.cpp", "bool DesktopApp::CreateDesktopInputWindow(",
              "void DesktopApp::AttachInputWindowToDesktopHost(", {"WS_CHILD | WS_VISIBLE"}},
             {"src/app/dock/app_dock_window_tracking.cpp", "void DesktopApp::RefreshDockForegroundState()",
-             "void DesktopApp::RefreshDockRunningWindows(",
+             "void DesktopApp::HandleDockWindowListChanged(",
              {"EnumWindows(", "QueryDock", "RefreshDockRunningWindows(", "InvalidateDockContainers("}},
             // Negative architecture boundary: attaching external input queues
             // turns native foreground activation into an unbounded wait. The
             // injected request tests above do not exercise that Win32 hazard.
             {"src/app/dock/app_dock_window_tracking.cpp", "", "", {"AttachThreadInput("}},
+            // A source's transition policy is setter-only. The overlay may
+            // disable its own policy, but must never overwrite the app's one.
+            {"src/dock/dock_window_transition.cpp", "bool DockWindowTransition::Start(",
+             "HRESULT CreateSmoothStepAnimation(", {"DWMWA_TRANSITIONS_FORCEDISABLED"}},
             {"src/app/widgets/app_widget_placement.cpp", "", "", {"RebuildContainersAndItems("}},
             {"src/app/dock/app_floating_dock_lifecycle.cpp", "", "", {"SetWindowsHookExW("}},
             {"src/app/popup/app_floating_popup_window.cpp", "", "", {"SetWindowsHookExW(", "CloseFloatingDock("}},

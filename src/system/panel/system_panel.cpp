@@ -3,7 +3,7 @@
 #include "system/calendar/system_calendar_editor.h"
 #include "system_panel_placement.h"
 #include "system_panel_transition.h"
-#include "ui/menu/modern_menu.h"
+#include "ui/menu/modern_menu_appearance_rules.h"
 #include "layout/popup_round_geometry.h"
 #include "theme/flat_glass_rim.h"
 #include "app/render/desktop_backdrop_compositor.h"
@@ -262,6 +262,7 @@ struct SystemPanel::Impl
         // move or reshape the HWND, so Arrange alone may not publish them.
         PublishGeometry();
         Paint();Animate(true);backdrop.SetPopupWindowPairZOrder(window,HWND_TOPMOST,true);if(Glass())backdrop.ShowPopupWindowPair(window);ShowWindow(window,SW_SHOW);SetForegroundWindow(window);SetFocus(window);if(!r.confirmPower.empty())FocusControlPage(false);SetTimer(window,1,500,nullptr);
+        if(r.action==StatusBarAction::Tray&&r.tray)r.tray->SubscribeChanges(window);
         ReportTrayState(showing&&!closing&&current&&current->action==StatusBarAction::Tray&&IsWindowVisible(window)?monitor:nullptr);
     }
     void ReportTrayState(HMONITOR expanded)
@@ -390,6 +391,7 @@ struct SystemPanel::Impl
         // Detach the old model/request before callbacks. Reentrant requests
         // stay queued until this guard ends and cannot be cleared below.
         auto oldModel=std::move(model);auto oldRequest=std::move(current);current.reset();
+        if(oldRequest&&oldRequest->tray&&oldRequest->action==StatusBarAction::Tray)oldRequest->tray->UnsubscribeChanges(window);
         ReportTrayState(nullptr);
         EndDragFeedback();dropIndicator.reset();
         if(scheduler)scheduler->Cancel(animationToken);animationToken=0;input.Cancel();scrollbarDragging=false;hovered.clear();Tip(nullptr);if(GetCapture()==window)ReleaseCapture();
@@ -479,6 +481,8 @@ struct SystemPanel::Impl
             item.enabled=std::string_view(action.id)!="hibernate"||IsPwrHibernateAllowed()!=FALSE;items.push_back(std::move(item));
         }
         modern_menu::Options options;options.owner=window;options.topmost=true;options.dpi=static_cast<UINT>(scale*96);
+        options.appearance=static_cast<modern_menu::Appearance>(std::clamp(current->appearance.contextMenuStyle,0,6));
+        options.lightTheme=modern_menu::appearance_rules::IsLightThemeForCurrentWindows(options.appearance);
         options.anchor={anchor.left,anchor.top};options.anchorRect=anchor;options.rootPlacement=modern_menu::RootPlacement::AboveAnchorRect;
         const auto life=lifetime;auto active=model;StopPointerHover();input.Cancel();modal=calendarMenu=true;
         modern_menu::Result result;
@@ -631,6 +635,13 @@ struct SystemPanel::Impl
             {self->transition.Cancel();self->afterClose={};++self->closeGeneration;}
             if(m==WM_ACTIVATE&&LOWORD(wp)==WA_INACTIVE&&!self->modal&&self->showing&&!self->closing)
             {if(!self->RetainTrayMenu(reinterpret_cast<HWND>(lp)))self->Animate(false);}
+            if(m==tray::ChangeMessage())
+            {
+                if(self->current&&self->current->tray&&self->current->tray->AcknowledgeChange(w,static_cast<std::uint64_t>(wp))&&
+                    self->model&&self->showing&&!self->closing&&!self->modal&&self->current->action==StatusBarAction::Tray)
+                {self->Arrange();if(self->paintDirty)self->Paint();}
+                return 0;
+            }
             if(!self->model||self->closing||self->modal)return DefWindowProcW(w,m,wp,lp);
             if(m==WM_THEMECHANGED||m==WM_SETTINGCHANGE){self->paintDirty=true;self->Arrange();self->Paint();return 0;}
             if(m==WM_TIMER&&(wp==1||wp==kTrayMenuTimer))
@@ -738,6 +749,8 @@ void SystemPanel::CloseThen(std::function<void()> next, HWND destinationOwner)
     else if(auto fn=std::move(impl_->afterClose)){impl_->afterClose={};fn();}
 }
 bool SystemPanel::IsOpen()const{return impl_->showing||impl_->modal||impl_->transition.Releasing()||impl_->transition.Pending()||impl_->afterClose;}
+bool SystemPanel::IsInputMethodOpen()const
+{return impl_->showing&&impl_->current&&impl_->current->action==StatusBarAction::InputMethodPanel;}
 bool SystemPanel::IsOpenForMonitor(HMONITOR monitor)const
 {
     if(!monitor)return false;

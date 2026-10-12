@@ -12,6 +12,7 @@
 #include "taskbar_native.h"
 #include "taskbar_hook_lifecycle.h"
 #include "taskview_visibility.h"
+#include "../shell/shell_start_pin_command.h"
 
 #include <windows.h>
 #include <commctrl.h>
@@ -78,7 +79,14 @@ SharedState* g_sharedState = nullptr;
 UINT g_applyMessage = 0;
 std::atomic<DWORD> g_watchedOwnerProcessId{0};
 std::atomic_bool g_forceRestore{false};
-std::atomic_bool g_taskbarTapStarted{false};
+std::mutex g_taskbarTapMutex;
+bool g_taskbarTapStarted = false;
+DWORD g_taskbarTapOwner = 0;
+ULONGLONG g_taskbarTapFailureTick = 0;
+std::mutex g_hookStatusMutex;
+LONG g_hookStatus = kStatusIdle;
+DWORD g_hookError = ERROR_SUCCESS;
+std::atomic_bool g_taskViewMonitorStarted{false};
 auto& g_retired = hookInstanceRetired;
 std::atomic<HWND> g_primaryTaskbar{nullptr};
 UINT g_taskViewStateMessage = 0;
@@ -89,6 +97,38 @@ bool IsCurrentHookInstance()
     const HWND primary = g_primaryTaskbar.load();
     return !g_retired.load() && primary &&
         GetPropW(primary, kHookOwnerProperty) == g_module;
+}
+
+DWORD AttachHookOwner(HWND window)
+{
+    // The temporary WH_CALLWNDPROC hook and TAP worker can both release their
+    // references after initialization fails. Window subclasses outlive those
+    // references, including callbacks already in flight during a handoff.
+    // Pin before publishing any callback, as native/tray attachment already do.
+    HMODULE pinned = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+            GET_MODULE_HANDLE_EX_FLAG_PIN,
+            reinterpret_cast<LPCWSTR>(&HookOwnerSubclass), &pinned))
+        return GetLastError();
+    const HANDLE previous = GetPropW(window, kHookOwnerProperty);
+    if (!SetPropW(window, kHookOwnerProperty, g_module)) return GetLastError();
+    if (!SetWindowSubclass(window, HookOwnerSubclass, kHookOwnerSubclassId, 0))
+    {
+        const DWORD error = GetLastError();
+        if (previous) SetPropW(window, kHookOwnerProperty, previous);
+        else RemovePropW(window, kHookOwnerProperty);
+        return error ? error : ERROR_INVALID_FUNCTION;
+    }
+    // Publish only after the owning thread has installed its persistent
+    // callback. The host must not mistake a resident old DLL for this session.
+    if (!SetPropW(window, kHookHostProcessProperty,
+            reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(g_sharedState->ownerProcessId))))
+    {
+        const DWORD error = GetLastError();
+        RemovePropW(window, kHookHostProcessProperty);
+        return error ? error : ERROR_INVALID_FUNCTION;
+    }
+    return ERROR_SUCCESS;
 }
 
 DWORD ClaimHookInstance(HWND primary)
@@ -157,13 +197,7 @@ DWORD ClaimHookInstance(HWND primary)
                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &stopped) || stopped != 1)
             return ERROR_BUSY;
     }
-    if (!SetPropW(primary, kHookOwnerProperty, g_module)) return GetLastError();
-    if (!SetWindowSubclass(primary, HookOwnerSubclass, kHookOwnerSubclassId, 0))
-    {
-        const DWORD error = GetLastError();
-        RemovePropW(primary, kHookOwnerProperty);
-        return error ? error : ERROR_INVALID_FUNCTION;
-    }
+    if (const DWORD error = AttachHookOwner(primary)) return error;
     g_primaryTaskbar.store(primary);
     return ERROR_SUCCESS;
 }
@@ -364,6 +398,15 @@ DWORD WINAPI MonitorTaskView(void*)
     return ERROR_SUCCESS;
 }
 
+void StartTaskViewMonitorIfNeeded()
+{
+    bool expected = false;
+    if (g_retired.load() || !g_taskViewMonitorStarted.compare_exchange_strong(expected, true)) return;
+    if (HANDLE thread = CreateThread(nullptr, 0, MonitorTaskView, nullptr, 0, nullptr))
+        CloseHandle(thread);
+    else g_taskViewMonitorStarted.store(false);
+}
+
 bool OpenSharedState()
 {
     if (g_sharedState)
@@ -386,10 +429,24 @@ bool OpenSharedState()
 
 void SetHookStatus(LONG status, DWORD error = ERROR_SUCCESS)
 {
+    std::lock_guard lock(g_hookStatusMutex);
     if (!g_sharedState || g_retired.load())
         return;
+    g_hookStatus = status;
+    g_hookError = error;
     InterlockedExchange(&g_sharedState->lastError, static_cast<LONG>(error));
     InterlockedExchange(&g_sharedState->status, status);
+}
+
+bool ReplayHookStatus()
+{
+    std::lock_guard lock(g_hookStatusMutex);
+    if (!g_sharedState || g_retired.load()) return false;
+    // The new host resets IPC to Injecting. Preserve the resident TAP's
+    // result even when unchanged visuals produce no new XAML callback.
+    InterlockedExchange(&g_sharedState->lastError, static_cast<LONG>(g_hookError));
+    InterlockedExchange(&g_sharedState->status, g_hookStatus);
+    return g_hookStatus == kStatusApplied || g_hookStatus == kStatusFailed;
 }
 
 void SignalReady()
@@ -466,6 +523,32 @@ void WatchOwnerProcess(DWORD processId)
             BroadcastApply();
         }
     }).detach();
+}
+
+void ApplyTaskbarActivationProtection(HWND taskbar) noexcept
+{
+    if (!IsCurrentHookInstance()) return;
+    try
+    {
+        Snapshot snapshot;
+        // A writer can temporarily hold an odd generation. Keep the previous
+        // state until the next Apply; the owner watcher handles process death.
+        if (!ReadSnapshot(snapshot)) return;
+        const bool ownerAlive = IsProcessAlive(snapshot.ownerProcessId);
+        if (snapshot.enabled && ownerAlive) WatchOwnerProcess(snapshot.ownerProcessId);
+        const bool enabled = snapshot.enabled && ownerAlive && !g_forceRestore.load();
+        bool protect = false;
+        for (LONG i = 0; i < snapshot.targetCount; ++i)
+            if (reinterpret_cast<HWND>(snapshot.targets[i].taskbar) == taskbar)
+                protect = snapshot.targets[i].protectAutoHideActivation != FALSE;
+        // Protection also needs Task View's explicit-access exemption when
+        // appearance cannot connect. Symbol-pending observation needs no COM.
+        if (enabled && protect && snapshot.autoHideResolutionError == ERROR_SUCCESS)
+            StartTaskViewMonitorIfNeeded();
+        autohide_observer::Configure(&g_sharedState->autoHideTrace, taskbar, enabled,
+            protect, snapshot.autoHideAdapter, snapshot.autoHideResolutionError);
+    }
+    catch (...) { autohide_observer::Disable(); }
 }
 
 struct GaussianBlurEffect : winrt::implements<GaussianBlurEffect,
@@ -824,7 +907,6 @@ public:
         Snapshot snapshot;
         if (!ReadSnapshot(snapshot))
         {
-            autohide_observer::Configure(nullptr, taskbar, false, false);
             // Shared memory is gone (process exited/crashed). Restore the
             // values that Explorer owned before SnowDesktop changed them.
             for (auto& [handle, info] : taskbars_)
@@ -836,17 +918,9 @@ public:
             return;
         }
         const bool ownerAlive = IsProcessAlive(snapshot.ownerProcessId);
-        if (snapshot.enabled && ownerAlive)
-            WatchOwnerProcess(snapshot.ownerProcessId);
         const bool hookEnabled = snapshot.enabled && ownerAlive &&
             !g_forceRestore.load();
         const bool controllerEnabled = hookEnabled && snapshot.appearanceEnabled;
-        bool protectActivation = false;
-        for (LONG index = 0; index < snapshot.targetCount; ++index)
-            if (reinterpret_cast<HWND>(snapshot.targets[index].taskbar) == taskbar)
-                protectActivation = snapshot.targets[index].protectAutoHideActivation != FALSE;
-        autohide_observer::Configure(&g_sharedState->autoHideTrace, taskbar, hookEnabled, protectActivation,
-            snapshot.autoHideAdapter, snapshot.autoHideResolutionError);
 
         bool applied = false;
         for (auto& [handle, info] : taskbars_)
@@ -1384,8 +1458,7 @@ private:
                 info.nativeRequestedTheme = info.rootElement.RequestedTheme();
             if (taskbar && subclassedTaskbars_.insert(taskbar).second)
             {
-                if (!SetPropW(taskbar, kHookOwnerProperty, g_module) ||
-                    !SetWindowSubclass(taskbar, HookOwnerSubclass, kHookOwnerSubclassId, 0) ||
+                if (AttachHookOwner(taskbar) != ERROR_SUCCESS ||
                     !SetWindowSubclass(taskbar, TaskbarSubclassProc,
                         kTaskbarSubclassId, reinterpret_cast<DWORD_PTR>(this)))
                 {
@@ -1499,9 +1572,7 @@ private:
                 kTaskbarSubclassId);
             self->OnTaskbarDestroyed(window);
         }
-        return IsCurrentHookInstance()
-            ? autohide_observer::Dispatch(window, message, wParam, lParam)
-            : DefSubclassProc(window, message, wParam, lParam);
+        return DefSubclassProc(window, message, wParam, lParam);
     }
 
     winrt::com_ptr<IXamlDiagnostics> diagnostics_;
@@ -1529,10 +1600,13 @@ LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
                 stopped = revealStopped && nativeStopped;
             }
             if (!stopped) return 0;
-            RemoveWindowSubclass(window, HookOwnerSubclass, kHookOwnerSubclassId);
+            if (!RemoveWindowSubclass(window, HookOwnerSubclass, kHookOwnerSubclassId))
+                return 0;
             if (GetPropW(window, kHookOwnerProperty) == g_module)
             {
                 RemovePropW(window, autohide_observer::kActivationProtectionProperty);
+                RemovePropW(window, kHookHostProcessProperty);
+                RemovePropW(window, kHookConnectionProperty);
                 RemovePropW(window, kHookOwnerProperty);
             }
             return 1;
@@ -1540,18 +1614,22 @@ LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
         catch (...) { return 0; }
     }
     if (message == g_applyMessage && IsCurrentHookInstance())
-    {
-        Snapshot snapshot;
-        if (ReadSnapshot(snapshot) &&
-            (!snapshot.enabled || !IsProcessAlive(snapshot.ownerProcessId)))
-            autohide_observer::Disable();
-    }
+        ApplyTaskbarActivationProtection(window);
     if (message == WM_NCDESTROY)
     {
         RemoveWindowSubclass(window, HookOwnerSubclass, kHookOwnerSubclassId);
+        if (GetPropW(window, kHookOwnerProperty) == g_module)
+        {
+            RemovePropW(window, autohide_observer::kActivationProtectionProperty);
+            RemovePropW(window, kHookHostProcessProperty);
+            RemovePropW(window, kHookConnectionProperty);
+            RemovePropW(window, kHookOwnerProperty);
+        }
         if (g_primaryTaskbar.load() == window) g_primaryTaskbar.store(nullptr);
     }
-    return DefSubclassProc(window, message, wParam, lParam);
+    return IsCurrentHookInstance()
+        ? autohide_observer::Dispatch(window, message, wParam, lParam)
+        : DefSubclassProc(window, message, wParam, lParam);
 }
 
 class TapSite : public winrt::implements<TapSite, IObjectWithSite,
@@ -1611,12 +1689,23 @@ public:
 
 using InitializeXamlDiagnosticsExProc = decltype(&InitializeXamlDiagnosticsEx);
 
-DWORD WINAPI InstallTaskbarTap(void*)
+DWORD WINAPI InstallTaskbarTap(void* parameter)
 {
-    HMODULE selfReference = nullptr;
-    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-        reinterpret_cast<LPCWSTR>(&InstallTaskbarTap), &selfReference);
+    const HMODULE selfReference = static_cast<HMODULE>(parameter);
+    // Keep one XAML reference per pinned instance, including failed attempts:
+    // diagnostics can retain callbacks even when initialization reports failure.
+    static HMODULE xaml = nullptr;
+    // Failure leaves only the passive owner subclass, which must remain
+    // callable until retirement on its window thread. Its module is pinned.
     const auto finish = [selfReference](DWORD result, bool keepLoaded) -> DWORD {
+        if (!keepLoaded)
+        {
+            // Release only after the attempt has finished publishing status;
+            // callbacks and the passive owner remain pinned independently.
+            std::lock_guard lock(g_taskbarTapMutex);
+            g_taskbarTapFailureTick = GetTickCount64();
+            g_taskbarTapStarted = false;
+        }
         if (selfReference && !keepLoaded)
             FreeLibraryAndExitThread(selfReference, result);
         return result;
@@ -1624,10 +1713,12 @@ DWORD WINAPI InstallTaskbarTap(void*)
 
     if (!OpenSharedState())
     {
+        SetHookStatus(kStatusFailed, ERROR_FILE_NOT_FOUND);
         SignalReady();
         return finish(ERROR_FILE_NOT_FOUND, false);
     }
     g_sharedState->explorerProcessId = GetCurrentProcessId();
+    InterlockedExchange(&g_sharedState->diagnosticStage, 90); // TAP worker entered
     SetHookStatus(kStatusInjecting);
 
     // XAML Diagnostics can only own a taskbar visual tree once. Refuse to
@@ -1640,7 +1731,7 @@ DWORD WINAPI InstallTaskbarTap(void*)
         return finish(ERROR_ALREADY_EXISTS, false);
     }
 
-    HMODULE xaml = LoadLibraryExW(L"Windows.UI.Xaml.dll", nullptr,
+    if (!xaml) xaml = LoadLibraryExW(L"Windows.UI.Xaml.dll", nullptr,
         LOAD_LIBRARY_SEARCH_SYSTEM32);
     auto initialize = xaml ? reinterpret_cast<InitializeXamlDiagnosticsExProc>(
         GetProcAddress(xaml, "InitializeXamlDiagnosticsEx")) : nullptr;
@@ -1666,6 +1757,7 @@ DWORD WINAPI InstallTaskbarTap(void*)
     HRESULT result = E_FAIL;
     for (unsigned attempt = 1; attempt <= 60 && FAILED(result); ++attempt)
     {
+        if (g_retired.load()) return finish(ERROR_CANCELLED, false);
         wchar_t connection[64]{};
         swprintf_s(connection, L"VisualDiagConnection%u", attempt);
         InterlockedExchange(&g_sharedState->diagnosticStage,
@@ -1683,10 +1775,9 @@ DWORD WINAPI InstallTaskbarTap(void*)
         SignalReady();
         return finish(static_cast<DWORD>(result), false);
     }
-    if (HANDLE taskViewThread = CreateThread(nullptr, 0, MonitorTaskView,
-        nullptr, 0, nullptr))
-        CloseHandle(taskViewThread);
-    // InitializeXamlDiagnosticsEx pins the TAP module. Keep our explicit
+    StartTaskViewMonitorIfNeeded();
+    // Owner attachment has already pinned the module, even on failure.
+    // InitializeXamlDiagnosticsEx also pins the TAP. Keep our explicit
     // reference too so a hook timeout can never unmap code still used by the
     // visual-tree callback or its owner-process watcher.
     return finish(static_cast<DWORD>(result), true);
@@ -1708,17 +1799,41 @@ bool IsExplorerProcess()
 
 void StartTaskbarTapIfNeeded()
 {
-    if (!IsExplorerProcess())
+    if (!IsExplorerProcess() || g_retired.load())
         return;
-    bool expected = false;
-    if (!g_taskbarTapStarted.compare_exchange_strong(expected, true))
+    std::lock_guard lock(g_taskbarTapMutex);
+    const DWORD owner = g_sharedState ? g_sharedState->ownerProcessId : 0;
+    constexpr ULONGLONG retryDelayMs = 10000;
+    if (g_taskbarTapStarted || (g_taskbarTapFailureTick && owner == g_taskbarTapOwner &&
+            GetTickCount64() - g_taskbarTapFailureTick < retryDelayMs))
+    {
+        if (ReplayHookStatus()) SignalReady();
         return;
+    }
+    g_taskbarTapOwner = owner;
+    g_taskbarTapStarted = true;
+    SetHookStatus(kStatusInjecting);
+    // Acquire the worker's reference before publishing its entry point.
+    HMODULE selfReference = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+            reinterpret_cast<LPCWSTR>(&InstallTaskbarTap), &selfReference))
+    {
+        const DWORD error = GetLastError();
+        g_taskbarTapStarted = false;
+        g_taskbarTapFailureTick = GetTickCount64();
+        SetHookStatus(kStatusFailed, error);
+        SignalReady();
+        return;
+    }
     HANDLE thread = CreateThread(
-        nullptr, 0, InstallTaskbarTap, nullptr, 0, nullptr);
+        nullptr, 0, InstallTaskbarTap, selfReference, 0, nullptr);
     if (!thread)
     {
-        g_taskbarTapStarted.store(false);
-        SetHookStatus(kStatusFailed, GetLastError());
+        const DWORD error = GetLastError();
+        FreeLibrary(selfReference);
+        g_taskbarTapStarted = false;
+        g_taskbarTapFailureTick = GetTickCount64();
+        SetHookStatus(kStatusFailed, error);
         SignalReady();
         return;
     }
@@ -1732,7 +1847,9 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
     if (code >= 0 && lParam && IsExplorerProcess() && OpenSharedState())
     {
         const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
-        if (message->message != WM_NULL && message->message != RegisterWindowMessageW(kApplyMessageName))
+        const UINT connectMessage = RegisterWindowMessageW(kConnectHookMessageName);
+        if (message->message != WM_NULL && message->message != connectMessage &&
+            message->message != RegisterWindowMessageW(kApplyMessageName))
             return CallNextHookEx(nullptr, code, wParam, lParam);
         wchar_t className[64]{};
         GetClassNameW(message->hwnd, className, 64);
@@ -1752,13 +1869,16 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
         }
         if (!IsCurrentHookInstance())
             return CallNextHookEx(nullptr, code, wParam, lParam);
-        if (!SetPropW(message->hwnd, kHookOwnerProperty, g_module) ||
-            !SetWindowSubclass(message->hwnd, HookOwnerSubclass, kHookOwnerSubclassId, 0))
+        if (const DWORD error = AttachHookOwner(message->hwnd))
         {
-            SetHookStatus(kStatusFailed, ERROR_INVALID_FUNCTION);
+            SetHookStatus(kStatusFailed, error);
             SignalReady();
             return CallNextHookEx(nullptr, code, wParam, lParam);
         }
+        if (message->message == connectMessage && !SetPropW(message->hwnd,
+                kHookConnectionProperty, reinterpret_cast<HANDLE>(message->wParam)))
+            return CallNextHookEx(nullptr, code, wParam, lParam);
+        ApplyTaskbarActivationProtection(message->hwnd);
         const bool classic = native::IsClassicTaskbarPlatform();
         if (classic || g_sharedState->suppressTaskbar)
         {
@@ -1772,13 +1892,27 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
                 // keep a rendering failure visible even while cloaking works.
                 if (!applied) SetHookStatus(kStatusFailed);
                 SignalReady();
-                bool expected = false;
-                if (applied && g_taskbarTapStarted.compare_exchange_strong(expected, true))
-                    if (HANDLE monitor = CreateThread(nullptr, 0, MonitorTaskView, nullptr, 0, nullptr))
-                        CloseHandle(monitor);
+                if (applied) StartTaskViewMonitorIfNeeded();
             }
         }
         if (!classic) StartTaskbarTapIfNeeded();
+    }
+    return CallNextHookEx(nullptr, code, wParam, lParam);
+}
+
+extern "C" __declspec(dllexport) LRESULT CALLBACK
+SnowDesktopStartPinHookProc(int code, WPARAM wParam, LPARAM lParam)
+{
+    if (code == HC_ACTION && lParam)
+    {
+        const auto* message = reinterpret_cast<const CWPSTRUCT*>(lParam);
+        if (message->message == RegisterWindowMessageW(
+                snowdesktop::shell_start_pin::kMessage))
+        {
+            snowdesktop::shell_start_pin::Receive(
+                static_cast<DWORD>(message->wParam),
+                static_cast<std::uint64_t>(message->lParam));
+        }
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }

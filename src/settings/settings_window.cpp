@@ -25,6 +25,9 @@ struct SettingsWindow::Impl
     ipc::SettingsProcess process;
     HWND window = nullptr;
     bool closing = false;
+    bool opening = false;
+    snowdesktop::SettingsRoute openingRoute;
+    OpenCompleted openCompleted;
     std::wstring lastError;
 
     std::wstring LocalizedError(const char* key) const
@@ -52,56 +55,82 @@ struct SettingsWindow::Impl
         try { if (controller) (void)controller->CloseSession(); } catch (...) {}
         process.Stop();
     }
-    bool EnsureInitialized()
+    void CompleteOpen(bool opened)
     {
-        if (channel && channel->Connected() && process.Running() && !closing) return true;
-        if (!instance || !controller)
+        opening = false;
+        auto completed = std::exchange(openCompleted, {});
+        if (completed) completed(opened);
+    }
+    void FailOpen(std::exception_ptr error)
+    {
+        std::wstring detail;
+        try { if (error) std::rethrow_exception(error); }
+        catch (const std::exception& failure) { detail = Utf8ToWide(failure.what()); }
+        catch (...) {}
+        if (!detail.empty()) WriteDiagnosticLogEntry(detail.c_str(), DiagnosticLogLevel::Error);
+        lastError = LocalizedError("settings.process.startFailed") + (detail.empty() ? L"" : L"\n" + detail);
+        EndSession();
+        CompleteOpen(false);
+    }
+    void StartOpen()
+    {
+        AllowSetForegroundWindow(process.ProcessId());
+        channel->RequestAsync("ui.open", ipc::Pack(openingRoute),
+            [this](ipc::Bytes reply, std::exception_ptr error) {
+                if (error) { FailOpen(error); return; }
+                try
+                {
+                    auto [opened, message] = ipc::Unpack<std::pair<bool, std::wstring>>(reply);
+                    lastError = std::move(message);
+                    CompleteOpen(opened);
+                }
+                catch (...) { FailOpen(std::current_exception()); }
+            });
+    }
+    void EnsureInitialized()
+    {
+        if (channel && channel->Connected() && process.Running() && !closing && window)
         {
-            lastError = L"Settings window has not been configured";
-            return false;
+            StartOpen();
+            return;
         }
-        try
+        if (!channel)
         {
-            if (!channel)
-            {
-                channel = std::make_unique<ipc::Channel>();
-                backends = std::make_unique<ipc::BackendServer>(*channel, *controller, widgetEngine, options);
-                channel->Bind<void>("ui.closed", [this] { closing = true; window = nullptr; });
-                channel->SetDisconnected([this] { EndSession(); });
-            }
-            // A normal close has acknowledged durable commits. An immediate
-            // reopen can finish teardown before launching the next UI.
-            if (process.Running()) { channel->Close(); EndSession(); }
-            ipc::BindController(*channel, *controller, options.localize);
-            if (widgetSettingsService) ipc::BindWidgetService(*channel, *widgetSettingsService);
-            process.Start(*channel);
-            auto [initialized, handle, error] = channel->Call<
-                std::tuple<bool, std::uint64_t, std::wstring>>("ui.initialize", ipc::ExecutableIdentity());
-            HWND candidate = reinterpret_cast<HWND>(handle);
-            DWORD owner = 0;
-            GetWindowThreadProcessId(candidate, &owner);
-            if (!initialized || !candidate || owner != process.ProcessId())
-            {
-                if (!error.empty()) WriteDiagnosticLogEntry(error.c_str(), DiagnosticLogLevel::Error);
-                lastError = LocalizedError("settings.process.startFailed") + (error.empty() ? L"" : L"\n" + error);
-                channel->Close();
-                EndSession();
-                return false;
-            }
-            window = candidate;
-            closing = false;
-            lastError.clear();
-            return true;
+            channel = std::make_unique<ipc::Channel>();
+            backends = std::make_unique<ipc::BackendServer>(*channel, *controller, widgetEngine, options);
+            channel->Bind<void>("ui.closed", [this] { closing = true; window = nullptr; });
+            channel->SetDisconnected([this] { EndSession(); });
         }
-        catch (const std::exception& error)
-        {
-            const std::string message(error.what());
-            WriteDiagnosticLogEntry(Utf8ToWide(message).c_str(), DiagnosticLogLevel::Error);
-            lastError = LocalizedError("settings.process.startFailed") + L"\n" + Utf8ToWide(message);
-            if (channel) channel->Close();
-            EndSession();
-            return false;
-        }
+        // A normal close has acknowledged durable commits. An immediate
+        // reopen can finish teardown before launching the next UI.
+        if (process.Running()) { channel->Close(); EndSession(); }
+        ipc::BindController(*channel, *controller, options.localize);
+        if (widgetSettingsService) ipc::BindWidgetService(*channel, *widgetSettingsService);
+        process.Start(*channel);
+        channel->RequestAsync("ui.initialize", ipc::Pack(ipc::ExecutableIdentity()),
+            [this](ipc::Bytes reply, std::exception_ptr failure) {
+                if (failure) { FailOpen(failure); return; }
+                try
+                {
+                    auto [initialized, handle, error] = ipc::Unpack<
+                        std::tuple<bool, std::uint64_t, std::wstring>>(reply);
+                    HWND candidate = reinterpret_cast<HWND>(handle);
+                    DWORD owner = 0;
+                    GetWindowThreadProcessId(candidate, &owner);
+                    if (!initialized || !candidate || owner != process.ProcessId())
+                    {
+                        if (!error.empty()) WriteDiagnosticLogEntry(error.c_str(), DiagnosticLogLevel::Error);
+                        lastError = LocalizedError("settings.process.startFailed") + (error.empty() ? L"" : L"\n" + error);
+                        EndSession();
+                        CompleteOpen(false);
+                        return;
+                    }
+                    window = candidate;
+                    closing = false;
+                    StartOpen();
+                }
+                catch (...) { FailOpen(std::current_exception()); }
+            });
     }
     template<class... A> void Notify(const char* name, const A&... arguments) noexcept
     {
@@ -131,6 +160,8 @@ bool SettingsWindow::Init(HINSTANCE instance, snowdesktop::SettingsController& c
 }
 void SettingsWindow::Shutdown() noexcept
 {
+    impl_->opening = false;
+    impl_->openCompleted = {};
     if (impl_->channel) impl_->channel->SetDisconnected({});
     impl_->window = nullptr;
     if (impl_->backends) impl_->backends->ClosePages();
@@ -155,18 +186,20 @@ void SettingsWindow::Shutdown() noexcept
     impl_->options = {};
     impl_->closing = false;
 }
-bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route)
+bool SettingsWindow::Open(const snowdesktop::SettingsRoute& route, OpenCompleted completed)
 {
     auto canonical = snowdesktop::CanonicalizeSettingsRoute(route);
-    if (!impl_->EnsureInitialized()) return false;
-    AllowSetForegroundWindow(impl_->process.ProcessId());
+    if (!impl_->instance || !impl_->controller || impl_->opening) return false;
+    impl_->opening = true;
+    impl_->openingRoute = std::move(canonical);
+    impl_->openCompleted = std::move(completed);
+    impl_->lastError.clear();
     try
     {
-        auto [opened, error] = impl_->channel->Call<std::pair<bool, std::wstring>>("ui.open", canonical);
-        impl_->lastError = std::move(error);
-        return opened;
+        impl_->EnsureInitialized();
+        return true;
     }
-    catch (...) { impl_->lastError = impl_->LocalizedError("settings.process.connectionLost"); return false; }
+    catch (...) { impl_->FailOpen(std::current_exception()); return true; }
 }
 bool SettingsWindow::Show()
 { return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General)); }
@@ -180,12 +213,15 @@ void SettingsWindow::ShowWidgetEditor(std::size_t, const wchar_t* id, const wcha
 { if (id && *id) (void)Open(snowdesktop::SettingsRoute::ForWidget(id)); }
 bool SettingsWindow::ShowExitConfirm()
 {
-    if (!impl_->controller || (!IsVisible() && !Show())) return false;
-    try { impl_->channel->Call<void>("ui.exitConfirmation"); return true; } catch (...) { return false; }
+    if (!impl_->controller) return false;
+    if (!IsVisible())
+        return Open(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::General),
+            [this](bool opened) { if (opened) impl_->Notify("ui.exitConfirmation"); });
+    try { impl_->channel->Notify("ui.exitConfirmation"); return true; } catch (...) { return false; }
 }
 bool SettingsWindow::FlushPendingChanges()
 {
-    if (!impl_->channel || !impl_->process.Running() || impl_->closing)
+    if (!impl_->channel || !impl_->process.Running() || impl_->closing || impl_->opening)
         return !impl_->controller || impl_->controller->FlushAll().Succeeded();
     try { return impl_->channel->Call<bool>("ui.flush"); } catch (...) { return false; }
 }
@@ -201,13 +237,13 @@ void SettingsWindow::RefreshWidgetsPage() { impl_->Notify("ui.refreshWidgets"); 
 void SettingsWindow::RefreshGeneralRuntimeState() { impl_->Notify("ui.refreshGeneral"); }
 bool SettingsWindow::PrepareLanguageChange()
 {
-    if (!impl_->channel || !impl_->process.Running() || impl_->closing) return true;
+    if (!impl_->channel || !impl_->process.Running() || impl_->closing || impl_->opening) return true;
     try { return impl_->channel->Call<bool>("ui.prepareLanguage"); } catch (...) { return false; }
 }
 void SettingsWindow::ApplyLanguageChange(bool reloaded) { impl_->Notify("ui.applyLanguage", reloaded); }
 bool SettingsWindow::PublishHomeAboutStatus(snowdesktop::winui::HomeAboutStatusPatch patch)
 {
-    if (!impl_->channel || !impl_->channel->Connected() || impl_->closing) return false;
+    if (!impl_->channel || !impl_->channel->Connected() || impl_->closing || impl_->opening) return false;
     try { return impl_->channel->Call<bool>("ui.homeStatus", patch); } catch (...) { return false; }
 }
 bool SettingsWindow::PreTranslateMessage(MSG*) noexcept { return false; }
@@ -222,7 +258,7 @@ HWND SettingsWindow::Window() const noexcept
 bool SettingsWindow::IsVisible() const noexcept { const HWND window = Window(); return window && IsWindowVisible(window); }
 bool SettingsWindow::IsHotkeyCaptureActive() const noexcept
 {
-    if (!IsVisible() || !impl_->channel || !impl_->channel->Connected()) return false;
+    if (!IsVisible() || !impl_->channel || !impl_->channel->Connected() || impl_->opening) return false;
     try { return impl_->channel->Call<bool>("ui.hotkeyCapture"); } catch (...) { return false; }
 }
 void SettingsWindow::CaptureRegisteredHotkey(UINT modifiers, UINT key) { impl_->Notify("ui.captureHotkey", modifiers, key); }

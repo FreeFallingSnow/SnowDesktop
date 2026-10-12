@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
 #include <span>
 #include <string>
 #include <string_view>
@@ -15,6 +16,25 @@ enum class DockAppIdentityKind
 
 namespace snowdesktop::dock_app_identity_rules
 {
+
+inline bool IsPackagedAppId(std::wstring_view id)
+{
+    const auto separator = id.find(L'!');
+    return separator != std::wstring_view::npos && separator > 0 && separator + 1 < id.size() &&
+        id.find_first_of(L"\\/: \t\r\n") == std::wstring_view::npos &&
+        id.find(L'!', separator + 1) == std::wstring_view::npos;
+}
+
+// Missing process metadata must not remove a protected broker's task window.
+inline std::wstring RunningWindowIdentity(const std::wstring& executable,
+    const std::wstring& appId, std::uintptr_t window, unsigned long process, unsigned long thread)
+{
+    if (!appId.empty()) return L"AUMID:" + appId;
+    if (!executable.empty()) return L"EXE:" + executable;
+    if (!window || !process || !thread) return {};
+    return L"WINDOW:" + std::to_wstring(process) + L":" + std::to_wstring(thread) +
+        L":" + std::to_wstring(window);
+}
 
 inline bool IsPathInsideDirectory(
     const std::wstring& path, const std::wstring& directory)
@@ -105,7 +125,8 @@ inline bool MatchesRunningApp(
     switch (kind)
     {
     case DockAppIdentityKind::Executable:
-        return MatchesExecutableProcessFamily(
+        return (!identityAppUserModelId.empty() && identityAppUserModelId == runningAppUserModelId) ||
+            MatchesExecutableProcessFamily(
             identityExecutablePath,
             runningExecutablePath,
             ancestorExecutablePaths) ||

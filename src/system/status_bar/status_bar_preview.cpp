@@ -56,6 +56,7 @@ StatusBarSnapshot Fixture()
     StatusBarSnapshot data;
     data.clock = L"2026/09/26   09:09";
     data.inputMethod.label = L"中"; // l10n-allow: fixed Chinese IME preview sample
+    data.inputMethod.layoutLabel = L"拼"; // l10n-allow: fixed Pinyin profile preview sample
     data.inputMethod.description = L"中文"; // l10n-allow: fixed native language-name preview data
     data.cpu.emplace(); data.cpu->available = true; data.cpu->warmingUp = false; data.cpu->usagePercent = 9;
     data.memory.emplace(); data.memory->available = true; data.memory->totalBytes = 32ull << 30; data.memory->usedBytes = 12ull << 30;
@@ -67,7 +68,7 @@ StatusBarSnapshot Fixture()
     data.network.emplace(); data.network->available = true; data.network->connectivity = "internet"; data.network->transport = "wifi";
     data.wifi = WifiFixture(true, 86);
     data.notifications.quiet = false; data.notifications.unreadCount = 0;
-    data.audio.emplace(); data.audio->available = true; data.audio->volume = .45;
+    data.audio.emplace(); data.audio->available = true; data.audio->volume = 1;
     data.power.emplace(); data.power->available = true; data.power->batteryPercent = 58;
     // Explicit fixture icons: never enumerate applications or connect a Hook.
     const SHSTOCKICONID icons[]{SIID_SHIELD, SIID_WORLD};
@@ -103,7 +104,7 @@ const StatusBarItem& Item(const std::vector<StatusBarItem>& items, std::string_v
     return *found;
 }
 void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, int width, int height, float scale, bool merged,
-    bool expectNotification = true) try
+    bool expectNotification = true, bool rightAligned = false) try
 {
     const auto clock = std::find_if(items.begin(), items.end(), [](const auto& item) { return item.key == "clock"; });
     const bool dateVisible = clock != items.end() && !IsRectEmpty(&clock->bounds);
@@ -122,21 +123,21 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         Require(dateVisible, "date disappeared despite sufficient status bar width");
     if (dateVisible)
     {
-        if (!merged) Require(std::abs(clock->bounds.left + clock->bounds.right - width) <= 1,
+        if (!merged && !rightAligned) Require(std::abs(clock->bounds.left + clock->bounds.right - width) <= 1,
             "date itself is not centered on the complete bar");
         Require(notification.left == clock->bounds.right,
             "notification button must immediately follow the date without shifting it");
     }
-    else if (!merged) Require(std::abs(notification.left + notification.right - width) <= 1,
+    else if (!merged && !rightAligned) Require(std::abs(notification.left + notification.right - width) <= 1,
         "notification button must remain centered when the date is absent");
     const auto& controls = Item(items, "controlCenter").bounds;
     if (IsRectEmpty(&controls) || (!IsRectEmpty(&notification) != expectNotification))
         throw std::runtime_error("narrow status bar removed essential controls: control=[" +
             std::to_string(controls.left) + "," + std::to_string(controls.right) + "] notification=[" +
             std::to_string(notification.left) + "," + std::to_string(notification.right) + "]");
-    if (expectNotification) Require(notification.right - notification.left == static_cast<LONG>(std::ceil(32.f * scale)),
+    if (expectNotification) Require(notification.right - notification.left == static_cast<LONG>(std::ceil(28.f * scale)),
         "notification button must remain a complete independent hit target");
-    if (merged && expectNotification)
+    if ((merged || rightAligned) && expectNotification)
     {
         Require(notification.right >= width - static_cast<LONG>(12.f * scale) && notification.right <= width,
             "merged notifications must be anchored to the complete bar's right edge");
@@ -146,7 +147,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
                     "a tray or system item was placed after the merged date and notifications");
     }
     const bool hasBattery = !Item(items, "controlCenter").controlGlyphs[2].empty();
-    Require(controls.right - controls.left == static_cast<LONG>(std::ceil((hasBattery ? 92.f : 64.f) * scale)),
+    Require(controls.right - controls.left == static_cast<LONG>(std::ceil((hasBattery ? 84.f : 56.f) * scale)),
         "available system controls must retain their hit targets without an absent-battery slot");
     std::vector<RECT> rectangles;
     ComPtr<IDWriteTextFormat> font;
@@ -168,8 +169,8 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
                 dateVisible ? clock->bounds.left : notification.left;
             Require(item.left && r.right < informationEnd && r.left >= launchEnd,
                 "system information must follow the launch buttons on the left");
-            if (item.key != "memory")
-                Require(r.right - r.left <= (item.key == "traffic" ? 152 : 68) * scale + 1,
+            if (item.key == "traffic")
+                Require(r.right - r.left <= 152 * scale + 1,
                     "system information wastes horizontal space");
         }
         Require(r.left >= 0 && r.top >= 0 && r.right <= width && r.bottom <= height, "status bar item escaped its viewport");
@@ -188,14 +189,14 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         rectangles.push_back(r);
         if (item.text.empty() || item.icon) continue;
         ComPtr<IDWriteTextLayout> layout;
-        const bool twoLineClock = StatusBarUsesTwoLineClock(merged, static_cast<float>(height), scale);
+        const bool twoLineClock = StatusBarUsesTwoLineClock(merged);
         const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
         Require(text->CreateTextLayout(displayed.c_str(), static_cast<UINT32>(displayed.size()), font.Get(), 4000, 400, &layout));
         DWRITE_TEXT_METRICS metrics{}; Require(layout->GetMetrics(&metrics));
         if (merged && item.key == "clock")
             Require(metrics.lineCount == (twoLineClock ? 2u : 1u) && metrics.height <= r.bottom - r.top + 1,
                 "merged date and time must fit the bar's available height");
-        const float reserved = item.key == "controlCenter" ? 94.f * scale : 0.f;
+        const float reserved = item.key == "controlCenter" ? 84.f * scale : 0.f;
         Require(metrics.widthIncludingTrailingWhitespace <= r.right - r.left - reserved + 1,
             "status bar fixed width clips visible text");
     }
@@ -226,6 +227,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
         Require(fullWidth >= static_cast<int>(640 * dpiScale), "status bar preview canvas is too narrow");
         std::vector<StatusBarItem> infoItems;
         std::vector<std::uint32_t> normalPixels;
+        std::optional<RECT> fullSpeakerInk;
         widget_preview::Wallpaper stage;
         if (!request.backgroundImage.empty())
         {
@@ -238,13 +240,26 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
         if (request.transparent || request.contentOnly)
         { stage.width = request.canvasWidth; stage.height = request.canvasHeight; stage.pixels.resize(static_cast<std::size_t>(stage.width) * stage.height); }
         Require(!stage.pixels.empty(), "cannot create status bar preview background");
-        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "charging-low", "low-battery", "wifi-off", "offline", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged"})
+        for (const std::string preset : {"normal", "information", "updated", "hover", "full", "charging", "charging-low", "low-battery", "wifi-off", "offline", "unavailable", "bottom", "narrow", "scaled", "high-contrast", "repeat", "merged", "input-icon", "volume-low", "volume-zero", "volume-muted"})
         {
             auto data = source; StatusBarSettings settings;
+            if (preset == "volume-low") data.audio->volume = .45;
+            if (preset == "volume-zero") data.audio->volume = 0;
+            if (preset == "volume-muted") data.audio->muted = true;
             settings.cpu = settings.memory = settings.gpu = settings.traffic =
                 preset == "information" || preset == "updated" || preset == "narrow" || preset == "merged";
             settings.pinnedTrayItems = {"bar-preview-0", "bar-preview-1"};
             if (preset == "scaled") settings.scale = 1.5f;
+            if (preset == "input-icon")
+            {
+                auto& icon = data.tray.front();
+                data.inputMethod.layoutIcon = status_bar_input_method::ProfileIcon{icon.width, icon.height, icon.pixels};
+                // An off-center shape on a non-square transparent canvas:
+                // centering its image rectangle must fail the pixel check.
+                icon.width = 24; icon.height = 32; icon.pixels.assign(24 * 32, 0);
+                for (unsigned y = 3; y < 13; ++y)
+                    for (unsigned x = 2; x < 13; ++x) icon.pixels[y * 24 + x] = 0xff0055ff;
+            }
             if (preset == "bottom") settings.position = DockPosition::Bottom;
             if (preset == "updated")
             {
@@ -254,7 +269,12 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 data.traffic->downloadBytesPerSecond = data.traffic->uploadBytesPerSecond = 999ull << 40;
                 data.clock = L"2026/09/26   11:59";
             }
-            if (preset == "full") { data.power->batteryPercent = 100; data.power->acPower = true; data.network->transport = "ethernet"; }
+            if (preset == "full")
+            {
+                data.power->batteryPercent = 100; data.power->acPower = true; data.network->transport = "ethernet";
+                data.notifications.unreadCount = 2;
+            }
+            if (preset == "merged") data.notifications.totalCount = 2;
             if (preset == "charging" || preset == "charging-low") { data.power->charging = true; data.power->acPower = true; }
             if (preset == "charging-low" || preset == "low-battery") data.power->batteryPercent = 10;
             if (preset == "low-battery") data.wifi = WifiFixture(true, 14);
@@ -273,23 +293,37 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 const auto overflow = std::find_if(items.begin(), items.end(), [](const auto& item) {
                     return item.key == "tray" && !item.icon;
                 });
-                Require(overflow != items.end() && std::distance(overflow, items.end()) >= 3 &&
-                    (overflow + 1)->key == "inputMethod" && (overflow + 2)->key == "controlCenter",
-                    "input indicator must sit between tray expansion and control center");
+                Require(overflow != items.end() && std::distance(overflow, items.end()) >= 4 &&
+                    (overflow + 1)->key == "inputMethod" && (overflow + 1)->action == StatusBarAction::InputMethod &&
+                    (overflow + 2)->key == "inputMethodLayout" && (overflow + 2)->action == StatusBarAction::InputMethodPanel &&
+                    (overflow + 3)->key == "controlCenter",
+                    "distinct input-mode and layout-picker buttons must sit between tray expansion and control center");
                 auto hiddenInput = settings; hiddenInput.inputMethod = false;
                 const auto hiddenItems = BuildStatusBarItems(hiddenInput, data);
                 Require(std::none_of(hiddenItems.begin(), hiddenItems.end(), [](const auto& item) {
-                    return item.action == StatusBarAction::InputMethod;
-                }), "hidden input indicator must have no rendered or accessible click target");
+                    return item.action == StatusBarAction::InputMethod || item.action == StatusBarAction::InputMethodPanel;
+                }), "hidden input indicators must have no rendered or accessible click target");
                 auto switchedInput = data; switchedInput.inputMethod.label = L"英"; // l10n-allow: fixed Chinese IME mode-transition sample
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, switchedInput)),
                     "IME mode changes must refresh the indicator without a layout change");
+                auto iconInput = data;
+                iconInput.inputMethod.layoutIcon = status_bar_input_method::ProfileIcon{1, 1, {0xff00cc00}};
+                const auto iconItems = BuildStatusBarItems(settings, iconInput);
+                const auto& iconButton = Item(iconItems, "inputMethodLayout");
+                auto invocationItems = iconItems;
+                const auto index = static_cast<std::size_t>(&iconButton - iconItems.data());
+                invocationItems[index].bounds = {0, 0, 28, 32};
+                const auto invocation = ResolveStatusBarInvocation(invocationItems, index, false);
+                Require(!iconButton.inputIcon && !iconButton.icon && !iconButton.glyph.empty() &&
+                    invocation && !invocation->isTray && invocation->action == StatusBarAction::InputMethodPanel &&
+                    SameStatusBarContent(items, iconItems),
+                    "profile bitmap changes must retain the fixed keyboard glyph and layout-picker action");
             }
             auto identical = data; if (identical.cpu) ++identical.cpu->revision;
             Require(SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "unchanged samples would repaint status bar content");
             if (preset == "normal")
             {
-                identical.audio->volume = .49;
+                identical.audio->volume = .9;
                 Require(SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "tooltip-only changes would repaint the bar");
                 StatusBarTooltipState tooltip;
                 Require(tooltip.Enter("controlCenter/1", Item(items, "controlCenter").controlTips[1], {}, 100, 400), "tooltip did not enter its target");
@@ -316,6 +350,20 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 changedTray.tray.front().pixels.front() ^= 0x0000ffff;
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),
                     "a changed tray bitmap would be skipped");
+                changedTray = data;
+                changedTray.tray.front().identity = {GUID{}, 42, 7, 99};
+                changedTray.tray.front().key = tray::Key(changedTray.tray.front().identity);
+                const auto originalTray = changedTray.tray.front();
+                const auto brightItems = BuildStatusBarItems(settings, changedTray);
+                tray::Event off;
+                off.operation = NIM_MODIFY; off.identity = originalTray.identity;
+                off.flags = NIF_ICON | tray::kClearIcon;
+                Require(tray::Apply(changedTray.tray, off), "blink-off event did not reach the tray model");
+                const auto offItems = BuildStatusBarItems(settings, changedTray);
+                Require(offItems.size() == brightItems.size() && !SameStatusBarContent(brightItems, offItems) &&
+                    std::any_of(offItems.begin(), offItems.end(), [&](const auto& item) {
+                        return item.icon && item.icon->key == originalTray.key && item.icon->pixels == std::vector<std::uint32_t>{0};
+                    }), "blank tray frame must repaint while retaining the same pinned click target");
                 changedTray = data;
                 changedTray.tray.front().state |= NIS_HIDDEN;
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, changedTray)),
@@ -403,7 +451,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 const auto pending = Item(BuildStatusBarItems(settings, notification), "notifications");
                 notification.notifications.unreadCount.reset(); notification.notifications.totalCount = 2;
                 const auto present = Item(BuildStatusBarItems(settings, notification), "notifications");
-                Require(pending.glyph != present.glyph && pending.tip != present.tip,
+                Require(pending.tip != present.tip,
                     "total notifications must not be reported as unread notifications");
                 notification.notifications.quiet = true;
                 Require(Item(BuildStatusBarItems(settings, notification), "notifications").glyph == status_bar_glyphs::kNotificationsQuiet,
@@ -413,7 +461,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     "an unknown notification count must not appear as a confirmed empty notification center");
                 Require(control.controlTips[0] != control.controlTips[1] && control.controlTips[1] != control.controlTips[2],
                     "control center glyphs must expose separate network, volume and battery tips");
-                identical.audio->volume = .9;
+                identical.audio->volume = .45;
                 Require(!SameStatusBarContent(items, BuildStatusBarItems(settings, identical)), "volume level must change its speaker glyph");
             }
             std::optional<std::size_t> hover;
@@ -473,11 +521,16 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 // Exercise the real renderer's fallback paths without adding
                 // CLI presets or altering the exported normal frame.
                 const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale,
-                    bool search = true, bool taskView = true, int mergedHeight = 64) {
+                    bool search = true, bool taskView = true, int mergedHeight = 64,
+                    bool rightAligned = false, bool seconds = false) {
                     auto compactSettings = settings; compactSettings.clock = date;
+                    compactSettings.timeNotificationRightAligned = rightAligned;
+                    compactSettings.clockShowSeconds = seconds;
                     compactSettings.quickSearch = search; compactSettings.taskView = taskView;
                     compactSettings.cpu = compactSettings.memory = compactSettings.gpu = compactSettings.traffic = true;
-                    auto compact = BuildStatusBarItems(compactSettings, data);
+                    auto compactData = data;
+                    if (seconds) compactData.clock = L"2026/09/26   09:09:59";
+                    auto compact = BuildStatusBarItems(compactSettings, compactData);
                     Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "clock"; }) == date,
                         "the existing date visibility flag must be respected");
                     Require(std::any_of(compact.begin(), compact.end(), [](const auto& item) { return item.key == "quickSearch"; }) == search,
@@ -491,12 +544,13 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     context->SetTarget(scratch.Get()); context->SetTransform(D2D1::Matrix3x2F::Identity());
                     context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
                     const auto content = DrawStatusBarContent(context.Get(), text, compact, testWidth, testHeight,
-                        testScale, appearance, palette, {}, false, 0, merged);
+                        testScale, appearance, palette, {}, false, 0, merged, compactSettings.timeNotificationRightAligned);
                     const auto end = context->EndDraw(); context->SetTarget(nullptr); Require(content); Require(end);
                     const auto dockCenter = MergedStatusBarCenter(static_cast<LONG>(testWidth), static_cast<LONG>(testHeight), testScale);
                     const bool notificationFits = !merged || static_cast<LONG>(testWidth) - dockCenter.right >=
-                        static_cast<LONG>(std::ceil(32.f * testScale) + std::ceil(92.f * testScale));
-                    CheckLayout(text, compact, static_cast<int>(testWidth), static_cast<int>(testHeight), testScale, merged, notificationFits);
+                        static_cast<LONG>(std::ceil(28.f * testScale) + std::ceil(84.f * testScale));
+                    CheckLayout(text, compact, static_cast<int>(testWidth), static_cast<int>(testHeight), testScale, merged,
+                        notificationFits, rightAligned);
                     if (!merged && search && logicalWidth >= 640)
                         Require(!IsRectEmpty(&Item(compact, "quickSearch").bounds),
                             "standalone status bar lost its enabled search entry");
@@ -505,14 +559,23 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                         const auto& entry = Item(compact, "taskView");
                         const auto invocation = ResolveStatusBarInvocation(compact,
                             static_cast<std::size_t>(&entry - compact.data()), false);
-                        Require(entry.bounds.right - entry.bounds.left == static_cast<LONG>(std::ceil(32.f * testScale)) &&
+                        Require(entry.bounds.right - entry.bounds.left == static_cast<LONG>(std::ceil(28.f * testScale)) &&
                             invocation && invocation->action == StatusBarAction::TaskView,
                             "Task View must retain a complete independent hit target and keyboard action");
                     }
-                    if (date && (logicalWidth == 320 || (merged && logicalWidth <= 480)))
+                    if (date && ((!rightAligned && logicalWidth <= 280) || (merged && logicalWidth <= 320)))
                         Require(IsRectEmpty(&Item(compact, "clock").bounds),
                             "crowded date must yield as a whole while its notification target remains available");
                 };
+                for (const float rightScale : {.75f, 1.f, 1.5f, 2.f, 3.f})
+                {
+                    compactLayout(true, false, 1920, rightScale, true, true, 64, true, true);
+                    compactLayout(true, false, 640, rightScale, true, true, 64, true, true);
+                    compactLayout(true, false, 320, rightScale, true, true, 64, true, true);
+                    compactLayout(false, false, 640, rightScale, true, true, 64, true);
+                    compactLayout(true, true, 1920, rightScale, true, true, 64, false, true);
+                    compactLayout(true, true, 1920, rightScale, true, true, 64, true, true);
+                }
                 compactLayout(false, false, 640, scale);
                 compactLayout(false, false, 640, scale, false);
                 compactLayout(false, true, 640, scale);
@@ -523,7 +586,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 compactLayout(true, true, 480, 1.5f * scale);
                 compactLayout(true, true, 1920, 1.25f * scale);
                 compactLayout(true, true, 1920, 3.f);
-                // Use the real renderer at the single/two-line boundary and
+                // Use the real renderer at compact/tall merged heights and
                 // fractional DPI: line height, measured width and hit targets
                 // must fit the compact bar rather than merely changing text.
                 for (const float testScale : {1.f, 1.25f, 1.5f, 3.f})
@@ -532,10 +595,14 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 compactLayout(true, true, 320, 3.f);
                 compactLayout(true, true, 240, 3.f);
                 compactLayout(true, false, 320, scale);
+                compactLayout(true, false, 280, scale);
             }
             if (preset == "information" && width >= 1800 * scale)
                 for (const auto* key : {"cpu", "memory", "gpu", "traffic"})
                     Require(!IsRectEmpty(&Item(items, key).bounds), "information disappeared despite sufficient status bar width");
+            if (settings.memory)
+                Require(Item(items, "memory").text.starts_with(L"RAM "),
+                    "the compact memory readout must use RAM in every locale");
             if (preset == "information") infoItems = items;
             if (preset == "updated")
             {
@@ -553,12 +620,96 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 std::memcpy(pixels.data() + static_cast<std::size_t>(y) * request.canvasWidth,
                     mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(request.canvasWidth) * 4);
             readback->Unmap();
+            if (preset == "input-icon")
+            {
+                const auto& trayIcon = *std::find_if(items.begin(), items.end(), [](const auto& item) { return item.icon.has_value(); });
+                const auto& bounds = trayIcon.bounds;
+                int minX = request.canvasWidth, minY = request.canvasHeight, maxX = -1, maxY = -1;
+                for (int py = top + bounds.top; py < top + bounds.bottom; ++py)
+                    for (int px = left + bounds.left; px < left + bounds.right; ++px)
+                    {
+                        const auto pixel = pixels[static_cast<std::size_t>(py) * request.canvasWidth + px];
+                        const int r = (pixel >> 16) & 255, b = pixel & 255;
+                        if ((pixel >> 24) > 128 && b > r + 40)
+                        { minX = std::min(minX, px); minY = std::min(minY, py); maxX = std::max(maxX, px); maxY = std::max(maxY, py); }
+                    }
+                Require(maxX >= minX && maxY >= minY &&
+                    std::abs(minX + maxX + 1 - 2 * left - bounds.left - bounds.right) <= 2 &&
+                    std::abs(minY + maxY + 1 - 2 * top - bounds.top - bounds.bottom) <= 2,
+                    "transparent padding must not displace a tray bitmap's visible shape from its button center");
+            }
+            if (preset == "normal" || preset == "information" || preset == "scaled" || preset == "merged")
+            {
+                // Icons retain geometric centering with a small optical
+                // descent for the bell. Text follows a fixed font baseline;
+                // its changing glyph extents must not be recentered.
+                const auto centeredInk = [&](RECT bounds, std::string_view name, bool opticalDescent = false,
+                    bool fixedBaselineText = false) {
+                    if (IsRectEmpty(&bounds)) return;
+                    int minX = request.canvasWidth, minY = request.canvasHeight, maxX = -1, maxY = -1;
+                    for (int py = top + bounds.top + 2; py < top + bounds.bottom - 2; ++py)
+                        for (int px = left + bounds.left + 1; px < left + bounds.right - 1; ++px)
+                        {
+                            const auto pixel = pixels[static_cast<std::size_t>(py) * request.canvasWidth + px];
+                            const int r = (pixel >> 16) & 255, g = (pixel >> 8) & 255, b = pixel & 255;
+                            if ((pixel >> 24) > 128 && std::abs(r - g) < 20 && std::abs(g - b) < 20 &&
+                                (appearance.contentTheme == 1 ? r < 150 : r > 140))
+                            { minX = std::min(minX, px); minY = std::min(minY, py); maxX = std::max(maxX, px); maxY = std::max(maxY, py); }
+                        }
+                    Require(maxX >= minX && maxY >= minY, "status bar alignment fixture has no visible ink");
+                    if (fixedBaselineText) return;
+                    const float dx = static_cast<float>(minX + maxX + 1 - 2 * left - bounds.left - bounds.right) / 2.f;
+                    const float dy = static_cast<float>(minY + maxY + 1 - 2 * top - bounds.top - bounds.bottom) / 2.f;
+                    const float expectedY = opticalDescent ? scale : 0;
+                    if (std::abs(dx) > 1.f || std::abs(dy - expectedY) > 1.f)
+                        throw std::runtime_error("status bar visible ink is not centered: " + std::string(name) +
+                            " dx=" + std::to_string(dx) + " dy=" + std::to_string(dy));
+                };
+                for (const auto& item : items)
+                {
+                    if (item.icon || item.key == "controlCenter") continue;
+                    centeredInk(item.bounds, item.key,
+                        item.key == "notifications" && item.glyph != status_bar_glyphs::kUnknown,
+                        item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
+                        item.key == "gpu" || item.key == "traffic");
+                }
+                const auto& controls = Item(items, "controlCenter");
+                for (int part = 0; part < 3; ++part)
+                {
+                    if (controls.controlGlyphs[static_cast<std::size_t>(part)].empty()) continue;
+                    auto bounds = controls.bounds;
+                    bounds.left += static_cast<LONG>(std::lround(28.f * static_cast<float>(part) * scale));
+                    bounds.right = bounds.left + static_cast<LONG>(std::lround(28.f * scale));
+                    centeredInk(bounds, part == 0 ? "network" : part == 1 ? "speaker" : "battery");
+                }
+            }
+            if (preset == "normal" || preset == "volume-low" || preset == "volume-zero" || preset == "volume-muted")
+            {
+                const auto& control = Item(items, "controlCenter").bounds;
+                const int speakerLeft = left + control.left + static_cast<int>(std::lround(28.f * scale));
+                RECT ink{request.canvasWidth, request.canvasHeight, -1, -1};
+                for (int py = top + control.top + 2; py < top + control.bottom - 2; ++py)
+                    for (int px = speakerLeft + 1; px < speakerLeft + static_cast<int>(std::lround(28.f * scale)) - 1; ++px)
+                    {
+                        const auto pixel = pixels[static_cast<std::size_t>(py) * request.canvasWidth + px];
+                        const int r = (pixel >> 16) & 255, g = (pixel >> 8) & 255, b = pixel & 255;
+                        if ((pixel >> 24) > 128 && std::abs(r - g) < 20 && std::abs(g - b) < 20 &&
+                            (appearance.contentTheme == 1 ? r < 150 : r > 140))
+                        { ink.left = std::min(ink.left, static_cast<LONG>(px)); ink.top = std::min(ink.top, static_cast<LONG>(py));
+                          ink.right = std::max(ink.right, static_cast<LONG>(px)); ink.bottom = std::max(ink.bottom, static_cast<LONG>(py)); }
+                    }
+                Require(ink.right >= ink.left && ink.bottom >= ink.top, "volume fixture has no speaker pixels");
+                if (preset == "normal") fullSpeakerInk = ink;
+                else Require(fullSpeakerInk && std::abs(ink.left - fullSpeakerInk->left) <= 1 &&
+                    std::abs(ink.top - fullSpeakerInk->top) <= 1 && std::abs(ink.bottom - fullSpeakerInk->bottom) <= 1,
+                    "the speaker body must retain its full-volume position when waves change or audio is muted");
+            }
             if (preset == "full" || preset == "charging")
             {
                 // User-visible contract: green is the charge inside the
                 // battery, while the outline remains the neutral foreground.
                 const auto& control = Item(items, "controlCenter");
-                const float glyphLeft = left + control.bounds.left + 64 * scale;
+                const float glyphLeft = left + control.bounds.left + 60 * scale;
                 const float glyphTop = top + (height - 20 * scale) / 2;
                 const int expected = appearance.contentTheme == 1 ? 0x20 : 0xf4;
                 int neutralOutline = 0, greenFill = 0;

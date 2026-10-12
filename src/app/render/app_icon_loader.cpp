@@ -4,6 +4,7 @@
 #include "app/shell/shell_icon_request.h"
 #include "app/shell/initial_icon_bitmap.h"
 #include "shell/shell_call_diagnostics.h"
+#include "diagnostics/performance_trace.h"
 
 #include "layout/popup_icon_load_rules.h"
 #include "shell/shortcut_application_rules.h"
@@ -257,14 +258,20 @@ void DesktopApp::DrainBackgroundShellWork()
 {
     if (exitRequested_ || compositionPaintInProgress_ || floatingPopupCompositionPaintInProgress_ || reloading_ ||
         HasActiveContextMenuSession() || renameController_.IsActive() ||
-        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty())
+        shellFileOperationInFlight_ > 0 || !pendingRenames_.empty() ||
+        (dockWindowTransition_ && dockWindowTransition_->IsActive()))
         return; // The maintenance timer retries after the interaction fence.
+    snowdesktop::performance::Scope deliveryScope("shell.refresh", "delivery");
     // Directory results can fill a newly opened drop destination while the
     // pointer is still held. The delivery mailbox defers all source/model edits.
     folderReadWork_.Drain();
     RetryFolderReads();
     if (dragSession_.HasContext() || dragDropController_.IsTransportActive() || mouseDown_)
     {
+        // Running-Dock lookup completions update only this gesture's pin
+        // capability and indicator; actual pin commits retain the idle fence.
+        if (dockRunningDrag_)
+            shellVisualWork_.Drain(std::chrono::milliseconds(4), L"dock-running-drag:");
         // First pixels/refinement update only the current popup's presentation;
         // source containers and all ordinary model deliveries remain fenced.
         if (dockFolderPopupOpen_ && popupAnimation_.IsInteractive())
@@ -277,6 +284,7 @@ void DesktopApp::DrainBackgroundShellWork()
         [this](auto& snapshot) { ApplyFolderRefresh(snapshot); });
     iconWork_.Drain();
     dockIconWork_.Drain();
+    dockIdentityWork_.Drain();
     shellVisualWork_.Drain();
     shellModelWork_.Drain();
     appIndexWork_.Drain();
@@ -645,6 +653,7 @@ void DesktopApp::StopIconLoader()
 {
     iconWork_.Stop();
     dockIconWork_.Stop();
+    dockIdentityWork_.Stop();
     shellVisualWork_.Stop();
     shellModelWork_.Stop();
     folderReadWork_.Stop();

@@ -316,7 +316,8 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             saved.mergedBarHeight = 48 + position * 8;
             saved.showOnlyWhenSummoned = true;
             saved.frequentItemCount = 7;
-            saved.thicknessScale = 0.73f;
+            saved.thicknessScale = attached ? 2.f : 0.73f;
+            saved.mergedIconScale = attached ? 0.75f : 1.f;
             const std::string contents = std::string("{\"dockEnabled\":") +
                 (attached ? "true" : "false") + ",\"dockLayout\":" +
                 layout::SerializeDockLayout(saved) + "}";
@@ -355,6 +356,16 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             legacy.dockLayout && !legacy.dockLayout->reserveScreenSpace &&
             legacy.dockLayout->lastMonitorUseHomeSize && legacy.dockLayout->mergedBarHeight == 48,
         "legacy Dock layouts do not opt into screen reservation when the field is absent");
+    Expect(layout::ParseDocument(R"({"dockLayout":{"thicknessScale":0.75}})", legacy) &&
+            legacy.dockLayout && legacy.dockLayout->thicknessScale == 0.75f &&
+            legacy.dockLayout->mergedIconScale == 0.75f,
+        "legacy backups retain the former shared scale in both independent values");
+    DockLayoutSettings scales;
+    scales.thicknessScale = 2.f;
+    scales.mergedIconScale = 0.75f;
+    Expect(ResolveDockScale(scales, false) == 2.f && ResolveDockScale(scales, true) == 0.75f &&
+            ClampDockScale(3.f) == 2.f && ClampMergedDockIconScale(2.f) == 1.f,
+        "switching Dock modes uses independent scales and keeps merged icons inside the fixed-height bar");
     for (const char* malformed : {
              R"({"dockLayout":false})",
              R"({"dockLayout":{"position":4}})",
@@ -367,7 +378,10 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
              R"({"dockLayout":{"mergedBarHeight":97}})",
              R"({"dockLayout":{"mergedBarHeight":48.5}})",
              R"({"dockLayout":{"frequentItemCount":0}})",
-             R"({"dockLayout":{"thicknessScale":0.1}})"})
+             R"({"dockLayout":{"thicknessScale":0.1}})",
+             R"({"dockLayout":{"thicknessScale":2.01}})",
+             R"({"dockLayout":{"mergedIconScale":0.49}})",
+             R"({"dockLayout":{"mergedIconScale":1.01}})"})
     {
         Expect(!layout::ValidateDocument(malformed),
             "invalid Dock layout values are rejected before replacing live data");
@@ -723,8 +737,10 @@ void TestWidgetRemoval(const std::filesystem::path& root)
         "catalog publication and reload preserve the removal declaration");
 }
 
+int RunDataCleanupTests();
 int main()
 {
+    failures += RunDataCleanupTests();
     // PIDs are reused across runs, and a previous interrupted cleanup can
     // leave an installed version behind. Never reuse or delete that tree.
     GUID runId{};
@@ -843,6 +859,8 @@ int main()
             "itemFontSizeCu" },
         { "cu list font size type", "{\"listItemFontSizeCu\":\"15\"}",
             "listItemFontSizeCu" },
+        { "cu fan title font size type", "{\"fanTitleFontSizeCu\":\"15\"}",
+            "fanTitleFontSizeCu" },
         { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
             "componentSpacing" },
         { "icon size scale type", "{\"iconSizeScale\":\"1.1\"}",
@@ -1091,6 +1109,23 @@ int main()
                 std::vector<std::string>({"programs", "others", "all", "folders"}),
         "restart preserves the position of All and program category tabs");
     Expect(typedLayout.widgets[0].categoryTabOrder.empty(), "old layouts keep their default category tab order");
+    {
+        snowdesktop::layout_storage::Document converted;
+        const std::string convertedText = R"({"widgets":[{"id":"folder-map","page":"__snowdesktop_dock__","x":0,"y":0,"type":"folderMapping","sourceFolderPath":"D:\\Projects","sourceDesktopItemKey":"C:\\Desktop\\Projects.lnk","items":["D:\\Projects\\notes.txt"]}]})";
+        const auto convertedPath = root / L"layout-storage" / L"converted-folder.layout.json";
+        Expect(snowdesktop::layout_storage::SaveDocument(convertedPath, convertedText, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(convertedPath, converted).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary && converted.widgets.size() == 1 &&
+                converted.widgets[0].sourceDesktopItemKey == "C:\\Desktop\\Projects.lnk" &&
+                converted.widgets[0].sourceFolderPath == "D:\\Projects" && converted.widgets[0].items.size() == 1,
+            "restart preserves converted shortcut identity separately from mapped-content order");
+        Expect(typedLayout.widgets[0].sourceDesktopItemKey.empty(),
+            "legacy widgets default to having no explicitly converted desktop source");
+        Expect(!snowdesktop::layout_storage::ParseDocument(
+            R"({"widgets":[{"id":"bad","page":"page-a","x":0,"y":0,"sourceDesktopItemKey":3}]})",
+            converted, &layoutError) && layoutError.find("sourceDesktopItemKey") != std::string::npos,
+            "invalid converted source identities cannot replace saved layouts");
+    }
     Expect(!snowdesktop::layout_storage::ParseDocument(
         R"({"widgets":[{"id":"bad","page":"page-a","x":0,"y":0,"categoryTabOrder":[3]}]})", categoryTabs, &layoutError) &&
             layoutError.find("categoryTabOrder[0]") != std::string::npos,
@@ -1176,7 +1211,7 @@ int main()
     const std::string detailsLayoutText =
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"
-        "\"itemFontSizeCu\":18,\"listItemFontSizeCu\":16,"
+        "\"itemFontSizeCu\":18,\"listItemFontSizeCu\":16,\"fanTitleFontSizeCu\":20,"
         "\"iconSizeScale\":1.2,"
         "\"collectionLargeFolderTitleless\":false,"
         "\"widgets\":[{\"id\":\"details-widget\",\"page\":\"page-a\","
@@ -1194,6 +1229,7 @@ int main()
             detailsLayout.widgetContentOptionsSchemaVersion.value_or(0) == 4 &&
             detailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
             detailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
+            detailsLayout.fanTitleFontSizeCu.value_or(0.0f) == 20.0f &&
             detailsLayout.iconSizeScale.value_or(0.0f) == 1.2f &&
             detailsLayout.collectionLargeFolderTitleless.has_value() &&
             !*detailsLayout.collectionLargeFolderTitleless &&
@@ -1225,6 +1261,7 @@ int main()
             snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
             loadedDetailsLayout.itemFontSizeCu.value_or(0.0f) == 18.0f &&
             loadedDetailsLayout.listItemFontSizeCu.value_or(0.0f) == 16.0f &&
+            loadedDetailsLayout.fanTitleFontSizeCu.value_or(0.0f) == 20.0f &&
             loadedDetailsLayout.iconSizeScale.value_or(0.0f) == 1.2f &&
             loadedDetailsLayout.collectionLargeFolderTitleless.has_value() &&
             !*loadedDetailsLayout.collectionLargeFolderTitleless &&

@@ -171,12 +171,16 @@ set(SNOWDESKTOP_SOURCES
     src/app/layout/app_desktop_layout.cpp
     src/app/shell/app_desktop_reload.cpp
     src/app/dock/app_dock_drop.cpp
+    src/app/dock/app_dock_running_drag.cpp
+    src/dock/dock_running_drag_rules.h
     src/app/dock/app_dock_launch.cpp
     src/app/dock/app_dock_layout.cpp
     src/dock/dock_appbar.cpp
     src/dock/dock_appbar.h
+    src/dock/dock_running_animation.h
     src/app/features/app_status_bar.cpp
     src/system/status_bar/status_bar_view.cpp
+    src/system/status_bar/status_bar_tooltip.h
     src/system/status_bar/status_bar_view.h
     src/system/status_bar/status_bar_preview.cpp
     src/system/status_bar/status_bar_preview.h
@@ -190,15 +194,19 @@ set(SNOWDESKTOP_SOURCES
     src/system/tray/tray_menu_placement.h
     src/ui/render/native_tooltip.cpp
     src/ui/render/native_tooltip.h
+    src/ui/render/inline_tooltip_backdrop.h
     src/ui/render/native_tooltip_content.h
+    src/ui/render/native_tooltip_preferences.h
     src/ui/render/native_tooltip_state.h
     src/ui/render/native_control_geometry.h
     src/system/tray/tray_model.cpp
+    src/system/tray/tray_change_notifications.h
     src/system/tray/tray_service.h
     src/system/tray/tray_focus.h
     src/taskbar_hook/tray_protocol.h
     src/system/status_bar/status_bar.h
     src/system/status_bar/status_bar_shell_shortcut.h
+    src/system/status_bar/status_bar_task_view_input.h
     src/system/status_bar/status_bar_interaction.h
     src/system/status_bar/status_bar_settings.h
     src/system/status_bar/status_bar_appbar.h
@@ -206,6 +214,11 @@ set(SNOWDESKTOP_SOURCES
     src/app/dock/app_dock_model.cpp
     src/app/dock/app_dock_render.cpp
     src/app/dock/app_dock_window_control.cpp
+    src/app/dock/app_dock_external_minimize.cpp
+    src/dock/dock_external_minimize.cpp
+    src/dock/dock_external_minimize.h
+    src/dock/dock_minimize_protocol.h
+    src/dock/dock_minimize_hook_threads.h
     src/app/dock/app_dock_window_tracking.cpp
     src/app/drag_drop/app_drag_hint_window.cpp
     src/app/drag_drop/app_drag_lifecycle.cpp
@@ -221,6 +234,8 @@ set(SNOWDESKTOP_SOURCES
     src/drag_drop/external_drop_content.cpp
     src/app/drag_drop/app_url_drop_download.cpp
     src/app/features/app_website_icon.cpp
+    src/app/features/app_data_cleanup.cpp
+    src/data/data_cleanup.cpp
     src/icons/website_icon.cpp
     src/app/drag_drop/app_drop_execution.cpp
     src/app/drag_drop/app_external_slot_drop.cpp
@@ -254,10 +269,12 @@ set(SNOWDESKTOP_SOURCES
     src/app/menus/app_menu_icons.cpp
     src/app/lifecycle/app_message_dispatch.cpp
     src/shell/shell_context_menu_site.cpp
+    src/shell/shell_new_menu.h
     src/desktop/windows_desktop_layout.cpp
     src/shell/shell_launch_worker.cpp
     src/shell/shell_launch_process.cpp
     src/shell/shell_extension_menu.cpp
+    src/shell/shell_extension_menu_query.h
     src/shell/shell_extension_menu_cache.cpp
     src/shell/shell_extension_catalogue.cpp
     src/shell/shell_extension_service.cpp
@@ -287,6 +304,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/navigation/app_quick_navigation_render.cpp
     src/app/navigation/app_quick_navigation_window.cpp
     src/app/input/app_rename_begin.cpp
+    src/app/input/software_desktop_hotkey.h
     src/app/input/app_rename_commit.cpp
     src/app/input/app_rename_editor.cpp
     src/app/input/app_rename_target.cpp
@@ -326,7 +344,10 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/wallpaper_engine_capture.cpp
     src/data/atomic_file.cpp
     src/dock/dock_window_preview.cpp
+    src/dock/dock_window_preview_layout.h
+    src/dock/dock_window_pin.cpp
     src/dock/dock_window_transition.cpp
+    src/dock/dock_window_source_cloak.h
     src/core/item.cpp
     src/core/drag_target_resolver.cpp
     src/core/dock.cpp
@@ -351,6 +372,7 @@ set(SNOWDESKTOP_SOURCES
     src/platform/single_instance.cpp
     src/diagnostics/debug_profile.cpp
     src/platform/deployment_context.cpp
+    src/platform/shell_overlay_window.h
     src/icons/shortcut_icon_resource.cpp
     src/icons/shortcut_icon_resource.h
     src/common/utils.cpp
@@ -493,6 +515,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/data/widget_audio_analysis_provider.cpp
     src/widget/view/widget_draw_geometry.cpp
     src/widget/view/widget_background_cache.cpp
+    src/widget/view/widget_image_sampling.cpp
     src/widget/view/widget_interaction_region.cpp
     src/widget/view/widget_accessibility_events.cpp
     src/widget/view/widget_accessibility_provider.cpp
@@ -910,6 +933,25 @@ if (TARGET SnowDesktopWallpaperHook)
         SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE=1)
 endif()
 
+add_library(SnowDesktopDockMinimizeHook SHARED src/dock/dock_minimize_hook.cpp)
+target_compile_features(SnowDesktopDockMinimizeHook PRIVATE cxx_std_20)
+target_compile_definitions(SnowDesktopDockMinimizeHook PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(SnowDesktopDockMinimizeHook PRIVATE /W4 /permissive- /EHsc /utf-8)
+target_link_libraries(SnowDesktopDockMinimizeHook PRIVATE user32 dwmapi)
+set_property(TARGET SnowDesktopDockMinimizeHook PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+include(ExternalProject)
+ExternalProject_Add(SnowDesktopDockMinimize32
+    SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/dock"
+    BINARY_DIR "${CMAKE_BINARY_DIR}/dock_minimize32"
+    CMAKE_GENERATOR "${CMAKE_GENERATOR}"
+    CMAKE_GENERATOR_PLATFORM Win32
+    CMAKE_ARGS "-DSNOWDESKTOP_OUTPUT_DIR=${CMAKE_BINARY_DIR}/$<CONFIG>"
+        "-DSNOWDESKTOP_BUILD_HOOK_FIXTURE=${BUILD_TESTING}"
+    BUILD_COMMAND "${CMAKE_COMMAND}" --build <BINARY_DIR> --config $<CONFIG>
+    BUILD_ALWAYS TRUE
+    INSTALL_COMMAND "")
+add_dependencies(SnowDesktop SnowDesktopDockMinimizeHook SnowDesktopDockMinimize32)
+
 target_compile_features(SnowDesktop PRIVATE cxx_std_20)
 target_include_directories(SnowDesktop PRIVATE
     src
@@ -1191,6 +1233,8 @@ if (BUILD_TESTING)
         application_data_lifecycle
         SOURCES
             tests/application_data_lifecycle_tests.cpp
+            tests/data/data_cleanup_tests.cpp
+            src/data/data_cleanup.cpp
             src/data/atomic_file.cpp
             src/data/full_data_backup.cpp
             src/data/layout_storage.cpp
@@ -1228,6 +1272,23 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES shlwapi winhttp ws2_32
         LABELS core contract security)
+
+    snowdesktop_add_test(
+        SnowDesktopInjectableRuntimeCacheTests
+        injectable_runtime_cache
+        SOURCES tests/platform/injectable_runtime_cache_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES bcrypt
+        LABELS core contract deployment)
+
+    snowdesktop_add_test(
+        SnowDesktopShellOverlayWindowTests
+        shell_overlay_window
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/platform/shell_overlay_window_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        LABELS core integration window)
 
     add_test(NAME http_network_integration
         COMMAND $<TARGET_FILE:SnowDesktopHttpSecurityTests> --network)
@@ -1829,6 +1890,7 @@ if (BUILD_TESTING)
         slot_runtime_contract
         SOURCES
             tests/slot_runtime_contract_tests.cpp
+            tests/drag_drop/drop_staging_tests.cpp
             src/drag_drop/external_drop_content.cpp
             src/resources/app_icon.rc
             src/app/drag_drop/drag_drop_controller.cpp
@@ -1966,6 +2028,12 @@ if (BUILD_TESTING)
         LABELS authoring integration lua preview render widget host-runtime)
     add_dependencies(SnowDesktopWidgetAuthorPreviewCliTests
         snowwidget SnowDesktop)
+    # Both tests invoke the original host/tool paths supplied above. Copying
+    # their referenced outputs into tests/ is unnecessary and makes parallel
+    # MSBuild projects contend for the same SnowDesktop.pdb destination.
+    set_target_properties(
+        SnowDesktopThemeWorkflowTests SnowDesktopWidgetAuthorPreviewCliTests
+        PROPERTIES VS_GLOBAL_UseCommonOutputDirectory "true")
     # One executable, five independently bounded scenes. Every child deadline
     # is below its 80-second suite budget and CTest's 90-second outer watchdog.
     set_tests_properties(widget_author_preview_cli PROPERTIES TIMEOUT 90)
@@ -2283,6 +2351,8 @@ if (BUILD_TESTING)
         SnowDesktopShellContextMenuInvokeTests
         shell_context_menu_invoke
         SOURCES tests/shell_context_menu_invoke_tests.cpp
+            tests/shell/shell_catalogue_registry_handle_tests.cpp
+            tests/shell/shell_context_menu_bootstrap_tests.cpp
             src/shell/shell_extension_menu.cpp
             src/shell/shell_extension_menu_cache.cpp
     src/shell/shell_extension_catalogue.cpp
@@ -2293,6 +2363,19 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 gdi32 uuid version
         LABELS integration contract shell)
+
+    # Keep slow inventory boundaries and real helper lifetimes independent of
+    # the ordinary menu cases; every entry retains the shell resource lock below.
+    add_test(NAME shell_menu_loading_deadlines
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-loading-deadlines)
+    add_test(NAME shell_extension_session_lifetime
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-extension-sessions)
+    add_test(NAME shell_context_menu_bootstrap
+        COMMAND $<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests> --test-menu-bootstrap)
+    set_tests_properties(shell_menu_loading_deadlines shell_extension_session_lifetime shell_context_menu_bootstrap PROPERTIES
+        TIMEOUT 60
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellContextMenuInvokeTests>"
+        LABELS "integration;contract;shell")
 
     snowdesktop_add_test(
         SnowDesktopShellIntegrationContractTests
@@ -2309,7 +2392,7 @@ if (BUILD_TESTING)
             src/shell/shell_launch_worker.cpp
             src/shell/shell_launch_process.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 uuid
+        LINK_LIBRARIES advapi32 ole32 oleaut32 shell32 shlwapi user32 uuid
         LABELS integration shell interaction)
 
     snowdesktop_add_test(
@@ -2321,7 +2404,7 @@ if (BUILD_TESTING)
             src/shell/shell_file_operation_worker.cpp
             src/drag_drop/external_drop_content.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi uuid netapi32
+        LINK_LIBRARIES ole32 shell32 shlwapi uuid netapi32 windowscodecs
         LABELS integration shell interaction)
     set_tests_properties(shell_file_operation_worker PROPERTIES
         SKIP_RETURN_CODE 77 LABELS "integration;shell;interaction;manual")
@@ -2335,6 +2418,11 @@ if (BUILD_TESTING)
     set_tests_properties(shell_file_operation_feedback PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
         TIMEOUT 20 LABELS "core;shell;storage")
+    add_test(NAME shell_file_operation_path_alias
+        COMMAND SnowDesktopShellFileOperationWorkerTests --tracked-path-alias-tests)
+    set_tests_properties(shell_file_operation_path_alias PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
+        TIMEOUT 90 LABELS "integration;shell;interaction;storage")
     # The automatic preflight regression shares the manual integration binary.
     # A cold fast build still needs it, although it never runs the integration.
     list(APPEND SNOWDESKTOP_FAST_TEST_TARGETS SnowDesktopShellFileOperationWorkerTests)
@@ -2345,6 +2433,8 @@ if (BUILD_TESTING)
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/dock_and_window_rules_tests.cpp
+            tests/dock/dock_window_pin_tests.cpp
+            tests/dock/fullscreen_focus_tests.cpp
             tests/taskbar_native_tests.cpp
             tests/taskbar_symbol_resolver_tests.cpp
             src/taskbar_hook/taskbar_symbol_resolver.cpp
@@ -2352,6 +2442,8 @@ if (BUILD_TESTING)
             src/taskbar_hook/taskbar_classic_surface.cpp
             ${MINHOOK64_SOURCES}
             tests/desktop_backdrop_compositor_tests.cpp
+            src/ui/render/native_tooltip.cpp
+            src/theme/personalization.cpp
             tests/tray_model_tests.cpp
             tests/tray_live_tests.cpp
             src/system/tray/tray_model.cpp
@@ -2361,13 +2453,44 @@ if (BUILD_TESTING)
             src/icons/icon_beautify.cpp
             src/common/l10n.cpp
             src/dock/dock_window_preview.cpp
+            src/dock/dock_window_pin.cpp
             src/dock/dock_window_transition.cpp
             src/ui/render/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 runtimeobject shell32 shcore shlwapi user32 windowsapp winhttp
+        LINK_LIBRARIES advapi32 comctl32 d2d1 d3d11 dbghelp dcomp dwrite dwmapi dxgi dxguid gdi32 imm32 ole32 oleaut32 runtimeobject shell32 shcore shlwapi uiautomationcore user32 windowsapp winhttp
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
+    snowdesktop_add_test(
+        SnowDesktopDockExternalMinimizeTests
+        dock_external_minimize
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/dock/dock_external_minimize_tests.cpp src/dock/dock_external_minimize.cpp
+            src/dock/dock_window_transition.cpp src/ui/render/ui_animation_scheduler.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES d2d1 d3d11 dxgi dcomp dwmapi ole32 user32 gdi32
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopDockMinimizeHook>"
+        LABELS integration core dock window)
+    add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimizeHook)
+    add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimize32)
+    snowdesktop_add_test(
+        SnowDesktopDockGenieRenderTests
+        dock_genie_render
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/dock/dock_genie_render_tests.cpp
+            src/dock/dock_window_transition.cpp src/ui/render/ui_animation_scheduler.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES d2d1 d3d11 dxgi dcomp dwmapi ole32 user32 gdi32
+        LABELS integration core dock window)
+    add_test(NAME dock_external_minimize32
+        COMMAND SnowDesktopDockExternalMinimizeTests
+            "$<TARGET_FILE:SnowDesktopDockMinimizeHook>"
+            "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopDockMinimizeFixture32.exe"
+            "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopDockMinimizeHost32.exe"
+            "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopDockMinimizeHook32.dll")
+    set_tests_properties(dock_external_minimize32 PROPERTIES
+        LABELS "integration;core;dock;window" TIMEOUT 30
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDockExternalMinimizeTests>")
     add_dependencies(SnowDesktopDockAndWindowRulesTests SnowDesktopTaskbarHook)
     # Explicit opt-in: this real-Shell diagnostic registers only its own fixture
     # icon and broadcasts TaskbarCreated, never launching the desktop host.
@@ -2417,7 +2540,7 @@ if (BUILD_TESTING)
             src/ui/menu/menu_builtin_icon.cpp
             src/ui/menu/modern_menu.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES comctl32 gdi32 imm32 ole32 user32 windowscodecs
+        LINK_LIBRARIES comctl32 dwmapi gdi32 imm32 ole32 user32 windowscodecs
         LABELS integration ui)
 
     snowdesktop_add_test(
@@ -2427,9 +2550,11 @@ if (BUILD_TESTING)
         SOURCES
             tests/component_preview_tests.cpp
             tests/widget_background_cache_tests.cpp
+            tests/widget/widget_image_sampling_tests.cpp
             tests/widget_text_layout_cache_tests.cpp
             tests/scroll_content_clip_tests.cpp
             src/widget/view/widget_background_cache.cpp
+            src/widget/view/widget_image_sampling.cpp
             src/ui/preview/component_preview.cpp
             src/ui/menu/menu_icon_render.cpp
             src/ui/menu/menu_builtin_icon.cpp
@@ -2509,13 +2634,32 @@ if (BUILD_TESTING)
     target_compile_features(SnowDesktopModernMenuPreview PRIVATE cxx_std_20)
     target_include_directories(SnowDesktopModernMenuPreview PRIVATE src)
     target_link_libraries(SnowDesktopModernMenuPreview PRIVATE
-        gdi32 imm32 ole32 user32 windowscodecs)
+        dwmapi gdi32 imm32 ole32 user32 windowscodecs)
     if (MSVC)
         set_property(TARGET SnowDesktopModernMenuPreview PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
         target_compile_options(SnowDesktopModernMenuPreview PRIVATE
             /W4 /permissive- /EHsc /utf-8)
         target_compile_definitions(SnowDesktopModernMenuPreview PRIVATE
+            _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+    endif()
+
+    # Fullscreen/focus diagnostic is built for delivery but is never launched
+    # by CTest. Changing display modes is an explicit interactive operation.
+    add_executable(SnowDesktopFullscreenProbe WIN32 tests/dock/fullscreen_probe.cpp)
+    set_target_properties(SnowDesktopFullscreenProbe PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests"
+        COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+    target_compile_features(SnowDesktopFullscreenProbe PRIVATE cxx_std_20)
+    target_link_libraries(SnowDesktopFullscreenProbe PRIVATE d3d11 dxgi gdi32 shell32 user32)
+    add_dependencies(SnowDesktopDockAndWindowRulesTests SnowDesktopFullscreenProbe)
+    if (MSVC)
+        set_property(TARGET SnowDesktopFullscreenProbe PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        target_compile_options(SnowDesktopFullscreenProbe PRIVATE /W4 /permissive- /EHsc /utf-8)
+        target_compile_definitions(SnowDesktopFullscreenProbe PRIVATE
             _UNICODE UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
     endif()
 

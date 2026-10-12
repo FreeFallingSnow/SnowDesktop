@@ -2,6 +2,7 @@
 #include "desktop/desktop_source.h"
 
 #include <filesystem>
+#include <cstdint>
 #include <string>
 
 #include <windows.h>
@@ -10,6 +11,33 @@
 
 namespace snowdesktop
 {
+// Invocation-only identity. Never include a transient HWND in selection/cache keys.
+struct ShellInvocationOwner
+{
+    std::uint64_t window = 0;
+    DWORD process = 0, thread = 0;
+    static ShellInvocationOwner Capture(HWND owner)
+    {
+        ShellInvocationOwner result;
+        if (owner && IsWindow(owner) && GetAncestor(owner, GA_ROOT) == owner &&
+            GetParent(owner) != HWND_MESSAGE)
+        {
+            result.thread = GetWindowThreadProcessId(owner, &result.process);
+            result.window = reinterpret_cast<UINT_PTR>(owner);
+        }
+        return result;
+    }
+    HWND Resolve() const
+    {
+        const HWND owner = reinterpret_cast<HWND>(static_cast<UINT_PTR>(window));
+        DWORD currentProcess = 0;
+        const DWORD currentThread = owner ? GetWindowThreadProcessId(owner, &currentProcess) : 0;
+        return process && thread && currentProcess == process && currentThread == thread &&
+            IsWindow(owner) && GetAncestor(owner, GA_ROOT) == owner &&
+            GetParent(owner) != HWND_MESSAGE ? owner : nullptr;
+    }
+};
+
 inline UINT FindNewFolderCommand(IContextMenu* contextMenu, HMENU menu)
 {
     if (!contextMenu || !menu) return 0;

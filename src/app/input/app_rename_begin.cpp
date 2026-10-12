@@ -280,6 +280,7 @@ void DesktopApp::BeginRenameSelected(
                 *dockRenameAnchor,
                 RenameInitialSelectionEnd(
                     items_[selectedIndex].name,
+                    path,
                     isDirectory)))
         {
             renameController_.Reset();
@@ -371,7 +372,7 @@ void DesktopApp::BeginRenameSelected(
     SetWindowPos(renameInputWindow_, HWND_TOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(renameInputWindow_, EM_SETSEL, 0,
-        RenameInitialSelectionEnd(items_[selectedIndex].name, isDirectory));
+        RenameInitialSelectionEnd(items_[selectedIndex].name, path, isDirectory));
     SetFocus(renameInputWindow_);
     if (visibilityWidgetIndex < widgets_.size())
     {

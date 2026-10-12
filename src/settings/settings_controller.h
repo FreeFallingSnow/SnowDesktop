@@ -94,6 +94,7 @@ struct SettingsActionResult
     SettingsDomain completedDomains = SettingsDomain::None;
     SettingsDomain failedDomains = SettingsDomain::None;
     std::wstring message;
+    std::vector<DockFullscreenApplication> dockApplications;
 
     [[nodiscard]] bool Succeeded() const noexcept
     {
@@ -202,6 +203,7 @@ public:
         FloatingDock,
         PagePrevious,
         PageNext,
+        SoftwareDesktop,
     };
 
     enum class Action : std::uint8_t
@@ -237,6 +239,7 @@ public:
         ClearDebugProfile,
         ApplyDesktopStylePreset,
         ApplyDesktopStyleAnimations,
+        GetDockRunningApplications,
     };
 
     struct Request

@@ -4,6 +4,7 @@
  */
 
 #include "deployment_context.h"
+#include "injectable_runtime_cache.h"
 #include "data/data_paths.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
 
@@ -442,6 +443,7 @@ void CleanupStaleRuntimeDirectories(
     {
         std::error_code entryError;
         if (!iterator->is_directory(entryError) || entryError ||
+            iterator->path().filename() == L"shared" ||
             IsReparsePoint(iterator->path()) ||
             RuntimeDirectoryHasLiveOwner(iterator->path()))
             continue;
@@ -702,17 +704,29 @@ private:
     HANDLE ownerHandle_ = INVALID_HANDLE_VALUE;
 };
 
-std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename)
+std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename, bool isolated = false)
 {
     const std::filesystem::path source =
         snowdesktop::deployment::GetRuntimeFilePath(filename);
     if (!std::filesystem::is_regular_file(source))
-        return source.wstring();
+        return isolated ? std::wstring{} : source.wstring();
+
+    if (!isolated && _wcsicmp(source.extension().c_str(), L".dll") == 0)
+    {
+        static snowdesktop::deployment::InjectableRuntimeCache cache([] {
+            const std::filesystem::path data = GetDataDirectoryPath();
+            if (data.empty()) return std::filesystem::path{};
+            CleanupLegacyRuntimeRootsOnce(data);
+            return data / L"ShellHook" / L"shared";
+        }());
+        const auto shared = cache.Deploy(source);
+        return shared.empty() ? source.wstring() : shared.wstring();
+    }
 
     static const InjectableRuntimeDirectory runtimeDirectory;
     const std::filesystem::path& targetDirectory = runtimeDirectory.Path();
     if (targetDirectory.empty())
-        return source.wstring();
+        return isolated ? std::wstring{} : source.wstring();
 
     const std::filesystem::path target =
         targetDirectory / source.filename();
@@ -724,7 +738,7 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename)
         std::filesystem::copy_options::none, error);
     if (!error && std::filesystem::is_regular_file(target))
         return target.wstring();
-    return source.wstring();
+    return isolated ? std::wstring{} : source.wstring();
 }
 
 snowdesktop::deployment::PackagedAutoStartState ConvertStartupTaskState(
@@ -968,6 +982,12 @@ std::wstring GetTaskbarHookPath()
 {
     static const std::wstring deployedPath =
         GetInjectableRuntimeFilePath(kTaskbarHookFilename);
+    return deployedPath;
+}
+
+std::wstring GetIsolatedTaskbarHookPath()
+{
+    static const std::wstring deployedPath = DeployInjectableRuntimeCopy(kTaskbarHookFilename, true);
     return deployedPath;
 }
 

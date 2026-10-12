@@ -1,4 +1,8 @@
 #pragma once
+#include "ui/render/native_tooltip.h"
+#include <dcomp.h>
+#include <dwrite.h>
+#include <wrl/client.h>
 
 #include <windows.h>
 #include <algorithm>
@@ -40,7 +44,7 @@ public:
     DesktopPassthroughIndicator& operator=(const DesktopPassthroughIndicator&) = delete;
 
     bool Show(HINSTANCE instance, HWND owner, UINT dismissMessage,
-        std::wstring hint);
+        std::wstring hint, IDCompositionDesktopDevice* composition, IDWriteFactory* text);
     void Hide();
     bool OwnsWindow(HWND window) const;
 
@@ -48,7 +52,9 @@ private:
     static LRESULT CALLBACK WindowProc(HWND window, UINT message,
         WPARAM wParam, LPARAM lParam);
     HWND owner_ = nullptr;
-    HWND tooltip_ = nullptr;
+    NativeTooltip tooltip_;
+    Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> composition_;
+    Microsoft::WRL::ComPtr<IDWriteFactory> text_;
     UINT dismissMessage_ = 0;
     std::wstring hint_;
     std::vector<HWND> edges_;

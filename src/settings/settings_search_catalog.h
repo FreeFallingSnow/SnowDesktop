@@ -13,7 +13,6 @@ struct StaticSearchDefinition
 };
 
 constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
-    {SettingsPage::QuickNavigation,"quickNav.view","quickNav.view","quickNav.description"},
     {SettingsPage::QuickNavigation,"quickNav.defaultEngine","quickNav.defaultEngine","quickNav.description"},
     {SettingsPage::AppearanceTheme,"quickNav.layout.expandedWidth","quickNav.layout.expandedWidth","quickNav.description"},
     {SettingsPage::AppearanceTheme,"quickNav.layout.collapsedWidth","quickNav.layout.collapsedWidth","quickNav.description"},
@@ -77,8 +76,14 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::QuickNavigation, "quickNav.engines", "quickNav.engines", "quickNav.engines.hint"},
 
     {SettingsPage::StatusBar, "statusBar.taskView", "statusBar.taskView", "statusBar.leftItems"},
-    {SettingsPage::StatusBar, "statusBar.clockPanel", "statusBar.clockPanel", "statusBar.clickBehavior"},
-    {SettingsPage::StatusBar, "statusBar.controlCenterPanel", "statusBar.controlCenterPanel", "statusBar.clickBehavior"},
+    {SettingsPage::StatusBar, "statusBar.clockPanel", "statusBar.clockPanel", "statusBar.timeAndNotificationArea"},
+    {SettingsPage::StatusBar, "statusBar.controlCenterPanel", "statusBar.controlCenterPanel", "statusBar.controlCenter"},
+    {SettingsPage::StatusBar, "statusBar.audioControls", "statusBar.audioControls", "statusBar.controlCenter"},
+    {SettingsPage::StatusBar, "statusBar.brightnessControls", "statusBar.brightnessControls", "statusBar.controlCenter"},
+    {SettingsPage::StatusBar, "statusBar.wifiControls", "statusBar.wifiControls", "statusBar.controlCenter"},
+    {SettingsPage::StatusBar, "statusBar.bluetoothControls", "statusBar.bluetoothControls", "statusBar.controlCenter"},
+    {SettingsPage::StatusBar, "statusBar.mediaControls", "statusBar.mediaControls", "statusBar.controlCenter"},
+    {SettingsPage::StatusBar, "statusBar.powerControls", "statusBar.powerControls", "statusBar.controlCenter"},
     {SettingsPage::DesktopStyle, "desktopStyle", "settings.desktopStyle.title", "settings.desktopStyle.description"},
     {SettingsPage::DesktopStyle, "desktopStyle.native", "settings.desktopStyle.native.title", "settings.desktopStyle.native.description"},
     {SettingsPage::DesktopStyle, "desktopStyle.taskbar-dock", "settings.desktopStyle.taskbar-dock.title", "settings.desktopStyle.taskbar-dock.description"},
@@ -86,6 +91,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::DesktopStyle, "desktopStyle.merged", "settings.desktopStyle.merged.title", "settings.desktopStyle.merged.description"},
     {SettingsPage::DesktopStyle, "desktopStyle.side", "settings.desktopStyle.side.title", "settings.desktopStyle.side.description"},
     {SettingsPage::Dock, "dock.mergedBarHeight", "settings.bars.height", "settings.bars.height.description"},
+    {SettingsPage::Dock, "dock.mergedIconScale", "settings.bars.iconSize", "settings.bars.mergedSettings"},
     {SettingsPage::Dock, "dock.lastMonitorUseHomeSize", "settings.bars.homeSize", "settings.bars.homeSize.description"},
     {SettingsPage::StatusBar, "statusBar.mergedBarHeight", "settings.bars.height", "settings.bars.height.description"},
     {SettingsPage::Dock, "dock.reserveScreenSpace", "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description"},
@@ -129,7 +135,10 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::StatusBar, "statusBar.maximizedWindow", "statusBar.maximizedWindow", "settings.nav.statusBar"},
     {SettingsPage::StatusBar, "statusBar.menu", "statusBar.menu", "statusBar.leftItems"},
     {SettingsPage::StatusBar, "statusBar.quickSearch", "statusBar.quickSearch", "statusBar.leftItems"},
-    {SettingsPage::StatusBar, "statusBar.inputMethod", "statusBar.inputMethod", "statusBar.information"},
+    {SettingsPage::StatusBar, "statusBar.inputMethod", "statusBar.inputMethod", "statusBar.controlCenter"},
+    {SettingsPage::StatusBar, "statusBar.inputMethodPanel", "statusBar.inputMethodPanel", "statusBar.controlCenter"},
+    {SettingsPage::StatusBar, "statusBar.clockShowSeconds", "statusBar.clockShowSeconds", "statusBar.timeAndNotificationArea"},
+    {SettingsPage::StatusBar, "statusBar.timeNotificationPosition", "statusBar.timeNotificationPosition", "statusBar.timeAndNotificationArea"},
     {SettingsPage::StatusBar, "statusBar.cpu", "statusBar.cpu", "statusBar.information"},
     {SettingsPage::StatusBar, "statusBar.memory", "statusBar.memory", "statusBar.information"},
     {SettingsPage::StatusBar, "statusBar.gpu", "statusBar.gpu", "statusBar.information"},
@@ -198,6 +207,10 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Desktop, "desktop.passthrough",
         "settings.general.desktopPassthrough",
         "settings.general.desktopPassthrough.description"},
+    {SettingsPage::Desktop, "desktop.softwareDesktopHotkey",
+        "app.settings.software_desktop_hotkey", "app.settings.software_desktop_hotkey"},
+    {SettingsPage::Desktop, "desktop.softwareDesktopHotkey.hotkey",
+        "app.settings.hotkey", "app.settings.software_desktop_hotkey"},
     {SettingsPage::Desktop, "desktop.passthrough.hotkey",
         "app.settings.hotkey",
         "settings.general.desktopPassthrough.description"},
@@ -215,6 +228,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceTheme, "personalization.theme",
         "settings.personalization.theme",
         "settings.personalization.theme.description"},
+    {SettingsPage::AppearanceWidgets, "personalization.tooltipFontSize",
+        "font.tooltipSize", "font.tooltipSizeHint"},
     {SettingsPage::ThemeManager, "personalization.savedThemes",
         "themeLibrary.manager", "themeLibrary.transferHint"},
     {SettingsPage::AppearanceTheme, "personalization.backgroundColor",
@@ -309,7 +324,10 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceDesktopIcons, "desktop.listFontSize",
         "app.settings.list_font_size",
         "settings.desktop.typography.description"},
-    {SettingsPage::AppearanceTheme, "personalization.font", "font.title", "font.hint"},
+    {SettingsPage::AppearanceDesktopIcons, "desktop.fanTitleFontSize",
+        "app.settings.fan_title_font_size",
+        "settings.desktop.typography.description"},
+    {SettingsPage::AppearanceWidgets, "personalization.font", "font.title", "font.hint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.titleLines", "titleLines.desktop", "titleLines.hint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.largeFolderTitleLines", "titleLines.largeFolder", "titleLines.hint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.scrollingTitleLines", "titleLines.scrolling", "titleLines.hint"},
@@ -457,9 +475,10 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.singleClickLaunchItems",
         "settings.dock.singleClickLaunchItems",
         "settings.dock.singleClickLaunchItems.description"},
-    {SettingsPage::Dock, "dock.floatingEdgeSwipeBlockFullscreen",
-        "settings.dock.blockFullscreenSwipe",
-        "settings.dock.blockFullscreenSwipe.description"},
+    {SettingsPage::Dock, "dock.fullscreenPolicy",
+        "settings.dock.fullscreenDefaultPolicy", "settings.dock.fullscreenPolicy.description"},
+    {SettingsPage::Dock, "dock.fullscreenExceptions",
+        "settings.dock.fullscreenExceptions", "settings.dock.fullscreenExceptions.description"},
     {SettingsPage::Taskbar, "taskbar.displayMode",
         "settings.bars.taskbarMode", "settings.dock.suppressTaskbar.description"},
     {SettingsPage::Dock, "dock.showWindowsButton",
@@ -594,7 +613,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
 inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
     const std::function<std::wstring(std::string_view)>& L,
     bool advancedFeaturesVisible, bool supportsQuickSettings,
-    int contextMenuStyle = 0)
+    int contextMenuStyle = 0, bool mergedBarVisible = false)
 {
             const auto pageContext = [&L](SettingsPage page) {
                 switch (page)
@@ -650,6 +669,9 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
             input.staticSettings.reserve(std::size(kStaticSearchDefinitions));
             for (const auto& definition : kStaticSearchDefinitions)
             {
+                const std::string_view focus(definition.focusId);
+                if (!mergedBarVisible && (focus == "dock.mergedIconScale" ||
+                    focus == "dock.mergedBarHeight" || focus == "statusBar.mergedBarHeight")) continue;
                 if (std::string_view(definition.focusId) == "statusBar.controlCenterPanel" &&
                     !supportsQuickSettings) continue;
                 if (std::string_view(definition.focusId) == "contextMenu.expandQuickActions" &&

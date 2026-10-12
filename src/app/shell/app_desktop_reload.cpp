@@ -1,10 +1,12 @@
 #include "app/app.h"
+#include "app/input/software_desktop_hotkey.h"
 #include "shell_icon_request.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_capture.h"
 #include "diagnostics/performance_trace.h"
 #include "drag_drop/drag_input_rules.h"
 #include "layout/popup_icon_load_rules.h"
+#include "dock/dock_minimize_protocol.h"
 
 // SID 字符串格式化（S-1-5-21-...），直接按 SID 内存布局解析，
 // 不依赖 sddl.h/ntsecapi，避免 PCH 环境下安全 API 声明不可用的问题。
@@ -419,6 +421,12 @@ LRESULT CALLBACK DesktopApp::ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPAR
  */
 LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    // The stable control HWND receives cross-process minimize preparation even
+    // while Explorer reparents/recreates the desktop surface.
+    if (msg >= 0xC000 &&
+        (msg == snowdesktop::dock_minimize::RequestMessage() ||
+         msg == snowdesktop::dock_minimize::CancelMessage()))
+        return HandleMessage(hwnd, msg, wp, lp);
     static const UINT menuUnavailable = RegisterWindowMessageW(L"SnowDesktop.MenuUnavailable");
     if (menuUnavailable && msg == menuUnavailable)
     {
@@ -550,12 +558,18 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
     case kBackgroundShellReadyMessage:
         PollInitialShellRead();
         DrainBackgroundShellWork();
+        if (generalSettings_.dockEnabled && !reloading_ && dockRunningWindowsRefreshTick_ == 0)
+            RefreshDockRunningWindows();
         return 0;
     case kLargeIconAssetsReadyMessage:
         ProcessLargeIconAssets();
         return 0;
     case kForegroundInteractionChangedMessage:
         HandleDockForegroundInteractionChanged();
+        return 0;
+    case kDockWindowListChangedMessage:
+        if (generalSettings_.dockEnabled && !reloading_)
+            HandleDockWindowListChanged(reinterpret_cast<HWND>(lp), static_cast<DWORD>(wp));
         return 0;
     case kShellFileOperationCompletedMessage:
         OnShellFileOperationCompleted(lp);
@@ -655,6 +669,18 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
             ToggleQuickNavigation();
             return 0;
         }
+        if (static_cast<int>(wp) == kSoftwareDesktopHotkeyId)
+        {
+            // Ignore stale queued shortcuts and preserve active pointer/drag
+            // ownership before the ordinary toggle reloads desktop containers.
+            if (generalSettings_.softwareDesktopHotkeyEnabled &&
+                snowdesktop::SoftwareDesktopHotkey().Matches(LOWORD(lp), HIWORD(lp)) &&
+                !mouseDown_ && !marqueeActive_ && !dragSession_.IsActive() &&
+                !dragDropController_.IsTransportActive() && GetCapture() == nullptr &&
+                !IsDesktopPassthroughPointerDown())
+                SetSoftwareDesktopEnabled(!generalSettings_.softwareDesktopEnabled, true);
+            return 0;
+        }
         if (static_cast<int>(wp) ==
             kFloatingDockHotkeyId)
         {
@@ -675,6 +701,7 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         return 0;
     case WM_DESTROY:
         KillTimer(hwnd, kDisplayTopologyRefreshTimerId);
+        snowdesktop::SoftwareDesktopHotkey().Unregister();
         if (floatingDockHotkeyHwnd_ == hwnd)
         {
             floatingDockHotkeyHwnd_ = nullptr;
@@ -755,6 +782,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     shellReloadPending_ = false;
     shellRefreshScope_.Full();
     reloading_ = true;
+    dataCleanupWorker_.Cancel();
     ULONGLONG stageStarted = GetTickCount64();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
     // A partial startup snapshot can arrive while a disk reload is queued.
@@ -1058,6 +1086,13 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     {
         CompleteLayoutRestore(snowdesktop::SettingsActionResult::Failure(
             _LW("settings.backup.restoreLayout.commitFailed")));
+    }
+    if (!incremental && desktopItemsReady_ && (!snapshot || snapshot->desktopComplete) &&
+        !layoutReload_.Pending() && synchronized != snowdesktop::layout_reload::SynchronizeResult::Failed)
+    {
+        dataCleanupHasCompleteModel_ = true;
+        SynchronizeLargeIconAssets();
+        ScheduleDataCleanup();
     }
 }
 

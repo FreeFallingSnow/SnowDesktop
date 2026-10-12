@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dock_settings.h"
+#include "dock_window_pin.h"
 
 #include <dwmapi.h>
 #include <windows.h>
@@ -41,6 +42,8 @@ DockWindowPreviewGrid CalculateDockWindowPreviewGrid(
 std::vector<RECT> CalculateDockWindowPreviewCardRects(
     size_t itemCount, const DockWindowPreviewGrid& grid, UINT dpi);
 RECT CalculateDockWindowPreviewCloseButtonRect(
+    const RECT& cardRect, UINT dpi);
+RECT CalculateDockWindowPreviewPinButtonRect(
     const RECT& cardRect, UINT dpi);
 bool IsPointInDockWindowPreviewCloseButton(
     POINT point, const RECT& cardRect, UINT dpi);
@@ -94,7 +97,7 @@ private:
 };
 
 /**
- * @brief 以不抢焦点的置顶弹窗显示一组实时 DWM 窗口缩略图。
+ * @brief 以不抢焦点的独立弹窗显示一组实时 DWM 窗口缩略图。
  */
 class DockWindowPreview
 {
@@ -124,6 +127,8 @@ public:
     bool IsShowingWindow(HWND window) const;
     bool ContainsInteractionPoint(POINT screenPoint) const;
     HWND GetWindow() const { return hwnd_; }
+    const std::vector<HWND>& GetWindows() const { return windows_; }
+    RECT GetBounds() const;
 
 private:
     static constexpr UINT_PTR kHideTimerId = 1;
@@ -133,22 +138,29 @@ private:
         HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
     bool EnsureWindow();
+    bool EnsureWindows(size_t count);
     void Layout(RECT monitorWorkArea, UINT dpi);
     void RegisterThumbnails();
     void UnregisterThumbnails();
-    void Paint();
-    void OnMouseMove(POINT point);
-    void OnMouseLeave();
+    void Paint(HWND window);
+    void InvalidatePopups();
+    POINT ToLayoutPoint(HWND window, POINT point) const;
+    void OnMouseMove(HWND window, POINT point);
+    void OnMouseLeave(HWND window);
     void OnLeftButtonUp(POINT point);
+    void OnMiddleButtonUp(POINT point);
     void HideIfPointerOutside();
     bool IsPointerInTransitionRegion(POINT screenPoint) const;
     int CardIndexAtPoint(POINT point) const;
     int CloseButtonIndexAtPoint(POINT point) const;
+    int PinButtonIndexAtPoint(POINT point) const;
 
     HINSTANCE instance_ = nullptr;
     HWND hwnd_ = nullptr;
+    std::vector<HWND> windows_;
     ActivateCallback activateCallback_;
     CloseCallback closeCallback_;
+    DockWindowPin windowPins_;
     std::function<void()> visibilityChanged_;
     std::vector<DockWindowPreviewItem> items_;
     std::vector<RECT> cardRects_;
@@ -159,8 +171,10 @@ private:
     DockPosition dockPosition_ = DockPosition::Bottom;
     bool lightTheme_ = false;
     bool trackingMouse_ = false;
+    HWND trackingWindow_ = nullptr;
     int hoveredIndex_ = -1;
     int hoveredCloseIndex_ = -1;
+    int hoveredPinIndex_ = -1;
     UINT dpi_ = 96;
     POINT transitionOriginScreen_{};
     bool hasTransitionOrigin_ = false;

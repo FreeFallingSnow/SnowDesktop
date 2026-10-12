@@ -2,6 +2,7 @@
 
 #include "settings_window_host.h"
 #include "settings/settings_search_catalog.h"
+#include "settings/bar_settings_rules.h"
 #include "data/data_paths.h"
 #include "resources/resource.h"
 #include "ui/render/app_font.h"
@@ -1085,7 +1086,9 @@ struct SettingsWindowHost::Impl
         {
             PopulateSettingsSearchCatalog(input, [this](std::string_view key) { return L(key); },
                 advancedFeaturesVisible, StatusBarSupportsSystemQuickSettings(),
-                snapshot ? snapshot->values.personalization.contextMenuStyle : 0);
+                snapshot ? snapshot->values.personalization.contextMenuStyle : 0,
+                snapshot && ResolveBarSettingsAvailability(snapshot->values.general.dockEnabled,
+                    snapshot->values.dock, snapshot->values.general.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged);
         }
         if (snapshot && (snapshot->values.personalization.contextMenuStyle == 5 ||
             snapshot->values.personalization.contextMenuStyle == 6))
@@ -2231,13 +2234,6 @@ struct SettingsWindowHost::Impl
         dock.themeAsync = [weak](std::uint64_t generation, ThemeLibraryRequest request, auto completed) {
             if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
                 state->owner->BeginThemeTask(generation, std::move(request), std::move(completed));
-        };
-        dock.previewAppearance = [weak](std::uint64_t generation, std::string target) {
-            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
-            {
-                ThemeLibraryRequest request; request.command = ThemeLibraryCommand::Preview; request.target = std::move(target);
-                state->owner->BeginThemeTask(generation, std::move(request), {});
-            }
         };
         dock.updateGeneral = [weak](
             std::uint64_t generation,

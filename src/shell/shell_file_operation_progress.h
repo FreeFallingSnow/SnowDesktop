@@ -17,6 +17,7 @@ class DropFileProgress final : public Microsoft::WRL::RuntimeClass<
 {
 public:
     std::wstring source;
+    Microsoft::WRL::ComPtr<IShellItem> sourceItem;
     std::shared_ptr<ShellFileOperationResult> result;
     bool completed = false;
     HRESULT failure = S_OK;
@@ -31,11 +32,13 @@ public:
         }
         if (FAILED(status)) { if (SUCCEEDED(failure)) failure = status; return S_OK; }
         if (!original || !created || completed) return S_OK;
-        PWSTR originalPath = nullptr;
-        const HRESULT originalStatus = original->GetDisplayName(SIGDN_FILESYSPATH, &originalPath);
-        const bool requestedItem = SUCCEEDED(originalStatus) && originalPath &&
-            _wcsicmp(originalPath, source.c_str()) == 0;
-        CoTaskMemFree(originalPath);
+        // Shell expands 8.3 aliases (including the user's temporary path).
+        // Compare the queued item identity, while retaining the caller's path
+        // in outputs for landing/cleanup. The captured item also survives moves
+        // and excludes recursive child notifications without reopening a file.
+        int order = 0;
+        const bool requestedItem = sourceItem &&
+            SUCCEEDED(sourceItem->Compare(original, SICHINT_CANONICAL, &order)) && order == 0;
         if (!requestedItem) return S_OK;
         PWSTR path = nullptr;
         if (SUCCEEDED(created->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path)
@@ -107,6 +110,7 @@ inline bool ExecuteTrackedDropStep(const ShellFileOperationStep& step,
         auto sink = Make<DropFileProgress>();
         if (!sink) { failure = E_OUTOFMEMORY; scheduledAll = false; continue; }
         sink->source = path;
+        sink->sourceItem = source;
         sink->result = result;
         const auto newName = name.empty() ? nullptr : name.c_str();
         const HRESULT queued = step.function == FO_MOVE

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "sort_menu.h"
 #include "desktop/desktop_input_activation.h"
 #include "shell/shell_extension_menu_presentation.h"
 #include "ui/menu/menu_icon_render.h"
@@ -549,6 +550,79 @@ void DesktopApp::SetMenuItemTextInput(
     }
 }
 
+std::vector<snowdesktop::modern_menu::Item> DesktopApp::BuildModernMenuItems(HMENU menu)
+{
+    std::vector<snowdesktop::modern_menu::Item> result;
+    const int count = GetMenuItemCount(menu);
+    result.reserve(static_cast<size_t>(std::max(0, count)));
+    for (int i = 0; i < count; ++i)
+    {
+        MENUITEMINFOW probe{ sizeof(probe) };
+        probe.fMask = MIIM_FTYPE | MIIM_STATE | MIIM_ID |
+            MIIM_SUBMENU | MIIM_STRING | MIIM_BITMAP;
+        if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
+            continue;
+
+        std::vector<wchar_t> label(
+            static_cast<size_t>(probe.cch) + 1, L'\0');
+        if (probe.cch > 0)
+        {
+            MENUITEMINFOW textInfo{ sizeof(textInfo) };
+            textInfo.fMask = MIIM_STRING;
+            textInfo.dwTypeData = label.data();
+            textInfo.cch = static_cast<UINT>(label.size());
+            GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE,
+                &textInfo);
+        }
+
+        snowdesktop::modern_menu::Item item;
+        item.command = probe.wID;
+        auto menuLabel = snowdesktop::DecodeMenuLabel(label.data());
+        item.label = std::move(menuLabel.text);
+        item.accessKey = menuLabel.accessKey;
+        item.enabled =
+            (probe.fState & (MFS_DISABLED | MFS_GRAYED)) == 0;
+        item.checked = (probe.fState & MFS_CHECKED) != 0;
+        item.separator = (probe.fType & MFT_SEPARATOR) != 0;
+        // Shell bitmaps stay owned by their live HMENU/COM session. Special
+        // HBMMENU values (including callbacks) are not GDI image objects.
+        BITMAP bitmap{};
+        if (probe.hbmpItem && GetObjectW(probe.hbmpItem, sizeof(bitmap), &bitmap))
+            item.image = probe.hbmpItem;
+        if (probe.hSubMenu)
+            item.children = BuildModernMenuItems(probe.hSubMenu);
+
+        for (const auto& icon : menuIconPool_)
+        {
+            if (icon->menu == menu &&
+                icon->position == static_cast<UINT>(i))
+            {
+                item.glyph = icon->glyph;
+                if (icon->imageBitmap) item.image = icon->imageBitmap;
+                item.builtinIcon = icon->builtinIcon;
+                item.iconFont = icon->fontAwesome
+                    ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
+                    : snowdesktop::modern_menu::IconFont::FluentRegular;
+                item.quickAction = icon->quickAction &&
+                    !generalSettings_.contextMenuExpandQuickActions;
+                item.inlineAction = icon->inlineAction;
+                item.inlineGroup = icon->inlineGroup;
+                item.compactInlineAction =
+                    icon->compactInlineAction;
+                item.horizontalScrollAction =
+                    icon->horizontalScrollAction;
+                item.textInput = icon->textInput;
+                item.inputText = icon->inputText;
+                item.quickIcon = icon->quickIcon;
+                break;
+            }
+        }
+        result.push_back(std::move(item));
+    }
+    snowdesktop::sort_menu::ApplyInlineLayout(result);
+    return result;
+}
+
 UINT DesktopApp::ShowModernMenu(
     HMENU rootMenu, POINT screenPoint, HWND owner,
     bool placeOutsideDock, bool placeAwayFromTaskbar,
@@ -569,76 +643,16 @@ UINT DesktopApp::ShowModernMenu(
     if (!rootMenu)
         return 0;
 
-    std::function<std::vector<snowdesktop::modern_menu::Item>(HMENU)>
-        buildItems;
-    buildItems = [&](HMENU menu) {
-        std::vector<snowdesktop::modern_menu::Item> result;
-        const int count = GetMenuItemCount(menu);
-        result.reserve(static_cast<size_t>(std::max(0, count)));
-        for (int i = 0; i < count; ++i)
-        {
-            MENUITEMINFOW probe{ sizeof(probe) };
-            probe.fMask = MIIM_FTYPE | MIIM_STATE | MIIM_ID |
-                MIIM_SUBMENU | MIIM_STRING;
-            if (!GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE, &probe))
-                continue;
-
-            std::vector<wchar_t> label(
-                static_cast<size_t>(probe.cch) + 1, L'\0');
-            if (probe.cch > 0)
-            {
-                MENUITEMINFOW textInfo{ sizeof(textInfo) };
-                textInfo.fMask = MIIM_STRING;
-                textInfo.dwTypeData = label.data();
-                textInfo.cch = static_cast<UINT>(label.size());
-                GetMenuItemInfoW(menu, static_cast<UINT>(i), TRUE,
-                    &textInfo);
-            }
-
-            snowdesktop::modern_menu::Item item;
-            item.command = probe.wID;
-            auto menuLabel = snowdesktop::DecodeMenuLabel(label.data());
-            item.label = std::move(menuLabel.text);
-            item.accessKey = menuLabel.accessKey;
-            item.enabled =
-                (probe.fState & (MFS_DISABLED | MFS_GRAYED)) == 0;
-            item.checked = (probe.fState & MFS_CHECKED) != 0;
-            item.separator = (probe.fType & MFT_SEPARATOR) != 0;
-            if (probe.hSubMenu)
-                item.children = buildItems(probe.hSubMenu);
-
-            for (const auto& icon : menuIconPool_)
-            {
-                if (icon->menu == menu &&
-                    icon->position == static_cast<UINT>(i))
-                {
-                    item.glyph = icon->glyph;
-                    item.image = icon->imageBitmap;
-                    item.builtinIcon = icon->builtinIcon;
-                    item.iconFont = icon->fontAwesome
-                        ? snowdesktop::modern_menu::IconFont::FontAwesomeSolid
-                        : snowdesktop::modern_menu::IconFont::FluentRegular;
-                    item.quickAction = icon->quickAction &&
-                        !generalSettings_.contextMenuExpandQuickActions;
-                    item.inlineAction = icon->inlineAction;
-                    item.inlineGroup = icon->inlineGroup;
-                    item.compactInlineAction =
-                        icon->compactInlineAction;
-                    item.horizontalScrollAction =
-                        icon->horizontalScrollAction;
-                    item.textInput = icon->textInput;
-                    item.inputText = icon->inputText;
-                    item.quickIcon = icon->quickIcon;
-                    break;
-                }
-            }
-            result.push_back(std::move(item));
-        }
-        return result;
-    };
+    // Shift uses the caller's existing native-menu handoff before querying.
+    if (shellRequest && shellRequest->extended)
+    {
+        const UINT state = GetMenuState(rootMenu, kContextMoreCommand, MF_BYCOMMAND);
+        if (state != static_cast<UINT>(-1) && !(state & (MF_DISABLED | MF_GRAYED)))
+            return kContextMoreCommand;
+    }
 
     std::vector<snowdesktop::modern_menu::Item> items =
-        buildItems(rootMenu);
+        BuildModernMenuItems(rootMenu);
     snowdesktop::modern_menu::Options options;
     options.owner = owner;
     options.anchor = screenPoint;
@@ -790,7 +804,20 @@ UINT DesktopApp::ShowModernMenu(
     // A status-bar session may use a floating host as its native z-order owner.
     // Retain that exact owner so hiding a different monitor never dismisses it.
     if (statusBarMenuOwner_ == owner && statusBarMenuMonitor_)
+    {
+        RECT barBounds{};
+        if (GetWindowRect(owner, &barBounds))
+        {
+            // Keep a right-side menu adjacent to its source. Rectangle-based
+            // placement clamps at the work-area edge without flipping a whole
+            // menu width to the left of the clicked status-bar control.
+            options.anchorRect = {screenPoint.x, barBounds.top, screenPoint.x, barBounds.bottom};
+            options.rootPlacement = generalSettings_.statusBar.position == DockPosition::Bottom
+                ? snowdesktop::modern_menu::RootPlacement::AboveAnchorRect
+                : snowdesktop::modern_menu::RootPlacement::BelowAnchorRect;
+        }
         statusBarMenuOwner_ = options.zOrderOwner ? options.zOrderOwner : options.owner;
+    }
     const snowdesktop::modern_menu::Result result =
         snowdesktop::modern_menu::Show(items, options);
     if (result.command == kContextManageMenuCommand)
@@ -804,7 +831,12 @@ UINT DesktopApp::ShowModernMenu(
             TryShowPendingSettingsWindow();
         return 0;
     }
-    if (extensions && extensions->Invoke(result.command, screenPoint)) return 0;
+    if (extensions && result.command >= snowdesktop::shell_extensions::Presentation::FirstCommand)
+    {
+        const HWND invocationOwner = ShellLaunchOwnerHwnd();
+        FocusKeyboardWindow(invocationOwner, true, L"Exposed Shell command owner");
+        if (extensions->Invoke(result.command, screenPoint, invocationOwner)) return 0;
+    }
 
     return result.command;
 }

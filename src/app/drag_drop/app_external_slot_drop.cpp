@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "drag_drop/external_drop_resources.h"
+#include "drag_drop/drop_staging.h"
 #include "widgets/lua_logical_slot.h"
 
 #include <stdexcept>
@@ -43,7 +44,8 @@ content::Paths DownloadSlotUrls(const content::Paths& urls, std::stop_token stop
         if (stop.stop_requested()) throw std::runtime_error("drop cancelled");
         snowdesktop::UrlDropDownloadRequest request;
         request.url = url;
-        request.destinationDirectory = GetDataSubdirectoryPath(L"DropContent");
+        request.destinationDirectory = snowdesktop::drop_staging::Directory();
+        if (request.destinationDirectory.empty()) return {};
         const auto result = snowdesktop::UrlDropDownloadWorker::Execute(request, stop);
         if (result.outcome == snowdesktop::UrlDropDownloadOutcome::Downloaded)
             return {result.localPath};
@@ -114,6 +116,36 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
     if (exitRequested_ || paths.empty()) return false;
+    if (owned && !destination.luaWidgetId.empty())
+    {
+        DragSourceList sources;
+        sources.hasExternalFiles = true;
+        for (const auto& path : paths)
+        {
+            DragSourceEntry entry;
+            entry.kind = DropSourceKind::ExternalFile;
+            entry.sourceIndex = sources.entries.size(); entry.filePath = path;
+            sources.entries.push_back(std::move(entry));
+        }
+        auto outputs = std::make_shared<snowdesktop::ShellFileOperationResult>();
+        auto committedResult = std::make_shared<bool>(false);
+        // A logical slot stores paths rather than copying files itself. Publish
+        // actual desktop files before handing those paths to the component.
+        const bool queued = MaterializeFilesToDesktop(sources, DropAction::Copy, false, nullptr,
+            [this, destination, paths, outputs, committedResult, synchronously, completion = std::move(completion)](bool succeeded) mutable {
+                std::vector<std::wstring> published;
+                for (const auto& path : paths)
+                    for (const auto& output : outputs->outputs)
+                        if (_wcsicmp(output.source.c_str(), path.c_str()) == 0 && !output.destination.empty())
+                        { published.push_back(output.destination); break; }
+                const bool committed = succeeded && published.size() == paths.size() &&
+                    CommitExternalSlotPaths(destination, published, false, true, {}, true, {});
+                *committedResult = committed;
+                if (!outputs->outputs.empty()) RequestShellRefresh();
+                if (completion && (committed || !synchronously)) completion(committed);
+            }, synchronously, outputs);
+        return queued && (!synchronously || *committedResult);
+    }
     if (destination.fileDropTarget)
     {
         const auto& target = *destination.fileDropTarget;
@@ -217,7 +249,7 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         entry.displayName = FileNameFromPath(path);
         sources.entries.push_back(std::move(entry));
     }
-    if ((owned || copyOnly) && !preview.pinMaterializedItemsToDock)
+    if (owned || (copyOnly && !preview.pinMaterializedItemsToDock))
         preview.action = DropAction::Copy;
     preview.fileBacked = true;
     return ExecuteDropPipeline(sources, preview, std::move(completion), synchronously, std::move(result));
@@ -299,9 +331,8 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         try { *value = read(dataObject, false, knownPaths); }
         catch (...) { return DROPEFFECT_NONE; }
     }
-    auto finished = [value, keepReference = !destination.luaWidgetId.empty(),
+    auto finished = [value,
         oleCompletion](bool succeeded) {
-        if (succeeded && keepReference) value->owned = false;
         if (!succeeded)
             WriteDiagnosticLogEntry(L"External component drop failed during content reading or destination commit");
         if (oleCompletion) oleCompletion(succeeded);

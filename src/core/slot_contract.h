@@ -50,6 +50,7 @@ enum class DragPayloadKind : std::uint8_t
     OtherWidget,
     CollectionGroupLabel,
     FileGroupLabel,
+    GroupWidget,
     Count,
 };
 
@@ -114,6 +115,7 @@ struct DragPayloadFlags
     bool fileGroupLabels = false;
     bool folderMappingWidgetsOnly = false;
     bool fileSourceWidgetsOnly = false;
+    bool groupWidgetsOnly = false;
 };
 
 constexpr DragPayloadKind ClassifyPayload(
@@ -142,6 +144,8 @@ constexpr DragPayloadKind ClassifyPayload(
             return DragPayloadKind::FolderMappingWidget;
         if (flags.fileSourceWidgetsOnly)
             return DragPayloadKind::FileSourceWidget;
+        if (flags.groupWidgetsOnly)
+            return DragPayloadKind::GroupWidget;
         return DragPayloadKind::OtherWidget;
     }
     if (flags.folderEntries)
@@ -188,7 +192,8 @@ inline constexpr std::array<
             PayloadBit(DragPayloadKind::CollectionWidget) |
             PayloadBit(DragPayloadKind::FolderMappingWidget) |
             PayloadBit(DragPayloadKind::FileSourceWidget) |
-            PayloadBit(DragPayloadKind::OtherWidget),
+            PayloadBit(DragPayloadKind::OtherWidget) |
+            PayloadBit(DragPayloadKind::GroupWidget),
         kInteractiveSlotCapabilities,
     },
         {
@@ -200,7 +205,8 @@ inline constexpr std::array<
                 PayloadBit(DragPayloadKind::CollectionWidget) |
                 PayloadBit(DragPayloadKind::FolderMappingWidget) |
                 PayloadBit(DragPayloadKind::FileSourceWidget) |
-                PayloadBit(DragPayloadKind::FolderEntry),
+                PayloadBit(DragPayloadKind::FolderEntry) |
+                PayloadBit(DragPayloadKind::GroupWidget),
             kInteractiveSlotCapabilities,
     },
     {
@@ -312,14 +318,14 @@ inline constexpr std::array<
             "collection_group",
             WidgetContainerRole::SlotContainer,
             SlotSurfaceKind::CollectionGroup,
-            DragPayloadKind::OtherWidget,
+            DragPayloadKind::GroupWidget,
         },
         {
             DesktopWidgetType::FileGroup,
             "file_group",
             WidgetContainerRole::SlotContainer,
             SlotSurfaceKind::FileGroup,
-            DragPayloadKind::OtherWidget,
+            DragPayloadKind::GroupWidget,
         },
         {
             DesktopWidgetType::FileCategories,
@@ -540,6 +546,8 @@ constexpr DropRoute EvaluateSlotDropUnchecked(
 
     if (payload == DragPayloadKind::CollectionGroupLabel)
     {
+        if (target == SlotSurfaceKind::Dock)
+            return DropRoute::AddToDock;
         if (target == SlotSurfaceKind::Desktop)
             return DropRoute::ReleaseGroupedChild;
         if (target == SlotSurfaceKind::CollectionGroup)
@@ -600,6 +608,15 @@ constexpr DropRoute EvaluateSlotDropUnchecked(
         if (target == SlotSurfaceKind::FileGroup)
             return DropRoute::MoveFileSourceIntoGroup;
         return DropRoute::Reject;
+    }
+
+    if (payload == DragPayloadKind::GroupWidget)
+    {
+        if (target == SlotSurfaceKind::Dock)
+            return relation == DragRelation::SameInstance
+                ? DropRoute::ReorderWithinContainer : DropRoute::AddToDock;
+        return target == SlotSurfaceKind::Desktop
+            ? DropRoute::PlaceOnDesktop : DropRoute::Reject;
     }
 
     if (payload == DragPayloadKind::OtherWidget)

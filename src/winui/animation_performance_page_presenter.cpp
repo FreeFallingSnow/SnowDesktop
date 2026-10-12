@@ -99,7 +99,9 @@ struct AnimationPerformancePagePresenter::Impl
         root = muxc::StackPanel{};
         root.Spacing(8);
         generalCard.Initialize(style, root);
-        dockCard.Initialize(style, dockRoot);
+        dockCard.content = muxc::StackPanel{};
+        dockCard.content.Spacing(16);
+        dockRoot.Children().Append(dockCard.content);
         performanceCard.Initialize(style, root);
         AddChoice(mode, generalCard, "mode", "animation.mode", 0,
             {L10N_KEY("settings.animation.option.followSystem"),
@@ -354,18 +356,18 @@ struct AnimationPerformancePagePresenter::Impl
         const bool wasUpdating = updating;
         updating = true;
         generalCard.title.Text(L("settings.animation.general"));
-        dockCard.title.Text(L("settings.animation.dock"));
         performanceCard.title.Text(L("settings.animation.performance"));
         for (auto* choice : {&mode, &popup, &speed, &hover, &launch, &window, &frameLimit})
         {
-            choice->row.SetText(L(choice->key), L(choice->key + ".description"));
+            const bool needsHelp = choice == &speed || choice == &window || choice == &frameLimit;
+            choice->row.SetText(L(choice->key), needsHelp ? L(choice->key + ".description") : std::wstring{});
             const int selected = choice->combo.SelectedIndex();
             choice->combo.Items().Clear();
             for (const auto& key : choice->options)
                 choice->combo.Items().Append(winrt::box_value(L(key)));
             choice->combo.SelectedIndex(selected >= 0 ? selected : choice->defaultIndex);
             muxa::AutomationProperties::SetName(choice->combo, L(choice->key));
-            muxa::AutomationProperties::SetHelpText(choice->combo, L(choice->key + ".description"));
+            muxa::AutomationProperties::SetHelpText(choice->combo, choice->row.help.Text());
             presenter_controls::ConfigureRestoreDefaultButton(choice->reset,
                 L(choice->key) + L": " + L("settings.animation.restore"));
         }

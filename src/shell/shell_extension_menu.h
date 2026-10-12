@@ -1,6 +1,7 @@
 #pragma once
 #include "settings/settings_ipc_codec.h"
 #include "settings/shell_extension_settings.h"
+#include "shell_start_pin_protocol.h"
 #include <functional>
 #include <memory>
 #include <optional>
@@ -15,8 +16,19 @@ struct Request
     bool catalogueOnly = false;
     bool extended = false;
     Context context = Context::Automatic;
-    // Private metadata query: never displayed or invoked as a menu session.
+    // Private source query: supplies display metadata, never invocation tokens.
+    // A click is resolved again against the actual selection's full Shell menu.
     std::wstring sourceClsid, sourceKey;
+    // Private executable query of Microsoft's Start handler, isolated from
+    // arbitrary extension discovery and its worker pool.
+    bool startPinOnly = false;
+    // Recovery query for the original shortcut files after target discovery fails.
+    // It has its own service identity and never replaces a complete disk snapshot.
+    bool originalShortcutOnly = false;
+    // Private popup optimization: full management/default queries keep this false.
+    // It forms part of the disk cache identity so an omitted compatibility
+    // source cannot be reused after the source is enabled.
+    bool omitNvidiaCompatibility = false;
     friend bool operator==(const Request &, const Request &) = default;
 };
 struct Entry
@@ -38,22 +50,30 @@ struct Reply
     std::string error;
 };
 
-// One fresh COM/menu session in a supervised child. Successful, uninvoked
-// sessions may return the child to the owning UI thread's bounded warm pool.
-// Tokens still expire when this object closes; they are never cached.
+// One fresh COM/menu session in a supervised child. Ordinary workers retire
+// with their first real selection; only the system Start handler is pooled.
+// Tokens expire when this object closes; they are never cached.
 class Session
 {
   public:
-    explicit Session(const Request &request, DWORD queryTimeoutMs = 8000);
+    explicit Session(const Request &request, DWORD queryTimeoutMs = 8000, bool usePreparedWorker = false);
     ~Session();
     Session(const Session &) = delete;
     Session &operator=(const Session &) = delete;
     std::optional<Reply> Poll();
     DWORD ProcessId() const noexcept;
+    // Metadata resolved inside the supervised helper, never on the scheduler.
+    unsigned SelectionContexts() const noexcept;
     static void ReleaseIdleWorker();
+    // Owning STA only. Preparation reserves one of the two ordinary slots and
+    // never queries the eventual selection or supplies cached command tokens.
+    enum class PreparationState { Absent, Pending, Ready };
+    static bool PrepareFirstMenuWorker(DWORD timeoutMs = 8000);
+    static PreparationState PollPreparedMenuWorker();
+    static void ReleasePreparedMenuWorker();
     // Transfers ownership to a bounded invocation monitor; modeless dialogs
     // remain alive after the custom popup closes.
-    void Invoke(UINT token, POINT position);
+    void Invoke(UINT token, POINT position, HWND owner = nullptr);
 
   private:
     struct Impl;
@@ -68,7 +88,11 @@ bool TakeMenuRegistryChanges();
 std::vector<HANDLE> MenuRegistryWaitHandles(bool &complete);
 using QueryExecutor = std::function<Reply(const Request &)>;
 using InvokeExecutor = std::function<void(UINT, POINT)>;
-std::optional<int> TryRunHelper(QueryExecutor query = {}, InvokeExecutor invoke = {});
+// Private composition boundary: the host supplies its deployment-staged
+// Explorer transport; tests can substitute only that final execution boundary.
+using StartPinExecutor = std::function<HRESULT(shell_start_pin::Action, const std::wstring &, HWND, POINT)>;
+std::optional<int> TryRunHelper(QueryExecutor query = {}, InvokeExecutor invoke = {}, StartPinExecutor startPin = {});
+bool CanQueryOriginalShortcutObjects(const Request &);
 Context ResolveContext(const Request &);
 std::vector<Entry> VisibleEntries(const Preferences &, const std::vector<Entry> &, const Request &);
 } // namespace snowdesktop::shell_extensions
@@ -79,7 +103,8 @@ template <> struct Fields<shell_extensions::Request>
 {
     template <class T> static auto Tie(T &v)
     {
-        return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context, v.sourceClsid, v.sourceKey);
+        return std::tie(v.paths, v.background, v.catalogueOnly, v.extended, v.context, v.sourceClsid, v.sourceKey,
+                        v.startPinOnly, v.originalShortcutOnly, v.omitNvidiaCompatibility);
     }
 };
 template <> struct Fields<shell_extensions::Entry>

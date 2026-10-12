@@ -350,7 +350,7 @@
 ---@field font? SnowFontResource Package-private font for text and label-bearing nodes, including link and radioGroup.
 ---@field fit? SnowViewImageFit Image scaling mode; defaults to contain.
 ---@field alignment? SnowViewImageAlignment Image alignment on both axes; defaults to center.
----@field interpolation? SnowViewImageInterpolation Image sampling mode; defaults to linear.
+---@field interpolation? SnowViewImageInterpolation Defaults to linear smooth sampling with cached high-quality downscaling; nearest preserves point samples. Older hosts retain their original linear quality.
 ---@field tint? SnowViewColor Image-only RGB or host theme tint that replaces source RGB while preserving source alpha.
 ---@field alt? string Required by image and referenceIcon nodes; use an empty string for decorative visuals.
 ---@field iconFont? 'fa'|'fluent'|'fluent-regular'
@@ -2380,7 +2380,7 @@ function draw.image(image, x, y, width, height, alpha) end
 ---@param fit? SnowDrawImageFit Defaults to contain.
 ---@param alignment? SnowDrawImageAlignment Applies to both axes; defaults to center.
 ---@param alpha? number
----@param interpolation? SnowDrawImageInterpolation Defaults to linear.
+---@param interpolation? SnowDrawImageInterpolation Defaults to linear smooth sampling with cached high-quality downscaling; nearest preserves point samples. Older hosts retain their original linear quality.
 ---@param rotationDegrees? number Clockwise rotation from -360 through 360 degrees; defaults to 0.
 ---@param originX? number Normalized horizontal rotation origin from 0 through 1; defaults to 0.5.
 ---@param originY? number Normalized vertical rotation origin from 0 through 1; defaults to 0.5.

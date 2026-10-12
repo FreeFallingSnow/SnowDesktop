@@ -71,6 +71,31 @@ struct InstanceInfo
     bool packaged = false;
 };
 
+enum class LaunchIntent
+{
+    Interactive,
+    AutoStart,
+    ApplicationRecovery
+};
+
+enum class ExistingLaunchAction
+{
+    ExitNewInstance,
+    ReplaceManagedRuntime,
+    PromptVersionConflict
+};
+
+// Accept a full command line (including the executable) so quoted paths and
+// values cannot be mistaken for a background launch marker.
+LaunchIntent ParseLaunchIntent(std::wstring_view commandLine);
+
+// Deliver settings activation only for an interactive compatible launch.
+// Background duplicates exit silently; the current Steam launcher may still
+// replace a restored immutable runtime from the same installation.
+ExistingLaunchAction HandleExistingInstanceLaunch(
+    const InstanceInfo& running, const InstanceInfo& requested,
+    LaunchIntent intent);
+
 /**
  * @brief Parse the internal restart predecessor argument.
  */

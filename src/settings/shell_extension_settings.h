@@ -1,5 +1,6 @@
 #pragma once
 #include "common/json_value.h"
+#include "shell/shell_extension_state_commands.h"
 #include <algorithm>
 #include <string>
 #include <string_view>
@@ -78,7 +79,26 @@ inline void Normalize(Preferences &value)
     std::erase_if(value.overrides, [&](const LocationOverride &r) { return !validId(r) || r.context < Context::File || r.context > Context::Desktop || r.visibility < Visibility::Inherit || r.visibility > Visibility::Hide; });
     if (value.rules.size() > 8192) value.rules.resize(8192);
     if (value.overrides.size() > 16384) value.overrides.resize(16384);
-
+    // Older settings independently enabled the two state variants. Preserve
+    // an opt-in from either variant, then write one authority per scope.
+    for (auto &r : value.rules) r.id = StateVisibilityId(r.id);
+    for (auto &r : value.overrides) r.id = StateVisibilityId(r.id);
+    for (auto *items : {&value.hidden, &value.shown})
+        for (auto &r : *items) r.id = StateVisibilityId(r.id);
+    for (size_t i = 0; i < value.rules.size(); ++i) if (StatePairForId(value.rules[i].id))
+        for (size_t j = i + 1; j < value.rules.size();)
+            if (value.rules[i].id == value.rules[j].id && value.rules[i].category == value.rules[j].category)
+            { value.rules[i].shown |= value.rules[j].shown; value.rules.erase(value.rules.begin() + j); }
+            else ++j;
+    for (size_t i = 0; i < value.overrides.size(); ++i) if (StatePairForId(value.overrides[i].id))
+        for (size_t j = i + 1; j < value.overrides.size();)
+            if (value.overrides[i].id == value.overrides[j].id && value.overrides[i].context == value.overrides[j].context)
+            { // Show wins a conflicting legacy opt-in, independently of order.
+              if (value.overrides[i].visibility == Visibility::Show || value.overrides[j].visibility == Visibility::Show)
+                  value.overrides[i].visibility = Visibility::Show;
+              else value.overrides[i].visibility = std::max(value.overrides[i].visibility, value.overrides[j].visibility);
+              value.overrides.erase(value.overrides.begin() + j); }
+            else ++j;
     std::vector<Selection> kept;
     for (auto item : value.selections)
     {
@@ -260,6 +280,22 @@ inline std::string WritePreferences(Preferences value)
 }
 inline bool IsHidden(const Preferences &prefs, const std::string &id, Context context)
 {
+    if (StatePairForId(id))
+    {
+        const auto key = StateVisibilityId(id);
+        bool overrideFound = false, ruleFound = false, shown = false;
+        for (const auto &r : prefs.overrides)
+            if (StateVisibilityId(r.id) == key && r.context == context && r.visibility != Visibility::Inherit)
+            { overrideFound = true; shown |= r.visibility == Visibility::Show; }
+        if (overrideFound) return !shown;
+        for (const auto &r : prefs.rules)
+            if (StateVisibilityId(r.id) == key && r.category == CategoryOf(context))
+            { ruleFound = true; shown |= r.shown; }
+        if (ruleFound) return !shown;
+        return std::none_of(prefs.shown.begin(), prefs.shown.end(), [&](const auto &r) {
+            return r.context == context && StateVisibilityId(r.id) == key;
+        });
+    }
     for (const auto &r : prefs.overrides)
         if (r.id == id && r.context == context && r.visibility != Visibility::Inherit)
             return r.visibility == Visibility::Hide;
@@ -269,6 +305,14 @@ inline bool IsHidden(const Preferences &prefs, const std::string &id, Context co
 }
 inline bool CommonShown(const Preferences &prefs, const std::string &id, Category category)
 {
+    if (StatePairForId(id))
+    {
+        bool found = false, shown = false;
+        for (const auto &r : prefs.rules)
+            if (StateVisibilityId(r.id) == StateVisibilityId(id) && r.category == category)
+            { found = true; shown |= r.shown; }
+        if (found) return shown;
+    }
     for (const auto &r : prefs.rules) if (r.id == id && r.category == category) return r.shown;
     const auto first = category == Category::Objects ? Context::File : Context::FolderBackground;
     const auto second = category == Category::Objects ? Context::Folder : Context::Desktop;
@@ -276,24 +320,35 @@ inline bool CommonShown(const Preferences &prefs, const std::string &id, Categor
 }
 inline Visibility OverrideOf(const Preferences &prefs, const std::string &id, Context context)
 {
+    if (StatePairForId(id))
+    {
+        Visibility result = Visibility::Inherit;
+        for (const auto &r : prefs.overrides)
+            if (StateVisibilityId(r.id) == StateVisibilityId(id) && r.context == context)
+            { if (r.visibility == Visibility::Show) return Visibility::Show;
+              if (r.visibility == Visibility::Hide) result = Visibility::Hide; }
+        return result;
+    }
     for (const auto &r : prefs.overrides) if (r.id == id && r.context == context) return r.visibility;
     return Visibility::Inherit;
 }
 inline void SetCommon(Preferences &prefs, const std::string &id, Category category, bool shown)
 {
-    std::erase_if(prefs.rules, [&](const auto &r) { return r.id == id && r.category == category; });
-    prefs.rules.push_back({id, category, shown});
+    const auto key = StateVisibilityId(id);
+    std::erase_if(prefs.rules, [&](const auto &r) { return StateVisibilityId(r.id) == key && r.category == category; });
+    prefs.rules.push_back({key, category, shown});
     prefs.rulesVersion = 2;
     Normalize(prefs);
 }
 inline void SetOverride(Preferences &prefs, const std::string &id, Context context, Visibility value)
 {
+    const auto key = StateVisibilityId(id);
     // Persist an explicit base when restoring inheritance, so retained legacy
     // records cannot recreate a migrated exception on the next association pass.
-    if (value == Visibility::Inherit && std::none_of(prefs.rules.begin(), prefs.rules.end(), [&](const auto &r) { return r.id == id && r.category == CategoryOf(context); }))
-        SetCommon(prefs, id, CategoryOf(context), CommonShown(prefs, id, CategoryOf(context)));
-    std::erase_if(prefs.overrides, [&](const auto &r) { return r.id == id && r.context == context; });
-    if (value != Visibility::Inherit) prefs.overrides.push_back({id, context, value});
+    if (value == Visibility::Inherit && std::none_of(prefs.rules.begin(), prefs.rules.end(), [&](const auto &r) { return StateVisibilityId(r.id) == key && r.category == CategoryOf(context); }))
+        SetCommon(prefs, key, CategoryOf(context), CommonShown(prefs, key, CategoryOf(context)));
+    std::erase_if(prefs.overrides, [&](const auto &r) { return StateVisibilityId(r.id) == key && r.context == context; });
+    if (value != Visibility::Inherit) prefs.overrides.push_back({key, context, value});
     Normalize(prefs);
 }
 inline std::set<std::string> EffectiveShownIds(const Preferences &prefs, Context context)
@@ -308,6 +363,10 @@ inline std::set<std::string> EffectiveShownIds(const Preferences &prefs, Context
             states[row->id] = row->visibility == Visibility::Show;
     std::set<std::string> result;
     for (const auto &[id, shown] : states) if (shown && !id.empty()) result.insert(id);
+    std::set<std::string> pairs;
+    for (const auto &[id, shown] : states) if (StatePairForId(id))
+    { result.erase(id); pairs.insert(StateVisibilityId(id)); }
+    for (const auto &id : pairs) if (!IsHidden(prefs, id, context)) result.insert(id);
     return result;
 }
 inline bool HasOptIns(const Preferences &prefs, Context context = Context::Automatic)
@@ -318,6 +377,7 @@ inline bool HasOptIns(const Preferences &prefs, Context context = Context::Autom
 }
 inline void SetHidden(Preferences &prefs, const std::string &id, Context context, bool hidden)
 {
+    if (StatePairForId(id)) { SetOverride(prefs, id, context, hidden ? Visibility::Hide : Visibility::Show); return; }
     std::erase(prefs.hidden, HiddenItem{id, context});
     std::erase(prefs.shown, HiddenItem{id, context});
     if (!hidden)

@@ -159,7 +159,14 @@ struct PersonalizationPagePresenter::Impl
     std::unique_ptr<ThemeLibraryControls> globalThemes, quickThemes, popupThemes, dockThemes, themeTransfers;
     muxc::StackPanel managementRoot;
     SettingsCard fontCard;
+    SettingsCard tooltipFontCard;
     SettingRow fontRow;
+    SettingRow tooltipFontSizeRow;
+    muxc::NumberBox tooltipFontSize;
+    muxc::Slider tooltipFontSizeSlider;
+    muxc::Button tooltipFontSizeReset;
+    winrt::event_token tooltipFontSizeToken{};
+    winrt::event_token tooltipFontSizeSliderToken{}, tooltipFontSizeResetToken{};
     muxc::DropDownButton fontPicker;
     muxc::TextBlock fontPickerLabel;
     muxc::Flyout fontFlyout;
@@ -538,9 +545,9 @@ struct PersonalizationPagePresenter::Impl
         popupAppearanceContent.Children().Append(popupThemes->SaveContent());
         popupThemeCard.content.Children().Append(popupAppearanceContent);
         dockThemeRoot = muxc::StackPanel{};
-        muxc::StackPanel dockBody;
-        InitializeCard(dockThemeCard, cardStyle, dockBody);
-        dockAppearanceHost.Content(dockBody);
+        dockThemeCard.content = muxc::StackPanel{};
+        dockThemeCard.content.Spacing(12.0);
+        dockAppearanceHost.Content(dockThemeCard.content);
         dockAppearanceHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         dockThemeRoot.Children().Append(dockAppearanceHost);
         dockAppearanceCombo = muxc::ComboBox{};
@@ -561,7 +568,7 @@ struct PersonalizationPagePresenter::Impl
         InitializeNavigationCard(statusBarLink, statusBarLinkTitle, statusBarLinkDescription);
         InitializeNavigationCard(taskbarLink, taskbarLinkTitle, taskbarLinkDescription);
         InitializeNavigationCard(dockLink, dockLinkTitle, dockLinkDescription);
-        InitializeCard(fontCard, cardStyle, themeRoot);
+        InitializeCard(fontCard, cardStyle, widgetLayoutRoot);
         fontPicker.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         fontPicker.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         fontPicker.MaxWidth(520.0);
@@ -590,6 +597,35 @@ struct PersonalizationPagePresenter::Impl
         fontPicker.Flyout(fontFlyout);
         fontRow.Initialize(fontPicker);
         fontCard.content.Children().Append(fontRow.root);
+        InitializeCard(tooltipFontCard, cardStyle, widgetLayoutRoot);
+        tooltipFontSize.Minimum(kMinimumTooltipFontSize);
+        tooltipFontSize.Maximum(kMaximumTooltipFontSize);
+        tooltipFontSize.SmallChange(1);
+        tooltipFontSize.LargeChange(2);
+        tooltipFontSize.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        tooltipFontSize.Width(92);
+        tooltipFontSizeSlider.Minimum(kMinimumTooltipFontSize);
+        tooltipFontSizeSlider.Maximum(kMaximumTooltipFontSize);
+        tooltipFontSizeSlider.StepFrequency(1);
+        tooltipFontSizeSlider.MinWidth(120);
+        tooltipFontSizeSlider.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid tooltipEditors;
+        tooltipEditors.ColumnSpacing(8);
+        muxc::ColumnDefinition tooltipSliderColumn, tooltipNumberColumn, tooltipResetColumn;
+        tooltipSliderColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+        tooltipNumberColumn.Width(mux::GridLengthHelper::Auto());
+        tooltipResetColumn.Width(mux::GridLengthHelper::Auto());
+        tooltipEditors.ColumnDefinitions().Append(tooltipSliderColumn);
+        tooltipEditors.ColumnDefinitions().Append(tooltipNumberColumn);
+        tooltipEditors.ColumnDefinitions().Append(tooltipResetColumn);
+        tooltipEditors.Children().Append(tooltipFontSizeSlider);
+        muxc::Grid::SetColumn(tooltipFontSize, 1);
+        tooltipEditors.Children().Append(tooltipFontSize);
+        tooltipFontSizeReset.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid::SetColumn(tooltipFontSizeReset, 2);
+        tooltipEditors.Children().Append(tooltipFontSizeReset);
+        tooltipFontSizeRow.Initialize(tooltipEditors);
+        tooltipFontCard.content.Children().Append(tooltipFontSizeRow.root);
         fontRestart.IsClosable(false);
         fontRestart.IsOpen(false);
         fontRestart.Severity(muxc::InfoBarSeverity::Informational);
@@ -851,6 +887,15 @@ struct PersonalizationPagePresenter::Impl
             fontPopup.Width(std::clamp(fontPicker.ActualWidth(), 240.0, 520.0));
             RefreshFonts();
             fontSearch.Focus(mux::FocusState::Programmatic);
+        });
+        tooltipFontSizeToken = tooltipFontSize.ValueChanged([this](const auto&, const auto&) {
+            ChangeTooltipFontSize(tooltipFontSize.Value());
+        });
+        tooltipFontSizeSliderToken = tooltipFontSizeSlider.ValueChanged([this](const auto&, const auto&) {
+            ChangeTooltipFontSize(tooltipFontSizeSlider.Value());
+        });
+        tooltipFontSizeResetToken = tooltipFontSizeReset.Click([this](const auto&, const auto&) {
+            ChangeTooltipFontSize(kDefaultTooltipFontSize);
         });
         fontSearchToken = fontSearch.TextChanged([this](const auto&, const auto&) {
             if (CanEmit()) FilterFonts();
@@ -1299,8 +1344,27 @@ struct PersonalizationPagePresenter::Impl
         EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [selection = selectedFont](auto& settings) { settings.font = selection; });
     }
 
+    void SyncTooltipFontSize(int size)
+    {
+        const bool previous = synchronizingPair;
+        synchronizingPair = true;
+        presenter_controls::SyncNumberBoxValue(tooltipFontSize, size);
+        if (tooltipFontSizeSlider.Value() != size) tooltipFontSizeSlider.Value(size);
+        tooltipFontSizeReset.IsEnabled(size != kDefaultTooltipFontSize);
+        synchronizingPair = previous;
+    }
+
+    void ChangeTooltipFontSize(double value)
+    {
+        if (!CanEmit() || !std::isfinite(value)) return;
+        const int size = NormalizeTooltipFontSize(static_cast<int>(std::lround(value)));
+        SyncTooltipFontSize(size);
+        EmitGeneral(SettingsUpdateMode::PreviewAndCommit, [size](auto& settings) { settings.tooltipFontSize = size; });
+    }
+
     void PatchGeneral(const GeneralSettings& settings)
     {
+        SyncTooltipFontSize(NormalizeTooltipFontSize(settings.tooltipFontSize));
         if (selectedFont != settings.font || fonts.empty())
         {
             selectedFont = settings.font;
@@ -1441,6 +1505,13 @@ struct PersonalizationPagePresenter::Impl
 
         SetCardText(fontCard, "font.title", L"Interface font");
         fontRow.SetText(L("font.family", L"Font"), L("font.hint"));
+        SetCardText(tooltipFontCard, "font.tooltipSize", L"Tooltip font size");
+        tooltipFontSizeRow.SetText(L("font.size", L"Font size"), L("font.tooltipSizeHint"));
+        const auto tooltipFontSizeLabel = L("font.tooltipSize", L"Tooltip font size");
+        muxa::AutomationProperties::SetName(tooltipFontSize, tooltipFontSizeLabel);
+        muxa::AutomationProperties::SetName(tooltipFontSizeSlider, tooltipFontSizeLabel);
+        presenter_controls::ConfigureRestoreDefaultButton(tooltipFontSizeReset,
+            L("app.settings.restore_default", L"Restore default") + L" · " + tooltipFontSizeLabel);
         muxa::AutomationProperties::SetName(fontPicker, fontRow.label.Text());
         fontSearch.PlaceholderText(L("font.search", L"Search fonts"));
         muxa::AutomationProperties::SetName(fontSearch, fontSearch.PlaceholderText());
@@ -1459,7 +1530,6 @@ struct PersonalizationPagePresenter::Impl
         popupCopyComponentRow.SetText(L("appearance.copyComponent", L"Copy current component appearance"),
             L("appearance.copyComponentHint", L"Copy the component appearance from the global theme once, then edit independently."));
         muxa::AutomationProperties::SetName(popupCopyComponent, popupCopyComponentRow.label.Text());
-        SetCardText(dockThemeCard, "settings.dock.dock", L"Dock");
         statusBarLinkTitle.Text(L("settings.nav.statusBar", L"Status bar"));
         statusBarLinkDescription.Text(L("appearance.openStatusBar", L"Open status bar settings"));
         dockLinkTitle.Text(L("guide.setting.dockAppearance.title"));
@@ -1519,7 +1589,6 @@ struct PersonalizationPagePresenter::Impl
         muxa::AutomationProperties::SetName(collectionPopupThemeCombo,
             collectionPopupThemeRow.label.Text());
 
-        presetRow.help.Text(L("appearance.presetHelp", L"")); presetRow.help.Visibility(mux::Visibility::Visible);
         SetColorText(backgroundColor,
             "app.settings.component_bg", L"Widget Background");
         SetColorText(borderColor,
@@ -1585,9 +1654,7 @@ struct PersonalizationPagePresenter::Impl
             L"Lua Widget Row Height");
         widgetTransformCursorsRow.SetText(
             L("app.settings.widget_transform_cursors",
-                L"Show component move and resize cursors"),
-            L("app.settings.widget_transform_cursors_hint",
-                L"Change the pointer when hovering over or dragging component move and resize handles. Turn off to use the standard pointer."));
+                L"Show component move and resize cursors"));
         muxa::AutomationProperties::SetName(
             widgetTransformCursors, widgetTransformCursorsRow.label.Text());
         showGroupTabCountsRow.SetText(
@@ -1599,7 +1666,7 @@ struct PersonalizationPagePresenter::Impl
         popupHoverOpenRow.SetText(
             L("app.settings.popup_hover_open", L"Open popups on hover"),
             L("app.settings.popup_hover_open_hint",
-                L"Hover over a Dock folder or collection, or a collection's expand button, to open its popup after the configured delay."));
+                L"Applies to Dock folders, collections and desktop collection expand buttons."));
         muxa::AutomationProperties::SetName(
             popupHoverOpen, popupHoverOpenRow.label.Text());
         SetContinuousText(popupHoverDelayMs,
@@ -1612,11 +1679,8 @@ struct PersonalizationPagePresenter::Impl
             popupCloseOnMouseLeave, popupCloseOnMouseLeaveRow.label.Text());
         muxa::AutomationProperties::SetName(
             gradientToggle, gradientToggleRow.label.Text());
-        const auto explain = [](auto& row, const std::wstring& text) { row.help.Text(text); row.help.Visibility(mux::Visibility::Visible); };
-        explain(widgetAlpha.row, L("appearance.opacityHelp", L""));
+        const auto explain = [](auto& row, const std::wstring& text) { row.SetText(std::wstring(row.label.Text().c_str()), text); };
         explain(glassRow, L("appearance.glassHelp", L""));
-        explain(edgeHighlightRow, L("appearance.borderHelp", L""));
-        explain(edgeHighlightWidth.row, L("appearance.rimWidthHelp", L""));
         for (auto const& [row, button] : appearanceResets) presenter_controls::ConfigureRestoreDefaultButton(button, L("app.settings.restore_default", L"Restore default") + L" · " + std::wstring(row->label.Text()));
         muxa::AutomationProperties::SetName(
             edgeHighlightToggle, edgeHighlightRow.label.Text());
@@ -1738,6 +1802,7 @@ struct PersonalizationPagePresenter::Impl
             id == "personalization.globalTheme")
             return presetCombo;
         if (id == "personalization.font") return fontPicker;
+        if (id == "personalization.tooltipFontSize") return tooltipFontSizeSlider;
         if (id == "personalization.dockAppearance") return dockAppearanceCombo;
         if (id == "personalization.statusBarTheme") return statusBarLink;
         if (id == "personalization.taskbar") return taskbarLink;
@@ -1873,6 +1938,9 @@ struct PersonalizationPagePresenter::Impl
         closed = true;
         quickAppearanceEditor->Close(); popupAppearanceEditor->Close(); dockAppearanceEditor->Close();
         quickAppearanceOptions->Close();
+        tooltipFontSize.ValueChanged(tooltipFontSizeToken);
+        tooltipFontSizeSlider.ValueChanged(tooltipFontSizeSliderToken);
+        tooltipFontSizeReset.Click(tooltipFontSizeResetToken);
         popupCopyComponent.Click(popupCopyComponentToken);
         dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken); dockLink.Click(dockLinkToken);
         try

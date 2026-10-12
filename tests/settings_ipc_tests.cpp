@@ -6,11 +6,13 @@
 #include "icons/large_icon_preset_rules.h"
 #include "settings/settings_process.h"
 #include "shell/shell_extension_service.h"
+#include "app/lifecycle/settings_external_state_refresh.h"
 
 #include <atomic>
 #include <future>
 #include <iostream>
 #include <limits>
+#include <string_view>
 #include <thread>
 
 namespace
@@ -69,6 +71,8 @@ void TestCodec()
     dockSpace.reserveScreenSpace = true;
     dockSpace.lastMonitorUseHomeSize = false;
     dockSpace.mergedBarHeight = 64;
+    dockSpace.thicknessScale = 2.f;
+    dockSpace.mergedIconScale = 0.75f;
     Check(Unpack<DockSettings>(Pack(dockSpace)) == dockSpace,
         "system Dock space reservation must cross the settings-process boundary");
     for (const bool enabled : {true, false})
@@ -82,6 +86,17 @@ void TestCodec()
     Check(restoredRoute.IsValid() && restoredRoute.page == snowdesktop::SettingsPage::DesktopStyle,
         "desktop style navigation retains its appended page identity across IPC");
     GeneralSettings extensions;
+    for (const bool enabled : {false, true})
+    {
+        extensions.softwareDesktopHotkeyEnabled = enabled;
+        extensions.softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_SHIFT;
+        extensions.softwareDesktopHotkeyVirtualKey = 'Q';
+        const auto hotkey = Unpack<GeneralSettings>(Pack(extensions));
+        Check(hotkey.softwareDesktopHotkeyEnabled == enabled &&
+            hotkey.softwareDesktopHotkeyModifiers == (MOD_CONTROL | MOD_SHIFT) &&
+            hotkey.softwareDesktopHotkeyVirtualKey == 'Q',
+            "switch shortcut enablement and chosen chord cross the settings-process boundary");
+    }
     // Each option must independently reach the desktop host from settings.
     for (int flags = 0; flags < 4; ++flags)
     {
@@ -235,7 +250,9 @@ void TestCodec()
     settings.values.dock.followComponentAppearance = false;
     settings.values.dock.appearancePreset = kAppearancePresetGlassLight;
     settings.values.dock.customAppearance.widgetBgR = .2f;
-    settings.values.dock.floatingEdgeSwipeBlockFullscreen = false;
+    settings.values.dock.fullscreenPolicy = DockFullscreenPolicy::FullProtection;
+    settings.values.dock.fullscreenExceptions = {{L"C:\\Apps\\播放器\\Player.exe", DockFullscreenPolicy::Allow},
+        {L"D:\\Browser\\browser.exe", DockFullscreenPolicy::BlockGestures}};
     settings.values.dock.edgeRevealGesture = 1;
     settings.values.dock.showWindowPreviews = false;
     settings.values.dock.hoverEffect = 1;
@@ -269,14 +286,18 @@ void TestCodec()
     settings.values.personalization.panelGradient.stops.insert(
         settings.values.personalization.panelGradient.stops.begin() + 1, {.37, 0xaabbcc, .1});
     settings.values.general.font = {"user-package", "中文 Family"};
+    settings.values.general.tooltipFontSize = 22;
     settings.values.desktop.itemFontWeight = 600;
+    settings.values.desktop.fanTitleFontSizeCu = 20.5f;
     settings.values.desktop.desktopTitleLines = 1;
     settings.values.desktop.largeFolderTitleLines = 2;
     settings.values.desktop.scrollingTitleLines = 1;
     settings.values.desktop.titleEllipsis = false;
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
     Check(restored.values.general.font == settings.values.general.font &&
+        restored.values.general.tooltipFontSize == 22 &&
         restored.values.desktop.itemFontWeight == 600.f &&
+        restored.values.desktop.fanTitleFontSizeCu == 20.5f &&
         restored.values.desktop.desktopTitleLines == 1 &&
         restored.values.desktop.largeFolderTitleLines == 2 &&
         restored.values.desktop.scrollingTitleLines == 1 && !restored.values.desktop.titleEllipsis,
@@ -298,8 +319,15 @@ void TestCodec()
     }
     Check(restored.values.dock.edgeRevealGesture == 1 && !restored.values.dock.showWindowPreviews,
         "hover reveal and disabled task thumbnails survive settings IPC");
-    Check(!restored.values.dock.floatingEdgeSwipeBlockFullscreen,
-        "an explicit fullscreen gesture opt-out survives IPC despite the enabled default");
+    Check(restored.values.dock.fullscreenPolicy == settings.values.dock.fullscreenPolicy &&
+        restored.values.dock.fullscreenExceptions == settings.values.dock.fullscreenExceptions,
+        "fullscreen policies and Unicode executable exceptions survive IPC");
+    snowdesktop::SettingsActionResult runningApplications;
+    runningApplications.dockApplications = {{L"播放器", L"C:\\Apps\\播放器\\Player.exe"},
+        {L"Browser", L"D:\\Browser\\browser.exe"}};
+    const auto runningCopy = Unpack<snowdesktop::SettingsActionResult>(Pack(runningApplications));
+    Check(runningCopy.dockApplications == runningApplications.dockApplications,
+        "existing Dock running-zone names and executable paths reach the exception selector through private IPC");
     Check(restored.values.dock.suppressSystemTaskbar && !restored.values.dock.showWindowsButton,
         "suppression crosses private settings IPC without replacing the base Windows button preference");
     for (const int theme : {-1, 0, 1})
@@ -491,6 +519,249 @@ void TestRetiredUpdateProtocol()
     CloseHandle(uiRead);
 }
 
+bool PumpUntil(const std::function<bool()>& done, DWORD timeout = 3000)
+{
+    const auto deadline = GetTickCount64() + timeout;
+    while (!done() && GetTickCount64() < deadline)
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            DispatchMessageW(&message);
+        if (!done()) MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+    }
+    return done();
+}
+
+struct DesktopMessageProbe
+{
+    std::function<void()> apply;
+    HWND window = nullptr;
+    explicit DesktopMessageProbe(std::function<void()> callback) : apply(std::move(callback))
+    {
+        WNDCLASSW type{};
+        type.hInstance = GetModuleHandleW(nullptr);
+        type.lpszClassName = L"SnowDesktop.Test.SettingsDesktopProbe";
+        type.lpfnWndProc = [](HWND hwnd, UINT message, WPARAM wp, LPARAM lp) -> LRESULT {
+            if (message == WM_NCCREATE)
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA,
+                    reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+            if (message == WM_APP + 1)
+            {
+                reinterpret_cast<DesktopMessageProbe*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA))->apply();
+                return 0;
+            }
+            return DefWindowProcW(hwnd, message, wp, lp);
+        };
+        RegisterClassW(&type);
+        window = CreateWindowExW(0, type.lpszClassName, L"", 0, 0, 0, 0, 0,
+            HWND_MESSAGE, nullptr, type.hInstance, this);
+        if (!window) throw std::runtime_error("cannot create desktop message probe");
+    }
+    ~DesktopMessageProbe() { DestroyWindow(window); }
+    void Post() { PostMessageW(window, WM_APP + 1, 0, 0); }
+};
+
+struct AsyncPeer
+{
+    Channel parent;
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::thread worker;
+    AsyncPeer()
+    {
+        if (!release) throw std::runtime_error("cannot create settings peer gate");
+        HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
+        if (!CreatePipe(&mainRead, &uiWrite, nullptr, 0) || !CreatePipe(&uiRead, &mainWrite, nullptr, 0))
+            throw std::runtime_error("cannot create settings peer pipes");
+        parent.Open(mainRead, mainWrite, CurrentProcessHandle());
+        auto ready = std::make_shared<std::promise<bool>>();
+        auto started = ready->get_future();
+        worker = std::thread([this, uiRead, uiWrite, ready] {
+            try
+            {
+                Channel child;
+                child.Open(uiRead, uiWrite, CurrentProcessHandle());
+                child.SetDisconnected([] { PostQuitMessage(0); });
+                child.Bind<int>("ui.initialize", [this, &child] {
+                    if (WaitForSingleObject(release, 3000) != WAIT_OBJECT_0)
+                        throw ProtocolError("desktop did not release settings initialization");
+                    return child.Call<int>("host.state");
+                });
+                child.Bind<int>("ui.open", [&child] { return child.Call<int>("host.query"); });
+                child.Bind<int>("ui.error", []() -> int { throw ProtocolError("startup rejected"); });
+                child.Bind<void>("ui.exit", [] { PostQuitMessage(0); });
+                ready->set_value(true);
+                MSG message{};
+                while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+            }
+            catch (...) { try { ready->set_value(false); } catch (...) {} }
+        });
+        if (!started.get())
+        {
+            worker.join();
+            CloseHandle(release);
+            throw std::runtime_error("settings peer startup failed");
+        }
+    }
+    ~AsyncPeer()
+    {
+        SetEvent(release);
+        parent.Close();
+        PostThreadMessageW(GetThreadId(worker.native_handle()), WM_QUIT, 0, 0);
+        worker.join();
+        CloseHandle(release);
+    }
+};
+
+void TestAsyncOpening()
+{
+    // Negative control for the reported production failure: even a separate
+    // settings process starves an unrelated desktop window during Request.
+    {
+        AsyncPeer peer;
+        bool desktopDispatched = false;
+        DesktopMessageProbe desktop([&] { desktopDispatched = true; SetEvent(peer.release); });
+        peer.parent.Bind<int>("host.state", [] { return 41; });
+        desktop.Post();
+        Reject([&] { (void)peer.parent.Request("ui.initialize", {}, 100); },
+            "synchronous startup stalls until its deadline while desktop work is queued");
+        Check(!desktopDispatched, "the old synchronous wait leaves desktop input/render messages undispatched");
+        PumpUntil([&] { return desktopDispatched; });
+    }
+    {
+        AsyncPeer peer;
+        bool desktopDispatched = false, initialized = false, opened = false;
+        bool failed = false;
+        const auto owner = GetCurrentThreadId();
+        Channel::Completion queryReply;
+        DesktopMessageProbe desktop([&] { desktopDispatched = true; SetEvent(peer.release); });
+        peer.parent.Bind<int>("host.state", [] { return 41; });
+        peer.parent.BindDeferredRaw("host.query", [&](auto arguments, auto reply) {
+            Reader(arguments).Finish();
+            queryReply = std::move(reply);
+        });
+        desktop.Post();
+        peer.parent.RequestAsync("ui.initialize", {}, [&](Bytes reply, std::exception_ptr error) {
+            initialized = true;
+            failed = error != nullptr;
+            Check(GetCurrentThreadId() == owner && !error && Unpack<int>(reply) == 41,
+                "delayed initialization and nested host requests complete on the desktop owner STA");
+            if (error) return;
+            peer.parent.RequestAsync("ui.open", {}, [&](Bytes result, std::exception_ptr failure) {
+                opened = true;
+                failed = failure != nullptr;
+                Check(!failure && Unpack<int>(result) == 42,
+                    "navigation waits for a deferred system-state reply without blocking the desktop");
+            });
+        });
+        Check(!initialized && !desktopDispatched,
+            "queuing startup returns before either the child or desktop messages execute");
+        Check(PumpUntil([&] { return static_cast<bool>(queryReply); }) && desktopDispatched && initialized && !opened,
+            "desktop messages run during delayed initialization and deferred navigation");
+        if (queryReply)
+        {
+            // The responder is also usable by a real background worker.
+            std::thread systemQuery([reply = std::move(queryReply)] { reply(Pack(42), {}); });
+            systemQuery.join();
+        }
+        Check(PumpUntil([&] { return opened; }) && !failed, "deferred system query resumes the pending open once");
+        int errors = 0;
+        peer.parent.RequestAsync("ui.error", {}, [&](Bytes, std::exception_ptr error) {
+            Check(error != nullptr, "child startup rejection reaches the asynchronous caller");
+            ++errors;
+        });
+        Check(PumpUntil([&] { return errors == 1; }), "remote startup failure completes without a synchronous wait");
+        Channel::Completion staleReply;
+        peer.parent.BindDeferredRaw("host.query", [&](auto, auto reply) { staleReply = std::move(reply); });
+        int cancelled = 0;
+        peer.parent.RequestAsync("ui.open", {}, [&](Bytes, std::exception_ptr) { ++cancelled; });
+        Check(PumpUntil([&] { return static_cast<bool>(staleReply); }), "a deferred query is active before connection cancellation");
+        peer.parent.Close();
+        if (staleReply) staleReply(Pack(99), {});
+        bool staleDrained = false;
+        peer.parent.Post([&] { staleDrained = true; });
+        Check(PumpUntil([&] { return staleDrained; }) && cancelled == 0,
+            "a late background reply cannot acknowledge an explicitly cancelled open");
+    }
+    {
+        AsyncPeer peer;
+        int disconnected = 0;
+        peer.parent.RequestAsync("ui.exit", {}, [&](Bytes, std::exception_ptr) { ++disconnected; });
+        Check(PumpUntil([&] { return disconnected == 1; }), "peer exit retires each pending open exactly once");
+    }
+    Channel::Completion orphanedReply;
+    {
+        AsyncPeer peer;
+        peer.parent.BindDeferredRaw("host.query", [&](auto, auto reply) { orphanedReply = std::move(reply); });
+        peer.parent.RequestAsync("ui.open", {}, [](Bytes, std::exception_ptr) {});
+        Check(PumpUntil([&] { return static_cast<bool>(orphanedReply); }),
+            "a pending system query retains a safe responder before endpoint destruction");
+    }
+    if (orphanedReply) orphanedReply(Pack(42), {});
+    for (const bool explicitClose : {false, true})
+    {
+        AsyncPeer peer;
+        int completed = 0;
+        peer.parent.RequestAsync("ui.initialize", {}, [&](Bytes, std::exception_ptr error) {
+            Check(error != nullptr, "stalled asynchronous startup reports a timeout");
+            ++completed;
+        }, 100);
+        if (explicitClose)
+        {
+            peer.parent.Close();
+            // Includes stale dispatch messages already queued before Close.
+            bool drained = false;
+            peer.parent.Post([&] { drained = true; });
+            Check(PumpUntil([&] { return drained; }) && completed == 0,
+                "explicit shutdown cancels open delivery instead of calling a destroyed facade");
+        }
+        else
+        {
+            Check(PumpUntil([&] { return completed == 1; }) && !peer.parent.Connected(),
+                "startup timeout disconnects the session while the desktop message loop keeps running");
+        }
+    }
+}
+
+void TestOverlappingSettingsRefresh()
+{
+    // Real child nested RPCs reproduce activation refresh A, then navigation
+    // refresh B while A waits. Dropping A's responder used to strand the outer
+    // wait, eventually closing an otherwise successfully opened settings UI.
+    AsyncPeer peer;
+    auto refresh = std::make_shared<snowdesktop::SettingsExternalStateRefresh>();
+    int requests = 0, queries = 0, replies = 0;
+    bool desktopDispatched = false;
+    DesktopMessageProbe desktop([&] { desktopDispatched = true; });
+    peer.parent.BindDeferredRaw("host.query", [&](auto, auto reply) {
+        ++requests;
+        if (refresh->Request([reply = std::move(reply)] { reply(Pack(42), {}); })) ++queries;
+    });
+    const auto completed = [&](Bytes reply, std::exception_ptr error) {
+        ++replies;
+        Check(!error && Unpack<int>(reply) == 42, "each overlapping settings request receives the authoritative query result");
+    };
+    peer.parent.RequestAsync("ui.open", {}, completed, 1000);
+    peer.parent.RequestAsync("ui.open", {}, completed, 1000);
+    desktop.Post();
+    Check(PumpUntil([&] { return requests == 2; }) && queries == 1 && replies == 0 && desktopDispatched,
+        "activation and navigation share one query while the desktop continues dispatching messages");
+    refresh->Complete();
+    Check(PumpUntil([&] { return replies == 2; }) && peer.parent.Connected(),
+        "both nested refresh waits finish without a lost acknowledgement or retired connection");
+    peer.parent.RequestAsync("ui.open", {}, completed, 1000);
+    Check(PumpUntil([&] { return requests == 3; }) && queries == 2,
+        "a later settings session queries Windows again instead of reusing a completed query");
+    refresh->Complete();
+    Check(PumpUntil([&] { return replies == 3; }), "the later refresh also completes exactly once");
+
+    int afterDestruction = 0;
+    {
+        snowdesktop::SettingsExternalStateRefresh abandoned;
+        abandoned.Request([&] { ++afterDestruction; });
+    }
+    Check(afterDestruction == 0, "destroying settings infrastructure cancels unfulfilled query acknowledgements");
+}
+
 void TestStalledPeer()
 {
     HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
@@ -546,14 +817,38 @@ void TestProcessLifecycle()
 }
 }
 
+void TestMenuHelperStartupFeedback()
+{
+    using namespace snowdesktop::settings_ipc;
+    for (const auto command : {L"--settings-ui", L"--shell-menu-helper"})
+    {
+        Channel channel;
+        SettingsProcess process;
+        process.Start(channel, command);
+        const auto flags = channel.Call<DWORD>("test.startup-flags");
+        const bool menuHelper = std::wstring_view(command) == L"--shell-menu-helper";
+        Check(((flags & STARTF_FORCEOFFFEEDBACK) != 0) == menuHelper,
+            "the real launcher suppresses startup cursor feedback only for background menu helpers");
+        channel.Close();
+        process.Stop();
+    }
+}
+
 int RunSettingsIpcChildIfRequested()
 {
     using namespace snowdesktop::settings_ipc;
-    if (!IsSettingsProcessCommand()) return -1;
+    const bool menuHelper = IsSettingsProcessCommand(L"--shell-menu-helper");
+    if (!menuHelper && !IsSettingsProcessCommand()) return -1;
     try
     {
         Channel channel;
-        OpenInheritedSettingsChannel(channel);
+        OpenInheritedSettingsChannel(channel, menuHelper ? L"--shell-menu-helper" : L"--settings-ui");
+        channel.Bind<DWORD>("test.startup-flags", [] {
+            STARTUPINFOW startup{};
+            startup.cb = sizeof(startup);
+            GetStartupInfoW(&startup);
+            return startup.dwFlags;
+        });
         channel.Bind<bool, std::string>("test.identity", [](const std::string& identity) {
             return identity == ExecutableIdentity();
         });
@@ -685,8 +980,11 @@ int RunSettingsIpcTests()
     TestCodec();
     TestLargeIconEditing();
     TestChannel();
+    TestAsyncOpening();
+    TestOverlappingSettingsRefresh();
     TestRetiredUpdateProtocol();
     TestStalledPeer();
     TestProcessLifecycle();
+    TestMenuHelperStartupFeedback();
     return failures;
 }

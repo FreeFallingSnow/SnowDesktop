@@ -132,6 +132,7 @@ void DesktopApp::ProcessLargeIconAssets()
         }
     }
     if (persist) SaveLayoutSlots();
+    SynchronizeLargeIconAssets();
     InvalidateDragStaticScene();
     if (hwnd_ && IsWindow(hwnd_)) InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -215,6 +216,7 @@ bool DesktopApp::SetLargeIconConfigs(const std::vector<std::pair<size_t, std::op
             largeIconRuntime_.erase(runtime);
         }
     }
+    SynchronizeLargeIconAssets();
     InvalidateRect(hwnd_, nullptr, FALSE);
     return true;
 }

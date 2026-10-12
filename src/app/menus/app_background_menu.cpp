@@ -1,6 +1,9 @@
 #include "app/app.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/modern_menu.h"
+#include "sort_menu.h"
+#include "ui/render/font_weight_rules.h"
+#include "shell/shell_new_menu.h"
 #include "navigation/search_match.h"
 #include "widget/preview/widget_preview_stage.h"
 #include "widget/runtime/widget_menu_catalogue.h"
@@ -14,6 +17,34 @@ namespace
 {
 
 using snowdesktop::menu_icon::BuiltinIcon;
+
+constexpr int kFontSizePresets[] = {10, 12, 14, 16, 18, 20, 22, 24};
+constexpr int kFontWeightPercentPresets[] = {25, 50, 75, 100, 125, 150, 175};
+
+template<size_t N>
+std::optional<int> FontPresetForCommand(UINT command, UINT first,
+    const int (&presets)[N])
+{
+    for (const int value : presets)
+        if (command == first + static_cast<UINT>(value)) return value;
+    return std::nullopt;
+}
+
+std::wstring FontMenuValue(double value, const wchar_t* unit)
+{
+    wchar_t text[32]{};
+    if (std::abs(value - std::round(value)) < 0.0001)
+        swprintf_s(text, L"%.0f%ls", value, unit);
+    else
+        swprintf_s(text, L"%.1f%ls", value, unit);
+    return text;
+}
+
+std::wstring FontWeightMenuLabel(int weight)
+{
+    return std::wstring(_LW("app.settings.title_font_weight")) + L": " +
+        FontMenuValue(snowdesktop::font_weight_rules::ToPercent(weight), L"%");
+}
 
 constexpr size_t kLuaWidgetMenuPageSize = 8;
 
@@ -1411,32 +1442,32 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         HasPasteableFileClipboardData()
             ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPasteCommand, _LW("app.menu.paste"));
-    AppendMenuW(menu, MF_STRING, kContextNewMenu, _LW("app.menu.new"));
     AppendMenuW(menu, MF_STRING, kContextRefreshCommand, _LW("app.menu.refresh"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, kContextMoreCommand, _LW("app.menu.more_options"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 
-    HMENU sortMenu = CreatePopupMenu();
-    HMENU nameSortMenu = nullptr, typeSortMenu = nullptr;
-    if (sortMenu)
+    // A stable host ID lets lazy preparation replace only this cascade's
+    // children. Keep the original Shell handler alive through invocation.
+    const std::wstring newItemDirectory = snowdesktop::desktop_source::Directory();
+    std::unique_ptr<snowdesktop::ShellNewMenu> shellNewMenu;
+    bool newMenuPrepared = false;
+    HMENU newMenuPlaceholder = CreatePopupMenu();
+    if (newMenuPlaceholder)
     {
-        nameSortMenu = CreatePopupMenu();
-        if (nameSortMenu)
-        {
-            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameCommand,     _LW("app.menu.sort_asc"));
-            AppendMenuW(nameSortMenu, MF_STRING, kContextSortByNameDescCommand,     _LW("app.menu.sort_desc"));
-            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(nameSortMenu), _LW("app.menu.sort_name"));
-        }
-        typeSortMenu = CreatePopupMenu();
-        if (typeSortMenu)
-        {
-            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeCommand, _LW("app.menu.sort_asc"));
-            AppendMenuW(typeSortMenu, MF_STRING, kContextSortByTypeDescCommand, _LW("app.menu.sort_desc"));
-            AppendMenuW(sortMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(typeSortMenu), _LW("app.menu.sort_type"));
-        }
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
+        AppendMenuW(newMenuPlaceholder, MF_STRING | MF_GRAYED, 0, _LW("settings.contextMenu.loading"));
+        AppendMenuW(menu, MF_POPUP | (newItemDirectory.empty() ? MF_GRAYED : 0),
+            reinterpret_cast<UINT_PTR>(newMenuPlaceholder), _LW("app.menu.new"));
+        MENUITEMINFOW newMenuId{sizeof(newMenuId)};
+        newMenuId.fMask = MIIM_ID;
+        newMenuId.wID = kContextNewMenu;
+        SetMenuItemInfoW(menu, GetMenuItemCount(menu) - 1, TRUE, &newMenuId);
     }
+
+    HMENU sortMenu = snowdesktop::sort_menu::Create(
+        [](const char* key) { return _LW(key); });
+    if (sortMenu)
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
 
     POINT clientPoint = screenPoint;
     ScreenToClient(hwnd_, &clientPoint);
@@ -1499,17 +1530,16 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         fontSizeMenu = CreatePopupMenu();
         if (fontSizeMenu)
         {
-            const int currentFontSize = static_cast<int>(std::round(itemFontSizeCu_));
-            auto addFontSizeItem = [&](UINT id, const wchar_t* label, int size) {
-                UINT flags = MF_STRING;
-                if (currentFontSize == size) flags |= MF_CHECKED;
-                AppendMenuW(fontSizeMenu, flags, id, label);
-            };
-            addFontSizeItem(kContextFontSizeSmall, _LW("app.menu.font_small"), 12);
-            addFontSizeItem(kContextFontSizeMedium, _LW("app.menu.font_medium"), 18);
-            addFontSizeItem(kContextFontSizeLarge, _LW("app.menu.font_large"), 24);
+            for (const int size : kFontSizePresets)
+            {
+                const auto label = FontMenuValue(size, L" cu");
+                const UINT flags = MF_STRING |
+                    (itemFontSizeCu_ == static_cast<float>(size) ? MF_CHECKED : 0);
+                AppendMenuW(fontSizeMenu, flags,
+                    kContextFontSizePresetFirst + static_cast<UINT>(size), label.c_str());
+            }
             const std::wstring fontSizeLabel = _LFW("app.menu.title_font_size_cu",
-                std::to_wstring(currentFontSize));
+                FontMenuValue(itemFontSizeCu_, L""));
             AppendMenuW(displaySettingsMenu, MF_POPUP,
                 reinterpret_cast<UINT_PTR>(fontSizeMenu), fontSizeLabel.c_str());
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontSizeMenu), L"");
@@ -1518,22 +1548,17 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         listFontSizeMenu = CreatePopupMenu();
         if (listFontSizeMenu)
         {
-            const int currentFontSize = static_cast<int>(
-                std::round(listItemFontSizeCu_));
-            auto addFontSizeItem = [&](UINT id, const wchar_t* label, int size) {
-                UINT flags = MF_STRING;
-                if (currentFontSize == size) flags |= MF_CHECKED;
-                AppendMenuW(listFontSizeMenu, flags, id, label);
-            };
-            addFontSizeItem(kContextListFontSizeSmall,
-                _LW("app.menu.font_small"), 12);
-            addFontSizeItem(kContextListFontSizeMedium,
-                _LW("app.menu.font_medium"), 18);
-            addFontSizeItem(kContextListFontSizeLarge,
-                _LW("app.menu.font_large"), 24);
+            for (const int size : kFontSizePresets)
+            {
+                const auto label = FontMenuValue(size, L" cu");
+                const UINT flags = MF_STRING |
+                    (listItemFontSizeCu_ == static_cast<float>(size) ? MF_CHECKED : 0);
+                AppendMenuW(listFontSizeMenu, flags,
+                    kContextListFontSizePresetFirst + static_cast<UINT>(size), label.c_str());
+            }
             const std::wstring fontSizeLabel = _LFW(
                 "app.menu.list_font_size_cu",
-                std::to_wstring(currentFontSize));
+                FontMenuValue(listItemFontSizeCu_, L""));
             AppendMenuW(displaySettingsMenu, MF_POPUP,
                 reinterpret_cast<UINT_PTR>(listFontSizeMenu),
                 fontSizeLabel.c_str());
@@ -1544,21 +1569,18 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         fontWeightMenu = CreatePopupMenu();
         if (fontWeightMenu)
         {
-            auto addWeightItem = [&](UINT id, const wchar_t* label, DWRITE_FONT_WEIGHT weight) {
-                UINT flags = MF_STRING;
-                if (itemFontWeight_ == weight) flags |= MF_CHECKED;
-                AppendMenuW(fontWeightMenu, flags, id, label);
-            };
-            addWeightItem(kContextFontWeightBold, _LW("app.menu.font_weight_bold_label"), DWRITE_FONT_WEIGHT_BOLD);
-            addWeightItem(kContextFontWeightMedium, _LW("app.menu.font_weight_medium_label"), DWRITE_FONT_WEIGHT_SEMI_BOLD);
-            addWeightItem(kContextFontWeightFine, _LW("app.menu.font_weight_light_label"), DWRITE_FONT_WEIGHT_NORMAL);
-            const wchar_t* weightLabel = _LW("app.menu.font_weight_medium");
-            if (itemFontWeight_ == DWRITE_FONT_WEIGHT_BOLD)
-                weightLabel = _LW("app.menu.font_weight_bold");
-            else if (itemFontWeight_ == DWRITE_FONT_WEIGHT_NORMAL)
-                weightLabel = _LW("app.menu.font_weight_light");
+            for (const int percent : kFontWeightPercentPresets)
+            {
+                const auto label = FontMenuValue(percent, L"%");
+                const UINT flags = MF_STRING |
+                    (itemFontWeight_ == snowdesktop::font_weight_rules::FromPercent(percent)
+                        ? MF_CHECKED : 0);
+                AppendMenuW(fontWeightMenu, flags,
+                    kContextFontWeightPresetFirst + static_cast<UINT>(percent), label.c_str());
+            }
+            const auto weightLabel = FontWeightMenuLabel(itemFontWeight_);
             AppendMenuW(displaySettingsMenu, MF_POPUP,
-                reinterpret_cast<UINT_PTR>(fontWeightMenu), weightLabel);
+                reinterpret_cast<UINT_PTR>(fontWeightMenu), weightLabel.c_str());
             SetMenuItemIcon(displaySettingsMenu, reinterpret_cast<UINT_PTR>(fontWeightMenu), L"");
         }
 
@@ -1756,7 +1778,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     SetMenuItemIcon(menu, kContextPasteCommand, L"",
         MenuIconFont::BuiltinFluentFromLegacy, BuiltinIcon::Paste);
     SetMenuItemQuickAction(menu, kContextPasteCommand);
-    SetMenuItemQuickAction(menu, kContextNewMenu);
     SetMenuItemQuickAction(menu, kContextRefreshCommand);
     SetMenuItemIcon(menu, kContextMoreCommand,
         snowdesktop::menu_fluent_glyphs::kMoreOptions,
@@ -1766,32 +1787,10 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(sortMenu),
             snowdesktop::menu_fluent_glyphs::kSort,
             MenuIconFont::FluentRegular, BuiltinIcon::Sort);
-        if (nameSortMenu)
-        {
-            SetMenuItemIcon(sortMenu,
-                reinterpret_cast<UINT_PTR>(nameSortMenu),
-                snowdesktop::menu_fluent_glyphs::kSortName,
-                MenuIconFont::FluentRegular);
-            SetMenuItemIcon(nameSortMenu, kContextSortByNameCommand,
-                snowdesktop::menu_fluent_glyphs::kSortNameAscending,
-                MenuIconFont::FluentRegular);
-            SetMenuItemIcon(nameSortMenu, kContextSortByNameDescCommand,
-                snowdesktop::menu_fluent_glyphs::kSortNameDescending,
-                MenuIconFont::FluentRegular);
-        }
-        if (typeSortMenu)
-        {
-            SetMenuItemIcon(sortMenu,
-                reinterpret_cast<UINT_PTR>(typeSortMenu),
-                snowdesktop::menu_fluent_glyphs::kSortType,
-                MenuIconFont::FluentRegular);
-            SetMenuItemIcon(typeSortMenu, kContextSortByTypeCommand,
-                snowdesktop::menu_fluent_glyphs::kSortTypeAscending,
-                MenuIconFont::FluentRegular);
-            SetMenuItemIcon(typeSortMenu, kContextSortByTypeDescCommand,
-                snowdesktop::menu_fluent_glyphs::kSortTypeDescending,
-                MenuIconFont::FluentRegular);
-        }
+        snowdesktop::sort_menu::SetIcons(sortMenu,
+            [this](HMENU target, UINT commandId, const wchar_t* glyph) {
+                SetMenuItemIcon(target, commandId, glyph, MenuIconFont::FluentRegular);
+            });
     }
     if (widgetMenu)
     {
@@ -1962,29 +1961,34 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         if (hover.command != 0)
             previewAnchor = hover;
     };
+    const auto applyFontPreset = [&](UINT command) {
+        if (const auto size = FontPresetForCommand(command,
+                kContextFontSizePresetFirst, kFontSizePresets))
+            SetItemFontSize(static_cast<float>(*size));
+        else if (const auto listSize = FontPresetForCommand(command,
+                kContextListFontSizePresetFirst, kFontSizePresets))
+            SetListItemFontSize(static_cast<float>(*listSize));
+        else if (const auto percent = FontPresetForCommand(command,
+                kContextFontWeightPresetFirst, kFontWeightPercentPresets))
+            SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
+                snowdesktop::font_weight_rules::FromPercent(*percent)));
+        else
+            return false;
+        return true;
+    };
     const auto changeDisplaySetting = [&](UINT command, auto& rootItems) {
         bool handled = ApplyGridMenuAdjustment(command);
+        if (applyFontPreset(command)) handled = true;
         if (command >= kContextSpacingPresetFirst && command <= kContextSpacingPresetFirst + 200)
         { SetIconSpacing(static_cast<float>(command - kContextSpacingPresetFirst) / 100.f); handled = true; }
         else switch (command)
         {
         case kContextSpacingIncrease: AdjustIconSpacing(.1f); handled = true; break;
         case kContextSpacingDecrease: AdjustIconSpacing(-.1f); handled = true; break;
-        case kContextFontSizeSmall: SetItemFontSize(12.f); handled = true; break;
-        case kContextFontSizeMedium: SetItemFontSize(18.f); handled = true; break;
-        case kContextFontSizeLarge: SetItemFontSize(24.f); handled = true; break;
-        case kContextListFontSizeSmall: SetListItemFontSize(12.f); handled = true; break;
-        case kContextListFontSizeMedium: SetListItemFontSize(18.f); handled = true; break;
-        case kContextListFontSizeLarge: SetListItemFontSize(24.f); handled = true; break;
-        case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); handled = true; break;
-        case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); handled = true; break;
-        case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); handled = true; break;
         default: break;
         }
         if (!handled) return changeLuaWidgetPage(command, rootItems);
         const int spacing = static_cast<int>(std::round(iconSpacingScale_ * 100.f));
-        const int fontSize = static_cast<int>(std::round(itemFontSizeCu_));
-        const int listFontSize = static_cast<int>(std::round(listItemFontSizeCu_));
         POINT point = lastContextMenuScreenPoint_; ScreenToClient(hwnd_, &point);
         const auto* currentPage = GridPageFromPoint(point);
         snowdesktop::modern_menu::VisitItems(rootItems, [&](auto& item) {
@@ -1994,15 +1998,16 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
                 snowdesktop::modern_menu::UpdateItemStates(item.children, BuildGridAdjustmentMenuItems());
             }
             if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(spacingMenu))) item.label = _LFW("app.menu.layout_spacing_pct", std::to_wstring(spacing));
-            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(fontSizeMenu))) item.label = _LFW("app.menu.title_font_size_cu", std::to_wstring(fontSize));
-            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(listFontSizeMenu))) item.label = _LFW("app.menu.list_font_size_cu", std::to_wstring(listFontSize));
-            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(fontWeightMenu))) item.label = _LW(itemFontWeight_ == DWRITE_FONT_WEIGHT_BOLD ? "app.menu.font_weight_bold" : itemFontWeight_ == DWRITE_FONT_WEIGHT_NORMAL ? "app.menu.font_weight_light" : "app.menu.font_weight_medium");
+            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(fontSizeMenu))) item.label = _LFW("app.menu.title_font_size_cu", FontMenuValue(itemFontSizeCu_, L""));
+            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(listFontSizeMenu))) item.label = _LFW("app.menu.list_font_size_cu", FontMenuValue(listItemFontSizeCu_, L""));
+            if (item.command == static_cast<UINT>(reinterpret_cast<UINT_PTR>(fontWeightMenu))) item.label = FontWeightMenuLabel(itemFontWeight_);
             if (item.command >= kContextSpacingPresetFirst && item.command <= kContextSpacingPresetFirst + 200) item.checked = static_cast<int>(item.command - kContextSpacingPresetFirst) == spacing;
-            if (item.command >= kContextFontSizeSmall && item.command <= kContextFontSizeLarge) item.checked = fontSize == 12 + 6 * static_cast<int>(item.command - kContextFontSizeSmall);
-            if (item.command >= kContextListFontSizeSmall && item.command <= kContextListFontSizeLarge) item.checked = listFontSize == 12 + 6 * static_cast<int>(item.command - kContextListFontSizeSmall);
-            if (item.command == kContextFontWeightBold) item.checked = itemFontWeight_ == DWRITE_FONT_WEIGHT_BOLD;
-            if (item.command == kContextFontWeightMedium) item.checked = itemFontWeight_ == DWRITE_FONT_WEIGHT_SEMI_BOLD;
-            if (item.command == kContextFontWeightFine) item.checked = itemFontWeight_ == DWRITE_FONT_WEIGHT_NORMAL;
+            if (const auto size = FontPresetForCommand(item.command, kContextFontSizePresetFirst, kFontSizePresets))
+                item.checked = itemFontSizeCu_ == static_cast<float>(*size);
+            if (const auto size = FontPresetForCommand(item.command, kContextListFontSizePresetFirst, kFontSizePresets))
+                item.checked = listItemFontSizeCu_ == static_cast<float>(*size);
+            if (const auto percent = FontPresetForCommand(item.command, kContextFontWeightPresetFirst, kFontWeightPercentPresets))
+                item.checked = itemFontWeight_ == snowdesktop::font_weight_rules::FromPercent(*percent);
         });
         return true;
     };
@@ -2014,6 +2019,29 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
     shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
     auto prepareWidgetSubmenu = [&](UINT submenuCommand,
         std::vector<snowdesktop::modern_menu::Item>& children) {
+        if (submenuCommand == kContextNewMenu)
+        {
+            if (newMenuPrepared) return;
+            newMenuPrepared = true;
+            shellNewMenu = std::make_unique<snowdesktop::ShellNewMenu>();
+            if (FAILED(shellNewMenu->Initialize(newItemDirectory)))
+            {
+                children = {snowdesktop::modern_menu::Item{}};
+                children.front().label = _LW("settings.contextMenu.failed");
+                children.front().enabled = false;
+            }
+            else if (shellNewMenu->CanDraw())
+                children = BuildShellNewMenuItems(shellNewMenu->Menu(), shellNewMenu->Context());
+            else
+            {
+                // Unsupported third-party drawing retains the native handoff.
+                children = {snowdesktop::modern_menu::Item{}};
+                children.front().command = kContextNewMenu;
+                children.front().label = _LW("app.menu.more_options");
+                children.front().glyph = snowdesktop::menu_fluent_glyphs::kMoreOptions;
+            }
+            return;
+        }
         if (!widgetMenu || luaWidgetCatalogueLoaded ||
             submenuCommand != static_cast<UINT>(
                 reinterpret_cast<UINT_PTR>(widgetMenu)))
@@ -2050,8 +2078,26 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         return;
     }
 
+    if (applyFontPreset(command))
+    {
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
+        return;
+    }
     bool needsDesktopFocus = true;
-    if (command >= kContextAddLuaWidgetFirst &&
+    if (shellNewMenu && shellNewMenu->Contains(command))
+    {
+        InvokeNewMenuCommand(shellNewMenu->Context(), command, newItemDirectory);
+        RequestShellRefresh();
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
+        return;
+    }
+    if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
+    {
+        SortIcons(sort->mode, sort->ascending);
+    }
+    else if (command >= kContextAddLuaWidgetFirst &&
         command < kContextAddLuaWidgetFirst +
             static_cast<UINT>(kLuaWidgetMenuPageSize))
     {
@@ -2081,10 +2127,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         switch (command)
         {
         case kContextRefreshCommand: ReloadItems(); break;
-        case kContextSortByNameCommand: SortIconsByName(true); break;
-        case kContextSortByNameDescCommand: SortIconsByName(false); break;
-        case kContextSortByTypeCommand: SortIconsByType(true); break;
-        case kContextSortByTypeDescCommand: SortIconsByType(false); break;
         case kContextSpacingIncrease: AdjustIconSpacing(+0.1f); break;
         case kContextSpacingDecrease: AdjustIconSpacing(-0.1f); break;
         case kContextPinFirstPage: ToggleFirstPagePin(screenPoint); break;
@@ -2118,15 +2160,6 @@ void DesktopApp::ShowBackgroundContextMenu(POINT screenPoint)
         case kContextSettingsCommand:
             needsDesktopFocus = false;
             ShowSettingsWindow(); break;
-        case kContextFontSizeSmall: SetItemFontSize(12.0f); break;
-        case kContextFontSizeMedium: SetItemFontSize(18.0f); break;
-        case kContextFontSizeLarge: SetItemFontSize(24.0f); break;
-        case kContextListFontSizeSmall: SetListItemFontSize(12.0f); break;
-        case kContextListFontSizeMedium: SetListItemFontSize(18.0f); break;
-        case kContextListFontSizeLarge: SetListItemFontSize(24.0f); break;
-        case kContextFontWeightBold: SetItemFontWeight(DWRITE_FONT_WEIGHT_BOLD); break;
-        case kContextFontWeightMedium: SetItemFontWeight(DWRITE_FONT_WEIGHT_SEMI_BOLD); break;
-        case kContextFontWeightFine: SetItemFontWeight(DWRITE_FONT_WEIGHT_NORMAL); break;
         case kContextDisplayAppearanceMore:
             needsDesktopFocus = false;
             ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(

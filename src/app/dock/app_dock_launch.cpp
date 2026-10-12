@@ -2,6 +2,7 @@
 #include "app/shell/shell_icon_request.h"
 #include "dock_platform_helpers.h"
 #include "dock_running_app_pin_rules.h"
+#include "diagnostics/diagnostic_log.h"
 #include "settings/animation_settings.h"
 #include "shell/shell_launch_execution.h"
 
@@ -108,11 +109,12 @@ void DesktopApp::OnDockLaunchBounceTimer()
         !snowdesktop::animation::RuntimeAnimationsEnabled())
     {
         dockLaunchBounces_.clear();
-        UpdateFloatingDockWindowBounds(false);
+        for (const auto& container : containers_)
+            if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+                RequestDockAnimationPresentation(*dock);
         return;
     }
 
-    const size_t previousBounceCount = dockLaunchBounces_.size();
     for (auto bounce = dockLaunchBounces_.begin();
         bounce != dockLaunchBounces_.end();)
     {
@@ -176,8 +178,9 @@ void DesktopApp::OnDockLaunchBounceTimer()
 
     // Retire the visual envelope even when the last item disappeared. The
     // item-based invalidation below has no remaining item in that case.
-    if (dockLaunchBounces_.size() != previousBounceCount)
-        UpdateFloatingDockWindowBounds(false);
+    for (const auto& container : containers_)
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+            RequestDockAnimationPresentation(*dock);
     InvalidateDockLaunchBounceRects();
 }
 
@@ -276,8 +279,9 @@ bool DesktopApp::LaunchDesktopItem(
     return true;
 }
 
-DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
+DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex, bool* pending)
 {
+    if (pending) *pending = false;
     if (itemIndex >= items_.size()) return {};
     const DesktopItem& item = items_[itemIndex];
     const std::wstring key = DockItemWindowKey(item);
@@ -288,16 +292,22 @@ DockAppIdentity DesktopApp::ResolveDockAppIdentity(size_t itemIndex)
     const auto cacheKey = snowdesktop::dock_refresh_cache::SourceKey(key, path);
     const auto stamp = snowdesktop::shell_icon_request::Stamp(item);
     const auto cached = dockAppIdentityCache_.Read(cacheKey, stamp);
+    if (pending) *pending = !cached.fresh && !cached.sameSourceVersion;
     if (cached.fresh) return cached.value.value_or(DockAppIdentity{});
 
-    shellVisualWork_.Submit(L"dock-identity:" + cacheKey + L"\n" + std::to_wstring(cached.ticket),
+    const ULONGLONG queuedAt = GetTickCount64();
+    dockIdentityWork_.Submit(L"dock-identity:" + cacheKey + L"\n" + std::to_wstring(cached.ticket),
         [path] { return ReadDockAppIdentity(path); },
-        [this, key, cacheKey, path, stamp, ticket = cached.ticket](DockAppIdentity identity) {
+        [this, key, cacheKey, path, stamp, queuedAt, ticket = cached.ticket](DockAppIdentity identity) {
             const auto current = std::find_if(items_.begin(), items_.end(), [&](const auto& item) {
                 return DockItemWindowKey(item) == key && item.parsingName == path;
             });
             if (current == items_.end() || snowdesktop::shell_icon_request::Stamp(*current) != stamp) return;
             if (!dockAppIdentityCache_.Publish(cacheKey, ticket, std::move(identity))) return;
+            wchar_t diagnostic[512]{};
+            swprintf_s(diagnostic, L"Dock identity ready: item=%ls elapsed=%llu ms",
+                PathFindFileNameW(path.c_str()), GetTickCount64() - queuedAt);
+            WriteDiagnosticLogEntry(diagnostic, DiagnosticLogLevel::Debug);
             dockRunningWindowsRefreshTick_ = 0;
         }, hwnd_, kBackgroundShellReadyMessage);
     return cached.value.value_or(DockAppIdentity{});
@@ -375,10 +385,16 @@ DockAppIdentity DesktopApp::ReadDockAppIdentity(const std::wstring& path)
                         targetParsingPath.find(L'\\') == std::wstring::npos &&
                         targetParsingPath.find(L'/') == std::wstring::npos &&
                         targetParsingPath.find(L':') == std::wstring::npos;
-                    if (!target[0] && looksLikeAppUserModelId)
+                    if (looksLikeAppUserModelId && (!target[0] ||
+                        snowdesktop::dock_app_identity_rules::IsPackagedAppId(targetParsingPath)))
                     {
                         identity.kind = DockAppIdentityKind::Applications;
                         identity.appUserModelId = ToUpperInvariant(targetParsingPath);
+                        // A packaged link already names the exact application.
+                        // Querying its AppsFolder argument/executable providers
+                        // before publishing adds no matching information.
+                        if (snowdesktop::dock_app_identity_rules::IsPackagedAppId(identity.appUserModelId))
+                            return identity;
                     }
                 }
 

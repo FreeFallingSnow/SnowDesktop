@@ -3,7 +3,6 @@
 #include "theme/theme_library_settings.h"
 #include "steam/steam_workshop_cache.h"
 #include "steam/steam_app_identity.h"
-#include "dock/dock_snapshot_warmup_rules.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "drag_drop/drag_input_rules.h"
@@ -461,14 +460,14 @@ void DesktopApp::OnTimer(WPARAM timerId)
             return;
         }
         if (dragDropController_.IsTransportActive() ||
-            (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) & 0x8000) == 0)
+            (GetAsyncKeyState(PointerGestureVirtualKey()) & 0x8000) == 0)
             return;
 
         POINT recoveredPoint{};
         if (TryGetNativeDragHoverPointFromCursor(
                 recoveredPoint))
         {
-            if (GetDockWidgetPairSourceIndex() < widgets_.size())
+            if (GetWidgetPairDragSource().widgetIndex < widgets_.size())
                 RefreshDragHintFromKeyboard();
             UpdateCollectionPopupDwell(recoveredPoint);
             UpdateCollectionGroupTabDwell(recoveredPoint);
@@ -494,7 +493,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 dragSession_.HasContext(),
                 dragDropController_.IsTransportActive());
         if (mouseDown_ || reloading_ || deferForDrag ||
-            renameController_.IsActive() || HasActiveContextMenuSession())
+            renameController_.IsActive() || HasActiveContextMenuSession() ||
+            (dockWindowTransition_ && dockWindowTransition_->IsActive()))
         {
             SetTimer(hwnd_, kShellChangeTimerId,
                 kShellChangeDebounceMs, nullptr);
@@ -612,30 +612,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (generalSettings_.dockEnabled &&
             (dockStateChanged || fallbackRefreshDue))
             RefreshDockRunningWindows();
-        if (dockWindowTransition_)
-        {
-            const HWND foreground = GetForegroundWindow();
-            const bool presentationVisible = std::any_of(containers_.begin(), containers_.end(),
-                [this](const auto& container) {
-                    const auto* dock = dynamic_cast<const DockContainer*>(container.get());
-                    if (!dock || !IsDockContainerInteractionVisible(dock)) return false;
-                    const auto* host = FindPersistentDockHost(dock);
-                    // Active persistent/merged hosts use their existing visibility
-                    // policy. A fallback desktop surface also requires visible icons.
-                    return (host && host->active) || (customDesktopVisible_ && !desktopIconsHidden_);
-                });
-            const bool tracked = snowdesktop::dock_snapshot_warmup_rules::CanOfferForeground(
-                generalSettings_.dockEnabled, presentationVisible,
-                dragSession_.HasContext(), quickNavigationAnimation_.IsAnimating()) &&
-                (std::any_of(dockRunningWindows_.begin(), dockRunningWindows_.end(),
-                    [foreground](const auto& entry) {
-                        return entry.second.running && entry.second.window == foreground;
-                    }) ||
-                 std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(),
-                    [foreground](const auto& entry) { return entry.window == foreground; }));
-            dockWindowTransition_->UpdateSnapshotWarmup(
-                tracked ? foreground : nullptr, now - foregroundTick);
-        }
+        UpdateDockExternalMinimizeTargets();
     }
     else if (timerId == kDockWindowPreviewHoverTimerId)
     {
@@ -672,12 +649,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
             (foregroundChanged || windowStateRefreshDue ||
                 foregroundSettling)))
         {
-            const bool taskbarAppearanceApplied =
-                RefreshSystemTaskbarAppearance(!controlRefreshDue, !controlRefreshDue);
+            RefreshSystemTaskbarAppearance(!controlRefreshDue, !controlRefreshDue);
             systemTaskbarBackdropForegroundTick_ = foregroundTick;
-            if (taskbarAppearanceApplied &&
-                hwnd_ && IsWindow(hwnd_))
-                InvalidateRect(hwnd_, nullptr, FALSE);
         }
     }
     else if (timerId == kPopupHoverTimerId)
@@ -724,7 +697,8 @@ void DesktopApp::OnTimer(WPARAM timerId)
     }
     else if (timerId == kDockHandoffDwellTimerId)
     {
-        if (!dragSession_.IsActive() || dockHandoffDwellIndex_ == static_cast<size_t>(-1))
+        if ((!dragSession_.IsActive() && widgetAction_ != WidgetAction::Move) ||
+            dockHandoffDwellIndex_ == static_cast<size_t>(-1))
         {
             ResetDockHandoffDwell();
             return;
@@ -732,7 +706,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
         if (GetTickCount() - dockHandoffDwellStartTick_ >= kDockHandoffDwellDelayMs)
         {
             const POINT dwellPoint =
-                dragSession_.CurrentPoint();
+                widgetAction_ == WidgetAction::Move ? lastMousePoint_ : dragSession_.CurrentPoint();
             DockContainer* dock =
                 GetDockContainerAtPoint(
                     dwellPoint);
@@ -746,6 +720,25 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     ? dockItem->
                         GetEntryIndex()
                     : static_cast<size_t>(-1);
+            if (entryIndex < dockEntries_.size() && IsGroupDockEntryType(dockEntries_[entryIndex].type))
+            {
+                const size_t group = FindWidgetIndexById(dockEntries_[entryIndex].reference);
+                if (group >= widgets_.size() || popupWidgetIndex_ == group)
+                {
+                    ResetDockHandoffDwell();
+                    return;
+                }
+                snowdesktop::popup_animation_rules::OpenAfterClose(
+                    popupAnimation_, GetOpenPopupWidget() != nullptr,
+                    [this] { pendingCollectionPopupOpen_.reset(); BeginCollectionPopupClose(false); },
+                    [this, group, dwellPoint] {
+                        ResetDockHandoffDwell();
+                        OpenCollectionPopupAt(group, dwellPoint);
+                        RefreshDwellDragTarget(dwellPoint);
+                        InvalidateRect(hwnd_, nullptr, FALSE);
+                    });
+                return;
+            }
             if (entryIndex <
                     dockEntries_.size() &&
                 IsFolderDockEntry(dockEntries_[entryIndex]) &&

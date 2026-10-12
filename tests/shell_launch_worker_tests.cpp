@@ -44,6 +44,7 @@ struct ConsentBoundary
     HWND expectedOwner = nullptr;
     HWND invocationOwner = nullptr;
     std::wstring expectedPath;
+    std::wstring expectedParameters;
     int activations = 0;
     int invocations = 0;
     int unexpectedOpens = 0;
@@ -73,6 +74,7 @@ BOOL WINAPI ConsentExecute(SHELLEXECUTEINFOW* info)
         consent.foreground == consent.expectedOwner && info->lpVerb &&
         wcscmp(info->lpVerb, L"runas") == 0 &&
         info->lpFile && info->lpFile == consent.expectedPath &&
+        (info->lpParameters ? info->lpParameters : L"") == consent.expectedParameters &&
         (info->fMask & SEE_MASK_NOASYNC) && info->nShow == SW_SHOWNORMAL;
     if (consent.cancel) SetLastError(ERROR_CANCELLED);
     return !consent.cancel;
@@ -84,8 +86,23 @@ bool ConsentRejectOpen(HWND, const std::wstring&, PCIDLIST_ABSOLUTE, int, ULONG)
     return false;
 }
 
+void CheckOrdinaryDispatch(const std::wstring& path)
+{
+    namespace process = snowdesktop::shell_launch_process;
+    process::Request request;
+    request.path = path;
+    request.action = process::Action::OpenWithShortcutPolicy;
+    consent = {};
+    const process::ExecutionApi api{ConsentForeground, ConsentActivate, ConsentAllow,
+        ConsentExecute, ConsentRejectOpen};
+    Check(!process::ExecuteRequestWithApi(request, api) && consent.unexpectedOpens == 1 &&
+        consent.invocations == 0,
+        "unmarked files must keep ordinary Open without invoking the consent broker");
+}
+
 void CheckElevationDispatch(const std::wstring& path,
-    snowdesktop::shell_launch_process::Action action)
+    snowdesktop::shell_launch_process::Action action,
+    const std::wstring& executable = {}, const std::wstring& parameters = {})
 {
     namespace process = snowdesktop::shell_launch_process;
     // Independent off-screen test windows, never the user's desktop host.
@@ -105,7 +122,8 @@ void CheckElevationDispatch(const std::wstring& path,
         consent = {};
         consent.foreground = input;
         consent.expectedOwner = input;
-        consent.expectedPath = path;
+        consent.expectedPath = executable.empty() ? path : executable;
+        consent.expectedParameters = parameters;
         consent.cancel = cancel;
         const bool opened = process::ExecuteRequestWithApi(request, api);
         Check(opened == !cancel && consent.invocations == 1 && consent.foregroundConsent &&
@@ -113,7 +131,8 @@ void CheckElevationDispatch(const std::wstring& path,
             "elevated launch must hand foreground to consent once; cancellation must never retry");
     }
     consent = {};
-    consent.expectedPath = path;
+    consent.expectedPath = executable.empty() ? path : executable;
+    consent.expectedParameters = parameters;
     Check(process::ExecuteRequestWithApi(request, api) && consent.invocations == 1 &&
         consent.activations == 0,
         "a delayed elevated launch must not reactivate the owner after its process loses foreground");
@@ -127,6 +146,28 @@ void CheckElevationDispatch(const std::wstring& path,
     Check(!process::ExecuteRequestWithApi(request, api) && consent.unexpectedOpens == 1 &&
         consent.invocations == 0,
         "the consent probe must reject unexpected ordinary Open without invoking the real Shell");
+}
+
+void TestMsiAdministratorUsesSystemInstaller()
+{
+    // Exercise the real helper routing while substituting only the OS consent
+    // boundary. Direct runas on an MSI reproduces the reported 1155 failure.
+    // Known-folder lookup supplies the expected trusted target independently.
+    PWSTR systemDirectory = nullptr;
+    const HRESULT result = SHGetKnownFolderPath(FOLDERID_System, 0, nullptr, &systemDirectory);
+    Check(SUCCEEDED(result) && systemDirectory,
+        "MSI regression must locate the Windows system folder");
+    if (FAILED(result) || !systemDirectory)
+        return;
+    const std::wstring installer = std::wstring(systemDirectory) + L"\\msiexec.exe";
+    CoTaskMemFree(systemDirectory);
+    for (const std::wstring path : {
+        L"C:\\MSI fixtures\\空安装包 & (test).msi",
+        L"C:\\MSI fixtures\\UPPERCASE.MSI" })
+    {
+        CheckElevationDispatch(path, snowdesktop::shell_launch_process::Action::RunAs,
+            installer, L"/i \"" + path + L"\"");
+    }
 }
 
 void TestLaunchOwnerSurvivesMenuDismissal()
@@ -326,6 +367,7 @@ void TestIsolatedFolderActivation()
                 Check(child != nullptr, "folder activation must observe helper completion");
                 bool visible = false;
                 bool completed = false;
+                bool currentFolderMatches = false;
                 const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
                 while (child && std::chrono::steady_clock::now() < deadline)
                 {
@@ -335,15 +377,22 @@ void TestIsolatedFolderActivation()
                     if (completed)
                     {
                         visible = false;
+                        currentFolderMatches = false;
                         visitFolderWindows([&](IWebBrowser2* browser) {
                             SHANDLE_PTR handle = 0;
                             if (SUCCEEDED(browser->get_HWND(&handle)))
                             {
                                 const HWND window = reinterpret_cast<HWND>(handle);
                                 visible = visible || (IsWindowVisible(window) && !IsIconic(window));
+                                if (IsWindowVisible(window) && !IsIconic(window))
+                                    if (const auto current = snowdesktop::dock_explorer_pin::ReadCurrentFolder(window))
+                                        currentFolderMatches |= SameFolder(folder, current->path) &&
+                                            current->name == std::filesystem::path(folder).filename().wstring();
                             }
                         });
-                        if (visible) break;
+                        // Explorer's outer window can precede its visible Shell
+                        // view. Observe both identities within the same deadline.
+                        if (visible && currentFolderMatches) break;
                     }
                     pumpMessages();
                 }
@@ -353,24 +402,15 @@ void TestIsolatedFolderActivation()
                     GetExitCodeProcess(child, &result);
                     CloseHandle(child);
                 }
-                if (!completed || !visible || result != ERROR_SUCCESS)
+                if (!completed || !visible || !currentFolderMatches || result != ERROR_SUCCESS)
                     std::cerr << "Folder activation kind=" << kind << " attempt=" << attempt
                               << " completed=" << completed << " result=" << result
-                              << " visible=" << visible << '\n';
+                              << " visible=" << visible << " folderMatches=" << currentFolderMatches << '\n';
                 Check(completed && result == ERROR_SUCCESS,
                     "folder activation helper must complete successfully");
                 Check(visible, attempt == 0 ? "first folder activation must show Explorer" :
                     attempt == 1 ? "reopening an existing folder must keep Explorer visible" :
                     "reopening a minimized folder must restore visible Explorer");
-                bool currentFolderMatches = false;
-                visitFolderWindows([&](IWebBrowser2* browser) {
-                    SHANDLE_PTR handle = 0;
-                    if (SUCCEEDED(browser->get_HWND(&handle)))
-                        if (const auto current = snowdesktop::dock_explorer_pin::ReadCurrentFolder(
-                                reinterpret_cast<HWND>(handle)))
-                            currentFolderMatches |= SameFolder(folder, current->path) &&
-                                current->name == std::filesystem::path(folder).filename().wstring();
-                });
                 Check(currentFolderMatches,
                     "Explorer pin discovery must read the exact visible fixture folder, including Unicode and spaces");
             }
@@ -672,8 +712,9 @@ void TestAdministratorShortcutMetadataIsDetected()
         {
             Check(
                 !snowdesktop::ShellLaunchWorker::
-                    ShortcutRequestsAdministrator(linkPath),
+                    PathRequestsAdministrator(linkPath),
                 "ordinary shortcuts must keep normal Open behavior");
+            CheckOrdinaryDispatch(linkPath);
         }
 
         DWORD flags = 0;
@@ -688,7 +729,7 @@ void TestAdministratorShortcutMetadataIsDetected()
         {
             Check(
                 snowdesktop::ShellLaunchWorker::
-                    ShortcutRequestsAdministrator(linkPath),
+                    PathRequestsAdministrator(linkPath),
                 "the SLDF_RUNAS_USER flag must select administrator launch");
             CheckElevationDispatch(linkPath,
                 snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy);
@@ -723,9 +764,13 @@ void TestAdministratorShortcutMetadataIsDetected()
             "an executable-manifest shortcut fixture must be created");
         if (manifestLinkCreated)
         {
+            Check(snowdesktop::ShellLaunchWorker::PathRequestsAdministrator(regeditPath),
+                "direct executables must honor highestAvailable just like their shortcuts");
+            CheckElevationDispatch(regeditPath,
+                snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy);
             Check(
                 snowdesktop::ShellLaunchWorker::
-                    ShortcutRequestsAdministrator(manifestLinkPath),
+                    PathRequestsAdministrator(manifestLinkPath),
                 "a highestAvailable target manifest must select administrator launch");
             CheckElevationDispatch(manifestLinkPath,
                 snowdesktop::shell_launch_process::Action::OpenWithShortcutPolicy);
@@ -734,8 +779,8 @@ void TestAdministratorShortcutMetadataIsDetected()
 
     Check(
         !snowdesktop::ShellLaunchWorker::
-            ShortcutRequestsAdministrator(L"C:\\Temp\\ordinary.txt"),
-        "non-shortcut paths must not select administrator launch");
+            PathRequestsAdministrator(L"C:\\Temp\\ordinary.txt"),
+        "ordinary documents must not select administrator launch");
 
     dataList.Reset();
     persistFile.Reset();
@@ -745,6 +790,203 @@ void TestAdministratorShortcutMetadataIsDetected()
     if (!manifestLinkPath.empty())
         DeleteFileW(manifestLinkPath.c_str());
     CoUninitialize();
+}
+
+void TestAdministratorExecutableAndCompatibilityMarks()
+{
+    namespace process = snowdesktop::shell_launch_process;
+    using snowdesktop::ShellLaunchWorker;
+    // The real manifest and registry readers feed the real launch router;
+    // only the OS consent/Open boundary is substituted. All file and registry
+    // fixtures are private, and both predefined hives are restored on exit.
+    struct Fixture
+    {
+        std::filesystem::path directory;
+        std::wstring registryPath;
+        HKEY user = nullptr;
+        HKEY machine = nullptr;
+        bool userOverridden = false;
+        bool machineOverridden = false;
+        bool comInitialized = false;
+        ~Fixture()
+        {
+            if (machineOverridden) RegOverridePredefKey(HKEY_LOCAL_MACHINE, nullptr);
+            if (userOverridden) RegOverridePredefKey(HKEY_CURRENT_USER, nullptr);
+            if (machine) RegCloseKey(machine);
+            if (user) RegCloseKey(user);
+            if (!registryPath.empty()) RegDeleteTreeW(HKEY_CURRENT_USER, registryPath.c_str());
+            std::error_code error;
+            if (!directory.empty()) std::filesystem::remove_all(directory, error);
+            if (comInitialized) CoUninitialize();
+        }
+    } fixture;
+    fixture.comInitialized = SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED));
+    Check(fixture.comInitialized, "shortcut compatibility fixtures must initialize COM");
+    if (!fixture.comInitialized) return;
+    GUID identifier{};
+    wchar_t identifierText[64]{};
+    wchar_t module[32768]{};
+    const bool ready = SUCCEEDED(CoCreateGuid(&identifier)) &&
+        StringFromGUID2(identifier, identifierText, static_cast<int>(std::size(identifierText))) > 0 &&
+        GetModuleFileNameW(nullptr, module, static_cast<DWORD>(std::size(module))) > 0;
+    Check(ready, "elevation fixtures must have unique identities");
+    if (!ready) return;
+    fixture.directory = std::filesystem::temp_directory_path() /
+        (std::wstring(L"SnowDesktopElevation-") + identifierText);
+    std::filesystem::create_directory(fixture.directory);
+    // Windows compatibility properties and IShellLink use long paths, while
+    // TEMP on the test machine may itself contain an 8.3 user-directory alias.
+    wchar_t longDirectory[32768]{};
+    const DWORD longLength = GetLongPathNameW(fixture.directory.c_str(), longDirectory,
+        static_cast<DWORD>(std::size(longDirectory)));
+    Check(longLength > 0 && longLength < std::size(longDirectory),
+        "compatibility fixtures must use full long-path property keys");
+    if (!longLength || longLength >= std::size(longDirectory)) return;
+    fixture.directory = longDirectory;
+    const auto ordinary = fixture.directory / L"ordinary.exe";
+    Check(CopyFileW(module, ordinary.c_str(), TRUE) != FALSE,
+        "an ordinary executable fixture must be copied");
+    Check(!ShellLaunchWorker::PathRequestsAdministrator(ordinary.wstring()),
+        "asInvoker executables must keep ordinary Open");
+    CheckOrdinaryDispatch(ordinary.wstring());
+
+    const auto required = fixture.directory / L"required.EXE";
+    const bool copied = CopyFileW(module, required.c_str(), TRUE) != FALSE;
+    HANDLE update = copied ? BeginUpdateResourceW(required.c_str(), TRUE) : nullptr;
+    constexpr char manifest[] =
+        "<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">"
+        "<trustInfo xmlns=\"urn:schemas-microsoft-com:asm.v3\"><security><requestedPrivileges>"
+        "<requestedExecutionLevel level=\"requireAdministrator\" uiAccess=\"false\"/>"
+        "</requestedPrivileges></security></trustInfo></assembly>";
+    const bool updated = update && UpdateResourceW(update, RT_MANIFEST,
+        CREATEPROCESS_MANIFEST_RESOURCE_ID, MAKELANGID(LANG_NEUTRAL, SUBLANG_NEUTRAL),
+        const_cast<char*>(manifest), static_cast<DWORD>(sizeof(manifest) - 1));
+    const bool saved = update && EndUpdateResourceW(update, !updated);
+    Check(copied && updated && saved, "a requireAdministrator manifest fixture must be saved");
+    if (copied && updated && saved)
+    {
+        Check(ShellLaunchWorker::PathRequestsAdministrator(required.wstring()),
+            "direct executables must honor requireAdministrator before ordinary Open");
+        CheckElevationDispatch(required.wstring(), process::Action::OpenWithShortcutPolicy);
+        for (const wchar_t* extension : {L".com", L".scr", L".cpl"})
+        {
+            auto alternate = fixture.directory / (std::wstring(L"required") + extension);
+            Check(CopyFileW(required.c_str(), alternate.c_str(), TRUE) != FALSE,
+                "alternate executable manifest fixtures must be copied");
+            Check(ShellLaunchWorker::PathRequestsAdministrator(alternate.wstring()),
+                "PE executable file types must honor their administrator manifests");
+            CheckElevationDispatch(alternate.wstring(), process::Action::OpenWithShortcutPolicy);
+        }
+    }
+
+    PWSTR systemDirectory = nullptr;
+    Check(SUCCEEDED(SHGetKnownFolderPath(FOLDERID_System, 0, nullptr, &systemDirectory)) && systemDirectory,
+        "marked MSI launches must find the trusted system installer before registry isolation");
+    const std::wstring installer = systemDirectory ? std::wstring(systemDirectory) + L"\\msiexec.exe" : L"";
+    CoTaskMemFree(systemDirectory);
+    if (installer.empty()) return;
+    const auto compatibilityLink = fixture.directory / L"compatibility-target.lnk";
+    Microsoft::WRL::ComPtr<IShellLinkW> shellLink;
+    Microsoft::WRL::ComPtr<IPersistFile> persistFile;
+    const bool linkReady = SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr,
+        CLSCTX_INPROC_SERVER, IID_PPV_ARGS(shellLink.GetAddressOf()))) &&
+        SUCCEEDED(shellLink->SetPath(ordinary.c_str())) &&
+        SUCCEEDED(shellLink.As(&persistFile)) &&
+        SUCCEEDED(persistFile->Save(compatibilityLink.c_str(), TRUE));
+    Check(linkReady, "a shortcut to a compatibility-marked executable must be created");
+    fixture.registryPath = L"Software\\SnowDesktopTests\\Elevation-" + std::wstring(identifierText);
+    const bool keysReady = RegCreateKeyExW(HKEY_CURRENT_USER,
+        (fixture.registryPath + L"\\User").c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &fixture.user, nullptr) == ERROR_SUCCESS &&
+        RegCreateKeyExW(HKEY_CURRENT_USER, (fixture.registryPath + L"\\Machine").c_str(),
+            0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &fixture.machine, nullptr) == ERROR_SUCCESS;
+    Check(keysReady, "private compatibility registry roots must be created");
+    if (!keysReady) return;
+    fixture.userOverridden = RegOverridePredefKey(HKEY_CURRENT_USER, fixture.user) == ERROR_SUCCESS;
+    constexpr wchar_t layersKey[] =
+        L"Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers";
+    if (fixture.userOverridden && linkReady)
+    {
+        HKEY layers = nullptr;
+        const bool opened = RegCreateKeyExW(HKEY_CURRENT_USER, layersKey, 0, nullptr,
+            0, KEY_ALL_ACCESS, nullptr, &layers, nullptr) == ERROR_SUCCESS;
+        Check(opened, "shortcut target compatibility marks must use the private user hive");
+        if (opened)
+        {
+            constexpr wchar_t mark[] = L"~ RUNASADMIN";
+            Check(RegSetValueExW(layers, ordinary.c_str(), 0, REG_SZ,
+                reinterpret_cast<const BYTE*>(mark), sizeof(mark)) == ERROR_SUCCESS,
+                "the shortcut target administrator mark must be saved");
+            Check(ShellLaunchWorker::PathRequestsAdministrator(compatibilityLink.wstring()),
+                "unflagged shortcuts must honor target compatibility administrator marks");
+            CheckElevationDispatch(compatibilityLink.wstring(), process::Action::OpenWithShortcutPolicy);
+            Check(RegDeleteValueW(layers, ordinary.c_str()) == ERROR_SUCCESS,
+                "the shortcut target administrator mark must be removed");
+            Check(!ShellLaunchWorker::PathRequestsAdministrator(compatibilityLink.wstring()),
+                "shortcuts must return to normal Open when their target mark is removed");
+            RegCloseKey(layers);
+        }
+    }
+    fixture.machineOverridden = RegOverridePredefKey(HKEY_LOCAL_MACHINE, fixture.machine) == ERROR_SUCCESS;
+    Check(fixture.userOverridden && fixture.machineOverridden,
+        "compatibility tests must isolate both user and all-user settings");
+    if (!fixture.userOverridden || !fixture.machineOverridden) return;
+    for (const HKEY root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+    {
+        for (const REGSAM view : {KEY_WOW64_64KEY, KEY_WOW64_32KEY})
+        {
+            HKEY layers = nullptr;
+            const bool opened = RegCreateKeyExW(root, layersKey, 0, nullptr, 0,
+                KEY_ALL_ACCESS | view, nullptr, &layers, nullptr) == ERROR_SUCCESS;
+            Check(opened, "each compatibility registry view must be available");
+            if (!opened) continue;
+            for (const wchar_t* extension : {L".exe", L".com", L".bat", L".cmd",
+                L".msi", L".msc", L".cpl", L".scr", L".lnk"})
+            {
+                const auto marked = fixture.directory / (std::wstring(L"compat") + extension);
+                const bool copiedFile = CopyFileW(ordinary.c_str(), marked.c_str(), FALSE) != FALSE;
+                Check(copiedFile, "compatibility file fixtures must be copied");
+                for (const wchar_t* value : {L"~ HIGHDPIAWARE", L"NOTRUNASADMIN RUNASADMIN_EXTRA",
+                    L"~ RUNASADMIN HIGHDPIAWARE", L"~\trunasadmin\r\n", L"~ RUNASINVOKER"})
+                {
+                    const bool markedAdmin = wcscmp(value, L"~ RUNASADMIN HIGHDPIAWARE") == 0 ||
+                        wcscmp(value, L"~\trunasadmin\r\n") == 0;
+                    Check(RegSetValueExW(layers, marked.c_str(), 0, REG_SZ,
+                        reinterpret_cast<const BYTE*>(value),
+                        static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t))) == ERROR_SUCCESS,
+                        "compatibility layers must be saved to the private fixture");
+                    Check(ShellLaunchWorker::PathRequestsAdministrator(marked.wstring()) == markedAdmin,
+                        "only an exact RUNASADMIN layer may select elevation, and changes must refresh");
+                    if (markedAdmin)
+                    {
+                        if (wcscmp(extension, L".msi") == 0)
+                        {
+                            CheckElevationDispatch(marked.wstring(), process::Action::OpenWithShortcutPolicy,
+                                installer, L"/i \"" + marked.wstring() + L"\"");
+                        }
+                        else CheckElevationDispatch(marked.wstring(), process::Action::OpenWithShortcutPolicy);
+                        Check(ShellLaunchWorker::PathRequestsAdministrator(L"\\\\?\\" + marked.wstring()),
+                            "extended paths must find ordinary full-path compatibility marks");
+                        wchar_t shortPath[32768]{};
+                        const DWORD shortLength = GetShortPathNameW(marked.c_str(), shortPath,
+                            static_cast<DWORD>(std::size(shortPath)));
+                        if (shortLength > 0 && shortLength < std::size(shortPath))
+                            Check(ShellLaunchWorker::PathRequestsAdministrator(shortPath),
+                                "8.3 aliases must find the same compatibility administrator marks");
+                    }
+                    else CheckOrdinaryDispatch(marked.wstring());
+                }
+                Check(RegDeleteValueW(layers, marked.c_str()) == ERROR_SUCCESS,
+                    "removing a compatibility mark must succeed");
+                Check(!ShellLaunchWorker::PathRequestsAdministrator(marked.wstring()),
+                    "removed administrator marks must not remain cached");
+            }
+            RegCloseKey(layers);
+        }
+    }
+    Check(!ShellLaunchWorker::PathRequestsAdministrator(fixture.directory.wstring()) &&
+        !ShellLaunchWorker::PathRequestsAdministrator((fixture.directory / L"missing.exe").wstring()),
+        "folders and missing files must not request elevation");
 }
 
 void TestIsolatedOpenLaunchesShortcut()
@@ -1145,8 +1387,10 @@ int wmain(int argc, wchar_t** argv)
     {
         TestLaunchOwnerSurvivesMenuDismissal();
         TestAdministratorShortcutMetadataIsDetected();
+        TestAdministratorExecutableAndCompatibilityMarks();
         CheckElevationDispatch(L"explicit-administrator.exe",
             snowdesktop::shell_launch_process::Action::RunAs);
+        TestMsiAdministratorUsesSystemInstaller();
         if (argc == 3)
         {
             const HRESULT com = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -1191,9 +1435,11 @@ int wmain(int argc, wchar_t** argv)
     TestInvalidRequestsAreRejected();
     TestShellItemPidlIsCopiedBeforeExecution();
     TestAdministratorShortcutMetadataIsDetected();
+    TestAdministratorExecutableAndCompatibilityMarks();
     TestLaunchOwnerSurvivesMenuDismissal();
     CheckElevationDispatch(L"explicit-administrator.exe",
         snowdesktop::shell_launch_process::Action::RunAs);
+    TestMsiAdministratorUsesSystemInstaller();
     TestRequestPayloadPreservesPathsAndRejectsInvalidPidls();
     TestRunCommandBoundary();
     TestHelperFailureReachesCaller();

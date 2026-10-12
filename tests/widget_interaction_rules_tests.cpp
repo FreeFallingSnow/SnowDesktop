@@ -1,7 +1,9 @@
 #include "../src/widgets/collection_group_rules.h"
 #include "../src/app/widgets/widget_group_transition.h"
 #include "../src/widgets/widget_pair_drop.h"
+#include "app/widgets/widget_pair_drag_source.h"
 #include "desktop/desktop_hover_rules.h"
+#include "dock/dock_magnification.h"
 #include "drag_drop/drag_input_rules.h"
 #include "drag_drop/drag_hint_rules.h"
 #include "widget/view/widget_scroll_rules.h"
@@ -653,11 +655,11 @@ void TestFileGroupRules()
             true, true, true),
         "clearing search must restore the category row");
     Check(
-        !rules::ShouldShowFileGroupSourceTabs(
+        rules::ShouldShowFileGroupSourceTabs(
             true, false) &&
         !rules::ShouldShowInnerCategoryTabs(
             true, true, false),
-        "file-group search results must hide both tab rows");
+        "file-group search results retain source tabs and hide inner categories");
     Check(
         rules::ShouldShowFileGroupSourceTabs(
             true, true),
@@ -676,9 +678,8 @@ void TestFileGroupRules()
             false, 0,
             true, 142,
             1, 38,
-            8, 4) == 184,
-        "hidden inner categories must reserve the search box "
-        "and the file-group source row");
+            8, 4) == 146,
+        "search already includes the preceding source row and must not reserve it twice");
     Check(
         rules::ResolveCategorizedContentTop(
             108, 500,
@@ -955,6 +956,11 @@ void TestDesktopHoverDeactivation()
             !hoverRules::ShouldRetainHoverAcrossMouseLeave(
                 false, false),
         "content and paired backdrop windows must form one logical hover surface");
+    Check(!hoverRules::ShouldClearRejectedDesktopHover(true, true, true) &&
+            hoverRules::ShouldClearRejectedDesktopHover(true, false, true) &&
+            hoverRules::ShouldClearRejectedDesktopHover(true, true, false) &&
+            !hoverRules::ShouldClearRejectedDesktopHover(false, false, false),
+        "stale desktop moves must retain hover owned by the live Dock while external and visual-only targets still clear");
     Check(
         hoverRules::ShouldResamplePassiveMouseMove(
             false, false, false) &&
@@ -965,6 +971,17 @@ void TestDesktopHoverDeactivation()
             !hoverRules::ShouldResamplePassiveMouseMove(
                 false, false, true),
         "only passive mouse moves may replace queued message coordinates with the live cursor");
+    Check(hoverRules::CanCoalescePassiveMouseMoves(true, false, false, false) &&
+            !hoverRules::CanCoalescePassiveMouseMoves(false, false, false, false) &&
+            !hoverRules::CanCoalescePassiveMouseMoves(true, true, false, false) &&
+            !hoverRules::CanCoalescePassiveMouseMoves(true, false, true, false) &&
+            !hoverRules::CanCoalescePassiveMouseMoves(true, false, false, true),
+        "passive queue coalescing must exclude pressed, captured and OLE input");
+    Check(!hoverRules::ShouldProbeMouseMoveQueue(false, true, false) &&
+            hoverRules::ShouldProbeMouseMoveQueue(false, true, true) &&
+            hoverRules::ShouldProbeMouseMoveQueue(true, false, false) &&
+            !hoverRules::ShouldProbeMouseMoveQueue(false, false, true),
+        "passive physical input must avoid redundant retrieval while posted moves and active gestures retain compaction");
     Check(
         hoverRules::ShouldPresentRetainedMouseLeave(
             true, true) &&
@@ -1060,7 +1077,13 @@ void TestDesktopHoverDeactivation()
             hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
                 true, false, true, true,
                 ReconcileMode::AllowActivationAfterForegroundSettle, true),
-        "an active hover may follow a changed base-desktop sample after activation is allowed");
+        "an active hover may follow a changed desktop or Dock sample after activation is allowed");
+    Check(
+        hoverRules::IsActiveHoverSampleSurface(true, false, false) &&
+            hoverRules::IsActiveHoverSampleSurface(false, true, true) &&
+            !hoverRules::IsActiveHoverSampleSurface(false, true, false) &&
+            !hoverRules::IsActiveHoverSampleSurface(false, false, true),
+        "active hover sampling includes actual Dock input but excludes visual overdraw and unrelated popup bridges");
     Check(
         !hoverRules::ShouldRefreshActiveHoverFromSurfaceSample(
             false, false, true, true,
@@ -1081,6 +1104,48 @@ void TestDesktopHoverDeactivation()
                 true, false, true, true,
                 ReconcileMode::AllowActivationAfterForegroundSettle, false),
         "active-hover fallback must reject bridges, cleared state, unchanged points, gestures, and unsettled samples");
+}
+
+void TestDockDesktopHoverHandoff()
+{
+    // Replace only native hit sampling/tracking. Both variants drive the real
+    // magnification timeline; the old content/backdrop-only route is a negative
+    // control for the stationary desktop hit recorded after minimize.
+    const auto preservesHandoff = [](bool acceptDesktopHandoff) {
+        snowdesktop::dock_magnification::HoverEntryAnimation entry;
+        int contentTracking = 0;
+        int desktopTracking = 0;
+        const auto routeLeave = [&](bool content, bool backdrop, bool desktop, double now) {
+            const auto rearm = [&](bool trackContent) {
+                if (trackContent) ++contentTracking;
+                else ++desktopTracking;
+            };
+            const bool retained = acceptDesktopHandoff
+                ? hoverRules::RetainDockSurfaceMouseLeave(content, backdrop, desktop, rearm)
+                : hoverRules::RetainPairedSurfaceMouseLeave(content, backdrop,
+                    [&] { rearm(true); });
+            if (!retained) entry.SetHovered(false, now, 1.0);
+            return retained;
+        };
+        entry.SetHovered(true, 1000.0, 1.0);
+        entry.Advance(1080.0);
+        const bool retained = routeLeave(false, false, true, 1080.0);
+        entry.SetHovered(true, 1080.0, 1.0);
+        entry.Advance(1160.0);
+        const bool uninterrupted = retained && desktopTracking == 1 &&
+            contentTracking == 0 && entry.FocusScale(2.0f) == 2.0f && !entry.IsAnimating();
+        const bool backdropRetained = routeLeave(false, true, false, 1160.0) &&
+            contentTracking == 0 && desktopTracking == 1;
+        const bool contentRetained = routeLeave(true, false, false, 1160.0) &&
+            contentTracking == 1 && desktopTracking == 1;
+        const bool exited = !routeLeave(false, false, false, 1200.0) &&
+            entry.FocusScale(2.0f) == 1.0f && !entry.IsAnimating();
+        return uninterrupted && backdropRetained && contentRetained && exited;
+    };
+    Check(preservesHandoff(true),
+        "minimize desktop handoff must preserve the wave, transfer leave tracking, and clear on a real exit");
+    Check(!preservesHandoff(false),
+        "negative control must reject the old route that restarts hover and leaves desktop tracking unarmed");
 }
 
 void TestDragInputSampling()
@@ -1123,6 +1188,16 @@ void TestDragInputSampling()
             !dragInputRules::IsPointerGestureButtonDown(
                 true, true, false),
         "primary gestures must follow the left button while middle-button widget moves preserve their own release barrier");
+    Check(dragInputRules::IsPointerGestureButtonDown(false, false, false, true, true) &&
+        !dragInputRules::IsPointerGestureButtonDown(false, true, false, true, false) &&
+        dragInputRules::IsPointerGestureButtonDown(true, false, true, true, false),
+        "right drags must follow right-button release without borrowing the left button, while middle gestures retain precedence");
+    Check(!dragInputRules::IsItemDragRelease(true, false),
+        "left-up must retain a right drag even when its wParam reports the still-held right button");
+    Check(dragInputRules::IsItemDragRelease(true, true) &&
+        dragInputRules::IsItemDragRelease(false, false) &&
+        !dragInputRules::IsItemDragRelease(false, true),
+        "only release of the initiating item-drag button may finish the gesture, independent of other held buttons");
     Check(
         dragInputRules::IsMarqueePointerGesture(
             true, false, true, true, true,
@@ -1199,18 +1274,8 @@ void TestPopupIconLoadCancellationRules()
         "only stale popup results must be rejected by the popup epoch gate");
 }
 
-void TestDragHintRasterRules()
+void TestDragHintPlacementRules()
 {
-    Check(!dragHintRules::ShouldReuseRaster(true, true, 96, 96, false),
-        "arming or releasing a modifier must repaint a cached hint with identical text");
-    Check(dragHintRules::ShouldReuseRaster(true, true, 96, 96),
-        "valid cached text at the same DPI is eligible for raster reuse");
-    Check(
-        !dragHintRules::ShouldReuseRaster(true, false, 96, 96) &&
-            !dragHintRules::ShouldReuseRaster(true, true, 96, 144) &&
-            !dragHintRules::ShouldReuseRaster(false, true, 96, 96),
-        "text, DPI, and raster validity changes must invalidate the drag hint cache");
-
     const auto bottomRight = dragHintRules::ResolveWindowPosition(
         {1910, 1070}, {200, 40}, {0, 0, 1920, 1080},
         48, 22, 8);
@@ -1413,6 +1478,184 @@ void TestPairGroupsDissolveAndDockOwnership()
         Check(pair::Dissolve(widgets, 2, {}) && widgets.size() == 2,
             "an empty auto group must remove only the wrapper");
     }
+}
+
+void TestGroupedLabelPairDrops()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    namespace drag = snowdesktop::widget_pair_drag;
+    using Type = DesktopWidgetType;
+    // The host resolves a captured label, then calls this ownership transaction.
+    // No Item pointer, active-tab lookup or filesystem operation is substituted.
+    const auto normalize = [](const std::wstring& key) { return key; };
+    struct Case { Type source; Type target; };
+    const Case cases[] = {
+        {Type::Collection, Type::Collection},
+        {Type::FileCategories, Type::FileCategories},
+        {Type::FileCategories, Type::FolderMapping},
+        {Type::FolderMapping, Type::FileCategories},
+        {Type::FolderMapping, Type::FolderMapping},
+    };
+    for (const auto& test : cases)
+        for (const bool targetInDock : {false, true})
+            for (const auto action : {pair::Action::Merge,
+                     pair::GetOptions(test.source, test.target).group})
+            {
+                std::vector<DesktopWidget> widgets(5);
+                widgets[0].id = L"old-group";
+                widgets[0].type = test.source == Type::Collection
+                    ? Type::CollectionGroup : Type::FileGroup;
+                widgets[0].childWidgetIds = {L"before", L"source", L"after"};
+                widgets[0].activeCategoryId = L"source";
+                widgets[0].customTitle = L"Keep original group";
+                widgets[1].id = L"source";
+                widgets[1].type = test.source;
+                widgets[1].itemKeys = {L"shared", L"source-only"};
+                widgets[1].sourceFolderPath = L"C:\\mapped-source";
+                widgets[1].customTitle = L"Keep child settings";
+                widgets[1].showSearchBox = true;
+                widgets[2].id = L"before";
+                widgets[2].type = test.source;
+                widgets[3].id = L"target";
+                widgets[3].type = test.target;
+                widgets[3].itemKeys = {L"target-first", L"shared"};
+                widgets[3].sourceFolderPath = L"C:\\mapped-target";
+                widgets[3].gridCell = {targetInDock ? kDockPageId : L"page-a", 2, 3};
+                widgets[4].id = L"after";
+                widgets[4].type = test.source;
+                std::vector<DockEntry> dock{{DockEntryTypeForWidget(widgets[0].type), L"old-group"}};
+                if (targetInDock)
+                    dock.push_back({DockEntryTypeForWidget(test.target), L"target"});
+                DragSourceList list;
+                list.hasOriginWidget = true;
+                list.originWidgetId = L"old-group";
+                list.originWidgetType = widgets[0].type;
+                list.hasCollectionGroupEntries = test.source == Type::Collection;
+                list.hasFileGroupSourceLabels = test.source != Type::Collection;
+                list.hasFileGroupEntries = test.source == Type::FileCategories;
+                list.hasWidgets = test.source == Type::FolderMapping;
+                DragSourceEntry entry;
+                entry.widgetId = L"source";
+                entry.kind = test.source == Type::Collection ? DropSourceKind::CollectionGroupEntry
+                    : test.source == Type::FileCategories ? DropSourceKind::FileGroupEntry
+                    : DropSourceKind::Widget;
+                entry.dockEntryType = DockEntryTypeForWidget(test.source);
+                list.entries.push_back(entry);
+                // Dwell may switch the visible tab while the child is in flight.
+                widgets[0].activeCategoryId = L"before";
+                const auto source = drag::ResolveSource(list, widgets, dock);
+                Check(source.widgetIndex == 1 && source.groupId == L"old-group",
+                    "collection, desktop-files and folder-mapping labels must resolve the captured child after tab switching");
+                widgets[0].activeCategoryId = L"source";
+                Check(!pair::CanPair(widgets, 1, 3) &&
+                        pair::CanPair(widgets, 1, 3, source.groupId),
+                    "grouped children can pair only through their explicitly captured source owner");
+                DesktopWidget group;
+                group.id = L"new-group";
+                group.gridCell = widgets[3].gridCell;
+                Check(!pair::Apply(widgets, dock, 1, 3, pair::Action::None, group, normalize, source.groupId) &&
+                        widgets[0].childWidgetIds.size() == 3 && widgets[0].activeCategoryId == L"source",
+                    "unarmed label drops must retain source membership and active tab");
+                const bool expected = action != pair::Action::Merge ||
+                    (test.source == test.target && test.source != Type::FolderMapping);
+                Check(pair::Apply(widgets, dock, source.widgetIndex, 3, action, group, normalize, source.groupId) == expected,
+                    "labels must support the same Shift merge and Ctrl group matrix as standalone components");
+                if (!expected)
+                {
+                    Check(widgets.size() == 5 && widgets[0].childWidgetIds.size() == 3 &&
+                            widgets[1].itemKeys.size() == 2 && widgets[0].activeCategoryId == L"source",
+                        "unsupported mapping merges must keep the original group, source and target intact");
+                    continue;
+                }
+                Check(widgets[0].childWidgetIds == std::vector<std::wstring>{L"before", L"after"} &&
+                        widgets[0].activeCategoryId == L"after" && widgets[0].customTitle == L"Keep original group" &&
+                        dock.front().reference == L"old-group",
+                    "successful label drops must detach only the moved child and select its next neighbour in the original group");
+                const auto target = std::find_if(widgets.begin(), widgets.end(),
+                    [](const auto& widget) { return widget.id == L"target"; });
+                if (action == pair::Action::Merge)
+                    Check(widgets.size() == 4 && target != widgets.end() &&
+                            target->itemKeys == std::vector<std::wstring>{L"target-first", L"shared", L"source-only"} &&
+                            dock.size() == (targetInDock ? 2u : 1u),
+                        "label merge must transfer and deduplicate contents before removing the child, preserving the target Dock reference");
+                else
+                    Check(widgets.size() == 6 && widgets.back().childWidgetIds ==
+                            std::vector<std::wstring>{L"target", L"source"} &&
+                            widgets.back().activeCategoryId == L"target" &&
+                            widgets[1].sourceFolderPath == L"C:\\mapped-source" &&
+                            widgets[1].customTitle == L"Keep child settings" && widgets[1].showSearchBox &&
+                            target != widgets.end() && target->sourceFolderPath == L"C:\\mapped-target" && dock.size() == 1,
+                        "label grouping must preserve both children, their mapping paths and settings without leaving duplicate Dock ownership");
+                Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+                    "a stale label snapshot cannot consume a merged or reparented child again");
+            }
+
+    std::vector<DesktopWidget> widgets(3);
+    widgets[0].id = L"group";
+    widgets[0].type = Type::CollectionGroup;
+    widgets[0].childWidgetIds = {L"child"};
+    widgets[1].id = L"child";
+    widgets[2].id = L"target";
+    DragSourceList list;
+    list.hasOriginWidget = list.hasCollectionGroupEntries = true;
+    list.originWidgetType = Type::CollectionGroup;
+    list.originWidgetId = L"group";
+    DragSourceEntry entry;
+    entry.kind = DropSourceKind::CollectionGroupEntry;
+    entry.widgetId = L"child";
+    list.entries.push_back(entry);
+    const std::vector<DockEntry> dock;
+    list.originWidgetId = L"wrong-owner";
+    Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+        "labels with stale or mismatched source groups must be rejected");
+    list.originWidgetId = L"group";
+    list.entries.push_back(entry);
+    Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+        "multiple labels must not arm a two-component transaction");
+    list.entries.resize(1);
+    list.entries[0].kind = DropSourceKind::DesktopIcon;
+    Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+        "files inside a group must not be mistaken for the group label");
+    widgets[0].childWidgetIds.push_back(L"target");
+    Check(!pair::CanPair(widgets, 1, 2, L"group"),
+        "a grouped target must not be merged or nested into a new group by label release");
+    widgets[0].childWidgetIds = {L"child", L"child"};
+    Check(!pair::CanUseSource(widgets, 1, L"group"),
+        "duplicate source ownership must reject before detaching any data");
+
+    widgets[0].childWidgetIds.clear();
+    DragSourceList dockList;
+    dockList.hasWidgets = true;
+    entry.kind = DropSourceKind::Widget;
+    entry.fromDock = true;
+    entry.dockEntryType = DockEntryType::Collection;
+    entry.dockReference = L"child";
+    dockList.entries.push_back(entry);
+    std::vector<DockEntry> dockEntries{{DockEntryType::Collection, L"child"}};
+    Check(drag::ResolveSource(dockList, widgets, dockEntries).widgetIndex == 1 &&
+            drag::ResolveSource(dockList, widgets, dockEntries).groupId.empty(),
+        "standalone Dock widget drags must retain their existing pair route");
+    dockEntries.clear();
+    Check(drag::ResolveSource(dockList, widgets, dockEntries).widgetIndex >= widgets.size(),
+        "stale Dock widget entries must not arm a pair drop");
+}
+
+void TestDockComponentInsertionHints()
+{
+    for (const bool control : {false, true})
+    {
+        Check(std::string_view(dragHintRules::DockInsertionHintKey(false, false, true, control)) ==
+                "core.drag.move_widget_dock",
+            "component and grouped-label Dock insertion must never advertise Ctrl file mapping");
+        Check(std::string_view(dragHintRules::DockInsertionHintKey(false, false, false, control)) ==
+                (control ? "core.dock.release_dock_map_full" : "core.dock.release_move_dock_ctrl"),
+            "ordinary file Dock insertion must retain its Ctrl mapping hint");
+    }
+    Check(std::string_view(dragHintRules::DockInsertionHintKey(true, false, true, true)) ==
+            "core.drag.release_adjust_order" &&
+            std::string_view(dragHintRules::DockInsertionHintKey(false, true, false, false)) ==
+            "core.dock.release_dock_map_full",
+        "same-Dock reorder and external file mapping must keep their existing hints");
 }
 
 void TestGroupRestorationPublishesOnlyTheFinalFrame()
@@ -1770,10 +2013,13 @@ int main()
     TestWidgetDesktopSurfaceVisibility();
     TestWidgetPreviewSourceVisibility();
     TestDesktopHoverDeactivation();
+    TestDockDesktopHoverHandoff();
     TestDragInputSampling();
     TestPopupIconLoadCancellationRules();
-    TestDragHintRasterRules();
+    TestDragHintPlacementRules();
     TestWidgetPairDrops();
+    TestGroupedLabelPairDrops();
+    TestDockComponentInsertionHints();
     TestPairGroupsDissolveAndDockOwnership();
     TestGroupRestorationPublishesOnlyTheFinalFrame();
     TestNestedWidgetScrolling();

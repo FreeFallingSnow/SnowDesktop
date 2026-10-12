@@ -30,11 +30,13 @@ SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(StatusBarAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,
     v.enabled, v.themeMode, v.contentTheme, v.appearance);
+SD_IPC_FIELDS(DockFullscreenException, v.executable, v.policy);
+SD_IPC_FIELDS(DockFullscreenApplication, v.name, v.executable);
 SD_IPC_FIELDS(DockSettings,
     v.position, v.edgeAttached, v.floatingShortcutMode, v.floatingHotkeyModifiers,
-    v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.edgeRevealGesture, v.floatingEdgeSwipeBlockFullscreen, v.monitorScope, v.showWindowsButton,
+    v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.edgeRevealGesture, v.fullscreenPolicy, v.fullscreenExceptions, v.monitorScope, v.showWindowsButton,
     v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.showFrequentItems, v.keepWhenDesktopHidden,
-    v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.reserveScreenSpace, v.lastMonitorUseHomeSize, v.mergedBarHeight, v.frequentItemCount, v.thicknessScale,
+    v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.reserveScreenSpace, v.lastMonitorUseHomeSize, v.mergedBarHeight, v.frequentItemCount, v.thicknessScale, v.mergedIconScale,
     v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
@@ -58,12 +60,13 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.cpu, v.memory, v.gpu, v.traffic, v.audioControls, v.brightnessControls,
     v.wifiControls, v.bluetoothControls, v.mediaControls, v.powerControls,
     v.pinnedTrayItems, v.trayOrder, v.menu, v.quickSearch, v.taskView,
-    v.clockSystemPanel, v.controlCenterSystemPanel, v.leftOrder, v.rightOrder,
+    v.clockSystemPanel, v.controlCenterSystemPanel, v.inputMethodSystemPanel, v.leftOrder, v.rightOrder,
     v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow, v.inputMethod,
-    v.quickControlOrder, v.hiddenQuickControls);
+    v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
 SD_IPC_FIELDS(GeneralSettings,
     v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
+    v.softwareDesktopHotkeyEnabled, v.softwareDesktopHotkeyModifiers, v.softwareDesktopHotkeyVirtualKey,
     v.desktopPassthroughHotkeyEnabled, v.desktopPassthroughHotkeyModifiers, v.desktopPassthroughHotkeyVirtualKey, v.pageNavigationKeyboardEnabled,
     v.pageNavigationPreviousModifiers, v.pageNavigationPreviousVirtualKey, v.pageNavigationNextModifiers, v.pageNavigationNextVirtualKey,
     v.quickNavTheme, v.collectionPopupTheme, v.dockEnabled, v.widgetDeveloperToolsEnabled,
@@ -71,7 +74,7 @@ SD_IPC_FIELDS(GeneralSettings,
     v.animationFrameLimit, v.animationEnergySaver, v.animationOnBattery,
     v.quickNavigationAppearance, v.collectionPopupAppearance, v.globalQuickNavigationAppearance,
     v.globalCollectionPopupAppearance, v.shellExtensions, v.statusBar,
-    v.contextMenuExpandQuickActions, v.contextMenuHidePageManagement);
+    v.contextMenuExpandQuickActions, v.contextMenuHidePageManagement, v.tooltipFontSize);
 SD_IPC_FIELDS(CategoryRule,
     v.id, v.customLabel, v.extensions, v.enabled);
 SD_IPC_FIELDS(CategorySettings,
@@ -89,7 +92,7 @@ SD_IPC_FIELDS(IconBeautifySettings,
     v.outlineG, v.outlineB, v.shadowStrength);
 SD_IPC_FIELDS(DesktopDisplaySettings,
     v.dockEnabled, v.iconSpacingScale, v.itemIconSizeScale, v.itemFontSizeCu,
-    v.listItemFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis);
+    v.listItemFontSizeCu, v.fanTitleFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis);
 SD_IPC_FIELDS(SettingsRoute,
     v.page, v.widgetInstanceId, v.focusId, v.itemKey, v.guideTopic);
 SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path, v.fields);
@@ -99,7 +102,7 @@ SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, 
     v.frameWidth, v.frameHeight, v.frameColumns, v.frameRows, v.frameLimit, v.unitScale, v.durationScale, v.frameWidths, v.frameHeights, v.animations, v.neutral,
     v.defaultConfig, v.imageWidth, v.imageHeight, v.hasEdgeColor, v.loading, v.edgeColor, v.itemCount, v.anyFill, v.mixedFields);
 SD_IPC_FIELDS(SettingsActionResult,
-    v.status, v.completedDomains, v.failedDomains, v.message);
+    v.status, v.completedDomains, v.failedDomains, v.message, v.dockApplications);
 SD_IPC_FIELDS(SettingsValues,
     v.personalization, v.dock, v.navigation, v.general,
     v.category, v.desktop);

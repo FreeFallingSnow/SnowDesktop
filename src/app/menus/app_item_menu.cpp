@@ -7,7 +7,10 @@
 #include "app/shell/shell_item_action_rules.h"
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_context_menu_site.h"
+#include "shell/shell_start_pin.h"
 #include "shell/namespace_menu_actions.h"
+#include "desktop/folder_mapping_visibility_rules.h"
+#include "app/shell/shell_icon_request.h"
 
 namespace { constexpr UINT kContextNamespaceActionFirst = 42000; }
 
@@ -199,17 +202,19 @@ void DesktopApp::ShowItemContextMenu(
     const bool canRunAsAdministrator =
         selectedCount == 1 &&
         IsAdministratorRunnablePath(itemPath);
-    const bool administratorShortcut =
+    const bool administratorLaunch =
         selectedCount == 1 &&
         snowdesktop::ShellLaunchWorker::
-            ShortcutRequestsAdministrator(itemPath);
+            PathRequestsAdministrator(itemPath);
     const bool canOpen =
-        selectedCount == 1 && !administratorShortcut;
+        selectedCount == 1 && !administratorLaunch;
     const bool protectedDesktopIcon = selectedCount == 1 && IsProtectedDesktopIcon(items_[itemIndex]);
     const bool namespaceItem = selectedCount == 1 &&
         (!items_[itemIndex].desktopIconClsid.empty() || protectedDesktopIcon);
-    // Query supported verbs without displaying the native popup. Keep its site,
-    // menu and COM object alive until a selected command has been invoked.
+    // Query only built-in namespace verbs before displaying the custom popup.
+    // Retain the selection and aggregate until its original token is invoked.
+    Pidl namespaceSnapshot;
+    ComPtr<IShellFolder> namespaceFolder;
     snowdesktop::ShellContextMenuSite namespaceSite;
     ComPtr<IContextMenu> namespaceContext;
     struct NativeMenuOwner { HMENU value = nullptr; ~NativeMenuOwner() { if (value) DestroyMenu(value); } } namespaceNative;
@@ -217,13 +222,26 @@ void DesktopApp::ShowItemContextMenu(
     if (namespaceItem && desktopFolder_)
     {
         const HWND owner = ShellDialogOwnerHwnd();
-        namespaceSite.Initialize(desktopFolder_.Get(), owner);
-        PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(items_[itemIndex].childPidl.get());
-        if (child && SUCCEEDED(desktopFolder_->GetUIObjectOf(namespaceSite.HostWindow() ? namespaceSite.HostWindow() : owner,
-            1, &child, IID_IContextMenu, nullptr, reinterpret_cast<void**>(namespaceContext.GetAddressOf()))))
+        namespaceFolder = desktopFolder_;
+        if (items_[itemIndex].childPidl.get())
+            namespaceSnapshot.reset(ILCloneFull(items_[itemIndex].childPidl.get()));
+        PCUITEMID_CHILD child = reinterpret_cast<PCUITEMID_CHILD>(namespaceSnapshot.get());
+        namespaceNative.value = CreatePopupMenu();
+        if (child && namespaceNative.value)
         {
-            namespaceSite.Attach(namespaceContext.Get()); namespaceNative.value = CreatePopupMenu();
-            if (SUCCEEDED(namespaceContext->QueryContextMenu(namespaceNative.value, 0, 1, 0x7fff, CMF_NORMAL | CMF_SYNCCASCADEMENU)))
+            const auto bindNamespace = [&](HWND bindOwner, IContextMenu** target) {
+                return namespaceFolder->GetUIObjectOf(bindOwner, 1, &child, IID_IContextMenu,
+                    nullptr, reinterpret_cast<void**>(target));
+            };
+            const std::wstring clsid = !items_[itemIndex].desktopIconClsid.empty()
+                ? items_[itemIndex].desktopIconClsid : ExtractClsidText(items_[itemIndex].parsingName);
+            constexpr UINT flags = CMF_NORMAL | CMF_SYNCCASCADEMENU;
+            const HRESULT result = snowdesktop::namespace_menu_actions::CanQueryWithoutFileProviders(clsid)
+                ? namespaceSite.BuildNamespaceMenu(owner, namespaceNative.value, 1, 0x7fff, flags,
+                    bindNamespace, namespaceContext.GetAddressOf())
+                : namespaceSite.BuildMenu(namespaceFolder.Get(), owner, namespaceNative.value, 1, 0x7fff, flags,
+                    bindNamespace, namespaceContext.GetAddressOf());
+            if (SUCCEEDED(result))
             {
                 const wchar_t* verbs[] = {L"manage", L"empty", L"connectNetworkDrive", L"disconnectNetworkDrive", L"properties"};
                 for (size_t i = 0; i < std::size(verbs); ++i)
@@ -254,6 +272,29 @@ void DesktopApp::ShowItemContextMenu(
         GetDockWindowVisualState(
             static_cast<size_t>(itemIndex)) !=
             DockWindowVisualState::Closed;
+
+    const auto canConvertFolder = [&](size_t index, const std::wstring& path) {
+        if (index >= items_.size() || path.empty()) return false;
+        const auto& item = items_[index];
+        const bool pinnedDock = dockEntryIndex && *dockEntryIndex < dockEntries_.size() &&
+            dockEntries_[*dockEntryIndex].type == DockEntryType::DesktopItem &&
+            snowdesktop::folder_mapping_visibility::EqualInsensitive(
+                dockEntries_[*dockEntryIndex].reference, item.layoutKey);
+        const DWORD attributes = item.isShortcut ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(path.c_str());
+        const bool folderTarget = item.isShortcut ? item.shortcutTarget.directory :
+            attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        return snowdesktop::folder_mapping_visibility::CanConvert(
+            static_cast<size_t>(std::count_if(items_.begin(), items_.end(),
+                [](const DesktopItem& candidate) { return candidate.selected; })),
+            folderTarget, !item.desktopIconClsid.empty() || IsProtectedDesktopIcon(item),
+            pinnedDock || (!dockFrequentItem && !dockApplicationItem && !dockMapping && !dockEntryIndex &&
+                !keepQuickNavigationOpen && item.gridCell.pageId != kDockPageId &&
+                !IsItemInAnyWidget(item)),
+            snowdesktop::folder_mapping_visibility::HasMappingForItem(item, widgets_));
+    };
+    const bool canConvertFolderMapping = canFile &&
+        canConvertFolder(static_cast<size_t>(itemIndex), itemPath);
+    const std::wstring folderMappingSourceKey = items_[itemIndex].layoutKey;
 
     HMENU menu = CreatePopupMenu();
     HMENU detailsMenu = nullptr;
@@ -335,6 +376,9 @@ void DesktopApp::ShowItemContextMenu(
     }
     AppendMenuW(menu, canOpen ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextOpenCommand, _LW("app.menu.open"));
+    if (canConvertFolderMapping)
+        AppendMenuW(menu, MF_STRING, kContextAddFolderMappingWidget,
+            _LW("app.menu.convert_folder_mapping"));
     if (!namespaceItem)
     {
         AppendMenuW(menu, canCopyPath ? MF_STRING : MF_STRING | MF_GRAYED,
@@ -480,6 +524,9 @@ void DesktopApp::ShowItemContextMenu(
     }
     if (namespaceItem && namespaceProperty == namespaceActions.end()) DeleteMenu(menu, kContextPropertiesCommand, MF_BYCOMMAND);
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
+    if (canConvertFolderMapping)
+        SetMenuItemIcon(menu, kContextAddFolderMappingWidget,
+            snowdesktop::menu_fluent_glyphs::kFolderMapping, MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextLargeIconCreate, L"\uF0B2");
     SetMenuItemIcon(menu, kContextLargeIconSettings, L"\uF013");
     SetMenuItemIcon(menu, kContextLargeIconRestore,
@@ -707,6 +754,80 @@ void DesktopApp::ShowItemContextMenu(
     applyLargeIconCommand(command);
     switch (command)
     {
+    case kContextAddFolderMappingWidget:
+    {
+        // The menu pumps messages. Re-resolve the source identity rather than
+        // trusting an index retained across Shell notifications or another menu.
+        const size_t sourceIndex = FindItemIndexByKey(folderMappingSourceKey);
+        if (!canConvertFolderMapping || !canConvertFolder(sourceIndex, itemPath))
+            break;
+        const std::wstring sourceStamp = snowdesktop::shell_icon_request::Stamp(items_[sourceIndex]);
+        const std::optional<DockEntry> pinnedEntry = dockEntryIndex && *dockEntryIndex < dockEntries_.size()
+            ? std::optional<DockEntry>(dockEntries_[*dockEntryIndex]) : std::nullopt;
+        // Resolve .lnk targets and verify filesystem availability on the Shell
+        // worker. A slow provider must not block the desktop input thread.
+        const bool submitted = shellVisualWork_.Submit(L"folder-convert:" + folderMappingSourceKey,
+            [itemPath] { return snowdesktop::item_location::ResolveFolderTarget(itemPath); },
+            [this, key = folderMappingSourceKey, itemPath, sourceStamp, pinnedEntry, screenPoint](
+                snowdesktop::item_location::FolderTarget target) {
+                const size_t index = FindItemIndexByKey(key);
+                if (!hwnd_ || exitRequested_ || index >= items_.size() ||
+                    !snowdesktop::folder_mapping_visibility::EqualInsensitive(items_[index].parsingName, itemPath) ||
+                    snowdesktop::shell_icon_request::Stamp(items_[index]) != sourceStamp ||
+                    snowdesktop::folder_mapping_visibility::HasMappingForItem(items_[index], widgets_)) return;
+                if (!target) { MessageBeep(MB_ICONWARNING); return; }
+                DesktopWidget widget;
+                widget.id = MakeNewWidgetId();
+                widget.type = DesktopWidgetType::FolderMapping;
+                widget.title = items_[index].name;
+                widget.showTitle = true;
+                widget.sourceFolderPath = target.path;
+                widget.sourceDesktopItemKey = key;
+                const std::wstring createdId = widget.id;
+                if (pinnedEntry)
+                {
+                    auto entry = std::find_if(dockEntries_.begin(), dockEntries_.end(), [&](const DockEntry& current) {
+                        return current.type == pinnedEntry->type && current.keepOnDesktop == pinnedEntry->keepOnDesktop &&
+                            snowdesktop::folder_mapping_visibility::EqualInsensitive(current.reference, pinnedEntry->reference);
+                    });
+                    if (entry == dockEntries_.end()) return;
+                    DockEntry replacement = *entry;
+                    if (!snowdesktop::folder_mapping_visibility::ReplaceDockEntry(replacement, widget)) return;
+                    ConfigureWidgetGridLimits(widget);
+                    widget.gridSpan = {3, 3};
+                    widgets_.push_back(std::move(widget));
+                    *entry = std::move(replacement);
+                    // Retire the direct-folder popup before rebuilding its source.
+                    if (dockFolderPopupOpen_)
+                    {
+                        CloseCollectionPopup();
+                        FinalizeCloseCollectionPopup();
+                    }
+                    EnsureNavTabOrder();
+                    LayoutItems();
+                    SaveLayoutSlots();
+                    InvalidateDockShellMetadata();
+                    InvalidateDockContainers();
+                    InvalidateDragStaticScene();
+                    InvalidateDockRects();
+                }
+                else
+                {
+                    if (IsItemInAnyWidget(items_[index]) || items_[index].gridCell.pageId == kDockPageId) return;
+                    lastContextMenuScreenPoint_ = screenPoint;
+                    AddWidgetToGrid(std::move(widget), {3, 3});
+                }
+                const size_t createdIndex = FindWidgetIndexById(createdId);
+                if (createdIndex < widgets_.size())
+                {
+                    EnumerateFolderMappingEntries(widgets_[createdIndex]);
+                    ClearWidgetAddedHint();
+                    ShowWidgetAddedHint();
+                }
+            }, hwnd_, kBackgroundShellReadyMessage);
+        if (!submitted) MessageBeep(MB_ICONWARNING);
+        break;
+    }
     case kContextLargeIconCreate:
         if (largeIconMenu && largeIconAccess != EntryAccess::Hidden)
         {
@@ -1030,34 +1151,62 @@ void DesktopApp::ShowShellContextMenu(
     std::optional<RECT> dockRenameAnchor,
     std::optional<size_t> dockMappingEntryIndex)
 {
+    const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     std::vector<LPCITEMIDLIST> pidls;
+    std::vector<std::wstring> invocationPaths;
+    const auto collectPath = [&invocationPaths](const DesktopItem& item) {
+        PWSTR path = nullptr;
+        if (SUCCEEDED(SHGetNameFromIDList(item.absolutePidl.get(),
+                SIGDN_FILESYSPATH, &path)) && path)
+            invocationPaths.emplace_back(path);
+        else
+            invocationPaths.emplace_back();
+        CoTaskMemFree(path);
+    };
     if (itemIndex >= 0 && static_cast<size_t>(itemIndex) < items_.size())
     {
         for (const auto& item : items_)
             if (item.selected)
+            {
                 pidls.push_back(reinterpret_cast<LPCITEMIDLIST>(item.childPidl.get()));
+                collectPath(item);
+            }
         if (pidls.empty())
+        {
             pidls.push_back(reinterpret_cast<LPCITEMIDLIST>(items_[itemIndex].childPidl.get()));
+            collectPath(items_[itemIndex]);
+        }
     }
     if (pidls.empty()) return;
+    // Shell activation/view creation can dispatch STA messages. Both bindings
+    // must retain the same folder and PIDLs even if a refresh replaces items_.
+    const ComPtr<IShellFolder> menuFolder = desktopFolder_;
+    if (!menuFolder) return;
+    std::vector<Pidl> selectionSnapshot;
+    selectionSnapshot.reserve(pidls.size());
+    for (auto& pidl : pidls)
+    {
+        if (!pidl) return;
+        Pidl copy(ILCloneFull(reinterpret_cast<PCIDLIST_ABSOLUTE>(pidl)));
+        if (!copy.get()) return;
+        pidl = copy.get();
+        selectionSnapshot.push_back(std::move(copy));
+    }
 
     ShellPopupMenuLayerGuard shellMenuLayer(*this);
     const HWND menuOwner = ShellDialogOwnerHwnd();
     snowdesktop::ShellContextMenuSite menuSite;
-    menuSite.Initialize(desktopFolder_.Get(), menuOwner);
-    HWND shellOwner = menuSite.HostWindow()
-        ? menuSite.HostWindow() : menuOwner;
     ComPtr<IContextMenu> ctxMenu;
-    if (FAILED(desktopFolder_->GetUIObjectOf(shellOwner, static_cast<UINT>(pidls.size()), pidls.data(),
-        IID_IContextMenu, nullptr, reinterpret_cast<void**>(ctxMenu.GetAddressOf()))) || !ctxMenu)
-        return;
-    menuSite.Attach(ctxMenu.Get());
-
     HMENU menu = CreatePopupMenu();
+    if (!menu) return;
     constexpr UINT kFirstCmd = 1;
     constexpr UINT kLastCmd = 0x7FFF;
-    if (FAILED(ctxMenu->QueryContextMenu(menu, 0, kFirstCmd, kLastCmd,
-            CMF_NORMAL | CMF_CANRENAME | CMF_SYNCCASCADEMENU)))
+    if (FAILED(menuSite.BuildMenu(menuFolder.Get(), menuOwner, menu, kFirstCmd, kLastCmd,
+            CMF_NORMAL | CMF_CANRENAME | CMF_SYNCCASCADEMENU | extendedFlags,
+            [&](HWND bindOwner, IContextMenu** target) {
+                return menuFolder->GetUIObjectOf(bindOwner, static_cast<UINT>(pidls.size()), pidls.data(),
+                    IID_IContextMenu, nullptr, reinterpret_cast<void**>(target));
+            }, ctxMenu.GetAddressOf())))
         { DestroyMenu(menu); return; }
 
     ctxMenu.As(&activeContextMenu2_);
@@ -1184,7 +1333,24 @@ void DesktopApp::ShowShellContextMenu(
             invoke, invocationDirectory, invocationDirectoryA);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = screenPoint;
-        InvokeShellMenuCommand(ctxMenu.Get(), invoke, &menuSite);
+        const auto startPin = snowdesktop::shell_start_pin::Route(
+            ctxMenu.Get(), commandOffset, invocationPaths,
+            [&](auto action, const auto& path) {
+                snowdesktop::UiAnimationScheduler::MessagePumpScope pump(
+                    uiAnimationScheduler_, [this]() { FlushPendingCompositionCommit(); });
+                return snowdesktop::shell_start_pin::Invoke(
+                    snowdesktop::deployment::GetTaskbarHookPath(), action,
+                    path, invoke.hwnd, screenPoint);
+            });
+        if (startPin)
+        {
+            wchar_t message[96]{};
+            swprintf_s(message, L"Shell Start pin command result=0x%08lX",
+                static_cast<unsigned long>(*startPin));
+            WriteDiagnosticLogEntry(message);
+        }
+        else
+            InvokeShellMenuCommand(ctxMenu.Get(), invoke, &menuSite);
         RequestShellRefresh();
     }
     DestroyMenu(menu);

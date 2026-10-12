@@ -1,16 +1,28 @@
 #include "app/app.h"
 
+namespace
+{
+struct ImmediateDockPaintDeferral
+{
+    bool& deferred;
+    bool previous;
+    explicit ImmediateDockPaintDeferral(bool& value) : deferred(value), previous(value)
+    { deferred = true; }
+    ~ImmediateDockPaintDeferral() { deferred = previous; }
+};
+}
+
 // Floating-Dock visibility, pointer mapping and interaction state.
 
 void DesktopApp::ShowFloatingDock(
-    HMONITOR preferredMonitor)
+    HMONITOR preferredMonitor, DockRevealSource source)
 {
     if (desktopPassthroughActive_)
         return;
     WriteDiagnosticLogEntry(
-        preferredMonitor
-            ? L"Floating Dock associated surface reveal received"
-            : L"Floating Dock shortcut received");
+        source == DockRevealSource::Hotkey ? L"Floating Dock shortcut received" :
+        source == DockRevealSource::Gesture ? L"Floating Dock edge gesture received" :
+        L"Floating Dock associated surface reveal received");
     if (!generalSettings_.dockEnabled)
     {
         WriteDiagnosticLogEntry(
@@ -27,6 +39,11 @@ void DesktopApp::ShowFloatingDock(
         GetCursorPos(&cursorScreen);
         targetMonitor = MonitorFromPoint(
             cursorScreen, MONITOR_DEFAULTTONEAREST);
+    }
+    if (FullscreenBlocksDockReveal(source, targetMonitor))
+    {
+        WriteDiagnosticLogEntry(L"Floating Dock reveal suppressed: foreground fullscreen");
+        return;
     }
     // Capture fullscreen before host rebuilds, SHOW/TOPMOST transactions or
     // the keyboard proxy can change foreground ownership. The independently
@@ -103,6 +120,15 @@ void DesktopApp::ShowFloatingDock(
             return;
         }
     }
+    // Rendering/host synchronization can pump work; recheck before promotion.
+    if (FullscreenBlocksDockReveal(source, targetMonitor))
+    {
+        floatingDockHost_->promoted = false;
+        RefreshFloatingDockVisibilityState();
+        if (statusBar_) statusBar_->RefreshDockState(floatingDockHost_->monitor);
+        UpdatePersistentDockHostVisibility(*floatingDockHost_);
+        return;
+    }
     UpdatePersistentDockHostVisibility(
         *floatingDockHost_);
     if (hostWasVisible)
@@ -112,7 +138,10 @@ void DesktopApp::ShowFloatingDock(
         InvalidateFloatingDockWindow(
             *floatingDockHost_, true);
     }
-    BeginFloatingDockKeyboardSession();
+    // Pointer gestures reveal a NOACTIVATE surface, never a keyboard proxy.
+    if (snowdesktop::dock_fullscreen::StartsKeyboardSession(source))
+        BeginFloatingDockKeyboardSession(source == DockRevealSource::Hotkey &&
+            !FullscreenBlocksDockReveal(source, targetMonitor));
 }
 
 bool DesktopApp::
@@ -123,6 +152,8 @@ EnsureFloatingDockVisibleForAssociatedSurface(
         return false;
     const HMONITOR monitor = MonitorFromPoint(
         anchorScreen, MONITOR_DEFAULTTONEAREST);
+    if (FullscreenBlocksDockReveal(DockRevealSource::AssociatedSurface, monitor))
+        return false;
     if (!SyncPersistentDockHost(monitor) ||
         !floatingDockHost_)
     {
@@ -141,6 +172,39 @@ EnsureFloatingDockVisibleForAssociatedSurface(
     return floatingDockHost_ &&
         IsPersistentDockHostEffectivelyFloating(
             *floatingDockHost_);
+}
+
+// Window/search animations own their target, while the Dock keeps its own
+// promotion until the existing outside-pointer dismissal ends this session.
+HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen)
+{
+    if (!generalSettings_.dockEnabled || desktopPassthroughActive_ ||
+        IsRectEmpty(&anchorScreen)) return nullptr;
+    const HMONITOR monitor = MonitorFromRect(&anchorScreen, MONITOR_DEFAULTTONEAREST);
+    for (const auto& ownedHost : persistentDockHosts_)
+    {
+        if (!ownedHost || !ownedHost->active || ownedHost->monitor != monitor ||
+            !ownedHost->hwnd || !IsWindowVisible(ownedHost->hwnd)) continue;
+        auto& host = *ownedHost;
+        // The native minimize button belongs to the action that opened this
+        // session. Consume that press before the outside-click timer samples it.
+        floatingDockPointerButtonsDown_ |=
+            ((GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1u : 0u) |
+            ((GetAsyncKeyState(VK_RBUTTON) & 0x8000) ? 2u : 0u) |
+            ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u);
+        if (!host.promoted)
+        {
+            host.promoted = true;
+            host.mergedCloseAfterInteraction = false;
+            host.passivelyRevealed = false;
+            host.passiveRevealTick = 0;
+            host.passiveLeaveStartTick = 0;
+            RefreshFloatingDockVisibilityState();
+            UpdatePersistentDockHostVisibility(host);
+        }
+        return host.hwnd;
+    }
+    return nullptr;
 }
 
 void DesktopApp::CloseFloatingDock(
@@ -198,9 +262,16 @@ void DesktopApp::CloseFloatingDock(
     host.passivelyRevealed = false;
     host.passiveRevealTick = 0;
     host.passiveLeaveStartTick = 0;
+    host.windowRegionPending = true;
     RefreshFloatingDockVisibilityState();
-    if (statusBar_) statusBar_->RefreshDockState(host.monitor);
-    UpdatePersistentDockHostVisibility(host);
+    // Visibility can prepare an animated reveal/hide and request its own
+    // immediate paint. Publish just once after the close state is complete,
+    // still before restoring keyboard focus below.
+    {
+        ImmediateDockPaintDeferral defer(host.immediatePaintDeferred);
+        if (statusBar_) statusBar_->RefreshDockState(host.monitor);
+        UpdatePersistentDockHostVisibility(host);
+    }
     InvalidateFloatingDockWindow(host, true);
     if (endKeyboardSession)
         EndFloatingDockKeyboardSession(focusPolicy);
@@ -248,6 +319,7 @@ void DesktopApp::CloseAllFloatingDocks(
             host->passivelyRevealed = false;
             host->passiveRevealTick = 0;
             host->passiveLeaveStartTick = 0;
+            host->windowRegionPending = true;
         }
     }
     RefreshFloatingDockVisibilityState();
@@ -255,8 +327,11 @@ void DesktopApp::CloseAllFloatingDocks(
     {
         if (!host)
             continue;
-        if (statusBar_) statusBar_->RefreshDockState(host->monitor);
-        UpdatePersistentDockHostVisibility(*host);
+        {
+            ImmediateDockPaintDeferral defer(host->immediatePaintDeferred);
+            if (statusBar_) statusBar_->RefreshDockState(host->monitor);
+            UpdatePersistentDockHostVisibility(*host);
+        }
         InvalidateFloatingDockWindow(*host, true);
     }
     if (endKeyboardSession)
@@ -307,13 +382,18 @@ void DesktopApp::ToggleFloatingDock()
     GetCursorPos(&cursorScreen);
     const HMONITOR monitor = MonitorFromPoint(
         cursorScreen, MONITOR_DEFAULTTONEAREST);
+    if (FullscreenBlocksDockReveal(DockRevealSource::Hotkey, monitor))
+    {
+        CloseAllFloatingDocks(FloatingDockCloseFocusPolicy::PreserveCurrent);
+        return;
+    }
     if (!SyncPersistentDockHost(monitor) ||
         !floatingDockHost_)
         return;
     if (IsPersistentDockHostPromoted(*floatingDockHost_))
         CloseFloatingDock(*floatingDockHost_);
     else
-        ShowFloatingDock(monitor);
+        ShowFloatingDock(monitor, DockRevealSource::Hotkey);
 }
 
 void DesktopApp::InvalidateFloatingDockWindow(
@@ -347,7 +427,7 @@ void DesktopApp::InvalidateFloatingDockWindow(
         // immediate 必须同步 UpdateWindow。历史回归：f29a882 曾改成
         // floatingDockPointerPresentPending_ + EnsureUiAnimationFrame()，
         // 导致浮动 Dock hover 和拖放反馈晚一帧；仅当合成绘制重入时才允许兜底。
-        if (immediate)
+        if (immediate && !host.immediatePaintDeferred)
         {
             if (!host.compositionPaintInProgress)
                 UpdateWindow(host.hwnd);

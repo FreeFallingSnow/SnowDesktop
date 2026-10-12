@@ -13,6 +13,8 @@
 
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
+    if (rightButtonItemDrag_ ||
+        (HasActiveContextMenuSession() && dragSession_.HasContext())) return;
     CancelPopupHover(true);
     CancelRenameClick();
     (void)wp;
@@ -204,11 +206,40 @@ void DesktopApp::OnMouseMoveAt(
     WPARAM wp, POINT current,
     bool* dragPreviewSynced)
 {
+    // Lua hover invalidations and native chrome can request the same child
+    // several times in one move. Merge their final state and subsequent
+    // passive samples within a bounded presentation interval.
+    struct WidgetPointerBatch
+    {
+        DesktopApp& app;
+        bool previous;
+        bool passive = false;
+        ~WidgetPointerBatch()
+        {
+            app.desktopWidgetPointerBatchActive_ = previous;
+            if (!previous && !app.pendingDesktopWidgetCompositions_.empty())
+                (void)app.PresentQueuedDesktopWidgetComposition(passive);
+        }
+    } widgetPointerBatch{ *this, desktopWidgetPointerBatchActive_ };
+    // Only passive hover is a short transaction. A pressed move may enter
+    // DoDragDrop and pump nested messages until release; holding the batch
+    // across that loop would suppress component drawing for the whole drag.
+    const bool passivePointerMove = snowdesktop::desktop_hover_rules::
+        CanCoalescePassiveMouseMoves(
+            snowdesktop::desktop_hover_rules::ShouldResamplePassiveMouseMove(
+                mouseDown_, dragSession_.IsActive(),
+                widgetAction_ != WidgetAction::None || middleButtonWidgetMove_ ||
+                    detailColumnResizeActive_ || luaWidgetPanelMouseDown_),
+            (wp & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON |
+                MK_XBUTTON1 | MK_XBUTTON2)) != 0,
+            dragDropController_.IsTransportActive(), GetCapture() != nullptr);
+    desktopWidgetPointerBatchActive_ =
+        desktopWidgetPointerBatchActive_ || passivePointerMove;
+    widgetPointerBatch.passive = passivePointerMove;
     renameClickController_.Move(current, GetSystemMetrics(SM_CXDRAG),
         GetSystemMetrics(SM_CYDRAG));
     if (dragPreviewSynced)
         *dragPreviewSynced = false;
-    (void)wp;
     const POINT tracePoint = current;
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
@@ -521,6 +552,14 @@ void DesktopApp::OnMouseMoveAt(
         return;
     }
 
+    if (!dragSession_.IsActive() && mouseDown_ && mouseDownHit_ &&
+        dynamic_cast<DockRunningItem*>(mouseDownHit_) && !rightButtonItemDrag_ &&
+        (std::abs(current.x - mouseDownPoint_.x) > std::max(8, GetSystemMetrics(SM_CXDRAG)) ||
+         std::abs(current.y - mouseDownPoint_.y) > std::max(8, GetSystemMetrics(SM_CYDRAG))))
+    {
+        (void)BeginDockRunningDrag(current);
+    }
+
     const bool pressedDockEntryWithoutSelection =
         mouseDownHit_ &&
         dynamic_cast<DockEntryItem*>(mouseDownHit_) &&
@@ -589,6 +628,8 @@ void DesktopApp::OnMouseMoveAt(
             PrepareDockBackdropForDragTransition();
             dragSession_.Begin(source, std::move(sourceItems), std::move(sourceList),
                 mouseDownPoint_, current);
+            if (rightButtonItemDrag_)
+                suppressRightButtonUp_ = true;
             if (hwnd_ && IsWindow(hwnd_))
             {
                 SetTimer(
@@ -765,6 +806,14 @@ void DesktopApp::OnMouseMoveAt(
                 : static_cast<size_t>(-1));
         if (groupTarget < widgets_.size())
         {
+            if (auto* dock = GetDockContainerAtPoint(current))
+                if (auto* entry = dock->EntryAtPoint(current); entry && IsGroupDockEntryType(entry->GetEntryType()) &&
+                    dockHandoffDwellIndex_ != entry->GetEntryIndex())
+                {
+                    dockHandoffDwellIndex_ = entry->GetEntryIndex();
+                    dockHandoffDwellStartTick_ = GetTickCount();
+                    SetTimer(hwnd_, kDockHandoffDwellTimerId, kDockHandoffDwellIntervalMs, nullptr);
+                }
             widgetCollectionGroupTargetIndex_ = groupTarget;
             widgetCollectionGroupInsertIndex_ =
                 widgets_[groupTarget].childWidgetIds.size();
@@ -785,9 +834,10 @@ void DesktopApp::OnMouseMoveAt(
                             CategoryIdAtPoint(current).empty()
                         : !dynamic_cast<FileGroup*>(group)->
                             SourceIdAtPoint(current).empty();
-                if (overTab)
+                if (overTab && slot)
                     widgetCollectionGroupInsertIndex_ =
-                        group->GetDropInsertIndex(slot, region);
+                        std::min(slot->GetIndex() + (region == HitRegion::SortAfter ? 1 : 0),
+                            widgets_[groupTarget].childWidgetIds.size());
                 break;
             }
             widgetDockTarget_ = false;
@@ -800,8 +850,19 @@ void DesktopApp::OnMouseMoveAt(
         }
         widgetCollectionGroupTargetIndex_ =
             static_cast<size_t>(-1);
+        ResetDockHandoffDwell();
         widgetCollectionGroupInsertIndex_ =
             static_cast<size_t>(-1);
+
+        if (IsPointOccludedByOpenPopup(current))
+        {
+            widgetDockTarget_ = false;
+            widgetDockTargetContainer_ = nullptr;
+            widgetPreviewCell_ = widgetDragOriginalCell_;
+            widgetPreviewSpan_ = widgetDragOriginalSpan_;
+            ShowDragHintWindow(current, L"");
+            return;
+        }
 
         widgetPairTargetIndex_ = HitTestWidgetPairTarget(current, mouseDownWidgetIndex_);
         std::wstring pairHint;
@@ -871,6 +932,14 @@ void DesktopApp::OnMouseMoveAt(
         }
         ShowDragHintWindow(current, pairHint.empty()
             ? _LW("core.drag.move_widget") : pairHint);
+        return;
+    }
+
+    if (dockRunningDrag_ && dragSession_.IsActive())
+    {
+        UpdateDockRunningDrag(current);
+        SyncDragPreviewWindow();
+        if (dragPreviewSynced) *dragPreviewSynced = true;
         return;
     }
 
@@ -964,7 +1033,7 @@ void DesktopApp::OnMouseMoveAt(
                             resumePoint);
                     const bool primaryButtonDown =
                         nativeResumeRequested &&
-                        (GetAsyncKeyState(middleButtonWidgetMove_ ? VK_MBUTTON : VK_LBUTTON) &
+                        (GetAsyncKeyState(PointerGestureVirtualKey()) &
                             0x8000) != 0;
                     const auto unwindAction =
                         snowdesktop::ole_drag_rules::
@@ -1044,6 +1113,8 @@ void DesktopApp::OnMouseMoveAt(
                         // Commit exactly once at the live native point without
                         // reacquiring capture or flashing the custom ghost.
                         if (middleButtonWidgetMove_) OnMiddleButtonUpAt(0, resumePoint);
+                        else if (rightButtonItemDrag_)
+                            OnRightButtonUp(MAKELPARAM(resumePoint.x, resumePoint.y));
                         else OnLeftButtonUpAt(0, resumePoint);
                     }
                     PresentPointerInteractionFrame();
@@ -1137,7 +1208,7 @@ void DesktopApp::OnMouseMoveAt(
         HitRegion targetRegion = HitRegion::None;
         const bool popupHit =
             !suppressDesktopWidgetTargets &&
-            !groupedEntryDrag &&
+            (!groupedEntryDrag || GetGroupPopupView()) &&
             HitTestPopupForDrag(current, targetContainer, targetSlot, targetRegion);
         if (!popupHit)
         {
@@ -1199,7 +1270,7 @@ void DesktopApp::OnMouseMoveAt(
             hint = targetContainer->GetDragHint(targetSlot, targetRegion,
                 dragSession_.Items(), dragSession_.Source(), currentMods);
 
-        if (!UpdateDockWidgetPairHint(current, currentMods))
+        if (!UpdateWidgetPairDragHint(current, currentMods))
             ShowDragHintWindow(current, hint);
         return;
     }

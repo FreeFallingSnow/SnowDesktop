@@ -55,6 +55,7 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/view/widget_interaction_region.h"
 #include "widget/view/widget_draw_geometry.h"
 #include "widget/view/widget_background_cache.h"
+#include "widget/view/widget_image_sampling.h"
 #include "widget/view/widget_text_layout_cache.h"
 #include "widget/view/widget_view_lua.h"
 #include "widget/view/widget_view_tree.h"
@@ -702,6 +703,7 @@ struct D2DState
     ComPtr<ID2D1Device> bitmapDevice;
     ComPtr<ID2D1DeviceContext> immediateCommandContext;
     snowdesktop::widget_runtime::WidgetBackgroundCache backgroundCache;
+    snowdesktop::widget_runtime::WidgetImageSamplingCache imageSamplingCache;
     snowdesktop::widget_runtime::WidgetTextLayoutCache textLayoutCache;
     std::unordered_map<std::string, ComPtr<ID2D1Bitmap1>> imageCache;
     snowdesktop::widget_runtime::WidgetPackageImageCache packageImageCache;
@@ -718,6 +720,23 @@ struct D2DState
     std::unordered_map<std::wstring, ComPtr<IDWriteTextFormat>>
         privateTextFormatCache;
 };
+
+static void EraseRuntimeImageBitmap(D2DState* state, const std::string& key)
+{
+    if (const auto found = state->runtimeImageBitmaps.find(key);
+        found != state->runtimeImageBitmaps.end())
+    {
+        state->imageSamplingCache.Remove(found->second.Get());
+        state->runtimeImageBitmaps.erase(found);
+    }
+}
+
+static void ClearShellIconBitmaps(D2DState* state)
+{
+    for (const auto& [path, bitmap] : state->shellIconCache)
+        state->imageSamplingCache.Remove(bitmap.Get());
+    state->shellIconCache.clear();
+}
 
 static float CurrentLayoutContentWidth(const D2DState* state) noexcept
 {
@@ -800,7 +819,7 @@ static std::string RegisterRuntimeImageSource(D2DState* state,
             [&boundToken](const auto& item) { return item.first != boundToken; });
         if (victim == state->runtimeImages.end()) break;
         if (victim->second.pixels) bytes -= victim->second.pixels->bgraPremultiplied.size();
-        state->runtimeImageBitmaps.erase(victim->first);
+        EraseRuntimeImageBitmap(state, victim->first);
         state->runtimeImages.erase(victim);
     }
     const std::size_t ownerCount = static_cast<std::size_t>(std::count_if(
@@ -819,7 +838,7 @@ static std::string RegisterRuntimeImageSource(D2DState* state,
         for (const auto& key : removed)
         {
             state->runtimeImages.erase(key);
-            state->runtimeImageBitmaps.erase(key);
+            EraseRuntimeImageBitmap(state, key);
         }
     }
     if (!state->runtimeImages.contains(boundToken) &&
@@ -827,7 +846,7 @@ static std::string RegisterRuntimeImageSource(D2DState* state,
     {
         const std::string evicted = state->runtimeImages.begin()->first;
         state->runtimeImages.erase(evicted);
-        state->runtimeImageBitmaps.erase(evicted);
+        EraseRuntimeImageBitmap(state, evicted);
     }
     state->runtimeImages.insert_or_assign(
         boundToken, RuntimeImageResource{
@@ -849,7 +868,7 @@ static void ClearRuntimeImagesForWidget(
     for (const auto& key : removed)
     {
         state->runtimeImages.erase(key);
-        state->runtimeImageBitmaps.erase(key);
+        EraseRuntimeImageBitmap(state, key);
     }
 }
 
@@ -866,7 +885,7 @@ static void ClearRuntimeImagesForSource(
     for (const auto& key : removed)
     {
         state->runtimeImages.erase(key);
-        state->runtimeImageBitmaps.erase(key);
+        EraseRuntimeImageBitmap(state, key);
     }
 }
 
@@ -5543,7 +5562,7 @@ static int lua_DataSubscribe(lua_State* state)
     return 1;
 }
 
-static int lua_TaskStart(lua_State* state)
+static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* state)
 {
     if (lua_gettop(state) < 1 || lua_gettop(state) > 2)
         return luaL_error(state,
@@ -6994,8 +7013,8 @@ static int lua_TaskStart(lua_State* state)
                         std::string::npos ||
                     valueSuffix.find_first_of("\r\n\0", 0, 3) !=
                         std::string::npos ||
-                    !IsValidUtf8Local(valuePrefix) ||
-                    !IsValidUtf8Local(valueSuffix)))
+                    (!valuePrefix.empty() && !IsValidUtf8Local(valuePrefix)) ||
+                    (!valueSuffix.empty() && !IsValidUtf8Local(valueSuffix))))
             {
                 descriptorError =
                     "secret header affixes must be valid single-line UTF-8";
@@ -7095,9 +7114,10 @@ static int lua_TaskStart(lua_State* state)
                             descriptorError))
                     {
                         lua_pop(state, 3);
-                        return luaL_error(state,
+                        lua_pushfstring(state,
                             "task.start: network.request header secret descriptor is invalid: %s",
                             descriptorError.c_str());
+                        return -1;
                     }
                     headerBytes += arguments[fieldPrefix + "prefix"].size() +
                         arguments[fieldPrefix + "suffix"].size();
@@ -7148,9 +7168,10 @@ static int lua_TaskStart(lua_State* state)
                     MaximumBodyBytes, false, descriptorError))
             {
                 lua_pop(state, 1);
-                return luaL_error(state,
+                lua_pushfstring(state,
                     "task.start: network.request body secret descriptor is invalid: %s",
                     descriptorError.c_str());
+                return -1;
             }
         }
         else
@@ -7497,6 +7518,14 @@ static int lua_TaskStart(lua_State* state)
     }
     lua_pushinteger(state, static_cast<lua_Integer>(result.id));
     return 1;
+}
+
+static int lua_TaskStart(lua_State* state)
+{
+    const int result = LuaTaskStartWithDeferredSecretError(state);
+    // Lua uses longjmp in this build. Finish the secret descriptor parser's
+    // C++ string/container lifetimes before raising its validation error.
+    return result < 0 ? lua_error(state) : result;
 }
 
 static int lua_TaskCancel(lua_State* state)
@@ -10282,10 +10311,11 @@ static void EnsureBitmapCachesForCurrentDevice(D2DState* state)
     state->bitmapDevice = std::move(device);
     state->backgroundCache.Clear();
     state->textLayoutCache.Clear();
+    state->imageSamplingCache.Clear();
     state->immediateCommandContext.Reset();
     state->imageCache.clear();
     state->runtimeImageBitmaps.clear();
-    state->shellIconCache.clear();
+    ClearShellIconBitmaps(state);
     state->shellIconFailures.clear();
 }
 
@@ -10310,7 +10340,56 @@ static ID2D1Bitmap1* LoadImageBitmap(
         return nullptr;
     ID2D1Bitmap1* result = bitmap.Get();
     if (s->imageCache.size() >= 128)
-        s->imageCache.clear();
+    {
+        // Retain only a bounded small BGRA8 working set past the original
+        // 128-entry boundary. This estimates source pixels, not GPU residency.
+        constexpr std::size_t smallImageEntryLimit = 256;
+        constexpr std::uint64_t smallImagePixelByteLimit =
+            16ULL * 1024ULL * 1024ULL;
+        std::uint64_t estimatedPixelBytes = 0;
+        const auto addBgra8PixelBytes =
+            [&](ID2D1Bitmap1* cachedBitmap) -> bool {
+                if (!cachedBitmap || cachedBitmap->GetPixelFormat().format !=
+                        DXGI_FORMAT_B8G8R8A8_UNORM)
+                    return false;
+                const D2D1_SIZE_U pixels = cachedBitmap->GetPixelSize();
+                const std::uint64_t width = pixels.width;
+                const std::uint64_t height = pixels.height;
+                if (width == 0 || height == 0)
+                    return false;
+                // Divide before multiplying: a successful check proves
+                // width*height*4 <= 16MiB, so the uint64_t product is safe.
+                if (height > (smallImagePixelByteLimit / 4ULL) / width)
+                    return false;
+                const std::uint64_t pixelBytes = width * height * 4ULL;
+                // Running total never exceeds the limit; subtraction and
+                // addition remain safe even for adversarial bitmap sizes.
+                if (pixelBytes > smallImagePixelByteLimit -
+                        estimatedPixelBytes)
+                    return false;
+                estimatedPixelBytes += pixelBytes;
+                return true;
+            };
+        bool retainSmallWorkingSet =
+            s->imageCache.size() < smallImageEntryLimit &&
+            addBgra8PixelBytes(bitmap.Get());
+        if (retainSmallWorkingSet)
+        {
+            for (const auto& cached : s->imageCache)
+            {
+                if (!addBgra8PixelBytes(cached.second.Get()))
+                {
+                    retainSmallWorkingSet = false;
+                    break;
+                }
+            }
+        }
+        if (!retainSmallWorkingSet)
+        {
+            s->imageSamplingCache.Clear();
+            s->imageCache.clear();
+        }
+    }
     s->imageCache[contentKey] = bitmap;
     return result;
 }
@@ -10332,7 +10411,14 @@ static void ReleasePackageImageResources(
             {
                 const std::string contentKey(value, length);
                 if (state->packageImageCache.Release(contentKey))
-                    state->imageCache.erase(contentKey);
+                {
+                    if (const auto found = state->imageCache.find(contentKey);
+                        found != state->imageCache.end())
+                    {
+                        state->imageSamplingCache.Remove(found->second.Get());
+                        state->imageCache.erase(found);
+                    }
+                }
             }
             lua_pop(luaState, 1);
         }
@@ -11623,7 +11709,11 @@ static int lua_DrawImage(lua_State* L)
     if (!s || !s->ctx || !bmp) return 0;
     D2D1_RECT_F dst = D2D1::RectF(x + s->widgetRect.left, y + s->widgetRect.top,
         x + s->widgetRect.left + w, y + s->widgetRect.top + h);
-    s->ctx->DrawBitmap(bmp, dst, alpha, D2D1_INTERPOLATION_MODE_LINEAR);
+    const auto size = bmp->GetSize();
+    const auto sampled = s->imageSamplingCache.Resolve(s->ctx, bmp, dst,
+        D2D1::RectF(0, 0, size.width, size.height));
+    s->ctx->DrawBitmap(sampled.bitmap.Get(), dst, alpha,
+        sampled.interpolation, sampled.source);
     return 0;
 }
 
@@ -11729,10 +11819,10 @@ static int lua_DrawImageFit(lua_State* state)
             D2D1::Matrix3x2F::Rotation(rotationDegrees, origin) *
             previousTransform);
     }
-    d2d->ctx->DrawBitmap(bitmap, destination, alpha,
-        interpolation == "nearest"
-            ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
-            : D2D1_INTERPOLATION_MODE_LINEAR, source);
+    const auto sampled = d2d->imageSamplingCache.Resolve(d2d->ctx, bitmap,
+        destination, source, interpolation == "nearest");
+    d2d->ctx->DrawBitmap(sampled.bitmap.Get(), destination, alpha,
+        sampled.interpolation, sampled.source);
     if (rotated)
         d2d->ctx->SetTransform(previousTransform);
     if (roundedClip)
@@ -11934,7 +12024,10 @@ static void DrainShellIconResults(D2DState* state)
             continue;
         }
         if (state->shellIconCache.size() >= 512)
-            state->shellIconCache.clear();
+            ClearShellIconBitmaps(state);
+        if (const auto old = state->shellIconCache.find(result.path);
+            old != state->shellIconCache.end())
+            state->imageSamplingCache.Remove(old->second.Get());
         state->shellIconCache[result.path] = std::move(bitmap);
     }
 }
@@ -15671,11 +15764,12 @@ void WidgetEngine::ResetGraphicsResources(ID2D1DeviceContext* context)
     d2dState_->bitmapDevice.Reset();
     d2dState_->immediateCommandContext.Reset();
     d2dState_->backgroundCache.Clear();
+    d2dState_->imageSamplingCache.Clear();
     d2dState_->brushCache.clear();
     d2dState_->brushContext = nullptr;
     d2dState_->imageCache.clear();
     d2dState_->runtimeImageBitmaps.clear();
-    d2dState_->shellIconCache.clear();
+    ClearShellIconBitmaps(d2dState_);
     d2dState_->shellIconFailures.clear();
     for (auto& widget : widgets_)
     {
@@ -18295,14 +18389,19 @@ static void DrawWidgetViewBitmap(D2DState* state,
             { targetLeft, targetTop,
                 targetWidth, targetHeight }, fit, alignment);
     if (!placement.valid) return;
-    const D2D1_INTERPOLATION_MODE interpolation =
-        node.imageInterpolation == ViewImageInterpolation::Nearest
-        ? D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR
-        : D2D1_INTERPOLATION_MODE_LINEAR;
-    const D2D1_RECT_F sourceRect = D2D1::RectF(
-        placement.source.x, placement.source.y,
-        placement.source.x + placement.source.width,
-        placement.source.y + placement.source.height);
+    const D2D1_RECT_F destination = D2D1::RectF(
+        placement.destination.x, placement.destination.y,
+        placement.destination.x + placement.destination.width,
+        placement.destination.y + placement.destination.height);
+    const auto sampled = state->imageSamplingCache.Resolve(state->ctx, bitmap,
+        destination, D2D1::RectF(
+            placement.source.x, placement.source.y,
+            placement.source.x + placement.source.width,
+            placement.source.y + placement.source.height),
+        node.imageInterpolation == ViewImageInterpolation::Nearest);
+    bitmap = sampled.bitmap.Get();
+    const auto& sourceRect = sampled.source;
+    const auto interpolation = sampled.interpolation;
     const std::optional<std::uint32_t> imageTint =
         snowdesktop::widget_runtime::ResolveViewThemeColor(
             node.imageTint, node.imageTintToken, palette);
@@ -18313,13 +18412,15 @@ static void DrawWidgetViewBitmap(D2DState* state,
                 CLSID_D2D1ColorMatrix, &tintEffect)) && tintEffect)
         {
             const D2D1_COLOR_F tint = D2D1::ColorF(*imageTint);
+            // PREMULTIPLIED mode unpremultiplies the input and premultiplies
+            // the matrix output. Supply constant straight RGB and scale only
+            // alpha; putting RGB in the alpha row would multiply alpha twice.
             const D2D1_MATRIX_5X4_F matrix = {
                 0.0f, 0.0f, 0.0f, 0.0f,
                 0.0f, 0.0f, 0.0f, 0.0f,
                 0.0f, 0.0f, 0.0f, 0.0f,
-                tint.r * opacity, tint.g * opacity,
-                    tint.b * opacity, opacity,
-                0.0f, 0.0f, 0.0f, 0.0f,
+                0.0f, 0.0f, 0.0f, opacity,
+                tint.r, tint.g, tint.b, 0.0f,
             };
             tintEffect->SetInput(0, bitmap);
             if (SUCCEEDED(tintEffect->SetValue(
@@ -18331,9 +18432,9 @@ static void DrawWidgetViewBitmap(D2DState* state,
                 D2D1_MATRIX_3X2_F previous{};
                 state->ctx->GetTransform(&previous);
                 const float scaleX = placement.destination.width /
-                    placement.source.width;
+                    (sourceRect.right - sourceRect.left);
                 const float scaleY = placement.destination.height /
-                    placement.source.height;
+                    (sourceRect.bottom - sourceRect.top);
                 const D2D1_MATRIX_3X2_F placementTransform =
                     D2D1::Matrix3x2F::Scale(scaleX, scaleY) *
                     D2D1::Matrix3x2F::Translation(
@@ -18341,8 +18442,7 @@ static void DrawWidgetViewBitmap(D2DState* state,
                         placement.destination.y);
                 state->ctx->SetTransform(placementTransform * previous);
                 state->ctx->DrawImage(tintEffect.Get(),
-                    D2D1::Point2F(-placement.source.x,
-                        -placement.source.y),
+                    D2D1::Point2F(-sourceRect.left, -sourceRect.top),
                     sourceRect, interpolation,
                     D2D1_COMPOSITE_MODE_SOURCE_OVER);
                 state->ctx->SetTransform(previous);
@@ -18350,11 +18450,7 @@ static void DrawWidgetViewBitmap(D2DState* state,
             }
         }
     }
-    state->ctx->DrawBitmap(bitmap, D2D1::RectF(
-            placement.destination.x, placement.destination.y,
-            placement.destination.x + placement.destination.width,
-            placement.destination.y + placement.destination.height),
-        opacity, interpolation, sourceRect);
+    state->ctx->DrawBitmap(bitmap, destination, opacity, interpolation, sourceRect);
 }
 
 static void DrawWidgetViewShadow(D2DState* state,
@@ -19470,23 +19566,26 @@ static void DrawWidgetViewTooltip(D2DState* state,
     if (!state || !state->ctx || !state->dwrite) return;
     const auto* region = regions.Find(regions.HoveredKey());
     if (!region || region->tooltip.empty()) return;
+    const auto context = state->engine ? state->engine->RuntimeGetWidgetContextState(state->currentWidgetId) : LuaWidgetContextState{};
+    const float scale = static_cast<float>(context.surface.dpiX) / 96.f;
 
     const float surfaceWidth = std::max(
         0.0f, state->widgetRect.right - state->widgetRect.left);
     const float surfaceHeight = std::max(
         0.0f, state->widgetRect.bottom - state->widgetRect.top);
     const float maximumWidth = std::max(
-        1.0f, std::min(280.0f, surfaceWidth - 8.0f));
+        1.0f, std::min(280.0f * scale, surfaceWidth - 8.0f * scale));
     const float maximumHeight = std::max(
-        1.0f, std::min(192.0f, surfaceHeight - 8.0f));
-    IDWriteTextFormat* format = GetCachedTextFormat(state, 13.0f,
+        1.0f, std::min(192.0f * scale, surfaceHeight - 8.0f * scale));
+    IDWriteTextFormat* format = GetCachedTextFormat(state, snowdesktop::NativeTooltipFontSize() * scale,
         DWRITE_FONT_WEIGHT_NORMAL, false, DWRITE_WORD_WRAPPING_WRAP);
     const std::wstring title = Utf8ToWideLocal(region->tooltipTitle);
     const std::wstring body = Utf8ToWideLocal(region->tooltip);
     snowdesktop::NativeTooltipTextLayout measured;
+    snowdesktop::NativeTooltipLayoutOptions options;
+    options.scale = scale;
     if (!format || FAILED(snowdesktop::MeasureNativeTooltip(state->dwrite,
-        format, title, body, maximumWidth, maximumHeight, measured))) return;
-    const auto& layout = measured.layout;
+        format, title, body, maximumWidth, maximumHeight, measured, options))) return;
     const float width = measured.width, height = measured.height;
     const auto& shape = region->shape;
     const bool circle = shape.type ==
@@ -19504,23 +19603,15 @@ static void DrawWidgetViewTooltip(D2DState* state,
     }
     // Anchor to the visible region, independent of where the pointer entered it.
     float x = (left + right - width) * 0.5f;
-    float y = bottom + 6.0f;
-    if (y + height > surfaceHeight - 4.0f)
-        y = top - height - 6.0f;
-    x = std::clamp(x, 4.0f, std::max(4.0f, surfaceWidth - width - 4.0f));
-    y = std::clamp(y, 4.0f, std::max(4.0f, surfaceHeight - height - 4.0f));
-    DrawHostRect(state, x, y, width, height,
-        0x20242B, 6.0f, 0.97f);
-    DrawHostStrokeRect(state, x, y, width, height,
-        0xFFFFFF, 6.0f, 1.0f, 0.18f);
-    if (ID2D1SolidColorBrush* brush = GetCachedBrush(
-            state, 0xF4F7FB, 1.0f))
-    {
-        state->ctx->DrawTextLayout(D2D1::Point2F(
-            state->widgetRect.left + x + 8.0f,
-            state->widgetRect.top + y + 6.0f),
-            layout.Get(), brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-    }
+    float y = bottom + 6.0f * scale;
+    if (y + height > surfaceHeight - 4.0f * scale)
+        y = top - height - 6.0f * scale;
+    x = std::clamp(x, 4.0f * scale, std::max(4.0f * scale, surfaceWidth - width - 4.0f * scale));
+    y = std::clamp(y, 4.0f * scale, std::max(4.0f * scale, surfaceHeight - height - 4.0f * scale));
+    snowdesktop::DrawNativeTooltip(state->ctx, D2D1::RectF(
+        state->widgetRect.left + x, state->widgetRect.top + y,
+        state->widgetRect.left + x + width, state->widgetRect.top + y + height),
+        measured, snowdesktop::NativeTooltipAppearance(), scale);
 }
 
 static void DrawWidgetSelectOverlays(D2DState* state,
@@ -20195,7 +20286,8 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
                     return static_cast<ID2D1Bitmap*>(item.second.Get()) == bitmap;
                 });
             };
-            return contains(d2dState_->imageCache) || contains(d2dState_->runtimeImageBitmaps);
+            return contains(d2dState_->imageCache) || contains(d2dState_->runtimeImageBitmaps) ||
+                d2dState_->imageSamplingCache.Contains(bitmap);
         });
     using CacheOutcome = snowdesktop::widget_runtime::WidgetBackgroundCache::Outcome;
     snowdesktop::performance::Value("widget.background.cache",
@@ -22586,7 +22678,7 @@ void WidgetEngine::NotifyDesktopChanged(const std::string& reason)
     RefreshLogicalSlotAvailability();
     if (d2dState_)
     {
-        d2dState_->shellIconCache.clear();
+        ClearShellIconBitmaps(d2dState_);
         d2dState_->shellIconFailures.clear();
     }
     std::vector<std::wstring> targets;
@@ -31024,6 +31116,8 @@ void WidgetEngine::RecordPerformanceResources() const noexcept
         shared("package_image_decoded_bytes", d2dState_->packageImageCache.Bytes());
         shared("package_image_sources", d2dState_->packageImageCache.Size());
         shared("package_bitmap_bgra_bytes_estimate", cacheBytes(d2dState_->imageCache));
+        shared("image_sampling_bgra_bytes_estimate", d2dState_->imageSamplingCache.RetainedBytes());
+        shared("image_sampling_entries", d2dState_->imageSamplingCache.Size());
         shared("shell_icon_bgra_bytes_estimate", cacheBytes(d2dState_->shellIconCache));
         shared("shell_icon_count", d2dState_->shellIconCache.size());
         shared("text_format_count", d2dState_->textFormatCache.size());

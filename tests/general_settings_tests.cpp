@@ -1,10 +1,13 @@
 #include "settings/general_settings.h"
+#include "app/input/software_desktop_hotkey.h"
 #include "theme/personalization.h"
 #include "dock/dock_gradient_storage.h"
 #include "theme/taskbar_appearance.h"
 #include "system/status_bar/status_bar_appearance.h"
 #include "widget/view/widget_appearance_presets.h"
 #include "layout/item_title_layout.h"
+#include "ui/render/native_tooltip_content.h"
+#include "ui/render/icon_font_glyphs.h"
 #include "../src/winui/font_picker_search.h"
 
 #include <windows.h>
@@ -232,8 +235,163 @@ HRESULT DrawSelectedFont(const std::function<void()>& beforeDraw = {})
 }
 
 int RunThemeLibraryTests();
+void TestTooltipPresentation()
+{
+    // Production text layout: short page/drag labels must not inherit a fixed
+    // panel width; increasing the shared font must resize rich titles too.
+    Microsoft::WRL::ComPtr<IDWriteFactory> factory;
+    const auto result = DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+        reinterpret_cast<IUnknown**>(factory.GetAddressOf()));
+    Check(SUCCEEDED(result), "create tooltip shaping factory");
+    if (FAILED(result)) return;
+    for (const int size : {10, 12, 14, 24})
+    for (const float scale : {1.f, 1.5f, 2.f})
+    {
+        snowdesktop::SetNativeTooltipPreferences(size, PersonalizationSettings::DarkPreset());
+        Microsoft::WRL::ComPtr<IDWriteTextFormat> format;
+        Check(SUCCEEDED(snowdesktop::CreateNativeTooltipTextFormat(factory.Get(), &format, scale)), "create shared tooltip font");
+        if (!format) continue;
+        snowdesktop::NativeTooltipLayoutOptions options;
+        options.scale = scale;
+        const auto tight = [scale, size](const snowdesktop::NativeTooltipTextLayout& measured) {
+            DWRITE_TEXT_METRICS metrics{};
+            if (!measured.layout || FAILED(measured.layout->GetMetrics(&metrics))) return false;
+            const float left = measured.paddingX + metrics.left;
+            const float right = measured.width - measured.paddingX - metrics.left - metrics.widthIncludingTrailingWhitespace;
+            const float readableGap = static_cast<float>(size) * .75f * scale;
+            const float compactGap = static_cast<float>(size) * scale + 1.f;
+            return left >= readableGap && right >= readableGap && left <= compactGap &&
+                right <= compactGap && std::abs(left - right) <= 1.f;
+        };
+        snowdesktop::NativeTooltipTextLayout measured;
+        Check(SUCCEEDED(snowdesktop::MeasureNativeTooltip(factory.Get(), format.Get(), {}, L"Move", 520.f * scale,
+            192.f * scale, measured, options)) && tight(measured),
+            "short drag and page labels retain balanced readable side padding without a blank right tail");
+        auto roundedAppearance = PersonalizationSettings::DarkPreset();
+        roundedAppearance.cornerRadius = 64.f;
+        const float radius = snowdesktop::NativeTooltipCornerRadius(roundedAppearance, measured.width, measured.height, scale);
+        Check(radius <= 8.f * scale && radius <= measured.height * .25f,
+            "large popup corner settings retain a modest curve on small tooltip panels");
+        auto fixedWidth = options;
+        fixedWidth.minimumWidth = 360;
+        snowdesktop::NativeTooltipTextLayout negative;
+        Check(SUCCEEDED(snowdesktop::MeasureNativeTooltip(factory.Get(), format.Get(), {}, L"Move", 520.f * scale,
+            192.f * scale, negative, fixedWidth)) && !tight(negative),
+            "negative control detects the former fixed-width page tooltip's blank right tail");
+        const std::wstring title = L"Volume";
+        Check(SUCCEEDED(snowdesktop::MeasureNativeTooltip(factory.Get(), format.Get(), title, L"50%", 280.f * scale,
+            192.f * scale, measured, options)), "measure rich status tooltip");
+        if (measured.layout)
+        {
+            float titleSize = 0, bodySize = 0;
+            measured.layout->GetFontSize(0, &titleSize);
+            measured.layout->GetFontSize(static_cast<UINT32>(title.size() + 1), &bodySize);
+            Check(titleSize == size * scale && bodySize == titleSize,
+                "rich tooltip title and body both follow the shared font setting and DPI");
+            DWRITE_TEXT_METRICS metrics{};
+            measured.layout->GetMetrics(&metrics);
+            const float verticalRatio = (measured.height - metrics.height) / (static_cast<float>(size) * scale);
+            Check(verticalRatio >= .55f && verticalRatio <= .85f,
+                "tooltip height grows with the font while keeping compact proportional vertical padding");
+        }
+        Check(SUCCEEDED(snowdesktop::MeasureNativeTooltip(factory.Get(), format.Get(), {},
+            L"Move this item to another page with the keyboard shortcut, or wait at the screen edge.",
+            160.f * scale, 192.f * scale, measured, options)), "measure wrapped long tooltip");
+        if (measured.layout)
+        {
+            DWRITE_TEXT_METRICS metrics{};
+            measured.layout->GetMetrics(&metrics);
+            // Wrapped line-ending spaces can extend beyond the layout width;
+            // only formatted visible text must fit inside the content area.
+            Check(measured.width <= 160.f * scale && measured.height <= 192.f * scale &&
+                metrics.width <= measured.width - measured.paddingX * 2.f + 1.f,
+                "wrapped long translations stay within the constrained tooltip content width");
+        }
+    }
+    snowdesktop::SetNativeTooltipPreferences(snowdesktop::kDefaultTooltipFontSize, PersonalizationSettings::DarkPreset());
+}
+
 int main(int argc, char** argv)
 {
+    {
+        // Never reserve a shortcut for existing profiles. Preserve a chosen
+        // chord, including clearing it, across application restarts.
+        const auto path = std::filesystem::temp_directory_path() /
+            (L"SnowDesktopSwitchHotkey-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings settings, restored;
+        Check(!settings.softwareDesktopHotkeyEnabled,
+            "desktop switching is opt-in for new profiles");
+        { std::ofstream legacy(path); legacy << "{}"; }
+        Check(LoadGeneralSettings(path.c_str(), restored) &&
+            !restored.softwareDesktopHotkeyEnabled,
+            "existing profiles do not enable desktop switching on upgrade");
+        for (const bool enabled : {true, false})
+        for (const UINT key : {UINT{'Q'}, UINT{0}})
+        {
+            settings.softwareDesktopHotkeyEnabled = enabled;
+            settings.softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_SHIFT;
+            settings.softwareDesktopHotkeyVirtualKey = key;
+            restored = {};
+            Check(SaveGeneralSettings(path.c_str(), settings) &&
+                LoadGeneralSettings(path.c_str(), restored) &&
+                restored.softwareDesktopHotkeyEnabled == enabled &&
+                restored.softwareDesktopHotkeyModifiers == (MOD_CONTROL | MOD_SHIFT) &&
+                restored.softwareDesktopHotkeyVirtualKey == key,
+                "switch shortcut state, custom chord and explicit clearing survive restart");
+        }
+        { std::ofstream malformed(path); malformed <<
+            "{\"softwareDesktopHotkeyModifiers\":65535,\"softwareDesktopHotkeyVirtualKey\":256}"; }
+        restored = {};
+        Check(LoadGeneralSettings(path.c_str(), restored) &&
+            restored.softwareDesktopHotkeyModifiers == (MOD_CONTROL | MOD_ALT | MOD_SHIFT | MOD_WIN) &&
+            restored.softwareDesktopHotkeyVirtualKey == 'S',
+            "invalid persisted keys retain the default and modifiers exclude unsupported flags");
+        std::filesystem::remove(path);
+
+        // Exercise the production registrar against isolated hidden windows;
+        // no keyboard input is sent and the user's desktop is never toggled.
+        HWND owner = CreateWindowExW(0, L"STATIC", L"SnowDesktop hotkey test", WS_POPUP,
+            0, 0, 0, 0, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        HWND probe = CreateWindowExW(0, L"STATIC", L"SnowDesktop hotkey probe", WS_POPUP,
+            0, 0, 0, 0, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Check(owner && probe, "isolated hotkey owner and probe windows can be created");
+        snowdesktop::SoftwareDesktopHotkeyRegistration registration;
+        settings = {};
+        settings.softwareDesktopHotkeyModifiers = MOD_CONTROL | MOD_ALT | MOD_SHIFT;
+        settings.softwareDesktopHotkeyVirtualKey = VK_F24;
+        registration.Apply(owner, settings);
+        Check(!registration.IsRegistered(), "a disabled switch shortcut never registers");
+        settings.softwareDesktopHotkeyEnabled = true;
+        settings.softwareDesktopEnabled = false;
+        registration.Apply(owner, settings);
+        Check(registration.Matches(settings.softwareDesktopHotkeyModifiers, VK_F24),
+            "the switch shortcut remains available while the native desktop is selected");
+        const bool occupied = RegisterHotKey(probe, 1,
+            settings.softwareDesktopHotkeyModifiers | MOD_NOREPEAT, VK_F24) != FALSE;
+        Check(!occupied, "a registered desktop shortcut reserves its chord globally");
+        if (occupied) UnregisterHotKey(probe, 1);
+        settings.softwareDesktopHotkeyVirtualKey = VK_F23;
+        registration.Apply(owner, settings);
+        Check(registration.Matches(settings.softwareDesktopHotkeyModifiers, VK_F23) &&
+            !registration.Matches(settings.softwareDesktopHotkeyModifiers, VK_F24),
+            "editing the shortcut rejects queued messages for the previous chord");
+        const bool released = RegisterHotKey(probe, 1,
+            settings.softwareDesktopHotkeyModifiers | MOD_NOREPEAT, VK_F24) != FALSE;
+        Check(released, "editing the shortcut releases the previous chord");
+        if (released) UnregisterHotKey(probe, 1);
+        settings.softwareDesktopHotkeyEnabled = false;
+        registration.Apply(owner, settings);
+        Check(!registration.IsRegistered() &&
+            !registration.Matches(settings.softwareDesktopHotkeyModifiers, VK_F23),
+            "disabling the shortcut unregisters it and rejects queued messages");
+        settings.softwareDesktopHotkeyEnabled = true;
+        settings.softwareDesktopHotkeyVirtualKey = 0;
+        registration.Apply(owner, settings);
+        Check(!registration.IsRegistered(), "a cleared shortcut cannot reserve a key");
+        if (probe) DestroyWindow(probe);
+        if (owner) DestroyWindow(owner);
+    }
+    TestTooltipPresentation();
     failures += RunThemeLibraryTests();
     using namespace snowdesktop;
     {
@@ -266,15 +424,39 @@ int main(int argc, char** argv)
         saved.font = {"missing-package", "字体 \"name\"\\line\n"};
         Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.font == saved.font,
             "font selection preserves Unicode, quotes, control characters and unavailable packages across restarts");
+        saved.tooltipFontSize = 22;
+        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.tooltipFontSize == 22,
+            "tooltip font size survives application restart independently of the font family");
+        saved.tooltipFontSize = 400;
+        Check(SaveGeneralSettings(path.c_str(), saved) && LoadGeneralSettings(path.c_str(), loaded) && loaded.tooltipFontSize == 24,
+            "out-of-range tooltip sizes cannot make persisted hints unusably large");
         { std::ofstream old(path); old << "{}"; }
         GeneralSettings legacy;
         Check(LoadGeneralSettings(path.c_str(), legacy) && legacy.font.package == "system" && legacy.font.family.empty(),
             "older profiles default to system fonts without migration writes");
+        Check(legacy.tooltipFontSize == 12, "older profiles use the shared tooltip default without migration writes");
         std::error_code ec; std::filesystem::remove(path, ec);
     }
     if (argc > 1)
     {
         const auto assets = std::filesystem::path(argv[1]) / "assets";
+        // Settings is a separate process without the host's GDI font
+        // registration. The actual bundled cmap must supply its icon picker.
+        const auto icons = icon_fonts::BundledPrivateUseCodepoints(
+            std::filesystem::path(argv[1]).wstring(), icon_fonts::BundledFont::FontAwesomeSolid);
+        for (const std::uint32_t codepoint : {0xF000u, 0xF007u, 0xF013u, 0xF0C2u})
+            Check(std::binary_search(icons.begin(), icons.end(), codepoint),
+                "Font Awesome picker includes glass, user, gear and cloud without GDI registration");
+        Check(!std::binary_search(icons.begin(), icons.end(), 0xEFFFu),
+            "Font Awesome picker excludes codepoints missing from the bundled face");
+        Check(icon_fonts::PrivateUseCodepoints(assets / "fonts" / "missing-icon-font.ttf").empty() &&
+            icon_fonts::PrivateUseCodepoints(assets / "fonts" / "README.md").empty(),
+            "missing or invalid icon fonts never populate the picker with system fallback glyphs");
+        const auto fluentIcons = icon_fonts::BundledPrivateUseCodepoints(
+            std::filesystem::path(argv[1]).wstring(), icon_fonts::BundledFont::FluentRegular);
+        Check(!fluentIcons.empty() && std::any_of(fluentIcons.begin(), fluentIcons.end(),
+                [](std::uint32_t codepoint) { return codepoint > 0xFFFF; }),
+            "Fluent picker retains supplementary-plane icons for UTF-16 surrogate pair rendering");
         const auto data = std::filesystem::temp_directory_path() / (L"SnowDesktopFontPackageTests-" + std::to_wstring(GetCurrentProcessId()));
         const auto choices = app_fonts::List(assets, data);
         Check(std::count_if(choices.begin(), choices.end(), [](const auto& choice) { return choice.selection.package != "installed"; }) == 3,
@@ -384,6 +566,38 @@ int main(int argc, char** argv)
         Check(firstEnable.taskView && !firstEnable.clockSystemPanel && !firstEnable.controlCenterSystemPanel,
             "task view starts visible while existing clock and controls retain the SnowDesktop panels");
         Check(firstEnable.inputMethod, "existing profiles gain the input indicator by default");
+        Check(!value.statusBar.inputMethodSystemPanel && !firstEnable.inputMethodSystemPanel,
+            "new and existing bars default to the SnowDesktop keyboard layout panel");
+        for (const bool systemInput : {true, false})
+        {
+            firstEnable.inputMethodSystemPanel = systemInput;
+            JsonValue stored; StatusBarSettings restored;
+            Check(ParseJson(EncodeStatusBarSettings(firstEnable), stored) &&
+                DecodeStatusBarSettings(stored, restored) && restored.inputMethodSystemPanel == systemInput,
+                "the chosen keyboard layout panel survives a settings reload");
+        }
+        Check(!value.statusBar.clockShowSeconds && !firstEnable.clockShowSeconds,
+            "new and existing profiles keep seconds hidden until enabled");
+        Check(!value.statusBar.timeNotificationRightAligned && !firstEnable.timeNotificationRightAligned,
+            "new and existing independent bars keep the centered time and notification area");
+        for (const bool seconds : {true, false})
+        {
+            firstEnable.clockShowSeconds = seconds;
+            JsonValue stored; StatusBarSettings restored;
+            Check(ParseJson(EncodeStatusBarSettings(firstEnable), stored) &&
+                stored.Find("clockShowSeconds") && stored.Find("clockShowSeconds")->IsBoolean() &&
+                stored.Find("clockShowSeconds")->boolean == seconds &&
+                DecodeStatusBarSettings(stored, restored) && restored.clockShowSeconds == seconds,
+                "both seconds preferences survive a settings reload");
+        }
+        for (const bool rightAligned : {true, false})
+        {
+            firstEnable.timeNotificationRightAligned = rightAligned;
+            JsonValue stored; StatusBarSettings restored;
+            Check(ParseJson(EncodeStatusBarSettings(firstEnable), stored) &&
+                DecodeStatusBarSettings(stored, restored) && restored.timeNotificationRightAligned == rightAligned,
+                "both time and notification positions survive a settings reload");
+        }
         {
             firstEnable.inputMethod = false;
             JsonValue stored; StatusBarSettings restored;
@@ -438,6 +652,8 @@ int main(int argc, char** argv)
         value.statusBar.menu = false;
         value.statusBar.taskView = false;
         value.statusBar.clockSystemPanel = value.statusBar.controlCenterSystemPanel = true;
+        value.statusBar.clockShowSeconds = true;
+        value.statusBar.timeNotificationRightAligned = true;
         value.statusBar.leftOrder = {"quickSearch", "menu", "taskView"};
         std::reverse(value.statusBar.rightOrder.begin(), value.statusBar.rightOrder.end());
         value.statusBar.pinnedTrayItems = {"C:\\测试\\app.exe|42", "guid:\"test\""};
@@ -495,7 +711,8 @@ int main(int argc, char** argv)
         }
         for (const auto* json : {"{\"shellUi\":true}", "{\"maximizedWindow\":{\"enabled\":1}}",
             "{\"visibleWindow\":{\"theme\":{\"mode\":9}}}", "{\"noWindow\":{\"enabled\":1}}",
-            "{\"sceneRulesVersion\":3}", "{\"sceneRulesVersion\":\"2\"}"})
+            "{\"sceneRulesVersion\":3}", "{\"sceneRulesVersion\":\"2\"}", "{\"clockShowSeconds\":1}",
+            "{\"timeNotificationRightAligned\":\"right\"}"})
         {
             JsonValue invalid; ParseJson(json, invalid);
             auto unchanged = value.statusBar;

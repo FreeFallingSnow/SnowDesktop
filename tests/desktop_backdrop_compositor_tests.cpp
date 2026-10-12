@@ -2,16 +2,27 @@
 #include "../src/app/render/desktop_backdrop_update_rules.h"
 #include "layout/popup_round_geometry.h"
 #include "icons/large_icon_shape_geometry.h"
+#include "dock/dock_window_transition.h"
+#include "dock/floating_dock_rules.h"
+#include "ui/render/native_tooltip.h"
+#include "ui/render/inline_tooltip_backdrop.h"
+#include "ui/render/native_tooltip_preferences.h"
+#include "ui/render/native_tooltip_content.h"
 
 #include <roapi.h>
 #include <d2d1_1helper.h>
 #include <d3d11.h>
+#include <dcomp.h>
+#include <dwrite.h>
 #include <dxgi1_2.h>
 #include <wrl/client.h>
 
 #include <array>
+#include <algorithm>
 #include <iostream>
+#include <string_view>
 #include <thread>
+#include <vector>
 
 namespace
 {
@@ -71,6 +82,90 @@ HWND FindOwnedBackdrop(const DesktopBackdropCompositor& compositor)
     return query.helper;
 }
 
+struct OwnedTransitionQuery
+{
+    const DockWindowTransition* transition = nullptr;
+    HWND window = nullptr;
+};
+
+BOOL CALLBACK MatchOwnedTransition(HWND window, LPARAM parameter)
+{
+    auto& query = *reinterpret_cast<OwnedTransitionQuery*>(parameter);
+    DWORD process = 0;
+    if (GetWindowThreadProcessId(window, &process) == GetCurrentThreadId() &&
+        process == GetCurrentProcessId() && query.transition->IsPresentationWindow(window))
+    {
+        query.window = window;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+int CheckDockTransitionShellExclusion()
+{
+    int failures = 0;
+    const auto check = [&](bool value, const char* message) {
+        if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
+        return value;
+    };
+    const auto covers = [](RECT host, RECT monitor) {
+        return host.left <= monitor.left && host.top <= monitor.top &&
+            host.right >= monitor.right && host.bottom >= monitor.bottom;
+    };
+    const RECT monitor{0, 0, 1280, 720};
+    const std::array<RECT, 1> singleMonitor{monitor};
+    const RECT ordinary{20, 20, 900, 600};
+    const auto ordinaryHost = ResolveDockWindowNonFullscreenHostRect(ordinary, singleMonitor);
+    check(ordinaryHost && EqualRect(&*ordinaryHost, &ordinary),
+        "ordinary animation bounds remain unchanged");
+    check(!ResolveDockWindowNonFullscreenHostRect(monitor, {}),
+        "unknown monitor geometry fails closed to native animation");
+    const std::array<RECT, 2> aligned{{{0, 0, 1280, 720}, {1280, 0, 2560, 1080}}};
+    const auto alignedHost = ResolveDockWindowNonFullscreenHostRect({0, 0, 2560, 1080}, aligned);
+    check(alignedHost && !covers(*alignedHost, aligned[0]) && !covers(*alignedHost, aligned[1]),
+        "one pixel at a shared monitor edge prevents fullscreen coverage on both monitors");
+    const std::array<RECT, 2> staggered{{{-1280, -200, 0, 520}, {0, 0, 1280, 720}}};
+    check(!ResolveDockWindowNonFullscreenHostRect({-1280, -200, 1280, 720}, staggered),
+        "unsafe staggered monitor unions use native fallback rather than clipping substantial content");
+    // Called only on the private fixture desktop. Use the production HWND and
+    // host-bounds rule without capturing or minimizing an external application.
+    for (int generation = 0; generation < 2; ++generation)
+    {
+        DockWindowTransition transition;
+        if (!check(transition.Initialize(GetModuleHandleW(nullptr), nullptr, nullptr, nullptr),
+                "initialize the real Dock transition's native window")) continue;
+        OwnedTransitionQuery query{&transition};
+        EnumThreadWindows(GetCurrentThreadId(), MatchOwnedTransition,
+            reinterpret_cast<LPARAM>(&query));
+        if (!check(query.window && !IsWindowVisible(query.window) &&
+                GetPropW(query.window, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+                "each real Dock animation HWND is excluded before its first show")) continue;
+        RECT client{};
+        check(GetClientRect(query.window, &client) && client.right == 1 && client.bottom == 1,
+            "the Dock animation window starts as the production hidden 1x1 surface");
+        const RECT source{0, 0, 1280, 720}, dock{600, 660, 680, 720};
+        const RECT originalHost = ResolveDockWindowImageHostRect(source, dock);
+        const auto protectedHost = ResolveDockWindowNonFullscreenHostRect(originalHost, singleMonitor);
+        if (!check(covers(originalHost, monitor) && protectedHost && !covers(*protectedHost, monitor),
+                "the original minimize union covers a monitor and its protected geometry cannot")) continue;
+        const RECT host = *protectedHost;
+        check(SetWindowPos(query.window, HWND_TOPMOST,
+                host.left, host.top, host.right - host.left, host.bottom - host.top,
+                SWP_NOACTIVATE) != FALSE && !IsWindowVisible(query.window) &&
+                GetPropW(query.window, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+            "fullscreen minimize host placement retains the exclusion before visibility");
+        ShowWindow(query.window, SW_SHOWNOACTIVATE);
+        check(IsWindowVisible(query.window) &&
+                GetPropW(query.window, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+            "showing the fullscreen-sized Dock animation surface retains its Shell role");
+        transition.Cancel();
+        check(!IsWindowVisible(query.window) &&
+                GetPropW(query.window, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+            "the production animation cleanup hides the surface and retains its exclusion");
+    }
+    return failures;
+}
+
 bool WaitForCommit(HWND window, WPARAM token)
 {
     const ULONGLONG deadline = GetTickCount64() + 3000;
@@ -98,6 +193,193 @@ bool WaitForCommit(HWND window, WPARAM token)
     }
 }
 
+BOOL CALLBACK CollectFixtureBackdrops(HWND window, LPARAM parameter)
+{
+    DWORD process = 0;
+    wchar_t name[96]{};
+    if (GetWindowThreadProcessId(window, &process) == GetCurrentThreadId() &&
+        process == GetCurrentProcessId() && GetClassNameW(window, name, 96) &&
+        std::wstring_view(name) == L"SnowDesktopBackdropWindow")
+        reinterpret_cast<std::vector<HWND>*>(parameter)->push_back(window);
+    return TRUE;
+}
+
+int CheckTooltipContentDamage(ID2D1Device* drawing, IDWriteFactory* text)
+{
+    using Microsoft::WRL::ComPtr;
+    int failures = 0;
+    const auto check = [&](bool value, const char* message) {
+        if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
+        return value;
+    };
+    ComPtr<ID2D1DeviceContext> context;
+    ComPtr<ID2D1Bitmap1> target, readable;
+    ComPtr<IDWriteTextFormat> format;
+    snowdesktop::NativeTooltipTextLayout measured;
+    const RECT client{0, 0, 320, 160}, bodyUpdate{120, 100, 200, 145}, tip{120, 20, 260, 60};
+    const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
+    const auto readProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW,
+        D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), 96, 96);
+    if (!check(SUCCEEDED(drawing->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)) &&
+            SUCCEEDED(context->CreateBitmap(D2D1::SizeU(320, 160), nullptr, 0, properties, &target)) &&
+            SUCCEEDED(context->CreateBitmap(D2D1::SizeU(320, 160), nullptr, 0, readProperties, &readable)) &&
+            SUCCEEDED(snowdesktop::CreateNativeTooltipTextFormat(text, &format)) &&
+            SUCCEEDED(snowdesktop::MeasureNativeTooltip(text, format.Get(), {}, L"Popup label", 140, 40, measured)),
+            "tooltip damage regression prepares real DirectWrite text and an offscreen D2D target")) return failures;
+    const auto appearance = PersonalizationSettings::DarkPreset();
+    const auto paint = [&](RECT update, bool showTip) {
+        context->SetTarget(target.Get()); context->SetDpi(96, 96);
+        context->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
+        context->BeginDraw();
+        // Substitute only DComp's BeginDraw update clip. The shared production
+        // text rasterizer, damage expansion and retained pixels remain real.
+        context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(update.left), static_cast<float>(update.top),
+            static_cast<float>(update.right), static_cast<float>(update.bottom)), D2D1_ANTIALIAS_MODE_ALIASED);
+        context->Clear(D2D1::ColorF(0, 0.f));
+        if (showTip) snowdesktop::DrawNativeTooltipText(context.Get(), D2D1::RectF(120, 20, 260, 60), measured, appearance);
+        context->PopAxisAlignedClip();
+        const bool painted = SUCCEEDED(context->EndDraw()); context->SetTarget(nullptr);
+        return painted;
+    };
+    const auto glyphPixels = [&]() {
+        std::size_t pixels = 0;
+        D2D1_MAPPED_RECT mapped{};
+        if (!check(SUCCEEDED(readable->CopyFromBitmap(nullptr, target.Get(), nullptr)) &&
+                SUCCEEDED(readable->Map(D2D1_MAP_OPTIONS_READ, &mapped)), "read tooltip text pixels after the partial update"))
+            return pixels;
+        for (LONG y = tip.top; y < tip.bottom; ++y)
+            for (LONG x = tip.left; x < tip.right; ++x)
+                if (mapped.bits[static_cast<std::size_t>(y) * mapped.pitch + static_cast<std::size_t>(x) * 4 + 3]) ++pixels;
+        readable->Unmap();
+        return pixels;
+    };
+    check(paint(client, false) && paint(bodyUpdate, true) && glyphPixels() == 0,
+        "the original popup-close body clip suppresses every tooltip glyph despite calling the text renderer");
+    snowdesktop::InlineTooltipPaintDamage damage;
+    damage.BeginDraw(); damage.Record(tip); damage.EndDraw();
+    const RECT restored = damage.IncludeCurrent(bodyUpdate, client);
+    check(paint(restored, true) && glyphPixels() > 10,
+        "the production tooltip damage paints visible label pixels before the popup-close frame is committed");
+
+    // A persistent Dock redraws its whole surface, but has a separate HWND
+    // region. Reproduce the stale popup-open region with real native windows:
+    // glass includes the label while the completed content is still clipped.
+    PopupWindow content;
+    DesktopBackdropCompositor glass;
+    if (!check(content.handle && glass.InitializePopup(content.handle, false, false),
+            "Dock tooltip clipping uses a private real content/backdrop window pair")) return failures;
+    glass.BeginFrame(true);
+    check(glass.AddPanel(tip, 7, 24, 81201), "restore glass at the popup-close tooltip position");
+    glass.EndFrame();
+    const HWND helper = FindOwnedBackdrop(glass);
+    RECT visible{};
+    bool regionPending = false;
+    const auto applyContentRegion = [&]() {
+        HRGN region = snowdesktop::floating_dock_rules::CreateHostWindowRegion(
+            bodyUpdate, {}, {}, visible, client, 12, 1.f);
+        if (region && SetWindowRgn(content.handle, region, FALSE)) { regionPending = false; return true; }
+        if (region) DeleteObject(region);
+        return false;
+    };
+    const auto includesLabel = [](HWND window) {
+        HRGN region = CreateRectRgn(0, 0, 0, 0);
+        const bool included = window && region && GetWindowRgn(window, region) != ERROR && PtInRegion(region, 160, 40);
+        if (region) DeleteObject(region);
+        return included;
+    };
+    check(applyContentRegion() && !includesLabel(content.handle) && includesLabel(helper),
+        "the original popup-close HWND clip exposes glass but hides completed label pixels");
+    damage.UpdateWindowRegionBounds(visible, regionPending);
+    check(regionPending && applyContentRegion() && includesLabel(content.handle) && includesLabel(helper),
+        "completed tooltip content updates the real Dock HWND clip before any mouse movement");
+    damage.UpdateWindowRegionBounds(visible, regionPending);
+    check(!regionPending, "unchanged tooltip drawing does not renegotiate the native window region");
+    damage.AcceptDraw();
+    damage.BeginDraw(); damage.EndDraw();
+    damage.UpdateWindowRegionBounds(visible, regionPending);
+    check(regionPending && applyContentRegion() && !includesLabel(content.handle),
+        "suppressing tooltip content removes its native window region in the same draw");
+    check(paint(bodyUpdate, false) && glyphPixels() > 10,
+        "the original body-only hide leaves retained tooltip text outside its paint clip");
+    check(paint(damage.IncludePrevious(bodyUpdate, client), false) && glyphPixels() == 0,
+        "hidden tooltip damage erases all old label pixels without requiring a mouse move");
+    damage.AcceptDraw();
+    const RECT afterHide = damage.IncludePrevious(bodyUpdate, client);
+    check(EqualRect(&bodyUpdate, &afterHide) != FALSE,
+        "a retired tooltip no longer expands later unrelated paints");
+    return failures;
+}
+
+// Invoked only on the private fixture desktop. Rasterization, tooltip HWND,
+// hide messages and WinComp backdrop destruction all use production code.
+int CheckNativeTooltipLifecycle()
+{
+    using Microsoft::WRL::ComPtr;
+    int failures = 0;
+    const auto check = [&](bool value, const char* message) {
+        if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
+        return value;
+    };
+    ComPtr<ID3D11Device> device;
+    ComPtr<IDXGIDevice> dxgi;
+    ComPtr<ID2D1Factory1> factory;
+    ComPtr<ID2D1Device> drawing;
+    ComPtr<IDCompositionDesktopDevice> composition;
+    ComPtr<IDWriteFactory> text;
+    if (!check(SUCCEEDED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION,
+            &device, nullptr, nullptr)) && SUCCEEDED(device.As(&dxgi)) &&
+            SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) &&
+            SUCCEEDED(factory->CreateDevice(dxgi.Get(), &drawing)) &&
+            SUCCEEDED(DCompositionCreateDevice2(drawing.Get(), IID_PPV_ARGS(&composition))) &&
+            SUCCEEDED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory),
+                reinterpret_cast<IUnknown**>(text.GetAddressOf()))),
+            "native tooltip fixture creates real D2D, DirectWrite and DComp devices")) return failures;
+    failures += CheckTooltipContentDamage(drawing.Get(), text.Get());
+    PopupWindow owner;
+    if (!check(owner.handle != nullptr, "native tooltip creates its own private owner")) return failures;
+    ShowWindow(owner.handle, SW_SHOWNOACTIVATE);
+    auto appearance = PersonalizationSettings::DarkPreset();
+    appearance.glassEnabled = true;
+    snowdesktop::NativeTooltip tooltip;
+    tooltip.Configure(owner.handle, composition.Get(), text.Get(), appearance);
+    const auto backdrops = [] {
+        std::vector<HWND> windows;
+        EnumThreadWindows(GetCurrentThreadId(), CollectFixtureBackdrops, reinterpret_cast<LPARAM>(&windows));
+        return windows;
+    };
+    const auto baseline = backdrops();
+    for (int scenario = 0; scenario < 5; ++scenario)
+    {
+        ShowWindow(owner.handle, SW_SHOWNOACTIVATE);
+        tooltip.SetTarget("private/lifecycle", L"Popup tooltip", {100, 100, 180, 140},
+            snowdesktop::NativeTooltipPlacement::Below, true);
+        const HWND tip = tooltip.Window();
+        const auto shown = backdrops();
+        HWND helper = nullptr;
+        for (const HWND window : shown)
+            if (std::find(baseline.begin(), baseline.end(), window) == baseline.end()) helper = window;
+        if (!check(tooltip.Visible() && tip && helper && IsWindowVisible(helper),
+                "native tooltip shows one real glass helper before each close scenario")) break;
+        if (scenario == 0) tooltip.Hide();
+        else if (scenario == 1) ShowWindow(tip, SW_HIDE);
+        else if (scenario == 2) SetWindowPos(tip, nullptr, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_HIDEWINDOW);
+        else if (scenario == 3) ShowOwnedPopups(owner.handle, FALSE);
+        else { DestroyWindow(owner.handle); owner.handle = nullptr; }
+        check(!tooltip.Visible() && !IsWindow(helper) && backdrops().size() == baseline.size(),
+            "hiding or destroying tooltip content leaves no glass helper and preserves unrelated glass");
+        check(scenario != 4 || tooltip.Window() == nullptr,
+            "owner-driven tooltip destruction clears its retained native window");
+        tooltip.Invalidate();
+        check(!tooltip.Visible() && backdrops().size() == baseline.size(),
+            "preference refresh cannot restore the hidden tooltip's old glass");
+    }
+    tooltip.Close();
+    return failures;
+}
+
 int CheckHiddenPopupKeyboardFocus()
 {
     int failures = 0;
@@ -117,6 +399,7 @@ int CheckHiddenPopupKeyboardFocus()
         // cannot interact with the user's input desktop or desktop host.
         if (!check(SetThreadDesktop(desktop) != FALSE,
                 "attach the focus test thread to its private desktop")) return;
+        failures += CheckDockTransitionShellExclusion();
         struct Apartment
         {
             HRESULT result = RoInitialize(RO_INIT_SINGLETHREADED);
@@ -150,6 +433,9 @@ int CheckHiddenPopupKeyboardFocus()
         const HWND helper = FindOwnedBackdrop(glass);
         if (!check(glass.IsBackdropWindow(helper),
                 "focus checks address only this compositor's helper")) return;
+        check(GetPropW(helper, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE) &&
+                !IsWindowVisible(helper),
+            "a real popup backdrop receives its Shell exclusion before first show");
 
         enum class Case { Content, Child, DestroyedChild, Outside };
         for (const auto scenario : {Case::Content, Case::Child,
@@ -201,6 +487,7 @@ int CheckHiddenPopupKeyboardFocus()
                     "repeating pair hide must not restore hidden keyboard focus");
             }
         }
+        failures += CheckNativeTooltipLifecycle();
     }).join();
     // The thread and its WinComp context have ended before releasing desktop.
     check(CloseDesktop(desktop) != FALSE, "release the private popup focus desktop");
@@ -478,6 +765,8 @@ int RunDesktopBackdropCompositorTests()
         if (!check(startupGlass.IsBackdropWindow(helper),
                 "region fixture locates its exact owned helper before inspecting pixels"))
             return failures;
+        check(GetPropW(helper, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+            "the real startup backdrop is excluded from Shell fullscreen detection");
         HRGN region = CreateRectRgn(0, 0, 0, 0);
         check(startupGlass.IsBackdropWindow(helper) && region &&
                 GetWindowRgn(helper, region) != ERROR &&
@@ -531,6 +820,98 @@ int RunDesktopBackdropCompositorTests()
             WaitForCommit(otherContent.handle, 1),
         "the shared controller completes an initial backdrop transaction");
 
+    {
+        // Real hidden WinComp targets and native regions. Only content raster
+        // success/failure is substituted; the shared commit remains production.
+        const RECT oldPanel{12, 12, 92, 92}, retiredPanel{120, 12, 180, 72};
+        const RECT candidate{200, 100, 300, 200}, exclusion{230, 130, 250, 150};
+        glass.BeginFrame(true);
+        check(glass.AddPanel(oldPanel, 8, 24, 101) && glass.AddPanel(retiredPanel, 8, 24, 102),
+            "staging fixture installs two live glass panels");
+        glass.EndFrame();
+        glass.BeginFrame(false);
+        check(!glass.BeginStagedFrame() && glass.PanelCount() == 2,
+            "candidate collection rejects a busy live collector before content BeginDraw");
+        glass.EndFrame();
+        const HWND helper = FindOwnedBackdrop(glass);
+        HRGN previous = CreateRectRgn(0, 0, 0, 0), observed = CreateRectRgn(0, 0, 0, 0);
+        if (!check(helper && previous && observed && GetWindowRgn(helper, previous) != ERROR,
+                "staging fixture reads only its own hidden helper region"))
+        {
+            if (previous) DeleteObject(previous);
+            if (observed) DeleteObject(observed);
+            return failures;
+        }
+        check(glass.BeginStagedFrame() && glass.AddPanel(candidate, 12, 18, 101),
+            "Dock candidate collects new geometry under the stable owner");
+        glass.SetOcclusionRect(exclusion);
+        check(glass.PanelCount() == 2 && glass.HasPanelContaining(candidate) && !glass.HasPanelContaining(oldPanel),
+            "icon inheritance sees candidate geometry while the two live panels remain retained");
+        // CommitNeeded and explicit commits share this compositor. Either can
+        // run while candidate pixels are unfinished (or EndDraw has failed).
+        check(otherGlass.CommitVisualChangesAndNotify(otherContent.handle, kCommitCompleted, 110) &&
+                WaitForCommit(otherContent.handle, 110),
+            "another target really commits while Dock candidate preparation is incomplete");
+        check(GetWindowRgn(helper, observed) != ERROR && EqualRgn(previous, observed) && glass.PanelCount() == 2,
+            "the shared commit cannot publish candidate geometry, exclusion, or panel retirement");
+        glass.DiscardStagedFrame(); // Production EndDraw/SetContent failure exit.
+        check(glass.HasPanelContaining(oldPanel) && glass.HasPanelContaining(retiredPanel) &&
+                !glass.HasPanelContaining(candidate) && glass.BlurFactoryCount() == 1,
+            "discarding failed content preserves the complete old glass and its resources");
+
+        check(glass.BeginStagedFrame() && glass.AddPanel(candidate, 12, 18, 101),
+            "a later complete content frame can prepare the same owner again");
+        glass.SetOcclusionRect(exclusion);
+        check(glass.ApplyStagedFrame() && glass.PanelCount() == 1 && glass.BlurFactoryCount() == 1,
+            "successful application updates the owner and retires omitted panels and factories together");
+        check(GetWindowRgn(helper, observed) != ERROR && PtInRegion(observed, 210, 110) &&
+                !PtInRegion(observed, 40, 40) && !PtInRegion(observed, 240, 140),
+            "successful publication applies candidate geometry and exclusion to the native region");
+        check(glass.BeginStagedFrame() && glass.AddIconPanel({10, 110, 70, 170},
+                snowdesktop::IconBeautifyShape::ContinuousRounded, 24, 103),
+            "a glass-disabled Dock can stage its independent icon glass");
+        check(glass.SetPanelOpacity({10, 110, 70, 170}, 0.4f),
+            "icon opacity is part of the candidate data");
+        glass.DiscardStagedFrame();
+        check(glass.PanelCount() == 1 && glass.HasPanelContaining(candidate),
+            "aborted icon collection does not remove the completed parent glass");
+        check(glass.BeginStagedFrame() && glass.AddIconPanel({10, 110, 70, 170},
+                snowdesktop::IconBeautifyShape::Circle, 24, 103) &&
+                glass.SetPanelOpacity({10, 110, 70, 170}, 0.4f) &&
+                glass.SetPanelTransform(103, D2D1::Matrix4x4F::Translation(100, 0, 0), {110, 110, 170, 170}) &&
+                glass.ApplyStagedFrame(),
+            "successful icon publication replays shape, opacity and projected region");
+        check(glass.PanelCount() == 1 && GetWindowRgn(helper, observed) != ERROR &&
+                PtInRegion(observed, 140, 140) && !PtInRegion(observed, 40, 140),
+            "staged transformed icon fences its new footprint and retires the old panel");
+        check(glass.BeginStagedFrame() && glass.ApplyStagedFrame() && glass.PanelCount() == 0,
+            "a successful empty frame retires glass when material is disabled");
+        check(glass.BeginStagedFrame() && glass.AddLargeIconPanel(candidate, 1, 12, 18, 104) &&
+                glass.HasPanelContaining(candidate),
+            "a rounded large card supplies enclosing glass while still staged");
+        snowdesktop::desktop_backdrop_update_rules::ReconcileIconPanel(glass,
+            candidate, snowdesktop::IconBeautifyShape::Circle, 24, 1, 105, false);
+        check(glass.ApplyStagedFrame() && glass.PanelCount() == 1,
+            "staged card inheritance prevents a second overlapping icon blur");
+        glass.BeginFrame(true);
+        check(glass.AddPanel(oldPanel, 8, 24, 101), "negative control restores the old panel");
+        glass.EndFrame();
+        GetWindowRgn(helper, previous);
+        glass.BeginFrame(true);
+        check(glass.AddPanel(candidate, 12, 18, 101), "negative control prepares through the old live collection");
+        glass.EndFrame(false);
+        check(otherGlass.CommitVisualChangesAndNotify(otherContent.handle, kCommitCompleted, 111) &&
+                WaitForCommit(otherContent.handle, 111),
+            "negative control really flushes the shared controller through another target");
+        check(GetWindowRgn(helper, observed) != ERROR && !EqualRgn(previous, observed) &&
+                !glass.HasPanelContaining(oldPanel) && glass.HasPanelContaining(candidate),
+            "negative control: delaying explicit Commit alone still leaks live candidate geometry");
+        glass.BeginFrame(true);
+        glass.EndFrame();
+        DeleteObject(previous);
+        DeleteObject(observed);
+    }
+
     // Exercise the production popup sequence after file-count/layout changes:
     // move the content HWND, reattach, collect geometry, then commit its pose.
     // These checks protect sizing, retained identity and controller liveness;
@@ -566,6 +947,8 @@ int RunDesktopBackdropCompositorTests()
                 GetWindowRect(helper, &actual) &&
                 EqualRect(&actual, &placement),
             "the hidden glass HWND follows popup growth, shrinkage and movement");
+        check(GetPropW(helper, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE),
+            "popup layout and target reattachment retain the Shell exclusion");
         HRGN region = CreateRectRgn(0, 0, 0, 0);
         check(region && GetWindowRgn(helper, region) != ERROR &&
                 PtInRegion(region, width - 1, height / 2) &&
@@ -670,6 +1053,100 @@ int RunDesktopBackdropCompositorTests()
     glass.EndFrame();
     check(glass.PanelCount() == 0 && glass.BlurFactoryCount() == 0,
         "zero-opacity icons retire their retained blur even in a partial frame");
+
+    {
+        // Reproduce the page-edge tooltip's old partial-frame collection:
+        // geometry-only identities leave blur at every previous cursor point.
+        const std::array<RECT, 4> tooltipFrames{{
+            {20, 20, 140, 44}, {28, 70, 168, 106},
+            {30, 120, 210, 168}, {35, 180, 155, 204}}};
+        const HWND helper = FindOwnedBackdrop(glass);
+        HRGN region = CreateRectRgn(0, 0, 0, 0);
+        if (check(helper && region, "tooltip regression owns a hidden backdrop and region fixture"))
+        {
+            for (const RECT frame : tooltipFrames)
+            {
+                glass.BeginFrame(false);
+                check(glass.AddPanel(frame, 8.f, 16.f), "register the original geometry-only tooltip");
+                glass.EndFrame();
+            }
+            check(glass.PanelCount() == tooltipFrames.size() &&
+                    GetWindowRgn(helper, region) != ERROR && PtInRegion(region, 32, 32),
+                "the original partial update reproduces a brush trail at the first tooltip position");
+            glass.BeginFrame(false);
+            glass.EndFrame();
+            check(glass.PanelCount() == tooltipFrames.size() &&
+                    GetWindowRgn(helper, region) != ERROR && PtInRegion(region, 32, 32),
+                "suppressing the original tooltip when its popup opens retains orphaned glass");
+            glass.BeginFrame(true);
+            glass.EndFrame();
+
+            constexpr RECT unrelated{230, 140, 310, 220};
+            glass.BeginFrame(false);
+            check(glass.AddPanel(unrelated, 8.f, 16.f, 401), "preserve unrelated desktop glass");
+            glass.EndFrame();
+            snowdesktop::InlineTooltipBackdrop tooltip;
+            const auto cleanup = [&](std::uintptr_t key) {
+                glass.RemovePanel({}, key);
+                otherGlass.RemovePanel({}, key);
+            };
+            for (size_t iteration = 0; iteration < tooltipFrames.size(); ++iteration)
+            {
+                const RECT frame = tooltipFrames[iteration];
+                glass.BeginFrame(false);
+                auto tooltipPaint = tooltip.BeginPaint(cleanup);
+                const bool registered = tooltip.Update(glass, frame, 8.f, 16.f, cleanup);
+                tooltipPaint.Keep(registered);
+                check(registered, "the production tooltip panel updates the pointer-following tooltip");
+                glass.EndFrame();
+                check(glass.PanelCount() == 2 && glass.BlurFactoryCount() == 1 &&
+                        GetWindowRgn(helper, region) != ERROR &&
+                        PtInRegion(region, frame.left + 12, frame.top + 12) &&
+                        PtInRegion(region, 250, 160) &&
+                        (iteration == 0 || !PtInRegion(region, 32, 32)),
+                    "moving or resizing a tooltip retires old blur bounds while retaining unrelated glass");
+            }
+            glass.BeginFrame(false);
+            // Opening the hovered Dock entry's popup suppresses the tip.
+            // Its partial paint must remove glass even with an early return.
+            { auto tooltipPaint = tooltip.BeginPaint(cleanup); }
+            glass.EndFrame();
+            check(glass.PanelCount() == 1 && GetWindowRgn(helper, region) != ERROR &&
+                    !PtInRegion(region, 47, 192) && PtInRegion(region, 250, 160),
+                "hiding the tooltip clears its final partial-frame blur without removing other panels");
+            glass.BeginFrame(false);
+            { auto tooltipPaint = tooltip.BeginPaint(cleanup); }
+            check(glass.PanelCount() == 1,
+                "closing the entry popup without a new tooltip cannot retain old glass");
+            check(tooltip.Update(glass, tooltipFrames.front(), 8.f, 16.f, cleanup),
+                "the tooltip can restore its blur after being hidden");
+            tooltip.Update(glass, RECT{}, 8.f, 16.f, cleanup);
+            glass.EndFrame();
+            check(glass.PanelCount() == 1 && glass.BlurFactoryCount() == 1,
+                "an empty tooltip update also retires its retained material");
+            otherGlass.BeginFrame(false);
+            check(tooltip.Update(glass, tooltipFrames.front(), 8.f, 16.f, cleanup) &&
+                    tooltip.Update(otherGlass, tooltipFrames.back(), 8.f, 16.f, cleanup) &&
+                    glass.PanelCount() == 1 && otherGlass.PanelCount() == 2,
+                "moving the tooltip to another native host removes glass from its previous host");
+            otherGlass.EndFrame();
+            tooltip.Clear(cleanup);
+            check(glass.PanelCount() == 1 && otherGlass.PanelCount() == 1,
+                "cross-host tooltip cleanup preserves both hosts' unrelated panels");
+            check(glass.BeginStagedFrame(), "tooltip lifecycle supports the floating Dock's staged paint");
+            { auto tooltipPaint = tooltip.BeginPaint(cleanup);
+              tooltipPaint.Keep(tooltip.Update(glass, tooltipFrames.front(), 8.f, 16.f, cleanup)); }
+            check(glass.ApplyStagedFrame() && glass.PanelCount() == 1,
+                "a complete floating Dock paint publishes its visible tooltip");
+            check(glass.BeginStagedFrame(), "stage the floating Dock popup-open paint");
+            { auto tooltipPaint = tooltip.BeginPaint(cleanup); }
+            check(glass.ApplyStagedFrame() && glass.PanelCount() == 0,
+                "suppressed floating Dock tooltip does not publish a stale staged backdrop");
+            glass.BeginFrame(true);
+            glass.EndFrame();
+        }
+        if (region) DeleteObject(region);
+    }
 
     glass.Reset();
     check(otherGlass.SetVisualOpacity(0.5f),

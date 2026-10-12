@@ -644,6 +644,7 @@ bool WidgetNetworkStatusDebouncer::SemanticallyEqual(
         left.metered == right.metered &&
         left.roaming == right.roaming &&
         left.overLimit == right.overLimit &&
+        left.connections == right.connections &&
         left.error == right.error;
 }
 
@@ -1434,24 +1435,62 @@ WidgetSystemDataProvider::SampleNetworkStatus()
     {
         ConnectionProfile selected{ nullptr };
         int selectedRank = -1;
-        for (const auto& profile : NetworkInformation::GetConnectionProfiles())
+        NetworkConnectivityLevel selectedConnectivity = NetworkConnectivityLevel::None;
+        std::string selectedTransport = "unknown";
+        struct ProfileDetails
         {
-            const int rank = ConnectivityRank(
-                profile.GetNetworkConnectivityLevel());
+            winrt::guid adapterId;
+            int rank;
+            std::string connectivity, name;
+        };
+        std::vector<ProfileDetails> profileDetails;
+        const auto profiles = NetworkInformation::GetConnectionProfiles();
+        for (const auto& profile : profiles)
+        {
+            // WinRT properties can cross a service boundary. Read each once,
+            // rather than repeating them for every IP Helper interface.
+            const auto level = profile.GetNetworkConnectivityLevel();
+            const int rank = ConnectivityRank(level);
+            const auto adapter = profile.NetworkAdapter();
+            if (adapter)
+                profileDetails.push_back({adapter.NetworkAdapterId(), rank,
+                    ConnectivityName(level), winrt::to_string(profile.ProfileName())});
             if (rank > selectedRank)
             {
                 selected = profile;
                 selectedRank = rank;
+                selectedConnectivity = level;
+                selectedTransport = adapter ? TransportName(adapter.IanaInterfaceType()) : "unknown";
             }
         }
         snapshot.available = true;
+        // Hover details describe connected network profiles, as the system
+        // tray does. The interface table also contains every NDIS filter and
+        // miniport; those driver layers are not independent user connections.
+        for (const auto& profile : profileDetails)
+        {
+            if (profile.name.empty()) continue;
+            NET_LUID luid{};
+            const GUID& adapterId = profile.adapterId;
+            if (ConvertInterfaceGuidToLuid(&adapterId, &luid) != NO_ERROR) continue;
+            const auto existing = std::find_if(snapshot.connections.begin(), snapshot.connections.end(),
+                [&](const auto& connection) { return connection.interfaceId == luid.Value; });
+            if (existing == snapshot.connections.end())
+                snapshot.connections.push_back({luid.Value, profile.name, profile.connectivity});
+            else if (profile.rank > (existing->connectivity == "internet" ? 2 : existing->connectivity == "local" ? 1 : 0))
+                *existing = {luid.Value, profile.name, profile.connectivity};
+        }
+        std::stable_sort(snapshot.connections.begin(), snapshot.connections.end(),
+            [](const auto& left, const auto& right) {
+                const int leftRank = left.connectivity == "internet" ? 2 : left.connectivity == "local" ? 1 : 0;
+                const int rightRank = right.connectivity == "internet" ? 2 : right.connectivity == "local" ? 1 : 0;
+                return leftRank > rightRank;
+            });
         if (!selected)
             return snapshot;
 
-        snapshot.connectivity = ConnectivityName(
-            selected.GetNetworkConnectivityLevel());
-        if (const auto adapter = selected.NetworkAdapter())
-            snapshot.transport = TransportName(adapter.IanaInterfaceType());
+        snapshot.connectivity = ConnectivityName(selectedConnectivity);
+        snapshot.transport = std::move(selectedTransport);
         const auto cost = selected.GetConnectionCost();
         if (cost)
         {

@@ -6,6 +6,7 @@
 #include "desktop/desktop_source.h"
 #include "drag_drop/drag_input_rules.h"
 #include "diagnostics/performance_trace.h"
+#include "dock/dock_minimize_protocol.h"
 
 #include <imm.h>
 #include <shldisp.h>
@@ -74,6 +75,14 @@ bool DesktopApp::HandleShellContextMenuMessage(
 
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::RequestMessage())
+        return HandleDockExternalMinimize(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp)) ? 1 : 0;
+    if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::CancelMessage())
+    {
+        if (dockWindowTransition_)
+            dockWindowTransition_->CancelExternalMinimize(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp));
+        return 0;
+    }
     struct NativeMenuPresentationScope final
     {
         DesktopApp& app;
@@ -292,6 +301,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
         {
+            // The render child does not activate on clicks. Match the normal
+            // press path so shell flyouts lose focus even while icons are hidden.
+            RestoreInteractionInputFocus();
             ShowHiddenHint();
             return 0;
         }
@@ -333,7 +345,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         const bool primaryButtonDown =
             latencySensitivePointerActive &&
             !middleButtonWidgetMove_ &&
-            (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0;
+            (GetAsyncKeyState(rightButtonItemDrag_ ? VK_RBUTTON : VK_LBUTTON) & 0x8000) != 0;
         const bool middleButtonDown =
             latencySensitivePointerActive &&
             middleButtonWidgetMove_ &&
@@ -392,8 +404,19 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                                 pointerOnPairedBackdropWindow))
                     {
                         snowdesktop::performance::Value("desktop.input", "hover.rejected", {}, 1);
-                        if (lastMousePoint_.x != LONG_MIN ||
-                            lastMousePoint_.y != LONG_MIN)
+                        POINT dockPoint = cursorScreen;
+                        const bool pointerInDockLayer =
+                            ScreenToClient(hwnd_, &dockPoint) &&
+                            IsPointInPromotedDockLayer(dockPoint);
+                        const bool pointerOnDockSurface =
+                            IsPersistentDockHostWindow(hitWindow) ||
+                            IsPersistentDockBackdropWindow(hitWindow);
+                        if (snowdesktop::desktop_hover_rules::
+                                ShouldClearRejectedDesktopHover(
+                                    lastMousePoint_.x != LONG_MIN ||
+                                        lastMousePoint_.y != LONG_MIN,
+                                    pointerOnDockSurface,
+                                    pointerInDockLayer))
                         {
                             OnMouseLeave();
                         }
@@ -552,14 +575,15 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_RBUTTONDOWN:
     case WM_RBUTTONDBLCLK:
         if (IsPointInUsageGuide({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)})) return 0;
-        OnRightButtonDown(nullptr);
+        OnRightButtonDown(nullptr, {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
         return 0;
     case WM_RBUTTONUP:
     {
         const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-        if (IsPointInUsageGuide(pt))
+        if (IsPointInUsageGuide(pt) && !rightButtonItemDrag_ && !suppressRightButtonUp_)
         return 0;
-        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt))
+        if (desktopIconsHidden_ && !IsPointOnRetainedElement(pt) &&
+            !rightButtonItemDrag_ && !suppressRightButtonUp_)
         {
             ShowHiddenHint();
             return 0;
@@ -614,6 +638,64 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             if (HandleQuickNavigationClick(pt))
                 return 0;
+        }
+
+        if (IsCollectionPopupInteractive() && IsPointOccludedByOpenPopup(pt))
+        {
+            if (auto* popupGroup = GetGroupPopupView())
+            {
+                const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
+                const RECT frame = GetCategorizedPopupFrame(popup);
+                popupGroup->SetPopupFrame(&frame);
+                const auto finishPopupOpen = [&](bool accepted) {
+                    if (!accepted) return;
+                    clearSelectionAfterAcceptedOpen(true);
+                    CloseCollectionPopup();
+                };
+                if (auto* fileGroup = dynamic_cast<FileGroup*>(popupGroup);
+                    fileGroup && fileGroup->HitTestWidget(pt) == WidgetHit::SourceTab)
+                {
+                    const size_t sourceIndex = FindWidgetIndexById(fileGroup->SourceIdAtPoint(pt));
+                    if (sourceIndex < widgets_.size())
+                    {
+                        const auto& source = widgets_[sourceIndex];
+                        const std::wstring path = source.type == DesktopWidgetType::FolderMapping
+                            ? source.sourceFolderPath
+                            : (source.type == DesktopWidgetType::FileCategories
+                                ? snowdesktop::desktop_source::Directory() : L"");
+                        if (!path.empty()) finishPopupOpen(shellLaunchWorker_.Enqueue(hwnd_, path));
+                    }
+                    return 0;
+                }
+                const RECT content = popupGroup->GetContentViewportRect();
+                if (PtInRect(&content, pt))
+                {
+                    for (const auto& slot : popupGroup->GetSlots())
+                    {
+                        if (!slot) continue;
+                        const RECT bounds = slot->GetBounds();
+                        if (!PtInRect(&bounds, pt)) continue;
+                        if (auto* desktopIcon = dynamic_cast<DesktopIcon*>(slot->GetItem()))
+                        {
+                            if (const auto* item = desktopIcon->GetDesktopItem())
+                            {
+                                const size_t itemIndex = FindItemIndexByKey(item->layoutKey);
+                                if (itemIndex < items_.size()) finishPopupOpen(LaunchDesktopItem(itemIndex));
+                            }
+                        }
+                        else if (auto* folderIcon = dynamic_cast<FolderEntryIcon*>(slot->GetItem()))
+                        {
+                            if (const auto* entry = folderIcon->GetFolderEntry())
+                                finishPopupOpen(LaunchPathWithShortcutPolicy(hwnd_, entry->fullPath));
+                        }
+                        return 0;
+                    }
+                }
+                // WM_LBUTTONDBLCLK replaces the second press. Keep controls and
+                // empty-space selection in the native group input path.
+                OnLeftButtonDown(wp, lp);
+                return 0;
+            }
         }
 
         if (DockContainer* dock = GetDockContainerAtPoint(pt))
@@ -1126,6 +1208,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case kBackgroundShellReadyMessage:
         PollInitialShellRead();
         DrainBackgroundShellWork();
+        if (generalSettings_.dockEnabled && !reloading_ && dockRunningWindowsRefreshTick_ == 0)
+            RefreshDockRunningWindows();
         return 0;
     case kFolderSubscriptionReadyMessage:
         SyncFolderChangeNotifications();
@@ -1221,6 +1305,10 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case kForegroundInteractionChangedMessage:
         HandleDockForegroundInteractionChanged();
+        return 0;
+    case kDockWindowListChangedMessage:
+        if (generalSettings_.dockEnabled && !reloading_)
+            HandleDockWindowListChanged(reinterpret_cast<HWND>(lp), static_cast<DWORD>(wp));
         return 0;
     case kSteamWorkshopSubscriptionReadyMessage:
         PollSteamWorkshopSubscriptions();

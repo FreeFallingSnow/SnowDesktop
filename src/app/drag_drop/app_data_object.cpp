@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "desktop/folder_mapping_visibility_rules.h"
 
 // OLE data-object construction and desktop landing bookkeeping.
 
@@ -202,6 +203,7 @@ void DesktopApp::RefreshCollectedKeysCache()
     collectedKeysCache_.clear();
     for (const auto& widget : widgets_)
     {
+        if (widget.type == DesktopWidgetType::FolderMapping) continue;
         for (const auto& key : widget.itemKeys)
             if (!key.empty())
                 collectedKeysCache_.insert(ToUpperInvariant(key));
@@ -212,6 +214,9 @@ void DesktopApp::RefreshCollectedKeysCache()
             !entry.reference.empty())
             collectedKeysCache_.insert(ToUpperInvariant(entry.reference));
     }
+    snowdesktop::folder_mapping_visibility::HideMappedSources(
+        items_, widgets_, collectedKeysCache_,
+        [](const std::wstring& key) { return ToUpperInvariant(key); });
 }
 
 /**

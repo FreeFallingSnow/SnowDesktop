@@ -282,7 +282,8 @@ bool TrayIconController::Add(HWND owner, bool force)
 
     added_ = true;
     data.uVersion = NOTIFYICON_VERSION_4;
-    Shell_NotifyIconW(NIM_SETVERSION, &data);
+    callbackVersion_ = Shell_NotifyIconW(NIM_SETVERSION, &data)
+        ? NOTIFYICON_VERSION_4 : 0;
     return true;
 }
 
@@ -300,6 +301,7 @@ void TrayIconController::Remove(HWND)
         DestroyWindow(owner_);
     added_ = false;
     owner_ = nullptr;
+    callbackVersion_ = 0;
     activeNotificationId_.clear();
 }
 
@@ -362,13 +364,18 @@ bool TrayIconController::DismissBalloon(
 }
 
 TrayCallbackAction TrayIconController::ClassifyCallback(
-    LPARAM value)
+    LPARAM value, UINT version)
 {
     switch (LOWORD(value))
     {
     case WM_CONTEXTMENU:
-    case WM_RBUTTONUP:
         return TrayCallbackAction::ShowContextMenu;
+    case WM_RBUTTONUP:
+        // The status-bar tray also sends this compatibility callback before
+        // WM_CONTEXTMENU. A v4 icon must open only for the semantic request,
+        // or the second callback replaces the menu in its nested message loop.
+        return version >= NOTIFYICON_VERSION_4
+            ? TrayCallbackAction::None : TrayCallbackAction::ShowContextMenu;
     case WM_LBUTTONDBLCLK:
         return TrayCallbackAction::ReloadItems;
     default:

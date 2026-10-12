@@ -2,6 +2,8 @@
 
 #include "settings_presenter_controls.h"
 #include "widgets_page_presenter.h"
+#include "data/data_paths.h"
+#include "ui/render/icon_font_glyphs.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
@@ -260,6 +262,7 @@ struct WidgetsPagePresenter::Impl
     muxc::TextBlock developmentWorkspacePath{nullptr};
     muxc::StackPanel cliRows{nullptr};
     muxc::Button publishWorkspaceButton{nullptr};
+    muxc::TextBlock publishWorkspaceLabel{nullptr};
     muxc::TextBlock iconReferenceTitle{nullptr};
     muxc::Expander fluentIconsExpander{nullptr};
     muxc::Expander fontAwesomeIconsExpander{nullptr};
@@ -501,57 +504,15 @@ struct WidgetsPagePresenter::Impl
 
     winrt::Windows::Foundation::Collections::
         IObservableVector<winrt::Windows::Foundation::IInspectable>
-    FluentGlyphItems() const
+    IconGlyphItems(icon_fonts::BundledFont font) const
     {
         auto values = winrt::single_threaded_observable_vector<
             winrt::Windows::Foundation::IInspectable>();
-        for (std::uint32_t codepoint = 0xE000; codepoint <= 0xF8FF;
-             ++codepoint)
+        for (const auto codepoint : icon_fonts::BundledPrivateUseCodepoints(
+                 GetExecutableDirectoryPath(), font))
         {
             values.Append(winrt::box_value(CodepointText(codepoint)));
         }
-        for (std::uint32_t codepoint = 0xF0000; codepoint <= 0xF0CCE;
-             ++codepoint)
-        {
-            values.Append(winrt::box_value(CodepointText(codepoint)));
-        }
-        return values;
-    }
-
-    winrt::Windows::Foundation::Collections::
-        IObservableVector<winrt::Windows::Foundation::IInspectable>
-    FontAwesomeGlyphItems() const
-    {
-        auto values = winrt::single_threaded_observable_vector<
-            winrt::Windows::Foundation::IInspectable>();
-        const HFONT font = CreateFontW(18, 0, 0, 0, FW_NORMAL, FALSE,
-            FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
-            CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH,
-            L"Font Awesome 6 Free Solid");
-        const HDC dc = CreateCompatibleDC(nullptr);
-        if (!font || !dc)
-        {
-            if (dc) DeleteDC(dc);
-            if (font) DeleteObject(font);
-            return values;
-        }
-        const HGDIOBJ previous = SelectObject(dc, font);
-        for (std::uint32_t codepoint = 0xE000; codepoint <= 0xF8FF;
-             ++codepoint)
-        {
-            const wchar_t character = static_cast<wchar_t>(codepoint);
-            WORD glyph = 0xFFFF;
-            if (GetGlyphIndicesW(dc, &character, 1, &glyph,
-                    GGI_MARK_NONEXISTING_GLYPHS) != GDI_ERROR &&
-                glyph != 0xFFFF)
-            {
-                values.Append(winrt::box_value(
-                    std::wstring(1, character)));
-            }
-        }
-        SelectObject(dc, previous);
-        DeleteDC(dc);
-        DeleteObject(font);
         return values;
     }
 
@@ -754,8 +715,34 @@ struct WidgetsPagePresenter::Impl
         ApplyAccentButtonStyle(publishWorkspaceButton);
         publishWorkspaceButton.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
-        developerPublishCard.content.Children().Append(
-            publishWorkspaceButton);
+        publishWorkspaceButton.VerticalAlignment(mux::VerticalAlignment::Center);
+        publishWorkspaceButton.VerticalContentAlignment(mux::VerticalAlignment::Center);
+        publishWorkspaceLabel = muxc::TextBlock{};
+        const double headingFontSize = publishWorkspaceButton.FontSize();
+        for (const auto& text : {developerPublishCard.title, publishWorkspaceLabel})
+        {
+            text.FontFamily(publishWorkspaceButton.FontFamily());
+            text.FontSize(headingFontSize);
+            text.LineStackingStrategy(mux::LineStackingStrategy::BlockLineHeight);
+            text.LineHeight(headingFontSize * 1.4);
+            text.VerticalAlignment(mux::VerticalAlignment::Center);
+            text.Margin({0, 0, 0, 0});
+            text.Padding({0, 0, 0, 0});
+        }
+        publishWorkspaceButton.Content(publishWorkspaceLabel);
+        muxc::Grid publishHeading;
+        publishHeading.ColumnSpacing(16);
+        muxc::ColumnDefinition publishTitleColumn, publishActionColumn;
+        publishTitleColumn.Width({1, mux::GridUnitType::Star});
+        publishActionColumn.Width({1, mux::GridUnitType::Auto});
+        publishHeading.ColumnDefinitions().Append(publishTitleColumn);
+        publishHeading.ColumnDefinitions().Append(publishActionColumn);
+        developerPublishCard.content.Children().RemoveAt(0);
+        developerPublishCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
+        publishHeading.Children().Append(developerPublishCard.title);
+        muxc::Grid::SetColumn(publishWorkspaceButton, 1);
+        publishHeading.Children().Append(publishWorkspaceButton);
+        developerPublishCard.content.Children().InsertAt(0, publishHeading);
 
         InitializeCard(developerReferenceCard, cardStyle, developerRoot);
         iconReferenceTitle = muxc::TextBlock{};
@@ -770,7 +757,8 @@ struct WidgetsPagePresenter::Impl
             "app.settings.fluent_icon_hint",
             L"Click an icon to copy it. Set iconFont = \"fluent\" on the "
                 L"Lua menu item that uses it.",
-            fluentGlyphTemplate, FluentGlyphItems());
+            fluentGlyphTemplate,
+            IconGlyphItems(icon_fonts::BundledFont::FluentRegular));
         developerReferenceCard.content.Children().Append(
             fluentIconsExpander);
         InitializeIconReference(fontAwesomeIconsExpander,
@@ -779,7 +767,8 @@ struct WidgetsPagePresenter::Impl
             "app.settings.fa_icon_hint",
             L"Click an icon to copy its character, then paste it into a Lua "
                 L"menu item's icon field.",
-            fontAwesomeGlyphTemplate, FontAwesomeGlyphItems());
+            fontAwesomeGlyphTemplate,
+            IconGlyphItems(icon_fonts::BundledFont::FontAwesomeSolid));
         developerReferenceCard.content.Children().Append(
             fontAwesomeIconsExpander);
 
@@ -2255,7 +2244,7 @@ struct WidgetsPagePresenter::Impl
                 muxc::Button settings = MakeActionButton(
                     L("settings.widget.fields", L"Widget settings"),
                     L("settings.page.widget.description",
-                        L"Open this instance's declarative settings."));
+                        L"Adjust this widget's settings."));
                 HookClick(settings,
                     [this, instanceId = instance.instanceId](
                         const winrt::Windows::Foundation::IInspectable&,
@@ -3154,32 +3143,33 @@ struct WidgetsPagePresenter::Impl
             "app.settings.widgets_authoring_workspace",
             L"Development Workspace"));
         developerWorkspaceCard.description.Text(L"");
+        developerWorkspaceCard.description.Visibility(mux::Visibility::Collapsed);
         developerCliCard.title.Text(L(
             "app.settings.widgets_component_cli", L"Component CLI"));
         developerCliCard.description.Text(L"");
+        developerCliCard.description.Visibility(mux::Visibility::Collapsed);
         developerPublishCard.title.Text(L(
             "app.settings.widgets_authoring_publish", L"Publish"));
         developerPublishCard.description.Text(L(
             "app.settings.widgets_authoring_publish_description",
-            L"Open the Steam-only manager to publish a component."));
+            L"Select a preview image and upload the component in Workshop Manager."));
         developerReferenceCard.title.Text(L(
             "app.settings.widgets_authoring_reference",
             L"Development Reference"));
         developerReferenceCard.description.Text(L(
             "app.settings.widgets_authoring_reference_description",
-            L"Icon resources and runtime diagnostics for component "
-                L"development."));
+            L"Browse icon resources and component runtime information."));
         iconReferenceTitle.Text(L(
             "app.settings.widgets_icon_reference", L"Icon Resources"));
         developerToolsCard.title.Text(L(
             "app.settings.widgets_runtime_diagnostics",
             L"Runtime Diagnostics"));
         developerToolsCard.description.Text(L"");
+        developerToolsCard.description.Visibility(mux::Visibility::Collapsed);
         debugRuntimeCard.title.Text(L(
             "settings.debug.runtime", L"Runtime diagnostics"));
-        debugRuntimeCard.description.Text(L(
-            "settings.debug.runtime.description",
-            L"Inspect diagnostic state and traces."));
+        debugRuntimeCard.description.Text(L"");
+        debugRuntimeCard.description.Visibility(mux::Visibility::Collapsed);
 
         searchBox.PlaceholderText(L("app.settings.widgets_search_hint",
             L"Search components"));
@@ -3204,8 +3194,8 @@ struct WidgetsPagePresenter::Impl
         openDevelopmentFolderButton.Content(winrt::box_value(L(
             "app.settings.widgets_open_development_folder",
             L"Open Development Components Folder")));
-        publishWorkspaceButton.Content(winrt::box_value(L(
-            "app.settings.widgets_publish_steam", L"Publish to Steam")));
+        publishWorkspaceLabel.Text(L(
+            "app.settings.widgets_publish_steam", L"Publish to Steam"));
         copyAllErrorsButton.Content(winrt::box_value(L(
             "app.settings.copy_all", L"Copy All")));
         clearAllErrorsButton.Content(winrt::box_value(L(

@@ -104,6 +104,13 @@ int main(int argc, char** argv)
     }
     else if (profile == "dock")
     {
+        // The desktop-style constructor passes {} for optional help on edge
+        // swipe and animation editors. A const char* interprets that as null
+        // and crashes in strlen when AddToggle/AddChoice stores the text.
+        // Keep empty help a value; actual page construction is runtime QA.
+        const auto desktopStyle = ReadSource(root, "src/winui/desktop_style_page_presenter.cpp");
+        Forbid(desktopStyle, "constchar*help",
+            "optional desktop-style help must accept empty values without a null C string");
         for (const auto token : {"RestartWindowsExplorer(", "RequestSystemTaskbar",
                  "IsSystemTaskbarAutoHideEnabled(", "IsSystemTaskbarAlignmentCentered(",
                  "SyncSystemTaskbarSettingsFromWindows"})

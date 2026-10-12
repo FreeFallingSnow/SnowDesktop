@@ -43,16 +43,23 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
     const std::string &application = {}, const std::wstring &extension = {})
 {
     std::map<std::string, ManagementRow> grouped;
+    std::map<std::string, std::set<std::wstring>> pairLabels;
     const unsigned mask = category == Category::Objects ? 3 : 12;
     for (const auto &entry : catalogue.rows)
     {
         if (!entry.systemEnabled || !entry.linked || !(entry.contexts & mask)) continue;
-        const auto id = entry.commandIdentity.empty() ? entry.id : "command:" + entry.commandIdentity;
+        const auto *pair = StatePairForVerb(entry.display.key);
+        if (!pair) pair = StatePairForId(entry.id);
+        const auto id = pair ? std::string(pair->id) : entry.commandIdentity.empty() ? entry.id : "command:" + entry.commandIdentity;
         auto [it, added] = grouped.try_emplace(id);
         auto &row = it->second;
         if (added) { row.id = id; row.display = entry.display; }
         else if (row.display.pixels.empty() && !entry.display.pixels.empty()) row.display = entry.display;
-        row.members.push_back({entry.id, entry.contexts});
+        const auto memberId = pair ? id : entry.id;
+        const auto member = std::find_if(row.members.begin(), row.members.end(), [&](const auto &m) { return m.id == memberId; });
+        if (member == row.members.end()) row.members.push_back({memberId, entry.contexts});
+        else member->contexts |= entry.contexts;
+        if (pair && !entry.display.label.empty()) pairLabels[id].insert(entry.display.label);
         row.contexts |= entry.contexts;
         if (std::find(row.applications.begin(), row.applications.end(), entry.application) == row.applications.end()) row.applications.push_back(entry.application);
         row.types.insert(row.types.end(), entry.types.begin(), entry.types.end());
@@ -61,6 +68,12 @@ inline std::vector<ManagementRow> ManagementRows(const Catalogue &catalogue, Cat
     std::vector<ManagementRow> result;
     for (auto &[id, row] : grouped)
     {
+        if (const auto labels = pairLabels.find(id); labels != pairLabels.end())
+        {
+            row.display.label.clear();
+            for (const auto &label : labels->second)
+            { if (!row.display.label.empty()) row.display.label += L" / "; row.display.label += label; }
+        }
         std::sort(row.members.begin(), row.members.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
         std::sort(row.types.begin(), row.types.end());
         std::sort(row.applications.begin(), row.applications.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
@@ -124,6 +137,7 @@ inline std::optional<Visibility> ManagementOverride(const Preferences &prefs, co
 }
 inline void SetManagementCommon(Preferences &prefs, const ManagementRow &row, Category category, bool shown)
 {
+    Normalize(prefs);
     for (const auto &member : row.members)
     {
         // The primary switch is an explicit show/hide action. Old migrated

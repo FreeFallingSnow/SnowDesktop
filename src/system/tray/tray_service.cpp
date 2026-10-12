@@ -63,6 +63,8 @@ struct Service::Impl
 {
     mutable std::mutex mutex;
     Snapshot snapshot;
+    ChangeNotifications changes;
+    void Changed() { ++snapshot.revision; changes.Publish(); }
     std::shared_ptr<Connection> connection;
     std::map<std::string, Geometry> geometries;
     FocusReturnTracker focus;
@@ -243,7 +245,7 @@ struct Service::Impl
             {
                 std::lock_guard guard(mutex);
                 snapshot.connected = current != nullptr; snapshot.degraded = !current;
-                snapshot.error = error; snapshot.icons.clear(); ++snapshot.revision;
+                snapshot.error = error; snapshot.icons.clear(); Changed();
                 connection = current; geometries.clear(); CancelFocus(); menuPlacement.Cancel();
             }
             if (!current) { WaitForSingleObject(stop, 2000); continue; }
@@ -297,7 +299,7 @@ struct Service::Impl
                         std::size_t added = 0;
                         for (const auto& event : supplemented) if (Apply(snapshot.icons, event))
                         {
-                            ++snapshot.revision; ++added;
+                            Changed(); ++added;
                             wchar_t registration[256]{};
                             swprintf_s(registration, L"Tray registration pid=%lu id=%lu hwnd=%p operation=%lu effectiveVersion=%lu callback=%lu hidden=%u",
                                 event.identity.process, event.identity.id, reinterpret_cast<HWND>(event.identity.window),
@@ -348,7 +350,7 @@ struct Service::Impl
                                 WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
                             }
                         }
-                        ++snapshot.revision;
+                        Changed();
                     }
                 }
                 if (!reportedCollection && GetTickCount64() - connectedAt >= 5000)
@@ -367,7 +369,7 @@ struct Service::Impl
                 if (Read(state.resync) != lost && GetTickCount64() - lastResync >= 3000)
                 {
                     lost = Read(state.resync); lastResync = GetTickCount64();
-                    { std::lock_guard guard(mutex); snapshot.degraded = true; ++snapshot.revision; }
+                    { std::lock_guard guard(mutex); snapshot.degraded = true; Changed(); }
                     // A persistent unknown Shell layout must not cause endless
                     // system-wide re-registration broadcasts.
                     if (resyncAttempts++ < 3)
@@ -377,7 +379,7 @@ struct Service::Impl
                         // empty snapshot. Some applications do not re-add after
                         // a synthetic TaskbarCreated; preserve their live icons.
                         { std::lock_guard guard(mutex);
-                            CancelFocus(); menuPlacement.Cancel(); ++snapshot.revision; }
+                            CancelFocus(); menuPlacement.Cancel(); Changed(); }
                         Reregister(current);
                     }
                 }
@@ -388,9 +390,9 @@ struct Service::Impl
                         DWORD pid = 0; GetWindowThreadProcessId(reinterpret_cast<HWND>(icon.identity.window), &pid);
                         return !pid || pid != icon.identity.process;
                     });
-                    if (previous != snapshot.icons.size()) ++snapshot.revision;
+                    if (previous != snapshot.icons.size()) Changed();
                     if (!snapshot.degraded && Read(state.rejected))
-                    { snapshot.degraded = true; ++snapshot.revision; }
+                    { snapshot.degraded = true; Changed(); }
                     PruneGeometries();
                     if (focus.Current() && !FocusIconExists()) { CancelFocus(); menuPlacement.Cancel(); }
                 }
@@ -400,7 +402,7 @@ struct Service::Impl
             }
             {
                 std::lock_guard guard(mutex);
-                CancelFocus(); menuPlacement.Cancel(); connection.reset(); snapshot.icons.clear(); snapshot.connected = false; ++snapshot.revision;
+                CancelFocus(); menuPlacement.Cancel(); connection.reset(); snapshot.icons.clear(); snapshot.connected = false; Changed();
             }
             current.reset();
         }
@@ -409,6 +411,16 @@ struct Service::Impl
 Service::Service() : impl_(std::make_unique<Impl>()) {}
 Service::~Service() = default;
 Snapshot Service::Current() const { std::lock_guard guard(impl_->mutex); return impl_->snapshot; }
+void Service::SubscribeChanges(HWND window)
+{
+    std::lock_guard guard(impl_->mutex);
+    impl_->changes.Subscribe(window);
+    impl_->changes.Publish();
+}
+void Service::UnsubscribeChanges(HWND window)
+{ std::lock_guard guard(impl_->mutex); impl_->changes.Unsubscribe(window); }
+bool Service::AcknowledgeChange(HWND window, std::uint64_t token)
+{ std::lock_guard guard(impl_->mutex); return impl_->changes.Acknowledge(window, token); }
 void Service::SetGeometry(const std::string& key, RECT rect)
 {
     std::lock_guard guard(impl_->mutex);

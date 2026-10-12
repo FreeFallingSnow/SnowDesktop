@@ -1,5 +1,7 @@
 #include "shell/shell_context_menu_invoke.h"
+#include "shell/shell_start_pin.h"
 #include "shell/shell_extension_menu.h"
+#include "shell/shell_extension_menu_query.h"
 #include "shell/shell_extension_catalogue.h"
 #include "shell/shell_extension_attribution.h"
 #include "shell/shell_extension_management.h"
@@ -8,6 +10,7 @@
 #include "shell/shell_extension_nvidia_compat.h"
 #include "ui/menu/menu_label.h"
 #include "shell/shell_new_item_capture.h"
+#include "shell/shell_new_menu.h"
 #include "shell/shell_popup_menu_tracker.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "dock/floating_dock_rules.h"
@@ -16,6 +19,7 @@
 #include <chrono>
 #include <atomic>
 #include <mutex>
+#include <condition_variable>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -27,6 +31,10 @@
 #include <wrl/client.h>
 #include <wrl/implements.h>
 
+void TestCatalogueRegistryHandles();
+void TestShellContextMenuBootstrap();
+void ProbeNativeShellMenuBootstrap(bool legacy);
+
 namespace
 {
 
@@ -35,6 +43,189 @@ void Expect(bool condition, const char* message)
     if (!condition)
     {
         throw std::runtime_error(message);
+    }
+}
+
+void TestAggregateCataloguePriming()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    ext::Request request; request.context = ext::Context::File; request.paths = {L"C:\\Private\\sample.txt"};
+    bool backgroundReady = false, filesReady = false;
+    unsigned calls = 0, materializations = 0;
+    auto bind = [&](const ext::Request &target, bool priming) {
+        if (!priming) ++materializations;
+        auto expected = request;
+        if (priming && expected.background && expected.context == ext::Context::Desktop)
+            expected.context = ext::Context::FolderBackground;
+        Expect(target == expected, "priming preserves the selection and flags while final binding retains the original scope");
+        ext::Entry item;
+        item.key = ++calls == 1 ? "partial" : "ModernArchive";
+        item.label = calls == 1 ? L"Unprimed placeholder" : L"Modern archive";
+        item.token = calls == 1 ? 31u : 43u;
+        return ext::Reply{true, {item}, {}};
+    };
+    auto reply = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(materializations == 1, "cold priming does not duplicate submenu or icon work");
+    Expect(calls == 2 && filesReady && !backgroundReady && reply.ok && reply.entries.size() == 1 &&
+        reply.entries.front().key == "ModernArchive" && reply.entries.front().token == 43,
+        "COLD_FILE_MUST_REBIND: a successful cold partial aggregate is never published with its first tokens");
+    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(materializations == 2, "a warm query still materializes its final menu");
+    Expect(calls == 3, "a primed file catalogue is not rebound again");
+    request.background = true; request.context = ext::Context::Desktop;
+    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(calls == 5 && backgroundReady, "file priming cannot suppress independent background priming");
+    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(calls == 6, "a primed background still queries once");
+
+    // The real desktop-only command fixture is absent from a filesystem
+    // background. Model only that COM boundary: publishing the first menu or
+    // forgetting the original scope must lose this independent command.
+    for (bool extended : {false, true})
+    {
+        ext::Request desktop; desktop.background = true; desktop.context = ext::Context::Desktop;
+        desktop.paths = {L"C:\\Private\\Desktop"}; desktop.extended = extended;
+        bool bg = false, file = false; unsigned bindings = 0;
+        auto complete = ext::QueryWithCataloguePriming(desktop, bg, file,
+            [&](const ext::Request &target, bool priming) {
+                ++bindings;
+                Expect(target.paths == desktop.paths && target.background && target.extended == extended,
+                    "desktop initialization retains the original directory and Shift flag");
+                ext::Entry item; item.token = priming ? 31u : 73u;
+                if (target.context == ext::Context::Desktop)
+                {
+                    item.key = "DesktopOnlyCommand"; item.label = L"Desktop-only command";
+                }
+                else
+                {
+                    item.key = "DirectoryBackground"; item.label = L"Unpublished background command";
+                }
+                return ext::Reply{true, {item}, {}};
+            });
+        Expect(complete.ok && bg && bindings == 2 && complete.entries.size() == 1 &&
+            complete.entries.front().key == "DesktopOnlyCommand" && complete.entries.front().token == 73u,
+            "DESKTOP_ONLY_COMMAND_MUST_SURVIVE: the final desktop scope and its executable tokens must be published");
+    }
+
+    request.background = false; request.context = ext::Context::File; request.extended = true;
+    filesReady = false;
+    ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, bind);
+    Expect(calls == 8 && filesReady, "Shift is preserved through both file bindings");
+    for (int mode = 0; mode < 7; ++mode)
+    {
+        auto special = request;
+        if (mode == 0) special.startPinOnly = true;
+        if (mode == 1) special.originalShortcutOnly = true;
+        if (mode == 2) special.sourceClsid = L"{12345678-1234-1234-1234-123456789ABC}";
+        if (mode == 3) special.paths = {L"C:\\Private\\original.LNK"};
+        if (mode == 4) special.context = ext::Context::Folder;
+        if (mode == 5) special.paths.push_back(L"C:\\Private\\original.lnk");
+        if (mode == 6) special.context = ext::Context::FolderBackground;
+        bool bg = false, file = false; unsigned count = 0;
+        auto result = ext::QueryWithCataloguePriming(special, bg, file, [&](const ext::Request &target, bool priming) {
+            Expect(!priming, "special queries are complete rather than priming passes");
+            Expect(target == special, "special query identity is preserved"); ++count; return ext::Reply{true, {}, {}};
+        });
+        Expect(result.ok && count == 1 && !file, "metadata, Start, shortcut and folder paths keep their existing warmup rules");
+    }
+    unsigned failures = 0; filesReady = false;
+    auto failed = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, [&](const ext::Request &, bool) {
+        ++failures; return ext::Reply{false, {}, "first binding failed"};
+    });
+    Expect(!failed.ok && failures == 1 && !filesReady && failed.error == "first binding failed",
+        "a failed first binding is not retried or disguised as priming success");
+    unsigned finalCalls = 0;
+    auto finalFailure = ext::QueryWithCataloguePriming(request, backgroundReady, filesReady, [&](const ext::Request &, bool) {
+        if (++finalCalls == 2) return ext::Reply{false, {}, "final binding failed"};
+        ext::Entry item; item.token = 31; return ext::Reply{true, {item}, {}};
+    });
+    Expect(!finalFailure.ok && finalFailure.entries.empty() && finalCalls == 2 && !filesReady &&
+        finalFailure.error == "final binding failed", "failed rebind cannot publish the previous menu or mark the catalogue ready");
+}
+
+void TestStartPinRouting()
+{
+    namespace pin = snowdesktop::shell_start_pin;
+    // Only the native menu and Explorer execution are substituted. The real
+    // router must preserve the chosen shortcut, dispatch once, and never send
+    // another verb or invert an action whose state changed while the menu was open.
+    class Menu final : public Microsoft::WRL::RuntimeClass<
+        Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IContextMenu>
+    {
+    public:
+        std::wstring verb = L"PinToStartScreen";
+        bool ansiOnly = false;
+        IFACEMETHODIMP QueryContextMenu(HMENU, UINT, UINT, UINT, UINT) override { return E_NOTIMPL; }
+        IFACEMETHODIMP InvokeCommand(LPCMINVOKECOMMANDINFO) override { return E_ACCESSDENIED; }
+        IFACEMETHODIMP GetCommandString(UINT_PTR offset, UINT flags, UINT*, LPSTR output, UINT size) override
+        {
+            if (offset != 17 || !output || size <= verb.size()) return E_INVALIDARG;
+            if (flags == GCS_VERBW && !ansiOnly)
+            { wcscpy_s(reinterpret_cast<wchar_t*>(output), size, verb.c_str()); return S_OK; }
+            if (flags == GCS_VERBA)
+            { return WideCharToMultiByte(CP_ACP, 0, verb.c_str(), -1, output, static_cast<int>(size), nullptr, nullptr) ? S_OK : E_FAIL; }
+            return E_NOTIMPL;
+        }
+    };
+    auto context = Microsoft::WRL::Make<Menu>();
+    unsigned calls = 0;
+    const std::wstring shortcut = L"C:\\isolated\\微信.lnk";
+    const auto execute = [&](pin::Action action, const std::wstring& path) {
+        ++calls;
+        Expect(action == pin::Action::Pin && path == shortcut,
+            "Start pin dispatch preserves the selected Unicode shortcut rather than its executable target");
+        return E_ACCESSDENIED;
+    };
+    const auto result = pin::Route(context.Get(), 17, {shortcut}, execute);
+    Expect(result && *result == E_ACCESSDENIED && calls == 1,
+        "a selected Start command routes to Explorer exactly once and keeps failure handled without local fallback");
+    context->ansiOnly = true;
+    context->verb = L"pintostartscreen";
+    Expect(pin::Route(context.Get(), 17, {shortcut}, execute).has_value() && calls == 2,
+        "legacy ANSI canonical verbs also route Start pinning without caption matching");
+    Expect(pin::Route(context.Get(), 17, {}, execute) == E_INVALIDARG &&
+        pin::Route(context.Get(), 17, {shortcut, L"C:\\other.lnk"}, execute) == E_INVALIDARG && calls == 2,
+        "missing or ambiguous selections cannot pin an unrelated first item");
+    context->ansiOnly = false;
+    context->verb = L"open";
+    Expect(!pin::Route(context.Get(), 17, {shortcut}, execute) && calls == 2,
+        "ordinary and third-party Shell commands keep their existing local execution route");
+    context->verb = L"UnpinFromStartScreen";
+    Expect(pin::Route(context.Get(), 17, {shortcut}, [&](pin::Action action, const auto& path) {
+        return action == pin::Action::Unpin && path == shortcut ? S_OK : E_FAIL;
+    }) == S_OK, "unpin dispatch preserves the user's reverse action");
+    struct Popup { HMENU value = CreatePopupMenu(); ~Popup() { DestroyMenu(value); } } popup;
+    AppendMenuW(popup.value, MF_STRING, 18, L"A localized caption");
+    Expect(!pin::FindCommand(context.Get(), popup.value, pin::Action::Pin) &&
+        pin::FindCommand(context.Get(), popup.value, pin::Action::Unpin) == 17u,
+        "a pin whose state became unpin is not executed as an accidental reversal");
+    EnableMenuItem(popup.value, 18, MF_BYCOMMAND | MF_GRAYED);
+    Expect(!pin::FindCommand(context.Get(), popup.value, pin::Action::Unpin),
+        "Explorer rechecks current command availability before changing Start pins");
+
+    pin::Request request;
+    request.processId = 42;
+    request.token = 123;
+    wcscpy_s(request.path, shortcut.c_str());
+    Expect(pin::ValidRequest(request, 42, 123), "a bound absolute Start request is valid");
+    for (int mutation = 0; mutation < 10; ++mutation)
+    {
+        auto invalid = request;
+        switch (mutation)
+        {
+        case 0: invalid.magic = 0; break;
+        case 1: invalid.version = 2; break;
+        case 2: invalid.size = 0; break;
+        case 3: invalid.processId = 43; break;
+        case 4: invalid.token = 124; break;
+        case 5: invalid.action = static_cast<pin::Action>(2); break;
+        case 6: invalid.status = pin::Completed; break;
+        case 7: invalid.path[0] = L'\0'; break;
+        case 8: std::fill(std::begin(invalid.path), std::end(invalid.path), L'x'); break;
+        case 9: wcscpy_s(invalid.path, L"relative.lnk"); break;
+        }
+        Expect(!pin::ValidRequest(invalid, 42, 123),
+            "unbound, replayed, unsupported or malformed requests cannot enter Explorer pin execution");
     }
 }
 
@@ -148,44 +339,34 @@ void TestRealNewFolderCapture()
     auto capture = std::make_shared<snowdesktop::ShellNewItemCapture>(
         directory.path.wstring(), L"desktop-files", 7);
     {
-        Microsoft::WRL::ComPtr<IContextMenu> context;
-        Expect(SUCCEEDED(CoCreateInstance(CLSID_NewMenu, nullptr,
-            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(context.GetAddressOf()))), "real New handler");
-        Microsoft::WRL::ComPtr<IShellExtInit> initializer;
-        Expect(SUCCEEDED(context.As(&initializer)), "New handler initializer");
-        PIDLIST_ABSOLUTE folder = nullptr;
-        Expect(SUCCEEDED(SHParseDisplayName(directory.path.c_str(), nullptr, &folder, 0, nullptr)),
-            "isolated directory PIDL");
-        const auto initialized = initializer->Initialize(folder, nullptr, 0);
-        CoTaskMemFree(folder);
-        Expect(SUCCEEDED(initialized), "initialize isolated New menu");
-        Expect(SUCCEEDED(snowdesktop::AttachShellNewItemCapture(context.Get(), capture)),
-            "attach production New-item capture site");
-        HMENU root = CreatePopupMenu();
-        const auto queried = context->QueryContextMenu(root, 0, 1, 0x7FFF, CMF_NORMAL);
-        HMENU submenu = GetSubMenu(root, 0);
-        Microsoft::WRL::ComPtr<IContextMenu2> messages;
-        if (SUCCEEDED(context.As(&messages)))
-            messages->HandleMenuMsg(WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(submenu), 0);
-        const UINT command = snowdesktop::FindNewFolderCommand(context.Get(), submenu);
-        Expect(SUCCEEDED(queried) && command != 0, "real NewFolder command resolves");
+        snowdesktop::ShellNewMenu menu;
+        Expect(SUCCEEDED(menu.Initialize(directory.path.wstring(), [&](IContextMenu* context) {
+            return snowdesktop::AttachShellNewItemCapture(context, capture);
+        })), "initialize production New-menu session with the capture site");
+        const UINT command = menu.FolderCommand();
+        Expect(command != 0 && menu.Contains(command), "real NewFolder resolves in the private command range");
+        Expect(!menu.Contains(0) && !menu.Contains(41400) && !menu.Contains(0x71000001),
+            "cancel, host commands and extension tokens cannot invoke New commands");
+        Expect(menu.CanDraw(), "the real Windows New submenu exposes readable custom-menu entries");
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask = CMIC_MASK_UNICODE;
         invoke.hwnd = CreateWindowExW(0, L"STATIC", L"New item test owner", 0,
             0, 0, 0, 0, HWND_MESSAGE, nullptr, nullptr, nullptr);
-        invoke.lpVerb = MAKEINTRESOURCEA(command - 1);
-        invoke.lpVerbW = MAKEINTRESOURCEW(command - 1);
+        invoke.lpVerb = MAKEINTRESOURCEA(command - snowdesktop::ShellNewMenu::FirstCommand);
+        invoke.lpVerbW = MAKEINTRESOURCEW(command - snowdesktop::ShellNewMenu::FirstCommand);
         const std::wstring invocationDirectory = directory.path.wstring();
         std::string ansiDirectory;
         snowdesktop::SetShellInvocationDirectory(invoke, invocationDirectory, ansiDirectory);
         invoke.nShow = SW_SHOWNORMAL;
-        const HRESULT invoked = context->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
+        const HRESULT invoked = menu.Context()->InvokeCommand(reinterpret_cast<LPCMINVOKECOMMANDINFO>(&invoke));
         DestroyWindow(invoke.hwnd);
-        DestroyMenu(root);
         if (FAILED(invoked)) std::cerr << "NewFolder HRESULT: " << std::hex << invoked << std::dec << '\n';
         Expect(SUCCEEDED(invoked),
             "real Windows NewFolder command succeeds");
+        EnableMenuItem(menu.Menu(), command, MF_BYCOMMAND | MF_GRAYED);
+        Expect(!menu.Contains(command) && menu.FolderCommand() == 0,
+            "a disabled command cannot be invoked after a custom menu selection");
     }
     std::vector<std::wstring> captured;
     const ULONGLONG deadline = GetTickCount64() + 5000;
@@ -436,6 +617,155 @@ void TestNativeCascadeOnPrivateDesktop()
     Expect(rejectedForeign, "a real top-level HWND on another thread cannot join the menu's input queue");
 }
 
+thread_local unsigned preparedPopupShows = 0;
+LRESULT CALLBACK ObservePreparedPopup(int code, WPARAM wp, LPARAM lp)
+{
+    if (code >= 0)
+    {
+        const auto &message = *reinterpret_cast<CWPSTRUCT *>(lp);
+        if (message.message == WM_WINDOWPOSCHANGED && IsWindowVisible(message.hwnd) &&
+            (reinterpret_cast<WINDOWPOS *>(message.lParam)->flags & SWP_SHOWWINDOW))
+        {
+            wchar_t name[32]{};
+            if (GetClassNameW(message.hwnd, name, 32) && wcscmp(name, L"#32768") == 0)
+                ++preparedPopupShows;
+        }
+    }
+    return CallNextHookEx(nullptr, code, wp, lp);
+}
+
+void TestPopupMaterializationOnPrivateDesktop()
+{
+    // Keep the production User32 loop/forwarding/cancellation. Only substitute
+    // the extension callback: like a deferred IExplorerCommand adapter, it
+    // provides children exclusively while its own STA has an active menu.
+    struct Fixture
+    {
+        HMENU menu = CreatePopupMenu();
+        HWND window = nullptr;
+        unsigned calls = 0, commands = 0;
+        bool activeMenu = false, correctPosition = false;
+        bool leaveDeferred = false, viewRequired = false, viewReady = false, partialWithoutView = false;
+        ~Fixture()
+        {
+            if (window) DestroyWindow(window);
+            if (menu) DestroyMenu(menu);
+        }
+        static LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+        {
+            auto *self = reinterpret_cast<Fixture *>(GetWindowLongPtrW(window, GWLP_USERDATA));
+            if (message == WM_NCCREATE)
+            {
+                self = static_cast<Fixture *>(reinterpret_cast<CREATESTRUCTW *>(lp)->lpCreateParams);
+                SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+            }
+            if (self && message == WM_INITMENUPOPUP && reinterpret_cast<HMENU>(wp) == self->menu)
+            {
+                ++self->calls;
+                GUITHREADINFO info{sizeof(info)};
+                self->activeMenu = GetGUIThreadInfo(GetCurrentThreadId(), &info) &&
+                    (info.flags & GUI_INMENUMODE) && info.hwndMenuOwner &&
+                    GetWindowThreadProcessId(info.hwndMenuOwner, nullptr) == GetCurrentThreadId();
+                self->correctPosition = LOWORD(lp) == 3 && HIWORD(lp) == FALSE;
+                if (self->activeMenu && !self->leaveDeferred && (!self->viewRequired || self->viewReady))
+                {
+                    while (GetMenuItemCount(self->menu) > 0) DeleteMenu(self->menu, 0, MF_BYPOSITION);
+                    AppendMenuW(self->menu, MF_STRING, 51, L"Add to archive");
+                    AppendMenuW(self->menu, MF_STRING | MF_GRAYED, 52, L"Extract files");
+                }
+                else if (self->activeMenu && !self->leaveDeferred && self->partialWithoutView)
+                {
+                    while (GetMenuItemCount(self->menu) > 0) DeleteMenu(self->menu, 0, MF_BYPOSITION);
+                    AppendMenuW(self->menu, MF_STRING, 50, L"...");
+                    AppendMenuW(self->menu, MF_STRING, 53, L"Partial command");
+                }
+                return 0;
+            }
+            if (self && message == WM_COMMAND) ++self->commands;
+            return DefWindowProcW(window, message, wp, lp);
+        }
+    } fixture;
+    namespace ext = snowdesktop::shell_extensions;
+    Expect(fixture.menu != nullptr, "create the deferred archive fixture menu");
+    AppendMenuW(fixture.menu, MF_STRING, 50, L"");
+    WNDCLASSW cls{};
+    cls.lpfnWndProc = Fixture::Proc;
+    cls.hInstance = GetModuleHandleW(nullptr);
+    cls.lpszClassName = L"SnowDesktopPopupReaderFixture";
+    Expect(RegisterClassW(&cls) || GetLastError() == ERROR_CLASS_ALREADY_EXISTS,
+        "register the deferred archive callback owner");
+    fixture.window = CreateWindowExW(WS_EX_TOOLWINDOW, cls.lpszClassName, L"", WS_POPUP,
+        -32000, -32000, 1, 1, nullptr, nullptr, cls.hInstance, &fixture);
+    Expect(fixture.window != nullptr, "create the callback window on the Shell STA");
+
+    SendMessageW(fixture.window, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(fixture.menu), MAKELPARAM(3, FALSE));
+    Expect(!fixture.activeMenu && ext::RequiresNativePopup(fixture.menu),
+        "standalone initialization reproduces the unmaterialized archive popup");
+    preparedPopupShows = 0;
+    HHOOK observer = SetWindowsHookExW(WH_CALLWNDPROC, ObservePreparedPopup, nullptr, GetCurrentThreadId());
+    Expect(observer != nullptr, "observe actual native popup visibility during preparation");
+    const HWND foreground = GetForegroundWindow();
+    unsigned viewPreparations = 0;
+    auto prepareView = [&] { ++viewPreparations; fixture.viewReady = true; return true; };
+    const bool ready = ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView);
+    UnhookWindowsHookEx(observer);
+    Expect(ready && fixture.activeMenu && fixture.correctPosition && GetMenuItemCount(fixture.menu) == 2,
+        "DEFERRED_ARCHIVE_MUST_MATERIALIZE: the real same-STA menu state generates both children at the original parent position");
+    Expect(preparedPopupShows == 0 && GetForegroundWindow() == foreground && fixture.commands == 0,
+        "background preparation displays no native popup, changes no foreground and invokes no command");
+    Expect(viewPreparations == 0,
+        "DEFERRED_ARCHIVE_AVOIDS_VIEW: a menu-only handler must not initialize a network-enumerating ShellView");
+    Expect(GetMenuState(fixture.menu, 52, MF_BYCOMMAND) & MF_GRAYED,
+        "materialization retains the extension's disabled command state");
+    const auto calls = fixture.calls;
+    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView) && fixture.calls == calls && viewPreparations == 0,
+        "already readable cascades such as 7-Zip never initialize a second time");
+
+    while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
+    AppendMenuW(fixture.menu, MF_OWNERDRAW, 50, nullptr);
+    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView) && fixture.calls == calls && viewPreparations == 0 &&
+        ext::RequiresNativePopup(fixture.menu), "owner-drawn popups retain native rendering without being probed");
+    ModifyMenuW(fixture.menu, 0, MF_BYPOSITION | MF_STRING, 50, L"...");
+    fixture.leaveDeferred = true;
+    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3) && ext::RequiresNativePopup(fixture.menu),
+        "an extension that still returns placeholders retains its native fallback");
+    Expect(!ext::TryMaterializePopup(fixture.menu, nullptr, 3, prepareView) && viewPreparations == 0,
+        "an invalid callback owner cannot prepare a popup or create a view");
+
+    // The production User32 loop stays real; only the optional view dependency
+    // is substituted. Providers that require a site still get a second attempt.
+    fixture.leaveDeferred = false; fixture.viewRequired = true;
+    const auto beforeView = fixture.calls;
+    Expect(ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView) && viewPreparations == 1 &&
+        fixture.calls == beforeView + 2 && GetMenuItemCount(fixture.menu) == 2,
+        "a genuinely view-dependent popup prepares its site once and retains both children");
+    while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
+    AppendMenuW(fixture.menu, MF_STRING, 50, L"...");
+    fixture.viewReady = false; fixture.partialWithoutView = true;
+    const auto beforePartial = fixture.calls;
+    Expect(ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView) && viewPreparations == 2 &&
+        fixture.calls == beforePartial + 2 && GetMenuItemCount(fixture.menu) == 2 && !ext::RequiresNativePopup(fixture.menu),
+        "PARTIAL_POPUP_RETAINS_CHILDREN: partial placeholder/command mixtures retry in the real menu loop after preparing the view");
+    while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
+    AppendMenuW(fixture.menu, MF_STRING, 50, L"...");
+    fixture.viewReady = false; fixture.partialWithoutView = false;
+    const auto beforeInitialView = fixture.calls;
+    Expect(ext::TryMaterializePopup(fixture.menu, fixture.window, 3, prepareView, ext::PopupNeedsInitialView(L"PowerShell7x64")) &&
+        fixture.calls == beforeInitialView + 1 && viewPreparations == 3 && GetMenuItemCount(fixture.menu) == 2,
+        "the known PowerShell adapter receives its view before the first initialization callback");
+    Expect(ext::PopupNeedsInitialView(L"PowerShell7x86") && !ext::PopupNeedsInitialView(L"SevenZip") &&
+        !ext::PopupNeedsInitialView(L"{B41DB860-64E4-11D2-9906-E49FADC173CA}") && !ext::PopupNeedsInitialView(L"OtherCommand"),
+        "ordinary archives and unknown providers never inherit the PowerShell view requirement");
+    while (GetMenuItemCount(fixture.menu) > 0) DeleteMenu(fixture.menu, 0, MF_BYPOSITION);
+    AppendMenuW(fixture.menu, MF_STRING, 50, L"...");
+    fixture.viewReady = false;
+    const auto beforeFailure = fixture.calls;
+    unsigned failedViews = 0;
+    Expect(!ext::TryMaterializePopup(fixture.menu, fixture.window, 3, [&] { ++failedViews; return false; }) &&
+        fixture.calls == beforeFailure + 1 && failedViews == 1 && ext::RequiresNativePopup(fixture.menu) && fixture.commands == 0,
+        "failed view preparation retains native fallback without invoking a placeholder command");
+}
+
 void TestNativeCascadeOwnerThread()
 {
     const std::wstring name = L"SnowDesktop.ShellTrackerTests." + std::to_wstring(GetCurrentProcessId());
@@ -448,7 +778,7 @@ void TestNativeCascadeOwnerThread()
             Expect(SetThreadDesktop(desktop) != FALSE, "attach the tracker test thread to its private desktop");
             Expect(SUCCEEDED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED)),
                 "the private tracker thread preserves the Shell owner STA");
-            try { TestNativeCascadeOnPrivateDesktop(); }
+            try { TestPopupMaterializationOnPrivateDesktop(); TestNativeCascadeOnPrivateDesktop(); }
             catch (...) { CoUninitialize(); throw; }
             CoUninitialize();
         }
@@ -462,6 +792,7 @@ void TestNativeCascadeOwnerThread()
 
 void RunTests()
 {
+    TestStartPinRouting();
     TestNativeMenuThemeScope();
     TestNativeCascadeOwnerThread();
     const std::wstring currentDirectory =
@@ -528,16 +859,18 @@ void RunTests()
 }
 } // namespace
 
-// Own uniquely named HKCU file-type keys only; never modify real handlers.
+// Own uniquely named HKCU file-type keys and common verbs; never modify real handlers.
 struct TemporaryVerb
 {
     std::wstring extension, progId;
+    std::string verbId = "snowdesktopprobe";
     HKEY verb = nullptr;
     std::vector<std::wstring> owned;
     void Clear() noexcept
     {
         if (verb) { RegCloseKey(verb); verb=nullptr; }
         for (const auto &path : owned) RegDeleteTreeW(HKEY_CURRENT_USER,path.c_str());
+        if (!owned.empty()) SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
         owned.clear();
     }
     static void Value(HKEY key, const wchar_t *name, const std::wstring &text)
@@ -545,7 +878,7 @@ struct TemporaryVerb
         Expect(RegSetValueExW(key,name,0,REG_SZ,reinterpret_cast<const BYTE*>(text.c_str()),
             static_cast<DWORD>((text.size()+1)*sizeof(wchar_t)))==ERROR_SUCCESS,"write owned test metadata");
     }
-    TemporaryVerb()
+    explicit TemporaryVerb(bool common = false)
     {
         GUID guid{}; Expect(SUCCEEDED(CoCreateGuid(&guid)),"unique association ID");
         wchar_t id[40]{}; StringFromGUID2(guid,id,40);
@@ -567,7 +900,22 @@ struct TemporaryVerb
             const auto status=RegSetValueExW(key,nullptr,0,REG_SZ,reinterpret_cast<const BYTE*>(progId.c_str()),
                 static_cast<DWORD>((progId.size()+1)*sizeof(wchar_t)));
             RegCloseKey(key); Expect(status==ERROR_SUCCESS,"associate test file");
-            const auto path=owned[1]+L"\\shell\\SnowDesktopProbe";
+            const auto name = common ? std::wstring(L"snowdesktopprobe-") + id : L"SnowDesktopProbe";
+            if (common)
+            {
+                verbId.clear();
+                for (const auto c : name) verbId.push_back(static_cast<char>(towlower(c)));
+            }
+            const auto path = common ? L"Software\\Classes\\*\\shell\\" + name : owned[1]+L"\\shell\\"+name;
+            if (common)
+            {
+                HKEY commonKey = nullptr; DWORD disposition = 0;
+                Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_READ|KEY_WRITE,
+                    nullptr, &commonKey, &disposition) == ERROR_SUCCESS, "create uniquely owned common verb");
+                RegCloseKey(commonKey);
+                Expect(disposition == REG_CREATED_NEW_KEY, "never replace an existing common verb");
+                owned.push_back(path);
+            }
             Expect(RegCreateKeyExW(HKEY_CURRENT_USER,path.c_str(),0,nullptr,0,KEY_READ|KEY_WRITE,nullptr,
                 &verb,nullptr)==ERROR_SUCCESS,"create private verb");
             Value(verb,nullptr,L"SnowDesktop isolated policy probe");
@@ -577,35 +925,108 @@ struct TemporaryVerb
             constexpr wchar_t executable[]=L"notepad.exe \"%1\""; // Never invoked.
             const auto written=RegSetValueExW(command,nullptr,0,REG_SZ,reinterpret_cast<const BYTE*>(executable),sizeof(executable));
             RegCloseKey(command); Expect(written==ERROR_SUCCESS,"write private command metadata");
+            SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
         }
         catch (...) { Clear(); throw; }
     }
     ~TemporaryVerb() { Clear(); }
-    void Disable() { Value(verb,L"LegacyDisable",L""); }
+    void Disable()
+    {
+        Value(verb,L"LegacyDisable",L"");
+        SHChangeNotify(SHCNE_ASSOCCHANGED, SHCNF_IDLIST, nullptr, nullptr);
+    }
 };
-template<class Wait>
-void TestSystemPolicy(Wait wait, const std::filesystem::path &directory)
+// Exercise the actual popup entry so a supervised query failure follows the
+// production recovery policy. Installed handlers remain real; only catalogue
+// metadata is fixed because system enable/disable is decided by the Shell.
+void TestSystemPolicy(const std::filesystem::path &directory, bool failFirst = false, bool shortcut = false)
 {
-    namespace ext=snowdesktop::shell_extensions;
-    TemporaryVerb registration;
-    const auto file=directory/(L"sample"+registration.extension);
-    { std::ofstream output(file); output<<"isolated Shell policy sample"; }
-    ext::Request request; request.paths={file.wstring()};
-    const auto probe=[](const auto &list) {
-        return std::find_if(list.begin(),list.end(),[](const auto &e){return e.label==L"SnowDesktop isolated policy probe";});
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryVerb registration(shortcut);
+    const auto file = directory / (L"sample" + registration.extension);
+    {
+        std::ofstream output(file);
+        output << "isolated Shell policy sample";
+    }
+    ext::Request request;
+    request.paths = {file.wstring()};
+    if (shortcut)
+    {
+        const auto path = directory / L"policy-shortcut.lnk";
+        Microsoft::WRL::ComPtr<IShellLinkW> link;
+        Microsoft::WRL::ComPtr<IPersistFile> persist;
+        Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+            SUCCEEDED(link.As(&persist)) && SUCCEEDED(link->SetPath(file.c_str())) &&
+            SUCCEEDED(persist->Save(path.c_str(), TRUE)), "create private policy shortcut");
+        request.paths = {path.wstring()};
+    }
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:" + registration.verbId, ext::Category::Objects, true);
+    auto queryPopup = [&](bool disabled)
+    {
+        std::atomic<unsigned> attempts = 0;
+        std::atomic<bool> forcedFailure = false, invoked = false;
+        ext::MenuService service(
+            directory / (disabled ? L"policy-disabled" : L"policy-enabled"),
+            [&](const ext::Request &target)
+            {
+                const bool selected = target.paths == request.paths && !target.startPinOnly &&
+                                      target.sourceClsid.empty() && target.sourceKey.empty();
+                const auto attempt = selected ? ++attempts : 0u;
+                auto session = std::make_shared<ext::Session>(target);
+                if (failFirst && selected && attempt == 1)
+                {
+                    HANDLE owned = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, session->ProcessId());
+                    if (owned)
+                    {
+                        forcedFailure = TerminateProcess(owned, 19) != FALSE;
+                        WaitForSingleObject(owned, 3000);
+                        CloseHandle(owned);
+                    }
+                }
+                return ext::QueryWork{[session] { return session->Poll(); }, [&](UINT, POINT) { invoked = true; }};
+            },
+            []
+            {
+                ext::Catalogue catalogue;
+                catalogue.revision = 1;
+                return catalogue;
+            });
+        service.Configure(prefs);
+        ext::Presentation popup(request, prefs, L"", L"", service);
+        std::vector<menu::Item> items;
+        menu::Options options;
+        popup.Attach(items, options, 0);
+        const auto deadline = GetTickCount64() + 20000;
+        while (!options.pollItemsFinished() && GetTickCount64() < deadline)
+        {
+            if (auto next = options.pollItems(items, true))
+                items = std::move(*next);
+            MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            {
+                TranslateMessage(&message);
+                DispatchMessageW(&message);
+            }
+        }
+        auto published = request; published.originalShortcutOnly = shortcut && failFirst;
+        const auto view = service.View(published);
+        std::cout << "Actual policy popup: disabled=" << disabled << ", fault=" << failFirst
+                  << ", attempts=" << attempts << ", rows=" << items.size() << ", error=" << view.error << std::endl;
+        Expect(options.pollItemsFinished() && view.snapshot && view.error.empty() && !invoked,
+               "system policy is observed through a successful actual popup query without invoking a command");
+        Expect(!failFirst || (forcedFailure && attempts == 2),
+               "the actual popup recovers once after terminating only its own first helper");
+        Expect(disabled ? items.empty()
+                        : items.size() == 1 && items.front().label == L"SnowDesktop isolated policy probe",
+               disabled ? "the actual popup never restores a system-disabled command"
+                        : "the system-enabled private verb appears in the actual popup after bounded recovery");
     };
-    {
-        ext::Session visible(request); const auto reply=wait(visible);
-        Expect(reply.ok&&probe(reply.entries)!=reply.entries.end(),
-            "system-enabled private verb appears through the actual Shell aggregate");
-    }
+    queryPopup(false);
     registration.Disable();
-    {
-        ext::Session disabled(request); const auto reply=wait(disabled);
-        const auto shown=ext::VisibleEntries({},reply.entries,request);
-        Expect(reply.ok&&probe(shown)==shown.end(),
-            "following the Shell never restores a system-disabled command");
-    }
+    queryPopup(true);
 }
 // Real inherited pipes and process supervision; only the third-party query is
 // substituted, so a hung extension cannot be mistaken for a passing UI mock.
@@ -633,10 +1054,495 @@ void TestDeferredPopups()
     Expect(!RequiresNativePopup(menu), "materialized submenu commands retain custom rendering");
     AppendMenuW(menu, MF_OWNERDRAW, 42, nullptr);
     Expect(RequiresNativePopup(menu), "unlabelled owner-drawn children keep their native parent renderer");
+
+    HMENU root = CreatePopupMenu();
+    Expect(root != nullptr, "create aggregate command-scope fixture");
+    Cleanup rootCleanup{root};
+    AppendMenuW(root, MF_STRING, 40, L"Run selected application as administrator");
+    AppendMenuW(root, MF_POPUP, reinterpret_cast<UINT_PTR>(menu), L"Provider tools");
+    Expect(snowdesktop::shell_extensions::IsRootMenuCommand(root, 40) &&
+        !snowdesktop::shell_extensions::IsRootMenuCommand(root, 41),
+        "selected-object root operations remain host-owned while provider children keep their own scope");
+    // Detach before the two independently owned fixtures destroy their menus.
+    RemoveMenu(root, 1, MF_BYPOSITION);
 }
 
+// Opt-in installed-extension evidence through the full supervised Host/Session
+// path. This reads only isolated files and never invokes archive commands.
+void ProbeArchiveSubmenus()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    for (const bool archive : {false, true})
+    {
+        const auto path = directory.path / (archive ? L"Sample.zip" : L"Sample.txt");
+        {
+            std::ofstream file(path, std::ios::binary);
+            if (archive)
+            {
+                const char emptyZip[22] = {'P', 'K', 5, 6};
+                file.write(emptyZip, sizeof(emptyZip));
+            }
+            else file << "isolated archive submenu probe";
+        }
+        ext::Request request; request.paths = {path.wstring()};
+        ext::Session session(request);
+        std::optional<ext::Reply> reply;
+        const auto deadline = GetTickCount64() + 12000;
+        while (!reply && GetTickCount64() < deadline)
+        {
+            reply = session.Poll();
+            if (reply) break;
+            MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+        if (reply && !reply->ok) std::cout << "Archive query failed: " << reply->error << std::endl;
+        Expect(reply && reply->ok, "the real archive query completes through supervised Session IPC");
+        bool winrar = false;
+        for (const auto &entry : reply->entries)
+        {
+            if (entry.label != L"WinRAR" && entry.label != L"7-Zip") continue;
+            std::cout << (archive ? "ZIP " : "TXT ") << (entry.label == L"WinRAR" ? "WinRAR" : "7-Zip")
+                << ": native=" << entry.native << ", children=" << entry.children.size() << std::endl;
+            Expect(!entry.native && !entry.children.empty(), "installed archive handlers return a real custom submenu tree");
+            unsigned commands = 0;
+            for (const auto &child : entry.children)
+            {
+                if (child.separator) continue;
+                Expect(!child.label.empty() && child.label != L"…" && child.label != L"...",
+                    "the archive submenu contains no dummy or ellipsis commands");
+                if (child.enabled && child.children.empty())
+                {
+                    Expect(ext::ResolveCommand(*reply, ext::AppendReference(ext::AppendReference({}, entry), child)) == child.token && child.token,
+                        "each archive command resolves to its fresh live-session token");
+                    ++commands;
+                }
+            }
+            Expect(commands > 0, "the real archive submenu exposes executable children");
+            winrar |= entry.label == L"WinRAR";
+        }
+        Expect(winrar, "this opt-in probe requires an enabled installed WinRAR Shell extension");
+    }
+}
+
+// Unlike metadata-only archive probes, this opt-in exercises a real WinRAR
+// compression of private files and checks the archive's independently listed
+// contents. It never uses a real user's shortcut or target.
+void ProbeShortcutArchives()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    std::filesystem::create_directory(directory.path / L"target");
+    const auto target = directory.path / L"target" / L"RealTarget.txt";
+    std::ofstream(target) << "referenced target must stay outside the archive";
+    const auto shortcut = directory.path / L"ActualShortcut.lnk";
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    Microsoft::WRL::ComPtr<IPersistFile> persist;
+    Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+        SUCCEEDED(link.As(&persist)) && SUCCEEDED(link->SetPath(target.c_str())) &&
+        SUCCEEDED(persist->Save(shortcut.c_str(), TRUE)), "create an isolated shortcut with a distinct target");
+    link.Reset(); persist.Reset();
+    ext::Request request; request.paths = {shortcut.wstring()};
+    ext::MenuSnapshotCache cache(directory.path / L"cache");
+    const auto ticket = cache.Capture(request);
+    ext::Session session(request);
+    std::optional<ext::Reply> reply;
+    const auto deadline = GetTickCount64() + 12000;
+    while (!reply && GetTickCount64() < deadline)
+    {
+        reply = session.Poll();
+        if (reply) break;
+        MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        MSG message{}; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        { TranslateMessage(&message); DispatchMessageW(&message); }
+    }
+    if (reply && !reply->ok) std::cout << reply->error << std::endl;
+    Expect(reply && reply->ok, "shortcut query completes through the production helper");
+    const auto root = std::find_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
+        return entry.label == L"WinRAR";
+    });
+    Expect(root != reply->entries.end() && !root->native, "enabled installed WinRAR exposes a real shortcut submenu");
+    const auto compress = std::find_if(root->children.begin(), root->children.end(), [](const auto &entry) {
+        // The aggregate may expose this provider through IExplorerCommand,
+        // whose child lacks a verb. Its actual label and live token identify
+        // the installed command; the referenced target's name must fail here.
+        return entry.label == L"Add to \"ActualShortcut.rar\"";
+    });
+    Expect(compress != root->children.end(), "WinRAR compression names the selected shortcut, never RealTarget.rar");
+    Expect(cache.Store(ticket, *reply) && cache.Find(cache.Capture(request)).has_value(),
+        "the original shortcut keeps a reusable display snapshot");
+    const auto token = ext::ResolveCommand(*reply, ext::AppendReference(ext::AppendReference({}, *root), *compress));
+    Expect(token != 0, "actual shortcut command resolves against its live session");
+    session.Invoke(token, {});
+    const auto archive = directory.path / L"ActualShortcut.rar";
+    const auto archiveDeadline = GetTickCount64() + 15000;
+    bool ready = false;
+    while (!ready && GetTickCount64() < archiveDeadline)
+    {
+        WIN32_FILE_ATTRIBUTE_DATA info{};
+        if (GetFileAttributesExW(archive.c_str(), GetFileExInfoStandard, &info) && info.nFileSizeLow)
+        {
+            HANDLE file = CreateFileW(archive.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (file != INVALID_HANDLE_VALUE) { ready = true; CloseHandle(file); }
+        }
+        if (ready) break;
+        MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        MSG message{}; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+        { TranslateMessage(&message); DispatchMessageW(&message); }
+    }
+    Expect(ready && !std::filesystem::exists(target.parent_path() / L"RealTarget.rar"),
+        "WinRAR creates the archive beside the shortcut instead of its referenced target");
+    wchar_t module[32768]{}; DWORD bytes = sizeof(module);
+    Expect(RegGetValueW(HKEY_CLASSES_ROOT,
+        L"CLSID\\{B41DB860-64E4-11D2-9906-E49FADC173CA}\\InProcServer32", nullptr,
+        RRF_RT_REG_SZ, nullptr, module, &bytes) == ERROR_SUCCESS, "read the registered installed WinRAR module");
+    const auto rar = std::filesystem::path(module).parent_path() / L"Rar.exe";
+    Expect(std::filesystem::is_regular_file(rar), "installed Rar CLI is available for independent content validation");
+    const auto listing = directory.path / L"archive-list.txt";
+    SECURITY_ATTRIBUTES security{sizeof(security), nullptr, TRUE};
+    HANDLE output = CreateFileW(listing.c_str(), GENERIC_WRITE, FILE_SHARE_READ, &security,
+        CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    HANDLE input = CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, &security,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(output != INVALID_HANDLE_VALUE && input != INVALID_HANDLE_VALUE, "create isolated CLI streams");
+    std::wstring command = L"\"" + rar.wstring() + L"\" lb \"" + archive.wstring() + L"\"";
+    STARTUPINFOW startup{sizeof(startup)}; startup.dwFlags = STARTF_USESTDHANDLES;
+    startup.hStdInput = input; startup.hStdOutput = startup.hStdError = output;
+    PROCESS_INFORMATION process{};
+    const bool launched = CreateProcessW(rar.c_str(), command.data(), nullptr, nullptr, TRUE,
+        CREATE_NO_WINDOW, nullptr, directory.path.c_str(), &startup, &process) != FALSE;
+    CloseHandle(input); CloseHandle(output);
+    Expect(launched, "list only the private archive through installed Rar CLI");
+    const DWORD waited = WaitForSingleObject(process.hProcess, 10000);
+    DWORD exit = 1; GetExitCodeProcess(process.hProcess, &exit);
+    if (waited != WAIT_OBJECT_0)
+    {
+        // This is our own bounded CLI child, never a user's WinRAR process.
+        TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+        WaitForSingleObject(process.hProcess, 1000);
+    }
+    CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    Expect(waited == WAIT_OBJECT_0 && exit == 0, "independent Rar content listing completes successfully");
+    std::ifstream contents(listing, std::ios::binary);
+    const std::string names{std::istreambuf_iterator<char>(contents), std::istreambuf_iterator<char>()};
+    Expect(names.find("ActualShortcut.lnk") != std::string::npos && names.find("RealTarget.txt") == std::string::npos,
+        "the actual archive contains the shortcut file and excludes its referenced target");
+    std::cout << "WinRAR shortcut archive contents: " << names << std::endl;
+    Expect(std::filesystem::exists(shortcut) && std::filesystem::exists(target), "compression preserves both original files");
+
+    // Target delegation also affects folder links, broken links and mixed
+    // selections. Query these real objects without invoking another archive.
+    auto makeLink = [&](const std::filesystem::path &path, const std::filesystem::path &destination) {
+        Microsoft::WRL::ComPtr<IShellLinkW> value;
+        Microsoft::WRL::ComPtr<IPersistFile> file;
+        Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&value))) &&
+            SUCCEEDED(value.As(&file)) && SUCCEEDED(value->SetPath(destination.c_str())) &&
+            SUCCEEDED(file->Save(path.c_str(), TRUE)), "create a private shortcut selection variant");
+    };
+    const auto folderLink = directory.path / L"FolderShortcut.lnk";
+    const auto brokenLink = directory.path / L"BrokenShortcut.lnk";
+    const auto otherLink = target.parent_path() / L"OtherShortcut.lnk";
+    makeLink(folderLink, target.parent_path());
+    makeLink(brokenLink, target.parent_path() / L"MissingTarget.txt");
+    makeLink(otherLink, target);
+    for (const auto &paths : std::vector<std::vector<std::wstring>>{
+        {folderLink.wstring()}, {brokenLink.wstring()}, {shortcut.wstring(), otherLink.wstring(), archive.wstring()}})
+    {
+        std::cout << "Query shortcut variant: " << std::filesystem::path(paths.front()).filename().string()
+            << ", objects=" << paths.size() << std::endl;
+        ext::Request variant; variant.paths = paths;
+        ext::Session query(variant);
+        std::optional<ext::Reply> result;
+        const auto end = GetTickCount64() + 12000;
+        while (!result && GetTickCount64() < end)
+        {
+            result = query.Poll();
+            if (result) break;
+            MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{}; while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+        if (result && !result->ok) std::cout << result->error << std::endl;
+        Expect(result && result->ok, "real folder, broken and cross-folder shortcut queries succeed");
+        const auto winrar = std::find_if(result->entries.begin(), result->entries.end(), [](const auto &entry) {
+            return entry.label == L"WinRAR";
+        });
+        Expect(winrar != result->entries.end() && !winrar->native && !winrar->children.empty(),
+            "shortcut variants preserve a real installed WinRAR submenu");
+        for (const auto &child : winrar->children)
+            Expect(child.label.find(L"RealTarget") == std::wstring::npos &&
+                child.label.find(L"MissingTarget") == std::wstring::npos,
+                "WinRAR variant menus never describe an unselected referenced file");
+        std::cout << "WinRAR original shortcut selection: " << paths.size() << " object(s), children="
+            << winrar->children.size() << std::endl;
+    }
+}
+
+// Read installed PowerShell cascades without launching a terminal or UAC.
+void ProbePowerShellSubmenus()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    for (const auto context : {ext::Context::Desktop, ext::Context::FolderBackground})
+    {
+        ext::Request request; request.catalogueOnly = true; request.context = context;
+        ext::Session session(request);
+        std::optional<ext::Reply> reply;
+        const auto deadline = GetTickCount64() + 12000;
+        while (!reply && GetTickCount64() < deadline)
+        {
+            reply = session.Poll();
+            if (reply) break;
+            MsgWaitForMultipleObjectsEx(0, nullptr, 20, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+        Expect(reply && reply->ok, "the real background menu query completes through Session IPC");
+        const auto root = std::find_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
+            auto key = entry.key;
+            std::transform(key.begin(), key.end(), key.begin(), [](unsigned char c) { return static_cast<char>(tolower(c)); });
+            return key == "powershell7x64" || key == "powershell7x86";
+        });
+        Expect(root != reply->entries.end(), "this opt-in probe requires enabled installed PowerShell 7 menu registration");
+        std::cout << (context == ext::Context::Desktop ? "Desktop" : "Folder background")
+            << " PowerShell 7: native=" << root->native << ", children=" << root->children.size() << std::endl;
+        Expect(!root->native && !root->children.empty(), "PowerShell 7 is a real custom submenu");
+        bool ordinary = false, administrator = false;
+        for (const auto &child : root->children)
+        {
+            ordinary |= child.key == "openpwsh";
+            administrator |= child.key == "runas";
+            if (child.separator) continue;
+            Expect(child.token && ext::ResolveCommand(*reply,
+                ext::AppendReference(ext::AppendReference({}, *root), child)) == child.token,
+                "each PowerShell child resolves to its current live-session command");
+        }
+        Expect(ordinary && administrator, "PowerShell preserves both ordinary and administrator commands");
+        ext::Preferences visible;
+        ext::SetHidden(visible, root->provider, context, false);
+        const auto shown = ext::VisibleSnapshot(visible, *reply, ext::ContextBit(context));
+        Expect(shown.size() == 1 && shown.front().children.size() == root->children.size(),
+            "the exposed background visibility path preserves the complete enabled PowerShell cascade");
+    }
+}
+
+void TestPackageManifestRefresh()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct RegistryFixture
+    {
+        HKEY key = nullptr; std::wstring path;
+        ~RegistryFixture() { if (key) RegCloseKey(key); RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry{nullptr, L"Software\\SnowDesktopManifestTests\\" + temp.path.filename().wstring()};
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, registry.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr,
+        &registry.key, nullptr) == ERROR_SUCCESS, "private package inventory fixture");
+    const std::wstring packageKey = L"Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages\\Example_1.0.0.0_x64__publisher";
+    auto registerPackage = [&] {
+        HKEY key = nullptr;
+        Expect(RegCreateKeyExW(registry.key, packageKey.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr,
+            &key, nullptr) == ERROR_SUCCESS, "register private package manifest");
+        const auto directory = temp.path.wstring();
+        const auto status = RegSetValueExW(key, L"PackageRootFolder", 0, REG_SZ,
+            reinterpret_cast<const BYTE *>(directory.c_str()), static_cast<DWORD>((directory.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(key); Expect(status == ERROR_SUCCESS, "write private package directory");
+    };
+    registerPackage();
+    const auto manifest = temp.path / L"AppxManifest.xml";
+    const std::string firstId = "{A6510AE1-9C45-4F16-A120-4A320B231001}";
+    const std::string secondId = "{A6510AE1-9C45-4F16-A120-4A320B231002}";
+    auto text = [](const std::string &id) { return "<Package><Extensions><Extension Category=\"windows.fileExplorerContextMenus\"><ItemType Type=\"Directory\\Background\"><Verb Id=\"Inspect\" Clsid=\"" + id + "\"/></ItemType></Extension></Extensions></Package>"; };
+    auto write = [](const std::filesystem::path &path, const std::string &xml) {
+        std::ofstream output(path, std::ios::binary | std::ios::trunc);
+        output.write(xml.data(), static_cast<std::streamsize>(xml.size()));
+        output.close(); Expect(!output.fail(), "write actual private manifest file");
+    };
+    auto check = [&](const char *expected) {
+        const auto catalogue = ext::ReadCatalogue(registry.key, true);
+        Expect(catalogue.rows.size() == 1 && catalogue.rows.front().id == expected &&
+            catalogue.rows.front().contexts == (ext::ContextBit(ext::Context::Desktop) | ext::ContextBit(ext::Context::FolderBackground)) &&
+            catalogue.rows.front().sources == std::vector<std::wstring>{L"package:Example_1.0.0.0_x64__publisher:Inspect"},
+            "PACKAGE_REFRESH: live package inventory retains the current manifest command and contexts");
+        Expect(catalogue.backgroundRevisions[1] == ext::ReadBackgroundCatalogueRevision(ext::Context::Desktop, registry.key, true),
+            "full and scoped scans use the same current package manifest");
+        return catalogue.revision;
+    };
+    write(manifest, text(firstId));
+    const auto firstRevision = check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}");
+    Expect(firstRevision == check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}"), "unchanged manifest remains deterministic");
+    FILE_BASIC_INFO oldBasic{};
+    HANDLE oldFile = CreateFileW(manifest.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(oldFile != INVALID_HANDLE_VALUE && GetFileInformationByHandleEx(oldFile, FileBasicInfo, &oldBasic, sizeof(oldBasic)), "read original manifest timestamp");
+    CloseHandle(oldFile);
+    write(manifest, text(secondId));
+    HANDLE changedFile = CreateFileW(manifest.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    auto changedBasic = oldBasic; changedBasic.ChangeTime.QuadPart += 10000000;
+    Expect(changedFile != INVALID_HANDLE_VALUE && SetFileInformationByHandle(changedFile, FileBasicInfo, &changedBasic, sizeof(changedBasic)),
+        "change content while preserving the last-write timestamp and size");
+    FILE_BASIC_INFO observed{};
+    Expect(GetFileInformationByHandleEx(changedFile, FileBasicInfo, &observed, sizeof(observed)) &&
+        observed.LastWriteTime.QuadPart == oldBasic.LastWriteTime.QuadPart && observed.ChangeTime.QuadPart != oldBasic.ChangeTime.QuadPart,
+        "in-place change fixture has equal last-write time but distinct change time");
+    CloseHandle(changedFile);
+    Expect(firstRevision != check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231002}"),
+        "same-size edit with restored last-write time invalidates parsed metadata");
+    const auto replacement = temp.path / L"replacement.xml";
+    write(replacement, text(firstId));
+    HANDLE replacementFile = CreateFileW(replacement.c_str(), FILE_READ_ATTRIBUTES | FILE_WRITE_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(replacementFile != INVALID_HANDLE_VALUE && SetFileInformationByHandle(replacementFile, FileBasicInfo, &observed, sizeof(observed)),
+        "prepare same-size replacement with matching timestamps");
+    FILE_ID_INFO replacementId{}, previousId{};
+    oldFile = CreateFileW(manifest.c_str(), FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+        nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Expect(oldFile != INVALID_HANDLE_VALUE && GetFileInformationByHandleEx(oldFile, FileIdInfo, &previousId, sizeof(previousId)) &&
+        GetFileInformationByHandleEx(replacementFile, FileIdInfo, &replacementId, sizeof(replacementId)) &&
+        memcmp(previousId.FileId.Identifier, replacementId.FileId.Identifier, sizeof(previousId.FileId.Identifier)) != 0,
+        "replacement fixture is a distinct file object");
+    CloseHandle(replacementFile);
+    CloseHandle(oldFile);
+    const auto moved = MoveFileExW(replacement.c_str(), manifest.c_str(), MOVEFILE_REPLACE_EXISTING);
+    if (!moved) std::cerr << "replace error=" << GetLastError() << " oldattrs=" << GetFileAttributesW(manifest.c_str()) << " newattrs=" << GetFileAttributesW(replacement.c_str()) << std::endl;
+    Expect(moved != FALSE, "replace private manifest");
+    check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}");
+    Expect(std::filesystem::remove(manifest), "remove private manifest");
+    Expect(ext::ReadCatalogue(registry.key, true).rows.empty(), "a removed manifest cannot retain old commands");
+    write(manifest, "<Package/>");
+    Expect(ext::ReadCatalogue(registry.key, true).rows.empty(), "valid manifest without context commands stays empty");
+    write(manifest, text(secondId));
+    check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231002}");
+    write(manifest, "<Package>");
+    Expect(ext::ReadCatalogue(registry.key, true).rows.empty(), "malformed manifest is not a cached command source");
+    write(manifest, text(firstId));
+    check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231001}");
+    const std::wstring utf16 = L"<Package><Extension Category=\"windows.fileExplorerContextMenu&#115;\"><ItemType Type=\"Directory&#92;Background\"><Verb Id=\"Inspect\" Clsid=\"{A6510AE1-9C45-4F16-A120-4A320B231002}\"/></ItemType></Extension></Package>";
+    std::string unicode("\xff\xfe", 2); unicode.append(reinterpret_cast<const char *>(utf16.data()), utf16.size() * sizeof(wchar_t));
+    write(manifest, unicode);
+    check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231002}");
+    Expect(RegDeleteTreeW(registry.key, packageKey.c_str()) == ERROR_SUCCESS, "unregister private package");
+    Expect(ext::ReadCatalogue(registry.key, true).rows.empty(), "cached XML cannot restore an unregistered package");
+    registerPackage();
+    check("package:example_publisher:{a6510ae1-9c45-4f16-a120-4a320b231002}");
+}
+
+void TestParallelRegistryCatalogue()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct RegistryFixture
+    {
+        HKEY key = nullptr; std::wstring path;
+        ~RegistryFixture() { if (key) RegCloseKey(key); RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry{nullptr, L"Software\\SnowDesktopCatalogueTests\\" + temp.path.filename().wstring()};
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, registry.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr,
+        &registry.key, nullptr) == ERROR_SUCCESS, "private parallel catalogue fixture");
+    auto put = [&](const std::wstring &path, const wchar_t *name, const std::wstring &value) {
+        HKEY key = nullptr;
+        Expect(RegCreateKeyExW(registry.key, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr,
+            &key, nullptr) == ERROR_SUCCESS, "create parallel registration");
+        const auto status = RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value.c_str()),
+            static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(key); Expect(status == ERROR_SUCCESS, "write parallel registration");
+    };
+    const std::wstring clsid = L"{B9F35FB4-D6E6-4CCE-89DB-F20796ED280A}";
+    for (int i = 0; i < 80; ++i)
+    {
+        const auto number = std::to_wstring(i), path = L"Parallel.Document" + number;
+        put(L".parallel" + number, nullptr, path);
+        put(L".parallel" + number, L"PerceivedType", L"parallel-shared");
+        put(L".parallel" + number + L"\\OpenWithProgids", L"Parallel.Alternate", L"");
+        put(path + L"\\shell\\inspect", L"MUIVerb", L"独立操作 " + number);
+        put(path + L"\\shell\\inspect\\command", nullptr, L"unused.exe /source:" + number + L" %1");
+        put(path + L"\\shellex\\ContextMenuHandlers\\Provider " + number, nullptr, clsid);
+    }
+    put(L"SystemFileAssociations\\parallel-shared\\shell\\inspect\\command", nullptr, L"unused.exe /perceived %1");
+    put(L"Parallel.Alternate\\shell\\inspect\\command", nullptr, L"unused.exe /alternate %1");
+    std::wstring first;
+    for (DWORD index = 0; ; ++index)
+    {
+        wchar_t name[1024]; DWORD length = 1024;
+        const auto status = RegEnumKeyExW(registry.key, index, name, &length, nullptr, nullptr, nullptr, nullptr);
+        Expect(status == ERROR_SUCCESS || status == ERROR_NO_MORE_ITEMS, "enumerate expected original root order");
+        if (status == ERROR_NO_MORE_ITEMS) break;
+        if (std::wstring_view(name, length).starts_with(L"Parallel.Document"))
+        { first = std::wstring(name, length).substr(std::wstring_view(L"Parallel.Document").size()); break; }
+    }
+    Expect(!first.empty(), "fixture has an original first handler source");
+    auto catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(catalogue.rows.size() == 83, "parallel file roots retain all unique verbs and merge only the shared CLSID");
+    const auto handler = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [](const auto &row) {
+        return row.id == "clsid:{b9f35fb4-d6e6-4cce-89db-f20796ed280a}";
+    });
+    Expect(handler != catalogue.rows.end() && handler->sources.size() == 80 && handler->types.size() == 80 &&
+        handler->contexts == ext::ContextBit(ext::Context::File) && handler->display.label == L"Provider " + first,
+        "parallel completion cannot change the first handler caption or drop any source/type");
+    for (int i = 0; i < 80; ++i)
+    {
+        const auto number = std::to_wstring(i);
+        const auto id = "reg:parallel.document" + std::to_string(i) + "\\shell\\inspect";
+        const auto row = std::find_if(catalogue.rows.begin(), catalogue.rows.end(), [&](const auto &value) { return value.id == id; });
+        Expect(row != catalogue.rows.end() && row->display.label == L"独立操作 " + number && row->systemEnabled &&
+            row->types == std::vector<std::wstring>{L".parallel" + number} && !row->commandIdentity.empty(),
+            "each parallel verb keeps its own caption, execution identity and exact file type");
+    }
+    const auto associatedTypes = [](const ext::Catalogue &value, const std::string &id) {
+        const auto found = std::find_if(value.rows.begin(), value.rows.end(), [&](const auto &row) { return row.id == id; });
+        return found == value.rows.end() ? std::vector<std::wstring>{} : found->types;
+    };
+    const std::string perceivedId = "reg:systemfileassociations\\parallel-shared\\shell\\inspect";
+    const std::string alternateId = "reg:parallel.alternate\\shell\\inspect";
+    Expect(associatedTypes(catalogue, perceivedId) == handler->types &&
+        associatedTypes(catalogue, alternateId) == handler->types,
+        "parallel association reads keep every perceived-type and OpenWithProgids extension");
+    const auto proof = catalogue.folderRevision;
+    Expect(proof == ext::ReadFolderCatalogueRevision(registry.key, false), "file workers cannot contaminate folder proof");
+    Expect(snowdesktop::settings_ipc::Pack(catalogue) == snowdesktop::settings_ipc::Pack(ext::ReadCatalogue(registry.key, false)),
+        "parallel completion order leaves the complete catalogue deterministic");
+    put(L"Parallel.Document0\\shell\\inspect", L"LegacyDisable", L"");
+    const auto changed = ext::ReadCatalogue(registry.key, false);
+    const auto disabled = std::find_if(changed.rows.begin(), changed.rows.end(), [](const auto &row) {
+        return row.id == "reg:parallel.document0\\shell\\inspect";
+    });
+    Expect(disabled != changed.rows.end() && !disabled->systemEnabled && changed.revision != catalogue.revision &&
+        changed.folderRevision == proof, "parallel scans recheck live file policy without invalidating unchanged folder proof");
+    put(L".parallel0", L"PerceivedType", L"other-perceived");
+    Expect(RegDeleteTreeW(registry.key, L".parallel0\\OpenWithProgids") == ERROR_SUCCESS,
+        "remove a private alternate association");
+    const auto reassociated = ext::ReadCatalogue(registry.key, false);
+    auto expectedTypes = handler->types;
+    std::erase(expectedTypes, L".parallel0");
+    Expect(associatedTypes(reassociated, perceivedId) == expectedTypes &&
+        associatedTypes(reassociated, alternateId) == expectedTypes &&
+        reassociated.revision != changed.revision && reassociated.folderRevision == proof,
+        "parallel association scans recheck changed perceived types and removed alternate ProgIDs");
+    const auto rowRevision = [](const ext::Catalogue &value, const std::string &id) {
+        const auto found = std::find_if(value.rows.begin(), value.rows.end(), [&](const auto &row) { return row.id == id; });
+        Expect(found != value.rows.end(), "association fingerprint source exists");
+        return found->revision;
+    };
+    const std::string originalId = "reg:parallel.document0\\shell\\inspect";
+    put(L".parallel0", nullptr, L"PARALLEL.DOCUMENT0");
+    const auto recased = ext::ReadCatalogue(registry.key, false);
+    Expect(associatedTypes(recased, originalId) == associatedTypes(reassociated, originalId) &&
+        rowRevision(recased, originalId) != rowRevision(reassociated, originalId) && recased.folderRevision == proof,
+        "a fresh scan preserves original association values in row fingerprints without changing case-insensitive membership");
+    put(L".parallel0", nullptr, L"Parallel.Document1");
+    const auto redirected = ext::ReadCatalogue(registry.key, false);
+    Expect(associatedTypes(redirected, originalId) == std::vector<std::wstring>{L"progid:parallel.document0"} &&
+        associatedTypes(redirected, "reg:parallel.document1\\shell\\inspect") ==
+            std::vector<std::wstring>{L".parallel0", L".parallel1"} &&
+        rowRevision(redirected, originalId) != rowRevision(recased, originalId) && redirected.folderRevision == proof,
+        "a new scan follows a changed default ProgID and removes the old type without disturbing folder proof");
+}
 void TestRegistryCatalogue()
 {
+    TestPackageManifestRefresh();
+    TestParallelRegistryCatalogue();
+    TestCatalogueRegistryHandles();
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory temp;
     const auto path = L"Software\\SnowDesktopCatalogueTests\\" + temp.path.filename().wstring();
@@ -761,6 +1667,104 @@ void TestRegistryCatalogue()
     Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application.name == L"Provider Shell.dll" &&
         find("reg:*\\shell\\library").application.name == L"Provider Shell.dll", "CLSID and rundll32 registrations identify the providing DLL rather than its generic host");
 
+    std::filesystem::remove(module);
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application.id.empty() &&
+        find("reg:*\\shell\\library").application.id.empty(), "a fresh catalogue drops attribution when the registered module has been removed");
+    std::ofstream(module) << "metadata fixture restored";
+    put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}\\InprocServer32", nullptr, program.c_str());
+    put(L"CLSID\\{B92A9760-188A-44ED-88A5-F9E3D30E33AF}", nullptr, L"Updated provider");
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").application == app &&
+        find("clsid:{b92a9760-188a-44ed-88a5-f9e3d30e33af}").display.label == L"Updated provider",
+        "a fresh catalogue observes changed provider registration and label");
+    Expect(find("reg:*\\shell\\library").application.name == L"Provider Shell.dll",
+        "a fresh catalogue rechecks previously missing command modules after their restoration");
+
+    // Real registry lookups are case-insensitive. Metadata indexing must keep
+    // captions intact and stay local to each scan; policy is never inferred
+    // from a cached absence. Unknown Unicode value names use direct reads.
+    const std::wstring longCaption(1024, L'界');
+    put(L"*\\shell\\metadata-case", L"mUiVeRb", L"Mixed metadata caption");
+    put(L"*\\shell\\metadata-unicode", L"MUIVerb", longCaption.c_str());
+    put(L"*\\shell\\metadata-unicode", L"其他元数据", L"保留未知字段");
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(find("reg:*\\shell\\metadata-case").display.label == L"Mixed metadata caption" &&
+        find("reg:*\\shell\\metadata-unicode").display.label == longCaption,
+        "metadata lookup preserves mixed-case value names and full Unicode captions");
+    const auto folderProof = catalogue.folderRevision;
+    Expect(folderProof && folderProof == ext::ReadFolderCatalogueRevision(registry.key, false),
+        "full inventory and folder-only verification agree for shared handler registrations");
+    const auto metadataRevision = catalogue.revision;
+    put(L"*\\shell\\metadata-case", L"MUIVerb", L"Updated metadata caption");
+    put(L"*\\shell\\metadata-case", L"LEGACYDISABLE", L"");
+    catalogue = ext::ReadCatalogue(registry.key, false);
+    Expect(catalogue.revision != metadataRevision &&
+        find("reg:*\\shell\\metadata-case").display.label == L"Updated metadata caption" &&
+        !find("reg:*\\shell\\metadata-case").systemEnabled,
+        "a new scan rechecks changed metadata and current case-insensitive disable policy");
+    Expect(catalogue.folderRevision == folderProof && ext::ReadFolderCatalogueRevision(registry.key, false) == folderProof,
+        "file-only metadata changes do not alter proof for an unchanged folder registration");
+    put(L"Directory\\shell\\folder-proof\\command", nullptr, L"unused.exe /proof %1");
+    auto previousProof = ext::ReadFolderCatalogueRevision(registry.key, false);
+    for (const auto &[name, value] : std::vector<std::pair<const wchar_t *, const wchar_t *>>{
+        {L"MUIVerb", L"Folder action"}, {L"AppliesTo", L"System.ItemNameDisplay:proof"},
+        {L"MultiSelectModel", L"Single"}, {L"Extended", L""}, {L"LegacyDisable", L""},
+        {L"ProgrammaticAccessOnly", L""}, {L"SubCommands", L"proof-one;proof-two"},
+        {L"ExtendedSubCommandsKey", L"FolderProof.SubCommands"},
+        {L"ExplorerCommandHandler", L"{B92A9760-188A-44ED-88A5-F9E3D30E33AF}"}})
+    {
+        put(L"Directory\\shell\\folder-proof", name, value);
+        const auto proof = ext::ReadFolderCatalogueRevision(registry.key, false);
+        Expect(proof != previousProof && proof == ext::ReadCatalogue(registry.key, false).folderRevision,
+            "each changed folder command, applicability value and disable policy invalidates scoped proof");
+        previousProof = proof;
+        if (std::wstring_view(name) == L"LegacyDisable" || std::wstring_view(name) == L"ProgrammaticAccessOnly")
+        {
+            Expect(RegDeleteKeyValueW(registry.key, L"Directory\\shell\\folder-proof", name) == ERROR_SUCCESS,
+                "restore the isolated enabled state before checking another disable policy");
+            previousProof = ext::ReadFolderCatalogueRevision(registry.key, false);
+        }
+    }
+    const auto restored = snowdesktop::settings_ipc::Unpack<ext::Catalogue>(snowdesktop::settings_ipc::Pack(catalogue));
+    Expect(!restored.folderRevision && !restored.backgroundRevisions[0] && !restored.backgroundRevisions[1],
+        "persisted and IPC catalogue data never carry a live scoped verification proof");
+    put(L"Directory\\Background\\shell\\background-proof\\command", nullptr, L"unused.exe /background");
+    put(L"DesktopBackground\\shell\\desktop-proof\\command", nullptr, L"unused.exe /desktop");
+    auto backgroundProofs = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
+    for (const auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+        Expect(backgroundProofs[context == ext::Context::Desktop ? 1 : 0] == ext::ReadBackgroundCatalogueRevision(context, registry.key, false),
+            "full inventory and each background-only verification read identical inputs");
+    put(L"*\\shell\\metadata-case", L"MUIVerb", L"Another unrelated file caption");
+    Expect(ext::ReadCatalogue(registry.key, false).backgroundRevisions == backgroundProofs,
+        "unrelated file metadata cannot invalidate either background scope");
+    put(L"DesktopBackground\\shell\\desktop-proof", L"LegacyDisable", L"");
+    auto changedBackgrounds = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
+    Expect(changedBackgrounds[0] == backgroundProofs[0] && changedBackgrounds[1] != backgroundProofs[1] &&
+        changedBackgrounds[1] == ext::ReadBackgroundCatalogueRevision(ext::Context::Desktop, registry.key, false),
+        "DesktopBackground policy affects desktop proof without invalidating folder backgrounds");
+    for (const auto &[name, value] : std::vector<std::pair<const wchar_t *, const wchar_t *>>{
+        {L"MUIVerb", L"Shared background action"}, {L"AppliesTo", L"System.ItemNameDisplay:proof"},
+        {L"MultiSelectModel", L"Single"}, {L"Extended", L""}, {L"LegacyDisable", L""},
+        {L"ProgrammaticAccessOnly", L""}, {L"SubCommands", L"background-one;background-two"},
+        {L"ExtendedSubCommandsKey", L"BackgroundProof.SubCommands"},
+        {L"ExplorerCommandHandler", L"{B92A9760-188A-44ED-88A5-F9E3D30E33AF}"}})
+    {
+        backgroundProofs = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
+        put(L"Directory\\Background\\shell\\background-proof", name, value);
+        changedBackgrounds = ext::ReadCatalogue(registry.key, false).backgroundRevisions;
+        for (const auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+        {
+            const auto index = context == ext::Context::Desktop ? 1 : 0;
+            Expect(changedBackgrounds[index] != backgroundProofs[index] &&
+                changedBackgrounds[index] == ext::ReadBackgroundCatalogueRevision(context, registry.key, false),
+                "shared background action, applicability and policy changes invalidate both scopes");
+        }
+        if (std::wstring_view(name) == L"LegacyDisable" || std::wstring_view(name) == L"ProgrammaticAccessOnly")
+            Expect(RegDeleteKeyValueW(registry.key, L"Directory\\Background\\shell\\background-proof", name) == ERROR_SUCCESS,
+                "restore enabled background state before checking the next disable policy");
+    }
+
 }
 
 void TestNvidiaCompatibility()
@@ -784,6 +1788,15 @@ void TestNvidiaCompatibility()
         Expect(!ext::NvidiaCompatibilityRequired(request, true, true, CLASS_E_CLASSNOTAVAILABLE),
             "NVIDIA compatibility does not add application launchers to object or folder menus");
     }
+    auto omitted = desktop; omitted.omitNvidiaCompatibility = true;
+    Expect(!ext::NvidiaCompatibilityRequired(omitted, true, true, CLASS_E_CLASSNOTAVAILABLE),
+        "an explicitly omitted compatibility source never enters the installed application resolver");
+    Expect(!ext::NvidiaCompatibilityShown({}) &&
+        !ext::NvidiaCompatibilityShown({"menu:nvidia app:14695981039346656037"}) &&
+        ext::NvidiaCompatibilityShown({ext::NvidiaControlPanelRegistration}) &&
+        ext::NvidiaCompatibilityShown({"verb:{3d1975af-48c6-4f8e-a182-be0e08fa86a9}"}) &&
+        ext::NvidiaCompatibilityShown({"handler:{3d1975af-48c6-4f8e-a182-be0e08fa86a9}"}),
+        "the compatibility opt-in recognizes exact provider identities without matching NVIDIA App captions");
     auto probe = desktop; probe.sourceClsid = ext::NvidiaControlPanelClsid;
     Expect(!ext::NvidiaCompatibilityRequired(probe, true, true, CLASS_E_CLASSNOTAVAILABLE),
         "metadata attribution probes never contribute executable compatibility entries");
@@ -1096,39 +2109,140 @@ void TestExtensionSessions()
                "Shell helpers cannot inherit or write the caller's redirected output stream");
     }
     ext::Request request;request.paths={L"synthetic-success"};
+    struct ObservedHelper
+    {
+        HANDLE process = nullptr;
+        ~ObservedHelper() { if (process) CloseHandle(process); }
+    } firstHelper;
     DWORD firstProcess = 0;
     {ext::Session session(request,2500);auto reply=wait(session); firstProcess = session.ProcessId();
+        firstHelper.process = OpenProcess(SYNCHRONIZE, FALSE, firstProcess);
         Expect(reply.ok&&reply.entries.size()==1&&reply.entries[0].label==L"压缩"&&reply.entries[0].checked&&!reply.entries[0].enabled,
             "isolated query transports Unicode labels and actual menu states");}
+    Expect(firstHelper.process && WaitForSingleObject(firstHelper.process, 2500) == WAIT_OBJECT_0,
+        "closing an ordinary query stops its helper instead of pumping extension callbacks between menus");
     request.paths={L"synthetic-second"};
     {ext::Session session(request,2500);auto reply=wait(session);
-        Expect(session.ProcessId()==firstProcess && reply.ok && reply.entries[0].key=="second",
-            "a warm worker is reused but queries the new selection instead of reusing old commands");}
+        Expect(session.ProcessId()!=firstProcess && reply.ok && reply.entries[0].key=="second",
+            "a fresh ordinary worker queries the new selection without retaining third-party callbacks");}
     {
         ext::Session first(request,2500); Expect(wait(first).ok,"first concurrent query");
         ext::Session second(request,2500); Expect(wait(second).ok,"second concurrent query");
         Expect(first.ProcessId()!=second.ProcessId(),"active menu sessions never share a worker or command map");
+        bool refused = false;
+        try { ext::Session third(request, 2500); } catch (const snowdesktop::settings_ipc::ProtocolError &) { refused = true; }
+        Expect(refused, "arbitrary extensions retain their two-session limit");
+        auto start = request; start.startPinOnly = true;
+        ext::Session reserved(start, 2500); const auto direct = wait(reserved);
+        Expect(direct.ok && reserved.ProcessId() != first.ProcessId() && reserved.ProcessId() != second.ProcessId(),
+            "Start queries have an isolated reserved helper even while both ordinary slots are occupied");
     }
+    auto prepare = [&](DWORD timeout = 2500) {
+        Expect(ext::Session::PrepareFirstMenuWorker(timeout), "preparation acquires a supervised ordinary slot");
+        const auto end = GetTickCount64() + 3500;
+        auto state = ext::Session::PreparationState::Pending;
+        while (GetTickCount64() < end && state == ext::Session::PreparationState::Pending)
+        {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+            state = ext::Session::PollPreparedMenuWorker();
+            if (state == ext::Session::PreparationState::Pending)
+                MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+        Expect(state != ext::Session::PreparationState::Pending, "preparation completion or retirement is bounded");
+        return state;
+    };
+    auto preparedRequest = request; preparedRequest.paths = {L"synthetic-prepared"};
+    std::wstring preparationPath;
+    ObservedHelper preparedHelper;
+    {
+        Expect(prepare() == ext::Session::PreparationState::Ready, "private bootstrap becomes ready");
+        Expect(ext::Session::PrepareFirstMenuWorker(), "repeated preparation keeps the same reserved slot");
+        ext::Session fresh(request, 2500); Expect(wait(fresh).ok, "one fresh query can coexist with preparation");
+        bool refused = false;
+        try { ext::Session overflow(request, 2500); } catch (const snowdesktop::settings_ipc::ProtocolError &) { refused = true; }
+        Expect(refused, "preparation counts against the ordinary two-process limit");
+        auto startRequest = request; startRequest.startPinOnly = true;
+        ext::Session startWorker(startRequest, 2500);
+        Expect(wait(startWorker).ok && ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Ready,
+            "Start keeps its separate slot without consuming the prepared ordinary worker");
+        ext::Session selected(preparedRequest, 2500, true); const auto reply = wait(selected);
+        preparedHelper.process = OpenProcess(SYNCHRONIZE, FALSE, selected.ProcessId());
+        preparationPath = reply.entries.front().label;
+        Expect(reply.ok && reply.entries.front().key == "prepared" && selected.ProcessId() != fresh.ProcessId() &&
+            selected.ProcessId() != startWorker.ProcessId() &&
+            ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent &&
+            GetFileAttributesW(preparationPath.c_str()) != INVALID_FILE_ATTRIBUTES,
+            "the first selection transfers one reserved slot and retains its independent bootstrap objects");
+    }
+    // Closing the kill-on-close job requests termination asynchronously. Check
+    // the kernel's process-exit signal before judging delete-on-close cleanup.
+    Expect(preparedHelper.process && WaitForSingleObject(preparedHelper.process, 2500) == WAIT_OBJECT_0,
+        "retiring the prepared query stops its helper within the lifetime bound");
+    Expect(GetFileAttributesW(preparationPath.c_str()) == INVALID_FILE_ATTRIBUTES,
+        "retiring the first real menu also removes its delete-on-close bootstrap sample");
+    {
+        ext::Session next(preparedRequest, 2500, true); const auto reply = wait(next);
+        Expect(reply.ok && reply.entries.front().key == "cold", "ordinary helpers are not recycled after a prepared real query");
+        ext::Session second(request, 2500); Expect(wait(second).ok, "prepared slot ownership is released exactly once");
+        Expect(!ext::Session::PrepareFirstMenuWorker(), "preparation cannot create a third ordinary process");
+    }
+    {
+        Expect(ext::Session::PrepareFirstMenuWorker(), "pending preparation starts asynchronously");
+        ext::Session immediate(preparedRequest, 2500, true); const auto reply = wait(immediate);
+        Expect(reply.ok && reply.entries.front().key == "cold", "an immediate popup replaces pending preparation without waiting for it");
+    }
+    {
+        Expect(prepare() == ext::Session::PreparationState::Ready, "background fallback setup");
+        auto background = preparedRequest; background.background = true; background.context = ext::Context::FolderBackground;
+        ext::Session unchanged(background, 2500, true); const auto reply = wait(unchanged);
+        Expect(reply.ok && reply.entries.front().key == "cold", "background menus always retain their original unprepared host");
+    }
+    {
+        struct PreparationFailureMode
+        {
+            ~PreparationFailureMode() { SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_PREPARATION", nullptr); }
+        } mode;
+        for (const auto fault : {L"fail", L"hang"})
+        {
+            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_PREPARATION", fault);
+            Expect(prepare(std::wstring_view(fault) == L"hang" ? 150 : 2500) == ext::Session::PreparationState::Absent,
+                "failed or timed-out preparation stops its helper and returns its ordinary slot");
+            ext::Session recovered(preparedRequest, 2500, true); const auto reply = wait(recovered);
+            Expect(reply.ok && reply.entries.front().key == "cold", "preparation failure preserves the normal first-query path");
+        }
+    }
+    Expect(prepare() == ext::Session::PreparationState::Ready, "generation invalidation setup");
     ext::InvalidateMenuCache();
+    Expect(ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent,
+        "an invalidated registry generation retires prepared registrations before an unseen selection");
+    Expect(prepare() == ext::Session::PreparationState::Ready, "explicit retirement setup");
+    ext::Session::ReleaseIdleWorker();
+    Expect(ext::Session::PollPreparedMenuWorker() == ext::Session::PreparationState::Absent,
+        "worker teardown releases preparation and the Start pool together");
     {ext::Session session(request,2500);auto reply=wait(session);
         Expect(session.ProcessId()!=firstProcess && reply.ok,"explicit refresh discards the previous cached worker");}
     {
         ext::Request sample; sample.catalogueOnly=true; sample.context=ext::Context::File;
         std::wstring samplePath;
         DWORD sampleWorker=0;
+        ObservedHelper sampleHelper;
         {
             ext::Session session(sample,2500); auto reply=wait(session);
             Expect(reply.ok,"owned catalogue sample query completes");
+            Expect(session.SelectionContexts() == ext::ContextBit(ext::Context::File),
+                "the real helper publishes its original sample context before the successful reply");
             samplePath=reply.entries[0].label; sampleWorker=session.ProcessId();
+            sampleHelper.process = OpenProcess(SYNCHRONIZE, FALSE, sampleWorker);
             Expect(GetFileAttributesW(samplePath.c_str())!=INVALID_FILE_ATTRIBUTES,"sample lives through its menu session");
         }
-        // Reacquire immediately to exercise a release acknowledgement arriving
-        // after the next request; it must not remove the current sample.
+        Expect(sampleHelper.process && WaitForSingleObject(sampleHelper.process, 2500) == WAIT_OBJECT_0,
+            "catalogue-only queries also stop their extension host after completion");
         ext::Session next(sample,2500); auto reply=wait(next);
-        Expect(next.ProcessId()==sampleWorker && reply.ok &&
+        Expect(next.ProcessId()!=sampleWorker && reply.ok &&
             GetFileAttributesW(samplePath.c_str())==INVALID_FILE_ATTRIBUTES &&
             GetFileAttributesW(reply.entries[0].label.c_str())!=INVALID_FILE_ATTRIBUTES,
-            "release acknowledgements remove retired samples while preserving the next session's object");
+            "retiring a catalogue helper removes its sample while preserving the next session's object");
     }
     request.paths={L"synthetic-hang"};const auto start=GetTickCount64();
     {ext::Session session(request,250);auto reply=wait(session);Expect(!reply.ok&&GetTickCount64()-start<3000,"hung query is terminated without blocking the parent");}
@@ -1144,7 +2258,9 @@ void TestExtensionSessions()
         RealQueryMode(){ext::InvalidateMenuCache(); SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",L"1");}
         ~RealQueryMode(){ext::InvalidateMenuCache(); SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",nullptr);}
     } realMode;
-    TestSystemPolicy(wait, directory.path);
+    TestSystemPolicy(directory.path);
+    TestSystemPolicy(directory.path, true);
+    TestSystemPolicy(directory.path, true, true);
     // Exercise the same four default queries as the settings tabs, including
     // real installed handler images. Report every scope before failing so one
     // incompatible DLL cannot hide the remaining scope results.
@@ -1361,6 +2477,743 @@ void PumpUntil(Condition condition, const char *message)
     Expect(condition(),message);
 }
 
+void TestNvidiaCompatibilityQueryPolicy(bool olderCompletesFirst)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    const auto first = temp.path / L"first", pending = temp.path / L"pending", barrier = temp.path / L"barrier";
+    for (const auto &path : {first, pending, barrier}) std::filesystem::create_directory(path);
+    ext::Request request; request.paths = {first.wstring()}; request.background = true; request.context = ext::Context::Desktop;
+    auto omitted = request; omitted.omitNvidiaCompatibility = true;
+    Expect(snowdesktop::settings_ipc::Unpack<ext::Request>(snowdesktop::settings_ipc::Pack(omitted)) == omitted,
+        "private omission option survives the actual helper request codec");
+    ext::MenuSnapshotCache cache(temp.path / L"identity");
+    const auto completeTicket = cache.Capture(request), omittedTicket = cache.Capture(omitted);
+    Expect(completeTicket && omittedTicket && completeTicket.identity != omittedTicket.identity,
+        "complete and omitted source variants have different disk identities");
+    ext::Reply ordinary; ordinary.ok = true;
+    ext::Entry entry; entry.provider = "verb:ordinary"; entry.key = "ordinary"; entry.label = L"Ordinary command"; entry.token = 7;
+    ordinary.entries = {entry};
+    Expect(cache.Store(omittedTicket, ordinary) && cache.Find(omittedTicket).has_value() && !cache.Find(completeTicket),
+        "a cached omitted reply cannot masquerade as full management output");
+    auto full = ordinary;
+    entry.provider = "verb:{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
+    entry.key = "{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
+    entry.registration = ext::NvidiaControlPanelRegistration; entry.label = L"Control Panel"; entry.token = 9;
+    full.entries.push_back(entry);
+    ext::Catalogue catalogue; catalogue.revision = 1; catalogue.folderRevision = 2; catalogue.backgroundRevisions = {3, 3};
+    ext::Registration registration; registration.id = ext::NvidiaControlPanelRegistration;
+    registration.contexts = ext::ContextBit(ext::Context::Desktop); registration.verbs = {entry.key}; registration.revision = 4;
+    catalogue.rows.push_back(registration);
+    std::mutex launchedMutex; std::vector<ext::Request> launched;
+    std::atomic<bool> fullReady = false, holdOmitted = false;
+    std::atomic<unsigned> retiredOmittedCompleted = 0;
+    auto count = [&](const std::filesystem::path &path, bool omit) {
+        std::lock_guard lock(launchedMutex);
+        return std::count_if(launched.begin(), launched.end(), [&](const auto &r) {
+            return r.paths == std::vector<std::wstring>{path.wstring()} && r.omitNvidiaCompatibility == omit;
+        });
+    };
+    ext::MenuService service(temp.path / L"service", [&](const ext::Request &target) {
+        const bool selected = target.paths == std::vector<std::wstring>{first.wstring()} ||
+            target.paths == std::vector<std::wstring>{pending.wstring()};
+        if (selected) { std::lock_guard lock(launchedMutex); launched.push_back(target); }
+        return ext::QueryWork{[&, target, selected]() -> std::optional<ext::Reply> {
+            if (!selected) return ordinary;
+            if (target.omitNvidiaCompatibility ? holdOmitted.load() : !fullReady.load()) return {};
+            if (target.omitNvidiaCompatibility && target.paths == std::vector<std::wstring>{pending.wstring()}) ++retiredOmittedCompleted;
+            return target.omitNvidiaCompatibility ? ordinary : full;
+        }, {}};
+    }, [catalogue] { return catalogue; }, [] { return std::uint64_t(2); }, [](ext::Context) { return std::uint64_t(3); });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:ordinary", ext::Category::Background, true);
+    ext::SetCommon(prefs, "menu:nvidia app:14695981039346656037", ext::Category::Background, true);
+    ext::SetCommon(prefs, ext::NvidiaControlPanelRegistration, ext::Category::Background, false);
+    service.Configure(prefs); service.Query(request);
+    PumpUntil([&] { auto view = service.View(request); return count(first, true) == 1 && view.snapshot && !view.pending; },
+        "an exposed NVIDIA App does not require the hidden Control Panel compatibility resolver");
+    Expect(service.MenuDisplay(request, prefs).snapshot->entries.size() == 1,
+        "ordinary exposed commands are published without waiting on the hidden compatibility source");
+    service.Query(request, ext::QueryPriority::Inspect);
+    PumpUntil([&] { return count(first, false) == 1; }, "management upgrades the omitted selection to a full query");
+    Expect(service.View(request).pending && !service.View(request).snapshot,
+        "management does not finish from an omitted in-memory or disk snapshot");
+    fullReady = true;
+    PumpUntil([&] { auto view = service.View(request); return view.snapshot && !view.pending; }, "complete management query finishes");
+    Expect(service.View(request).snapshot->entries.size() == 2, "management retains the compatibility command and its proven registration");
+    service.Query(request);
+    auto cachedBarrier = request; cachedBarrier.paths = {barrier.wstring()};
+    service.Query(cachedBarrier, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { auto view = service.View(cachedBarrier); return view.snapshot && !view.pending; },
+        "a later inspection barrier observes the complete cache reuse check");
+    Expect(count(first, false) == 1 && count(first, true) == 1 &&
+        service.View(request).snapshot->entries.size() == 2 && !service.View(request).pending &&
+        service.MenuDisplay(request, prefs).snapshot->entries.size() == 1,
+        "a complete cached superset serves hidden-source popups without requerying or discarding management data");
+    auto pendingRequest = request; pendingRequest.paths = {pending.wstring()}; holdOmitted = true;
+    service.Query(pendingRequest);
+    PumpUntil([&] { return count(pending, true) == 1; }, "hold an older omitted query at its external boundary");
+    ext::SetCommon(prefs, ext::NvidiaControlPanelRegistration, ext::Category::Background, true);
+    service.Configure(prefs);
+    if (olderCompletesFirst) fullReady = false;
+    service.Query(pendingRequest);
+    PumpUntil([&] { return count(pending, false) == 1; }, "replacement full query has been dispatched");
+    if (olderCompletesFirst)
+    {
+        holdOmitted = false;
+        auto before = request; before.paths = {barrier.wstring()};
+        // A held popup owns one supervised slot. Use the reserved popup lane
+        // for this barrier; a background Inspect must correctly wait behind it.
+        service.Query(before, ext::QueryPriority::Menu, true);
+        PumpUntil([&] { auto view = service.View(before); return retiredOmittedCompleted && view.snapshot && !view.pending; },
+            "retired omitted query finishes before the replacement full reply");
+        if (!service.View(pendingRequest).pending || service.View(pendingRequest).snapshot)
+        {
+            const auto failed = service.View(pendingRequest);
+            std::cerr << "omission interleave state: pending=" << failed.pending
+                << " snapshot=" << bool(failed.snapshot) << " error=" << failed.error << "\n";
+        }
+        Expect(service.View(pendingRequest).pending && !service.View(pendingRequest).snapshot,
+            "an older omitted reply cannot clear or replace a newer full query still pending");
+        fullReady = true;
+    }
+    PumpUntil([&] { auto view = service.View(pendingRequest); return count(pending, false) == 1 && view.snapshot && !view.pending; },
+        "enabling compatibility replaces an in-flight omitted query in the reserved popup slot");
+    Expect(service.MenuDisplay(pendingRequest, prefs).snapshot->entries.size() == 2,
+        "the newly enabled compatibility command is visible without inheriting omission or backoff");
+    const auto revision = service.View(pendingRequest).revision;
+    holdOmitted = false;
+    auto barrierRequest = request; barrierRequest.paths = {barrier.wstring()};
+    service.Query(barrierRequest, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { auto view = service.View(barrierRequest); return view.snapshot && !view.pending; }, "drain the late omitted reply before a management barrier");
+    Expect(service.View(pendingRequest).revision == revision && service.View(pendingRequest).snapshot->entries.size() == 2,
+        "a retired omitted query cannot overwrite the replacement complete reply");
+}
+
+// Hold only the supervised query boundary; real Inspect, Presentation and fresh
+// click resolution must remain independent, with and without a prior full cache.
+void TestInspectionIndependentPopup(bool cached)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    const auto selected = temp.path / L"selected";
+    std::filesystem::create_directory(selected);
+    ext::Request request; request.paths = {selected.wstring()}; request.background = true; request.context = ext::Context::Desktop;
+    ext::Reply ordinary; ordinary.ok = true;
+    ext::Entry entry; entry.provider = "verb:ordinary"; entry.key = "ordinary"; entry.label = L"Ordinary command"; entry.token = 11;
+    ordinary.entries = {entry};
+    ext::Catalogue catalogue; catalogue.revision = 1; catalogue.folderRevision = 2; catalogue.backgroundRevisions = {3,3};
+    std::atomic<unsigned> fullStarted=0, popupStarted=0, invoked=0;
+    std::atomic<bool> releaseFull=false, completed=false, succeeded=false, staleToken=false;
+    ext::MenuService service(temp.path/L"cache", [&](const ext::Request &target) {
+        const bool selectedQuery = target.paths == request.paths && target.sourceClsid.empty();
+        const bool popup = target.omitNvidiaCompatibility;
+        unsigned token = 11;
+        if(selectedQuery){if(popup)token=100+ ++popupStarted;else ++fullStarted;}
+        const bool held = selectedQuery && !popup && (!cached || fullStarted.load() > 1);
+        auto fresh=ordinary;fresh.entries.front().token=token;
+        return ext::QueryWork{[&, held, fresh]() -> std::optional<ext::Reply> {
+            if(held){if(!releaseFull)return {};return ext::Reply{false,{},"optional inspection failure"};}
+            return fresh;
+        },[&, selectedQuery, popup, token](UINT actual,POINT point){
+            if(selectedQuery&&popup){staleToken=actual!=token||point.x!=13||point.y!=23; ++invoked;}
+        }};
+    },[catalogue]{return catalogue;},[]{return std::uint64_t(2);},[](ext::Context){return std::uint64_t(3);});
+    ext::Preferences prefs;
+    ext::SetCommon(prefs,"verb:ordinary",ext::Category::Background,true);
+    ext::SetCommon(prefs,ext::NvidiaControlPanelRegistration,ext::Category::Background,false);
+    service.Configure(prefs);
+    if(cached){
+        service.Query(request,ext::QueryPriority::Inspect);
+        PumpUntil([&]{auto view=service.View(request);return fullStarted==1&&view.snapshot&&!view.pending;},
+            "prepare a complete full snapshot before management refresh");
+    }
+    service.Inspect(request,cached);
+    PumpUntil([&]{return fullStarted.load()==(cached?2u:1u);},"actual Inspect dispatches its full desktop query");
+    const auto opened=GetTickCount64();
+    ext::Presentation popup(request,prefs,L"",L"",service);
+    std::vector<snowdesktop::modern_menu::Item> items;
+    snowdesktop::modern_menu::Options options;popup.Attach(items,options,7);
+    while(GetTickCount64()-opened<2000 && options.pollItemsFinished && !options.pollItemsFinished()){
+        MSG msg{};while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}
+        if(auto update=options.pollItems(items,true))items=std::move(*update);
+        MsgWaitForMultipleObjectsEx(0,nullptr,1,QS_ALLINPUT,MWMO_INPUTAVAILABLE);
+    }
+    const auto readyMs=GetTickCount64()-opened;
+    Expect(popupStarted==(cached?0u:1u)&&items.size()==1&&items.front().label==L"Ordinary command"&&
+        (!options.pollItemsFinished||options.pollItemsFinished())&&!releaseFull,
+        "a held full inspection cannot block the actual popup Presentation or mark its ordinary stream pending");
+    const auto click=GetTickCount64();
+    service.Execute(request,ext::AppendReference({},ordinary.entries.front()),{13,23},[&](bool ok){succeeded=ok;completed=true;});
+    while(!completed&&GetTickCount64()-click<2000){MSG msg{};while(PeekMessageW(&msg,nullptr,0,0,PM_REMOVE)){TranslateMessage(&msg);DispatchMessageW(&msg);}MsgWaitForMultipleObjectsEx(0,nullptr,1,QS_ALLINPUT,MWMO_INPUTAVAILABLE);}
+    const auto clickMs=GetTickCount64()-click;
+    Expect(completed&&succeeded&&popupStarted==(cached?1u:2u)&&invoked==1&&!staleToken&&!releaseFull,
+        "click resolves a fresh ordinary token and completes while full inspection is still held");
+    releaseFull=true;
+    PumpUntil([&]{auto view=service.Inspect(request);return !view.menu.pending&&view.menu.error=="optional inspection failure";},
+        "optional failure completes in the management lane");
+    const auto shown=service.MenuDisplay(request,prefs);
+    Expect(shown.snapshot&&shown.snapshot->entries.size()==1&&!shown.pending&&shown.error.empty(),
+        "optional management failure does not clear or back off a complete ordinary menu");
+    std::cout<<"inspection isolation cached="<<cached<<" popup_ms="<<readyMs<<" click_ms="<<clickMs<<" fresh_queries="<<popupStarted<<" invoked="<<invoked<<std::endl;
+}
+
+
+void TestExposedStartPinHelper()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace pin = snowdesktop::shell_start_pin;
+    TemporaryDirectory directory;
+    const auto output = directory.path / L"start-pin-result.bin";
+    // Exercise the real Session IPC, dedicated menu, token lookup and Host
+    // invocation. Substitute only the final Explorer call so no user pin changes.
+    struct Mode
+    {
+        explicit Mode(const std::filesystem::path &path)
+        {
+            ext::InvalidateMenuCache();
+            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_START_PIN", path.c_str());
+        }
+        ~Mode()
+        {
+            ext::InvalidateMenuCache();
+            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", nullptr);
+            SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_START_PIN", nullptr);
+        }
+    } mode(output);
+    wchar_t target[32768]{};
+    Expect(GetModuleFileNameW(nullptr, target, static_cast<DWORD>(std::size(target))) != 0,
+        "isolated shortcut target is the test executable");
+    const auto shortcut = directory.path / L"微信 菜单验证.lnk";
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    Microsoft::WRL::ComPtr<IPersistFile> persist;
+    Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+        SUCCEEDED(link->SetPath(target)) && SUCCEEDED(link.As(&persist)) &&
+        SUCCEEDED(persist->Save(shortcut.c_str(), TRUE)), "create a private Unicode shortcut");
+    ext::Request request; request.paths = {shortcut.wstring()};
+    request.startPinOnly = true;
+    ext::Session session(request);
+    std::optional<ext::Reply> reply;
+    PumpUntil([&] { if (!reply) reply = session.Poll(); return reply.has_value(); },
+        "the production helper queries the shortcut menu");
+    Expect(reply->ok && reply->entries.size() == 1, "the real shortcut query exposes only its current Start command");
+    const auto selected = std::find_if(reply->entries.begin(), reply->entries.end(), [](const auto &entry) {
+        return entry.enabled && entry.token && !entry.native &&
+            (_stricmp(entry.key.c_str(), "PinToStartScreen") == 0 ||
+             _stricmp(entry.key.c_str(), "UnpinFromStartScreen") == 0);
+    });
+    Expect(selected != reply->entries.end(), "Windows exposes a canonical Start command for the shortcut");
+    const auto expected = _stricmp(selected->key.c_str(), "PinToStartScreen") == 0 ? pin::Action::Pin : pin::Action::Unpin;
+    bool rejected = false;
+    try { session.Invoke(selected->token, {123, 456}); }
+    catch (const snowdesktop::settings_ipc::ProtocolError &) { rejected = true; }
+    Expect(rejected, "the final executor's failure reaches the stateful invocation caller");
+    Expect(std::filesystem::exists(output),
+        "an exposed Start command must reach the Explorer executor rather than local InvokeCommand");
+    std::ifstream file(output, std::ios::binary);
+    const std::vector<char> bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    const auto [path, action, ownerValid, x, y] = snowdesktop::settings_ipc::Unpack<
+        std::tuple<std::wstring, pin::Action, bool, LONG, LONG>>(
+            {reinterpret_cast<const std::byte *>(bytes.data()), bytes.size()});
+    Expect(path == shortcut.wstring() && action == expected && ownerValid && x == 123 && y == 456,
+        "the exposed menu preserves the original Unicode .lnk, action, helper owner and click position");
+}
+
+void TestPairedCommandVisibility()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    ext::Catalogue catalogue;
+    ext::Preferences legacy;
+    for (const auto &pair : ext::StateCommandPairs)
+    {
+        const auto forward = "verb:" + std::string(pair.forward), reverse = "verb:" + std::string(pair.reverse);
+        legacy.rules.push_back({forward, ext::Category::Objects, false});
+        legacy.rules.push_back({reverse, ext::Category::Objects, true});
+        legacy.overrides.push_back({forward, ext::Context::File, ext::Visibility::Hide});
+        legacy.overrides.push_back({reverse, ext::Context::File, ext::Visibility::Show});
+        for (const auto &verb : {pair.forward, pair.reverse})
+        {
+            ext::Registration row; row.id = "verb:" + std::string(verb); row.linked = true; row.contexts = 3;
+            row.display.key = verb; row.display.label = std::wstring(verb.begin(), verb.end());
+            catalogue.rows.push_back(row);
+        }
+        Expect(!ext::IsHidden(legacy, forward, ext::Context::File) && !ext::IsHidden(legacy, reverse, ext::Context::File),
+            "an opt-in from either legacy state variant applies to both, independently of record order");
+    }
+    const auto rows = ext::ManagementRows(catalogue, ext::Category::Objects);
+    Expect(rows.size() == 3, "Start, taskbar and Quick Access each have one paired management switch");
+    ext::Normalize(legacy);
+    Expect(legacy.rules.size() == 3 && legacy.overrides.size() == 3,
+        "legacy state aliases collapse to one authority per category and location");
+    for (const auto &row : rows)
+    {
+        Expect(row.members.size() == 1 && ext::ManagementCommon(legacy, row, ext::Category::Objects) == true,
+            "both discovered variants share the same management state");
+        ext::SetManagementCommon(legacy, row, ext::Category::Objects, false);
+        const auto *pair = ext::StatePairForId(row.id);
+        Expect(pair && ext::IsHidden(legacy, "verb:" + std::string(pair->forward), ext::Context::File) &&
+            ext::IsHidden(legacy, "verb:" + std::string(pair->reverse), ext::Context::Folder),
+            "the primary hide switch disables both variants and clears old object exceptions");
+        ext::SetManagementCommon(legacy, row, ext::Category::Objects, true);
+        ext::SetOverride(legacy, "verb:" + std::string(pair->reverse), ext::Context::File, ext::Visibility::Hide);
+        Expect(ext::IsHidden(legacy, "verb:" + std::string(pair->forward), ext::Context::File) &&
+            !ext::IsHidden(legacy, "verb:" + std::string(pair->reverse), ext::Context::Folder),
+            "paired location overrides preserve the independent file/folder scopes");
+    }
+    JsonValue saved;
+    Expect(ParseJson(ext::WritePreferences(legacy), saved) && ext::ReadPreferences(&saved) == legacy,
+        "the unified pair settings survive the real preferences serializer");
+    ext::Preferences isolated;
+    ext::SetCommon(isolated, "reg:folder\\shell\\pintohome", ext::Category::Objects, true);
+    Expect(!ext::IsHidden(isolated, "verb:unpinfromhome", ext::Context::Folder) &&
+        ext::IsHidden(isolated, "verb:other", ext::Context::Folder),
+        "proven static Windows aliases join their pair without enabling unrelated commands");
+    const auto forward = catalogue.rows.front().display;
+    auto changed = forward; changed.key = "UnpinFromStartScreen"; changed.provider = "verb:unpinfromstartscreen"; changed.token = 99;
+    ext::Reply fresh{true, {changed}, {}};
+    Expect(ext::ResolveCommand(fresh, ext::AppendReference({}, forward)) == 0,
+        "shared visibility must never resolve an old Pin click to the opposite Unpin action");
+}
+
+void TestPairedCommandRefresh()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory directory;
+    const auto target = directory.path / L"state.lnk";
+    std::ofstream(target) << "private scheduler target";
+    ext::Request request; request.paths = {target.wstring()};
+    std::atomic<bool> pinned = false, hold = false, completed = false, success = false;
+    std::atomic<int> queries = 0, ordinaryQueries = 0, invokes = 0;
+    auto startRequest = request; startRequest.startPinOnly = true;
+    ext::MenuService service(directory.path / L"cache", [&](const auto &source) {
+        ++queries;
+        if (!source.startPinOnly) ++ordinaryQueries;
+        const bool state = pinned.load();
+        ext::Entry action; action.key = state ? "UnpinFromStartScreen" : "PinToStartScreen";
+        action.provider = state ? "verb:unpinfromstartscreen" : "verb:pintostartscreen";
+        action.label = state ? L"Unpin" : L"Pin"; action.token = state ? 42 : 41;
+        ext::Entry ordinary; ordinary.key = "inspect"; ordinary.provider = "verb:inspect"; ordinary.label = L"Inspect"; ordinary.token = 43;
+        return ext::QueryWork{[&, action, ordinary, direct = source.startPinOnly]() -> std::optional<ext::Reply> {
+            if (hold) return {}; return ext::Reply{true, direct ? std::vector<ext::Entry>{action} : std::vector<ext::Entry>{ordinary, action}, {}};
+        }, [&, state, token = action.token](UINT selected, POINT) {
+            if (selected != token || pinned.load() != state) throw std::runtime_error("wrong state token");
+            ++invokes; pinned = !state; hold = true; // Hold the post-action query, never the invocation.
+        }};
+    }, [] { return ext::Catalogue{}; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:pintostartscreen", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(request);
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "seed the pre-action menu snapshot");
+    pinned = true; hold = true; // State changes outside SnowDesktop, without changing the .lnk.
+    menu::Item more; more.command = 7; more.label = L"More";
+    ext::Presentation presentation(request, prefs, L"", L"", service, [&](bool ok) { success = ok; completed = true; });
+    std::vector<menu::Item> items{more}; menu::Options options;
+    presentation.Attach(items, options, 7);
+    Expect(items.size() == 2 && items.front().label == L"Inspect" && options.pollItems &&
+        std::none_of(items.begin(), items.end(), [](const auto &item) { return item.label == L"Pin"; }),
+        "warm ordinary commands appear immediately, but cached external pin state is never displayed");
+    PumpUntil([&] { return queries >= 2; }, "opening a warm paired menu forces a native state query");
+    Expect(!options.pollItems(items, true), "a held state query cannot reinsert the stale cached action");
+    hold = false;
+    PumpUntil([&] { return !service.View(startRequest).pending && service.View(startRequest).snapshot.has_value(); }, "fresh external state query completes");
+    const auto additions = options.pollItems(items, true);
+    Expect(additions && std::count_if(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Unpin"; }) == 1 &&
+        std::none_of(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Pin"; }),
+        "this opening materializes exactly the current Unpin state without duplicating ordinary rows");
+    const auto selected = std::find_if(additions->begin(), additions->end(), [](const auto &i) { return i.label == L"Unpin"; });
+    Expect(presentation.Invoke(selected->command, {0, 0}), "dispatch the freshly displayed state command");
+    PumpUntil([&] { return completed.load(); }, "state invocation completion is observed by the real service");
+    const auto ordinaryView = service.View(request);
+    Expect(success && invokes == 1 && !pinned && ordinaryQueries == 1 && ordinaryView.snapshot &&
+        ordinaryView.snapshot->entries.size() == 1 && ordinaryView.snapshot->entries.front().label == L"Inspect",
+        "a Start state change retires the old pin while preserving ordinary rows without an aggregate query");
+    ext::MenuSnapshotCache disk(directory.path / L"cache");
+    const auto ordinaryDisk = disk.Find(disk.Capture(request));
+    Expect(ordinaryDisk && ordinaryDisk->entries.size() == 1 && ordinaryDisk->entries.front().label == L"Inspect",
+        "the disk snapshot preserves ordinary rows and cannot restore the stale pin state");
+    hold = false;
+    PumpUntil([&] { const auto view = service.View(startRequest); return !view.pending && view.snapshot.has_value(); },
+        "the post-action native query publishes the new Pin state");
+    const auto after = service.MenuDisplay(startRequest, prefs);
+    Expect(after.snapshot && after.snapshot->entries.back().label == L"Pin" && invokes == 1 && ordinaryQueries == 1,
+        "one Unpin action produces one fresh Pin state without repeating aggregate enumeration or invocation");
+}
+
+void TestStartQueryScheduling()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory directory;
+    ext::Request first, second, target;
+    first.paths = {(directory.path / L"first.lnk").wstring()};
+    second.paths = {(directory.path / L"second.lnk").wstring()};
+    target.paths = {(directory.path / L"target.lnk").wstring()};
+    for (const auto &request : {first, second, target}) std::ofstream(std::filesystem::path(request.paths.front())) << "isolated target";
+    std::atomic<bool> hold = true;
+    std::atomic<unsigned> ordinaryQueries = 0, startQueries = 0;
+    // Only the native process boundary is substituted. Exercise the production
+    // scheduler, popup bridge and cache with two deliberately stalled extensions.
+    ext::MenuService service(directory.path / L"cache", [&](const auto &request) {
+        const bool direct = request.startPinOnly;
+        if (direct) ++startQueries; else ++ordinaryQueries;
+        ext::Entry entry; entry.token = direct ? 1 : 2;
+        entry.key = direct ? "PinToStartScreen" : "inspect";
+        entry.provider = direct ? "verb:pintostartscreen" : "verb:inspect";
+        entry.label = direct ? L"Pin" : L"Inspect";
+        return ext::QueryWork{[&, direct, entry]() -> std::optional<ext::Reply> {
+            if (!direct && hold) return {}; return ext::Reply{true, {entry}, {}};
+        }, {}};
+    }, [] { return ext::Catalogue{}; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:pintostartscreen", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(first); service.Query(second);
+    PumpUntil([&] { return ordinaryQueries == 2; }, "occupy both ordinary extension slots");
+    // Model a target disappearing after selection: no cache ticket can be
+    // captured. The process-boundary substitute still completes, so lane
+    // accounting must remain correct without a persistent cache identity.
+    std::filesystem::remove(std::filesystem::path(target.paths.front()));
+    ext::Presentation presentation(target, prefs, L"", L"", service);
+    menu::Item builtin; builtin.command = 5; builtin.label = L"Open";
+    menu::Item more; more.command = 7; more.label = L"More";
+    std::vector<menu::Item> items{builtin, more}; menu::Options options;
+    presentation.Attach(items, options, 7);
+    auto start = target; start.startPinOnly = true;
+    PumpUntil([&] { return service.View(start).snapshot.has_value(); }, "the reserved Start query bypasses both stalled extensions");
+    const auto early = options.pollItems(items, true);
+    Expect(ordinaryQueries == 2 && startQueries == 1 && early && early->size() == 4 &&
+        std::count_if(early->begin(), early->end(), [](const auto &i) { return i.label == L"Pin"; }) == 1 &&
+        !options.pollItemsFinished(), "Start appears before the cold aggregate without ending its independent publication");
+    items = *early;
+    hold = false;
+    PumpUntil([&] { return service.View(target).snapshot.has_value(); }, "the cold aggregate can finish afterwards");
+    const auto late = options.pollItems(items, true);
+    Expect(late && options.pollItemsFinished() && late->back().command == 7 &&
+        std::count_if(late->begin(), late->end(), [](const auto &i) { return i.label == L"Pin"; }) == 1 &&
+        std::count_if(late->begin(), late->end(), [](const auto &i) { return i.label == L"Inspect"; }) == 1,
+        "later ordinary publication preserves the Start action and the footer without duplicates");
+    const auto previousOrdinary = ordinaryQueries.load();
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, false); service.Configure(prefs);
+    ext::Presentation onlyStart(target, prefs, L"", L"", service);
+    std::vector<menu::Item> fresh{more}; menu::Options freshOptions; onlyStart.Attach(fresh, freshOptions, 7);
+    PumpUntil([&] { return !service.View(start).pending && startQueries >= 2; }, "a new Start-only opening queries current state");
+    const auto state = freshOptions.pollItems(fresh, true);
+    Expect(state && freshOptions.pollItemsFinished() && ordinaryQueries == previousOrdinary,
+        "enabling only Start pinning never triggers an aggregate query on reopening");
+    service.Prewarm(first);
+    auto prewarmed = first; prewarmed.startPinOnly = true;
+    PumpUntil([&] { return service.View(prewarmed).snapshot.has_value(); }, "Start-only prewarming uses its dedicated request");
+    Expect(ordinaryQueries == previousOrdinary, "Start-only selection prewarming does not enumerate unrelated extensions");
+}
+
+// Real Classes notifications and live private registration scans reproduce the
+// repeated file/shortcut loading defect. Only the final Shell query is replaced;
+// unchanged popups must not dispatch it, while real changes must dispatch once.
+// Hold initial catalogue completion behind a published native result. Service
+// reconstruction must restore that result without another Shell query; a real
+// notification, changed target or superseding query must not certify old data.
+void TestInitialSnapshotPersistence(int mode = 0)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct Fixture {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        ~Fixture() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } noise{nullptr, L"Software\\Classes\\Local Settings\\SnowDesktopInitialSnapshot-" + temp.path.filename().wstring()};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, noise.path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &noise.key, &disposition) == ERROR_SUCCESS, "create first snapshot notification fixture");
+    noise.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(noise.owned, "first snapshot notification fixture has a unique owner");
+    const auto file = temp.path / L"selected.txt";
+    std::ofstream(file) << "private";
+    ext::Request selected; selected.paths = {file.wstring()};
+    std::atomic<unsigned> queries = 0, reads = 0, polls = 0;
+    std::atomic<std::uint64_t> version = 17;
+    auto inventory = [&] {
+        ext::Catalogue c; c.revision = version.load();
+        ext::Registration r; r.id = "reg:persistence-proof"; r.verbs = {"persistence-proof"};
+        r.types = {L"*"}; r.contexts = ext::ContextBit(ext::Context::File); r.revision = c.revision;
+        c.rows = {r}; return c;
+    };
+    auto factory = [&](const ext::Request &request) {
+        if (request.paths != selected.paths) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+        ++queries;
+        ext::Entry e; e.key = "persistence-proof"; e.provider = "verb:persistence-proof";
+        e.label = std::to_wstring(version.load()); e.token = 42;
+        return ext::QueryWork{[&, e] { ++polls; return ext::Reply{true, {e}, {}}; }, {}};
+    };
+    ext::Preferences preferences;
+    ext::SetCommon(preferences, "verb:persistence-proof", ext::Category::Objects, true);
+    {
+        std::promise<void> release;
+        auto gate = release.get_future().share();
+        ext::MenuService service(temp.path / L"cache", factory, [&] {
+            ++reads;
+            if (gate.wait_for(std::chrono::seconds(15)) != std::future_status::ready)
+                throw std::runtime_error("initial snapshot catalogue gate exceeded its bound");
+            return inventory();
+        });
+        struct Release {
+            std::promise<void> &promise; bool released = false;
+            void Now() { if (!released) { released = true; promise.set_value(); } }
+            ~Release() { Now(); }
+        } cleanup{release};
+        service.Configure(preferences); service.Query(selected);
+        PumpUntil([&] { return reads > 0 && polls > 0 && service.View(selected).snapshot.has_value(); },
+            "known commands publish while initial inventory is still blocked");
+        Expect(queries == 1 && !service.View(selected).pending,
+            "initial inventory does not delay an already usable ordinary command");
+        if (mode == 1) {
+            const auto oldRevision = service.View(selected).revision;
+            version = 18;
+            const DWORD sequence = 1;
+            Expect(RegSetValueExW(noise.key, L"Sequence", 0, REG_DWORD,
+                reinterpret_cast<const BYTE *>(&sequence), sizeof(sequence)) == ERROR_SUCCESS,
+                "emit a registration mutation before initial proof completes");
+            PumpUntil([&] { return service.View(selected).revision > oldRevision; },
+                "observe a newer registry generation than the provisional snapshot");
+            service.Query(selected);
+        } else if (mode == 2) {
+            std::ofstream(file, std::ios::app) << "changed while attribution was blocked";
+        } else if (mode == 3) {
+            service.Invalidate(selected);
+            PumpUntil([&] { return queries == 2 && service.View(selected).snapshot.has_value(); },
+                "a newer issued query replaces the provisional snapshot");
+        }
+        cleanup.Now();
+        PumpUntil([&] { return !service.Inspect().scanning; }, "initial live inventory and durable catalogue settle");
+        if (mode == 2) service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return view.snapshot && !view.pending &&
+            queries == (mode ? 2u : 1u); }, "finish only the queries required by real changes");
+        Expect(service.View(selected).snapshot->entries.front().label == (mode == 1 ? L"18" : L"17"),
+            "registration mutations cannot promote a provisional stale command");
+        service.Shutdown();
+    }
+    const auto beforeReload = queries.load();
+    {
+        ext::MenuService restored(temp.path / L"cache", factory, inventory);
+        restored.Configure(preferences); restored.Query(selected);
+        PumpUntil([&] { auto view = restored.View(selected); return view.snapshot && !view.pending; },
+            "reload a verified exact-object snapshot from the durable cache");
+        Expect(queries == beforeReload && restored.MenuDisplay(selected, preferences).snapshot.has_value(),
+            "a first query preceding catalogue completion remains reusable after service reconstruction");
+        restored.Shutdown();
+    }
+    std::cout << "Initial snapshot persistence mode=" << mode << " queries=" << queries.load() << std::endl;
+}
+
+void TestFileSnapshotNotificationReuse()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct Registry {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        explicit Registry(std::wstring p) : path(std::move(p)) {
+            DWORD disposition = 0;
+            Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                nullptr, &key, &disposition) == ERROR_SUCCESS, "create cache reuse registry fixture");
+            owned = disposition == REG_CREATED_NEW_KEY;
+            Expect(owned, "cache reuse registry fixture has a unique owner");
+        }
+        ~Registry() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry(L"Software\\SnowDesktopFileCacheReuse\\" + temp.path.filename().wstring()),
+      noise(L"Software\\Classes\\Local Settings\\SnowDesktopFileCacheReuse-" + temp.path.filename().wstring());
+    const auto commandAsset = temp.path / L"command.exe";
+    std::ofstream(commandAsset) << "private command asset";
+    auto caption = [&](const wchar_t *value) {
+        for (const wchar_t *root : {L"*", L"Directory"}) {
+            HKEY action = nullptr;
+            const auto path = std::wstring(root) + L"\\shell\\cache-reuse";
+            Expect(RegCreateKeyExW(registry.key, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                nullptr, &action, nullptr) == ERROR_SUCCESS, "create private cache reuse action");
+            const auto status = RegSetValueExW(action, L"MUIVerb", 0, REG_SZ,
+                reinterpret_cast<const BYTE *>(value), static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t)));
+            RegCloseKey(action);
+            Expect(status == ERROR_SUCCESS, "change private cache reuse action");
+            HKEY command = nullptr;
+            const auto commandPath = path + L"\\command";
+            Expect(RegCreateKeyExW(registry.key, commandPath.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                nullptr, &command, nullptr) == ERROR_SUCCESS, "create private cache reuse command");
+            const std::wstring commandValue = L"\"" + commandAsset.wstring() + L"\" %1";
+            const auto commandStatus = RegSetValueExW(command, nullptr, 0, REG_SZ,
+                reinterpret_cast<const BYTE *>(commandValue.c_str()),
+                static_cast<DWORD>((commandValue.size() + 1) * sizeof(wchar_t)));
+            RegCloseKey(command);
+            Expect(commandStatus == ERROR_SUCCESS, "write private cache reuse command");
+        }
+    };
+    caption(L"Initial action");
+    const auto text = temp.path / L"one.txt", image = temp.path / L"two.png";
+    const auto shortcut = temp.path / L"one.lnk", folder = temp.path / L"folder";
+    std::ofstream(text) << "private"; std::ofstream(image) << "private";
+    std::filesystem::create_directory(folder);
+    auto saveLink = [&](const std::filesystem::path &target) {
+        Microsoft::WRL::ComPtr<IShellLinkW> link;
+        Microsoft::WRL::ComPtr<IPersistFile> persistence;
+        Expect(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(&link))) && SUCCEEDED(link->SetPath(target.c_str())) &&
+            SUCCEEDED(link.As(&persistence)) && SUCCEEDED(persistence->Save(shortcut.c_str(), TRUE)),
+            "save private shortcut for cache identity verification");
+    };
+    saveLink(text);
+    std::atomic<unsigned> scans = 0, queries = 0;
+    std::atomic<bool> decodedIcon = false;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
+        if (target.paths.empty() || std::filesystem::path(target.paths.front()).parent_path() != temp.path)
+            return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+        ++queries;
+        ext::Entry entry; entry.key = "cache-reuse"; entry.provider = "verb:cache-reuse";
+        entry.label = L"Cached action"; entry.token = 42;
+        return ext::QueryWork{[entry] { return ext::Reply{true, {entry}, {}}; }, {}};
+    }, [&] {
+        ++scans;
+        auto catalogue = ext::ReadCatalogue(registry.key, false);
+        // Model the observed real scanner failure: an unchanged provider icon
+        // sometimes decodes only on a later scan. Only presentation data varies.
+        if (decodedIcon)
+        {
+            for (auto &row : catalogue.rows)
+            {
+                row.display.width = row.display.height = 1;
+                row.display.pixels = {0, 0, 0, 255};
+                row.revision ^= 0x35ab42ull;
+            }
+            catalogue.revision ^= 0x35ab42ull;
+        }
+        return catalogue;
+    });
+    ext::Preferences preferences;
+    ext::SetCommon(preferences, "verb:cache-reuse", ext::Category::Objects, true);
+    service.Configure(preferences); service.Inspect();
+    PumpUntil([&] { return scans != 0 && !service.Inspect().scanning; }, "establish a live file cache registration baseline");
+    DWORD sequence = 0;
+    auto notify = [&] {
+        ++sequence;
+        Expect(RegSetValueExW(noise.key, L"Sequence", 0, REG_DWORD,
+            reinterpret_cast<const BYTE *>(&sequence), sizeof(sequence)) == ERROR_SUCCESS,
+            "emit an unrelated real Classes notification");
+    };
+    const std::vector<std::vector<std::wstring>> selections = {
+        {text.wstring()}, {image.wstring()}, {shortcut.wstring()}, {folder.wstring()},
+        {text.wstring(), image.wstring()}, {shortcut.wstring(), folder.wstring()}};
+    unsigned caseNumber = 0;
+    for (const auto &paths : selections) {
+        ext::Request selected; selected.paths = paths;
+        const auto before = queries.load();
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return view.snapshot && !view.pending; }, "warm an exact file selection");
+        Expect(queries == before + 1, "first exact selection performs one native query");
+        for (int i = 0; i < 20; ++i) {
+            ext::Presentation popup(selected, preferences, L"", L"", service);
+            std::vector<snowdesktop::modern_menu::Item> items; snowdesktop::modern_menu::Options options;
+            popup.Attach(items, options, 0);
+            Expect(items.size() == 1 && items.front().label == L"Cached action" && !options.pollItems,
+                "unchanged files and shortcut selections appear immediately from memory");
+        }
+        const auto revision = service.View(selected).revision;
+        const auto previousScans = scans.load();
+        notify();
+        PumpUntil([&] { return service.View(selected).revision > revision; }, "observe notification invalidation before reopening");
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return scans > previousScans &&
+            !service.Inspect().scanning && view.snapshot && !view.pending; }, "verify unchanged registrations before reusing file cache");
+        Expect(queries == before + 1 && service.MenuDisplay(selected, preferences).snapshot.has_value(),
+            "unrelated Classes noise never launches another file or shortcut query");
+        const auto visualRevision = service.View(selected).revision;
+        const auto visualScans = scans.load();
+        decodedIcon = !decodedIcon.load();
+        notify();
+        PumpUntil([&] { return service.View(selected).revision > visualRevision; }, "observe an icon-only catalogue update");
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return scans > visualScans &&
+            !service.Inspect().scanning && view.snapshot && !view.pending; }, "verify icon-only changes without another native query");
+        Expect(queries == before + 1,
+            "ICON_ONLY_COMMAND_PROOF: decoded icon fluctuations cannot discard file or shortcut commands");
+        caption((++caseNumber % 2) ? L"Changed action A" : L"Changed action B");
+        const auto currentRevision = service.View(selected).revision;
+        notify();
+        PumpUntil([&] { return service.View(selected).revision > currentRevision; }, "observe real relevant registration mutation");
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return queries >= before + 2 && view.snapshot && !view.pending; },
+            "a relevant registration mutation refreshes the menu");
+        Expect(queries == before + 2, "relevant registration mutation dispatches exactly one fresh query");
+        if (paths.front() == shortcut.wstring()) saveLink(caseNumber % 2 ? folder : image);
+        else {
+            const auto attributes = GetFileAttributesW(paths.front().c_str());
+            Expect(attributes != INVALID_FILE_ATTRIBUTES && SetFileAttributesW(paths.front().c_str(), attributes ^ FILE_ATTRIBUTE_HIDDEN),
+                "change a private selected file or folder attribute");
+        }
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return queries >= before + 3 && view.snapshot && !view.pending; },
+            "changed file attributes or shortcut contents refresh the exact menu");
+        Expect(queries == before + 3, "target mutation dispatches exactly one fresh query");
+        service.Invalidate(selected);
+        PumpUntil([&] { auto view = service.View(selected); return queries >= before + 4 && view.snapshot && !view.pending; },
+            "explicit invalidation still refreshes the exact selection");
+        Expect(queries == before + 4, "explicit invalidation cannot be cancelled by unchanged registration proof");
+        const auto forcedRevision = service.View(selected).revision;
+        const auto forcedScans = scans.load();
+        notify();
+        PumpUntil([&] { return service.View(selected).revision > forcedRevision; }, "observe noise after an explicit refresh");
+        service.Query(selected);
+        PumpUntil([&] { auto view = service.View(selected); return scans > forcedScans &&
+            !service.Inspect().scanning && view.snapshot && !view.pending; }, "verified snapshots remain reusable after an explicit refresh");
+        Expect(queries == before + 4, "a completed forced refresh cannot permanently disable notification cache reuse");
+    }
+    ext::Request assetSelection; assetSelection.paths = {text.wstring()};
+    service.Query(assetSelection);
+    PumpUntil([&] { auto view = service.View(assetSelection); return view.snapshot && !view.pending; },
+        "warm a command whose local executable can change without a registry write");
+    const auto assetQueries = queries.load();
+    const auto assetRevision = service.View(assetSelection).revision;
+    std::ofstream(commandAsset, std::ios::app) << " changed";
+    notify();
+    PumpUntil([&] { return service.View(assetSelection).revision > assetRevision; }, "observe local command asset verification");
+    service.Query(assetSelection);
+    PumpUntil([&] { auto view = service.View(assetSelection); return !service.Inspect().scanning && view.snapshot && !view.pending; },
+        "refresh a command after its executable changes with unchanged registration text");
+    Expect(queries == assetQueries + 1,
+        "a real local executable mutation still invalidates command proof when decoded icons are ignored");
+    const auto beforeTargetChange = queries.load();
+    saveLink(text);
+    ext::Request linked; linked.paths = {shortcut.wstring()};
+    service.Query(linked);
+    PumpUntil([&] { auto view = service.View(linked); return queries > beforeTargetChange && view.snapshot && !view.pending; },
+        "warm the changed shortcut target before changing its registrations");
+    const auto shortcutQueries = queries.load();
+    const auto shortcutRevision = service.View(linked).revision;
+    HKEY targetAction = nullptr;
+    Expect(RegCreateKeyExW(registry.key, L".txt\\shell\\target-proof", 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &targetAction, nullptr) == ERROR_SUCCESS, "create a command specific to the shortcut target type");
+    constexpr wchar_t targetCaption[] = L"Changed target action";
+    const auto targetStatus = RegSetValueExW(targetAction, L"MUIVerb", 0, REG_SZ,
+        reinterpret_cast<const BYTE *>(targetCaption), sizeof(targetCaption));
+    RegCloseKey(targetAction);
+    Expect(targetStatus == ERROR_SUCCESS, "change the shortcut target type registration");
+    HKEY targetCommand = nullptr;
+    Expect(RegCreateKeyExW(registry.key, L".txt\\shell\\target-proof\\command", 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &targetCommand, nullptr) == ERROR_SUCCESS, "create the shortcut target command");
+    constexpr wchar_t targetExecutable[] = L"unused.exe %1";
+    const auto targetCommandStatus = RegSetValueExW(targetCommand, nullptr, 0, REG_SZ,
+        reinterpret_cast<const BYTE *>(targetExecutable), sizeof(targetExecutable));
+    RegCloseKey(targetCommand);
+    Expect(targetCommandStatus == ERROR_SUCCESS, "write the shortcut target command");
+    notify();
+    PumpUntil([&] { return service.View(linked).revision > shortcutRevision; }, "observe a registration change outside the .lnk type");
+    service.Query(linked);
+    PumpUntil([&] { auto view = service.View(linked); return !service.Inspect().scanning && view.snapshot && !view.pending; },
+        "resolve registrations affecting the shortcut target");
+    std::cout << "Shortcut target registration: before=" << shortcutQueries << " after=" << queries.load() << std::endl;
+    Expect(queries == shortcutQueries + 1, "a shortcut cannot reuse a snapshot after its target type gains a command");
+    service.Shutdown();
+}
+
 void TestUnchangedCataloguePersistence()
 {
     namespace ext = snowdesktop::shell_extensions;
@@ -1419,11 +3272,89 @@ void TestUnchangedCataloguePersistence()
     snowdesktop::settings_ipc::Bytes updated(static_cast<size_t>(length));
     Expect(static_cast<bool>(input.read(reinterpret_cast<char*>(updated.data()), updated.size())),
         "read refreshed catalogue");
-    const auto [schema, value] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t, ext::Catalogue>>(updated);
-    Expect(schema == 4 && value.revision == 18 && value.rows[0].display.label == L"Changed",
-        "changed catalogue preserves schema and publishes new registration metadata");
+    const auto [schema, value, proof] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t,
+        ext::Catalogue, std::vector<std::pair<std::string, std::uint64_t>>>>(updated);
+    Expect(schema == 5 && value.revision == 18 && value.rows[0].display.label == L"Changed" &&
+        proof.size() == value.rows.size() && proof[0].first == value.rows[0].id,
+        "a legacy catalogue upgrades with separate command proof and new registration metadata");
     Expect(value.rows[0].linked && value.associations.size() == 1,
         "unchanged scans retain associations for subsequent changed registration scans");
+}
+
+void TestIdleCatalogueInvalidation()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopCpuTest-" + directory.path.filename().wstring();
+    struct Fixture
+    {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        ~Fixture() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } fixture{nullptr, path};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+        nullptr, &fixture.key, &disposition) == ERROR_SUCCESS, "create isolated Classes notification fixture");
+    fixture.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(fixture.owned, "Classes notification fixture is newly owned by this test");
+    std::atomic<unsigned> scans = 0, version = 1;
+    ext::MenuService service(directory.path / L"cache", [&](const auto &) {
+        ext::Reply reply; reply.ok = true;
+        ext::Entry entry; entry.key = "cpu-test"; entry.provider = "verb:cpu-test";
+        entry.label = std::to_wstring(version.load()); reply.entries = {entry};
+        return ext::QueryWork{[reply] { return reply; }, {}};
+    }, [&] {
+        ext::Catalogue result; result.revision = version.load();
+        ext::Registration row; row.id = "reg:cpu-test"; row.contexts = 1;
+        row.types = {L"*"}; row.verbs = {"cpu-test"}; row.revision = result.revision;
+        row.display.label = std::to_wstring(result.revision); result.rows = {row};
+        ++scans; return result;
+    });
+    ext::Preferences prefs; ext::SetCommon(prefs, "reg:cpu-test", ext::Category::Objects, true);
+    service.Configure(prefs);
+    const auto target = directory.path / L"selected.cpu-test"; std::ofstream(target) << "fixture";
+    ext::Request request; request.paths = {target.wstring()};
+    service.Query(request);
+    PumpUntil([&] { return scans > 0 && service.View(request).snapshot.has_value(); }, "seed a current catalogue and menu");
+    service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; }, "initial settings discovery settles before registry notifications");
+    const auto baseline = scans.load();
+    auto notify = [&] {
+        const DWORD data = ++version;
+        Expect(RegSetValueExW(fixture.key, L"Sequence", 0, REG_DWORD,
+            reinterpret_cast<const BYTE *>(&data), sizeof(data)) == ERROR_SUCCESS, "emit real registry value notification");
+    };
+    const auto firstRevision = service.View(request).revision;
+    notify();
+    PumpUntil([&] { return service.View(request).revision > firstRevision; }, "a registry notification marks the cached menu stale");
+    Expect(service.View(request).snapshot && !service.MenuDisplay(request, prefs).snapshot,
+        "an open popup retains published data while a new popup cannot reuse the stale cache");
+    Sleep(100);
+    Expect(scans == baseline, "an idle registry notification does not start a complete catalogue scan");
+    service.Query(request);
+    PumpUntil([&] { return scans > baseline && service.View(request).snapshot &&
+        service.View(request).snapshot->entries.front().label == L"2"; }, "the next menu query refreshes the stale catalogue and command snapshot");
+    PumpUntil([&] { return !service.Inspect().scanning; },
+        "background discovery settles before the next idle notification");
+    const auto afterQuery = scans.load();
+    const auto secondRevision = service.View(request).revision;
+    notify();
+    PumpUntil([&] { return service.View(request).revision > secondRevision; }, "a subsequent notification still marks the cache stale");
+    Expect(service.View(request).snapshot && !service.MenuDisplay(request, prefs).snapshot,
+        "subsequent notifications preserve open-popup data and invalidate new-popup cache reuse");
+    Expect(scans == afterQuery, "a subsequent idle notification remains lazy");
+    service.Inspect();
+    PumpUntil([&] { return scans > afterQuery && !service.Inspect().scanning; }, "settings inspection refreshes the stale catalogue without an explicit refresh button");
+    service.Shutdown();
+    const auto file = directory.path / L"cache" / L"catalogue.bin";
+    std::ifstream input(file, std::ios::binary | std::ios::ate);
+    const auto length = input.tellg(); Expect(length > 0, "refreshed catalogue was persisted"); input.seekg(0);
+    snowdesktop::settings_ipc::Bytes bytes(static_cast<size_t>(length));
+    Expect(static_cast<bool>(input.read(reinterpret_cast<char *>(bytes.data()), bytes.size())), "read refreshed persisted catalogue");
+    const auto [schema, catalogue, proof] = snowdesktop::settings_ipc::Unpack<std::tuple<std::uint32_t,
+        ext::Catalogue, std::vector<std::pair<std::string, std::uint64_t>>>>(bytes);
+    Expect(schema == 5 && catalogue.revision == 3 && catalogue.rows.front().display.label == L"3" &&
+        proof.size() == catalogue.rows.size() && proof.front().first == catalogue.rows.front().id,
+        "lazy refresh still publishes and persists changed registration metadata");
 }
 
 void TestCatalogueShutdown()
@@ -1558,14 +3489,47 @@ void TestPendingCachedClick()
     }
     SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_INVOKE", nullptr);
 }
-void TestSourceScheduler()
+
+void TestInvocationOwnerHandoff()
 {
     namespace ext = snowdesktop::shell_extensions;
     TemporaryDirectory directory;
-    const auto file = directory.path / L"source.snowattribution"; std::ofstream(file) << "private";
+    const auto file = directory.path / L"owner.txt"; std::ofstream(file) << "isolated";
+    const HWND owner = CreateWindowExW(WS_EX_TOOLWINDOW, L"STATIC", L"Invocation owner",
+        WS_POPUP, -12000, -12000, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Expect(owner != nullptr, "create a private persistent invocation owner");
+    const auto captured = snowdesktop::ShellInvocationOwner::Capture(owner);
+    Expect(captured.Resolve() == owner, "real top-level owner survives an asynchronous command handoff");
+    auto stale = captured; ++stale.thread;
+    Expect(!stale.Resolve(), "owner thread mismatch rejects a stale invocation identity");
     ext::Request request; request.paths = {file.wstring()};
+    ext::Reply reply; reply.ok = true;
+    ext::Entry command; command.key = "test-owner"; command.provider = "verb:test-owner";
+    command.label = L"Private owner handoff"; command.token = 42; reply.entries = {command};
+    std::atomic<HWND> received = nullptr;
+    std::atomic<bool> done = false;
+    ext::MenuService service(directory.path / L"cache", [&, reply](const auto &) {
+        return ext::QueryWork{[reply] { return reply; }, [](UINT, POINT) {
+            Expect(false, "a real owner must reach the owner-aware execution boundary");
+        }, [&](UINT token, POINT point, HWND window) {
+            Expect(token == 42 && point.x == 12 && point.y == 34, "handoff preserves the fresh command and click position");
+            received = window;
+        }};
+    }, [] { return ext::Catalogue{}; });
+    service.Execute(request, ext::AppendReference({}, command), {12, 34}, [&](bool ok) { done = ok; }, owner);
+    PumpUntil([&] { return done.load(); }, "the real service completes an owner-aware click");
+    Expect(received == owner, "cached/fresh-query scheduling preserves the host owner instead of a hidden query window");
+    DestroyWindow(owner);
+    Expect(!captured.Resolve(), "a destroyed menu owner is rejected before invocation");
+}
+void TestSourceScheduler(bool recovery = false)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory directory;
+    const auto file = directory.path / (recovery ? L"source.lnk" : L"source.snowattribution"); std::ofstream(file) << "private";
+    ext::Request request; request.paths = {file.wstring()}; request.originalShortcutOnly = recovery;
     ext::Registration handler; handler.id = "clsid:{00000000-0000-0000-0000-000000000001}";
-    handler.kind = ext::RegistrationKind::Handler; handler.contexts = 1; handler.types = {L".snowattribution"};
+    handler.kind = ext::RegistrationKind::Handler; handler.contexts = 1; handler.types = {recovery ? L".lnk" : L".snowattribution"};
     handler.sources = {L"Test.Type\\shellex\\ContextMenuHandlers\\Provider"};
     handler.verbs = {"{00000000-0000-0000-0000-000000000001}"}; handler.application = {"test-app", L"Test app"};
     handler.revision = 1;
@@ -1573,11 +3537,12 @@ void TestSourceScheduler()
     ext::Entry action; action.provider = "verb:runtime-only"; action.key = "runtime-only"; action.label = L"Runtime action"; action.token = 72;
     std::atomic<int> probes = 0, invokes = 0, active = 0, maximum = 0;
     std::atomic<bool> release = false;
+    std::atomic<bool> wrongSourceMode = false;
     auto factory = [&](const ext::Request &target) -> ext::QueryWork {
         auto lease = std::shared_ptr<int>(new int, [&](int *p) { --active; delete p; });
         const auto count = ++active; maximum.store(std::max(maximum.load(), count));
         const bool source = !target.sourceClsid.empty();
-        if (source) ++probes;
+        if (source) { wrongSourceMode = target.originalShortcutOnly; ++probes; }
         ext::Reply reply; reply.ok = true;
         if (target.paths == request.paths) reply.entries = {action};
         if (source) { auto hidden = action; hidden.key = "probe-only"; hidden.provider = "verb:probe-only"; reply.entries.push_back(hidden); }
@@ -1589,6 +3554,7 @@ void TestSourceScheduler()
         ext::MenuService service(cache, factory, [catalogue] { return catalogue; });
         service.Inspect(request);
         PumpUntil([&] { return probes > 0; }, "unattributed actual item schedules a separate provider query");
+        Expect(!wrongSourceMode, "metadata attribution must not inherit original shortcut executable mode");
         const auto first = service.View(request);
         Expect(first.snapshot && first.snapshot->entries.size() == 1 && !first.pending, "slow source discovery does not delay or add items to the actual menu");
         bool completed = false;
@@ -1736,6 +3702,1367 @@ void TestQueryScheduler()
     Expect(maximum <= 2, "scheduler never runs more than two query workers");
 }
 
+// A query can finish while unrelated initial discovery remains blocked.
+void TestInitialDiscoveryDoesNotBlockPopup()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    std::promise<void> entered, release;
+    auto started = entered.get_future();
+    auto released = release.get_future().share();
+    std::atomic<bool> timedOut = false, proofEntered = false, replyReady = false;
+    ext::Request selected, proof;
+    selected.paths = {(temp.path / L"selected.txt").wstring()};
+    proof.paths = {(temp.path / L"proof.txt").wstring()};
+    std::ofstream(selected.paths.front()) << "private";
+    std::ofstream(proof.paths.front()) << "private";
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &target)
+        {
+            if (target.paths == proof.paths)
+                proofEntered = true;
+            ext::Reply reply;
+            reply.ok = true;
+            ext::Entry entry;
+            entry.provider = "verb:initial-probe";
+            entry.key = "initial-probe";
+            entry.label = L"Extra action";
+            reply.entries = {entry};
+            return ext::QueryWork{[&, reply, target]
+                                  {
+                                      if (target.paths == selected.paths)
+                                          replyReady = true;
+                                      return reply;
+                                  },
+                                  {}};
+        },
+        [&]
+        {
+            entered.set_value();
+            timedOut = released.wait_for(std::chrono::seconds(10)) != std::future_status::ready;
+            ext::Catalogue c;
+            c.revision = 17;
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:initial-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    const bool scanning = started.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    service.Query(selected);
+    PumpUntil([&] { return replyReady.load(); }, "selected helper has returned its ready reply");
+    service.Query(proof);
+    PumpUntil([&] { return proofEntered.load(); }, "a later dispatch crosses the initial query publication boundary");
+    const auto view = service.View(selected);
+    release.set_value();
+    service.Shutdown();
+    Expect(scanning && !timedOut && view.snapshot && !view.pending,
+           "a ready menu publishes without waiting for unrelated initial inventory discovery");
+}
+
+// A management opt-in can name a registration rather than its observed verb.
+// Initial attribution must be allowed to add that row after ordinary rows appear.
+
+void TestMenuDisplayAttributionSnapshot()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    ext::Request selected; selected.paths = {(temp.path / L"selected.txt").wstring()};
+    std::ofstream(selected.paths.front()) << "private";
+    std::promise<void> release; auto released = release.get_future().share();
+    std::atomic<bool> entered = false; bool didRelease = false;
+    ext::MenuService service(temp.path / L"cache", [](const ext::Request &) {
+        ext::Entry ordinary, late;
+        ordinary.provider = "verb:ordinary-probe"; ordinary.key = "ordinary-probe"; ordinary.label = L"Ordinary";
+        late.provider = "verb:late-probe"; late.key = "late-probe"; late.label = L"Registered";
+        return ext::QueryWork{[=] { return ext::Reply{true, {ordinary, late}, {}}; }, {}};
+    }, [&] {
+        entered = true;
+        if (released.wait_for(std::chrono::seconds(20)) != std::future_status::ready) return ext::Catalogue{};
+        ext::Catalogue c; c.revision = 17;
+        ext::Registration r; r.id = "reg:late-probe"; r.verbs = {"late-probe"}; r.types = {L"*"};
+        r.contexts = 1; r.revision = 17; c.rows = {r}; return c;
+    });
+    struct Release { std::promise<void> &promise; bool &done; ~Release() { if (!done) promise.set_value(); } }
+        releaseOnFailure{release, didRelease};
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:ordinary-probe", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "reg:late-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    PumpUntil([&] { return entered.load(); }, "initial attribution worker starts");
+    service.Query(selected);
+    PumpUntil([&] { return service.View(selected).snapshot.has_value(); }, "native rows arrive before attribution");
+    const auto before = service.MenuDisplay(selected, prefs, true);
+    Expect(before.attributionPending && before.snapshot && before.snapshot->entries.size() == 1,
+        "a displayed pre-attribution snapshot carries its own waiting state");
+    release.set_value(); didRelease = true;
+    PumpUntil([&] { return !service.MenuAttributionPending(selected, prefs); }, "inventory attribution completes");
+    const auto after = service.MenuDisplay(selected, prefs, true);
+    Expect(!after.attributionPending && after.snapshot && after.snapshot->entries.size() == 2 &&
+        after.snapshot->entries.back().label == L"Registered" && before.attributionPending,
+        "completion and newly visible registration share one immutable snapshot without changing the previous view");
+    const auto restored = snowdesktop::settings_ipc::Unpack<ext::MenuView>(snowdesktop::settings_ipc::Pack(before));
+    Expect(!restored.attributionPending, "live display waiting state is not restored from IPC or cached data");
+}
+
+void TestLateInitialRegistrationAttribution(bool warmed = false, bool inventoryFailure = false, bool duplicateVerbs = false,
+    bool slowInventory = false)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    std::promise<void> entered, release;
+    auto started = entered.get_future();
+    auto released = release.get_future().share();
+    std::atomic<bool> timedOut = false;
+    ext::Request request;
+    request.paths = {(temp.path / L"selected.txt").wstring()};
+    std::ofstream(request.paths.front()) << "private";
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const auto &)
+        {
+            ext::Reply reply;
+            reply.ok = true;
+            ext::Entry ordinary;
+            ordinary.provider = "verb:ordinary-probe";
+            ordinary.key = "ordinary-probe";
+            ordinary.label = L"Ordinary";
+            ext::Entry late;
+            late.provider = "verb:late-probe";
+            late.key = "late-probe";
+            late.label = L"Registered";
+            reply.entries = duplicateVerbs ? std::vector<ext::Entry>{ordinary, ordinary, late} : std::vector<ext::Entry>{ordinary, late};
+            return ext::QueryWork{[reply] { return reply; }, {}};
+        },
+        [&]
+        {
+            entered.set_value();
+            timedOut = released.wait_for(std::chrono::seconds(slowInventory ? 30 : 10)) != std::future_status::ready;
+            ext::Catalogue c;
+            if (inventoryFailure) return c;
+            c.revision = 17;
+            ext::Registration r;
+            r.id = "reg:late-probe";
+            r.verbs = {"late-probe"};
+            r.types = {L"*"};
+            r.contexts = 1;
+            r.revision = 17;
+            c.rows = {r};
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:ordinary-probe", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "reg:late-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    const bool scanning = started.wait_for(std::chrono::seconds(10)) == std::future_status::ready;
+    if (warmed)
+    {
+        service.Query(request);
+        PumpUntil([&] { return service.View(request).snapshot.has_value(); }, "prewarm completes while initial attribution remains blocked");
+    }
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); },
+              "native result is ready before initial registration attribution");
+    if (auto next = options.pollItems(items, true))
+        items = std::move(*next);
+    const size_t ordinaryCount = duplicateVerbs ? 2u : 1u;
+    const bool ordinaryFirst = items.size() == ordinaryCount && items.front().label == L"Ordinary";
+    if (slowInventory)
+    {
+        // Exercise the actual timing boundary that truncated the real 8-12 s
+        // inventory. This is a timeout-contract check, not a scheduling sleep.
+        const auto until = GetTickCount64() + 8500;
+        while (GetTickCount64() < until)
+        {
+            if (auto next = options.pollItems(items, true)) items = std::move(*next);
+            MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+    }
+    const bool subscribed = options.pollItemsFinished && !options.pollItemsFinished();
+    release.set_value();
+    if (!subscribed)
+    {
+        service.Shutdown();
+        Expect(false, "popup must remain subscribed for initial registration attribution after ordinary rows appear");
+    }
+    PumpUntil(
+        [&]
+        {
+            if (auto next = options.pollItems(items, true))
+                items = std::move(*next);
+            return options.pollItemsFinished() && static_cast<size_t>(std::count_if(items.begin(), items.end(),
+                [](const auto &item) { return !item.separator; })) == ordinaryCount + (inventoryFailure ? 0u : 1u);
+        },
+        "initial registration attribution adds the management opt-in to the same popup");
+    Expect(scanning && !timedOut && ordinaryFirst && items.front().label == L"Ordinary" &&
+               (inventoryFailure || items.back().label == L"Registered"),
+           "known verbs appear immediately and later registration attribution adds exactly one remaining row");
+}
+// Hold a later unrelated verification behind a ready query's captured boundary.
+// The reserved Start lane proves that the ordinary scheduler has crossed it.
+void TestLaterRegistryNoiseDoesNotExtendPublication()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopBoundaryProbe-" + temp.path.filename().wstring();
+    struct Fixture
+    {
+        HKEY key = nullptr;
+        std::wstring path;
+        bool owned = false;
+        ~Fixture()
+        {
+            if (key)
+                RegCloseKey(key);
+            if (owned)
+                RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+        }
+    } fixture{nullptr, path};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &fixture.key,
+                           &disposition) == ERROR_SUCCESS,
+           "create private publication-boundary cache fixture");
+    fixture.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(fixture.owned, "publication-boundary fixture is newly owned");
+    auto notify = [&](DWORD value)
+    {
+        Expect(RegSetValueExW(fixture.key, L"Cache", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value),
+                              sizeof(value)) == ERROR_SUCCESS,
+               "emit real cache notification");
+    };
+    ext::Request selected, proof, observer, start;
+    selected.paths = {(temp.path / L"selected.txt").wstring()};
+    proof.paths = {(temp.path / L"proof.txt").wstring()};
+    observer.paths = {(temp.path / L"observer.txt").wstring()};
+    start.paths = {(temp.path / L"start.txt").wstring()};
+    start.startPinOnly = true;
+    for (const auto &request : {selected, proof, observer, start})
+        std::ofstream(request.paths.front()) << "private";
+    std::promise<void> firstRelease, secondRelease;
+    const auto firstGate = firstRelease.get_future().share(), secondGate = secondRelease.get_future().share();
+    std::atomic<unsigned> reads = 0, queries = 0;
+    std::atomic<bool> noisy = false, firstEntered = false, secondEntered = false, replyReady = false;
+    std::atomic<bool> proofEntered = false, proofReleased = false, observerEntered = false, startEntered = false;
+    std::atomic<bool> observerBeforeStart = false, readerTimedOut = false;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &target)
+        {
+            if (target.paths == proof.paths)
+            {
+                proofEntered = true;
+                return ext::QueryWork{[&]() -> std::optional<ext::Reply>
+                                      {
+                                          if (!proofReleased)
+                                              return {};
+                                          return ext::Reply{true, {}, {}};
+                                      },
+                                      {}};
+            }
+            if (target.paths == observer.paths)
+                observerEntered = true;
+            if (target.startPinOnly)
+            {
+                observerBeforeStart = observerEntered.load();
+                startEntered = true;
+            }
+            if (target.paths != selected.paths)
+                return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+            ++queries;
+            auto stage = std::make_shared<unsigned>(0);
+            return ext::QueryWork{[&, stage]() -> std::optional<ext::Reply>
+                                  {
+                                      if (*stage == 0)
+                                      {
+                                          noisy = true;
+                                          notify(1);
+                                          ++*stage;
+                                          return {};
+                                      }
+                                      if (*stage == 2 || !firstEntered)
+                                          return {};
+                                      ++*stage;
+                                      replyReady = true;
+                                      ext::Reply reply;
+                                      reply.ok = true;
+                                      ext::Entry entry;
+                                      entry.provider = "verb:boundary-probe";
+                                      entry.key = "boundary-probe";
+                                      entry.label = L"Extra action";
+                                      reply.entries = {entry};
+                                      return reply;
+                                  },
+                                  {}};
+        },
+        [&]
+        {
+            if (noisy)
+            {
+                const unsigned read = ++reads;
+                if (read == 1)
+                {
+                    firstEntered = true;
+                    readerTimedOut = firstGate.wait_for(std::chrono::seconds(10)) != std::future_status::ready;
+                }
+                else if (read == 2)
+                {
+                    secondEntered = true;
+                    readerTimedOut = secondGate.wait_for(std::chrono::seconds(10)) != std::future_status::ready;
+                }
+            }
+            ext::Catalogue c;
+            c.revision = 17;
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:boundary-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; },
+              "initial inventory settles before the noise-boundary experiment");
+    ext::Presentation popup(selected, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil([&] { return replyReady.load(); }, "first helper reply is ready under the blocked verification");
+    service.Query(proof, ext::QueryPriority::Menu, true);
+    PumpUntil([&] { return proofEntered.load(); }, "second ordinary slot crosses the ready reply boundary");
+    const auto capturedRevision = service.View(selected).revision;
+    notify(2);
+    PumpUntil([&] { return service.View(selected).revision > capturedRevision; },
+              "later notification arrives after the ready reply was captured");
+    firstRelease.set_value();
+    PumpUntil([&] { return secondEntered.load(); }, "a later cache notification starts its own blocked verification");
+    service.Query(observer, ext::QueryPriority::Execute, true);
+    service.Query(start, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { return startEntered.load(); },
+              "reserved Start dispatch proves the publication and ordinary dispatch pass");
+    const bool progressed = observerBeforeStart.load();
+    const auto published = service.View(selected);
+    // Notify again between publication and UI polling, as real extensions can.
+    notify(3);
+    PumpUntil([&] { return service.View(selected).revision > published.revision; },
+              "post-publication notification reaches the current popup");
+    if (auto next = options.pollItems(items, true))
+        items = std::move(*next);
+    const bool visible = items.size() == 1 && items.front().label == L"Extra action";
+    const bool newPopupMisses = !service.MenuDisplay(selected, prefs).snapshot;
+    secondRelease.set_value();
+    proofReleased = true;
+    noisy = false;
+    service.Shutdown();
+    Expect(!readerTimedOut && progressed && queries == 1 && published.snapshot && !published.pending,
+           "later unrelated notifications cannot extend an already captured query verification boundary");
+    Expect(visible && newPopupMisses, "a post-publication cache notification preserves the current popup payload but "
+                                      "invalidates reuse by new popups");
+}
+
+// A real Classes cache notification at each child-query boundary must not
+// starve an open popup when the registration inventory remains unchanged.
+void TestUnrelatedRegistryChangesDuringPopup(bool failedScan = false, bool permanentFailure = false)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopNoiseProbe-" + temp.path.filename().wstring();
+    struct Fixture
+    {
+        HKEY key = nullptr;
+        std::wstring path;
+        bool owned = false;
+        ~Fixture()
+        {
+            if (key)
+                RegCloseKey(key);
+            if (owned)
+                RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+        }
+    } fixture{nullptr, path};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &fixture.key,
+                           &disposition) == ERROR_SUCCESS,
+           "create unrelated Classes cache fixture");
+    fixture.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(fixture.owned, "Classes cache fixture is privately owned");
+    ext::Request request;
+    request.paths = {(temp.path / L"selected.txt").wstring()};
+    std::ofstream(temp.path / L"selected.txt") << "private";
+    std::atomic<unsigned> queries = 0;
+    ext::MenuService *observed = nullptr;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &target)
+        {
+            const unsigned query = ++queries;
+            auto touched = std::make_shared<bool>(false);
+            auto before = std::make_shared<std::uint64_t>(0);
+            return ext::QueryWork{[&, target, query, touched, before]() -> std::optional<ext::Reply>
+                                  {
+                                      if (query <= 5)
+                                      {
+                                          if (!*touched)
+                                          {
+                                              *before = observed->View(target).revision;
+                                              const DWORD data = query;
+                                              Expect(RegSetValueExW(fixture.key, L"UnrelatedCacheValue", 0, REG_DWORD,
+                                                                    reinterpret_cast<const BYTE *>(&data),
+                                                                    sizeof(data)) == ERROR_SUCCESS,
+                                                     "emit real unrelated cache notification");
+                                              *touched = true;
+                                              return {};
+                                          }
+                                          if (observed->View(target).revision <= *before)
+                                              return {};
+                                      }
+                                      ext::Reply reply;
+                                      reply.ok = true;
+                                      ext::Entry entry;
+                                      entry.provider = "verb:noise-probe";
+                                      entry.key = "noise-probe";
+                                      entry.label = L"Extra action";
+                                      reply.entries = {entry};
+                                      return reply;
+                                  },
+                                  {}};
+        },
+        [&]
+        {
+            ext::Catalogue c;
+            if (failedScan && queries > 0 && (permanentFailure || queries == 1))
+                return c;
+            c.revision = 17;
+            ext::Registration r;
+            r.id = "reg:noise-probe";
+            r.types = {L"*"};
+            r.verbs = {"noise-probe"};
+            r.contexts = 1;
+            r.revision = 17;
+            c.rows = {r};
+            return c;
+        });
+    observed = &service;
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:noise-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil(
+        [&]
+        {
+            if (options.pollItems)
+                if (auto next = options.pollItems(items, true))
+                    items = std::move(*next);
+            return options.pollItemsFinished && options.pollItemsFinished() &&
+                   ((failedScan && permanentFailure) || !items.empty());
+        },
+        "popup eventually receives the real scheduler publication after noise stops");
+
+    Expect(queries == (failedScan ? 2u : 1u), "unrelated cache verification does not repeat successful queries and "
+                                              "failed verification receives one bounded recovery");
+    Expect(items.empty() == (failedScan && permanentFailure),
+           "transient inventory failure recovers visible items and permanent failure finishes without unbounded retry");
+}
+// A later dispatch proves the ready reply has reached its publication boundary.
+// Real registration verification is held there; the popup must remain pending.
+void TestRegistrationVerificationBeforePopupPublication(bool slowVerification = false)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    const auto path = L"Software\\Classes\\Local Settings\\SnowDesktopVerifyProbe-" + temp.path.filename().wstring();
+    struct Fixture
+    {
+        HKEY key = nullptr;
+        std::wstring path;
+        bool owned = false;
+        ~Fixture()
+        {
+            if (key)
+                RegCloseKey(key);
+            if (owned)
+                RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+        }
+    } fixture{nullptr, path};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &fixture.key,
+                           &disposition) == ERROR_SUCCESS,
+           "create verification fixture");
+    fixture.owned = disposition == REG_CREATED_NEW_KEY;
+    Expect(fixture.owned, "own verification fixture");
+    ext::Request selected, proof;
+    selected.paths = {(temp.path / L"selected.txt").wstring()};
+    proof.paths = {(temp.path / L"proof.txt").wstring()};
+    std::ofstream(temp.path / L"selected.txt") << "private";
+    std::ofstream(temp.path / L"proof.txt") << "private";
+    std::atomic<unsigned> version = 17, queries = 0;
+    std::atomic<bool> scanStarted = false, scanTimedOut = false, firstReplyReady = false, proofEntered = false;
+    bool release = false;
+    std::mutex gateMutex;
+    std::condition_variable gate;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &target)
+        {
+            if (target.paths == proof.paths)
+                proofEntered = true;
+            if (target.paths != selected.paths)
+                return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+            const unsigned query = ++queries;
+            const unsigned captured = version.load();
+            auto notified = std::make_shared<bool>(false);
+            return ext::QueryWork{[&, target, query, captured, notified]() -> std::optional<ext::Reply>
+                                  {
+                                      if (query == 1)
+                                      {
+                                          if (!*notified)
+                                          {
+                                              version = 18;
+                                              const DWORD data = 18;
+                                              Expect(RegSetValueExW(fixture.key, L"Sequence", 0, REG_DWORD,
+                                                                    reinterpret_cast<const BYTE *>(&data),
+                                                                    sizeof(data)) == ERROR_SUCCESS,
+                                                     "emit actual registration revision notification");
+                                              *notified = true;
+                                              return {};
+                                          }
+                                          if (!scanStarted || firstReplyReady.exchange(true))
+                                              return {};
+                                      }
+                                      ext::Reply reply;
+                                      reply.ok = true;
+                                      ext::Entry entry;
+                                      entry.provider = "verb:verify-probe";
+                                      entry.key = "verify-probe";
+                                      entry.label = std::to_wstring(captured);
+                                      reply.entries = {entry};
+                                      return reply;
+                                  },
+                                  {}};
+        },
+        [&]
+        {
+            const auto revision = version.load();
+            if (revision == 18)
+            {
+                scanStarted = true;
+                std::unique_lock lock(gateMutex);
+                if (!gate.wait_for(lock, std::chrono::seconds(slowVerification ? 30 : 10), [&] { return release; }))
+                    scanTimedOut = true;
+            }
+            ext::Catalogue c;
+            c.revision = revision;
+            ext::Registration r;
+            r.id = "reg:verify-probe";
+            r.types = {L"*"};
+            r.verbs = {"verify-probe"};
+            r.contexts = 1;
+            r.revision = revision;
+            c.rows = {r};
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:verify-probe", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; },
+              "initial inventory/discovery completes before a revision changes");
+    ext::Presentation popup(selected, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil([&] { return firstReplyReady.load(); },
+              "old helper result becomes available during blocked verification");
+    service.Query(proof);
+    PumpUntil([&] { return proofEntered.load(); }, "later dispatch provides a causal publication barrier");
+    if (slowVerification)
+    {
+        const auto until = GetTickCount64() + 8500;
+        while (GetTickCount64() < until)
+        {
+            MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+        }
+    }
+    const auto before = service.View(selected);
+    if (auto updated = options.pollItems(items, true))
+        items = std::move(*updated);
+    {
+        std::lock_guard lock(gateMutex);
+        release = true;
+    }
+    gate.notify_one();
+    PumpUntil(
+        [&]
+        {
+            if (auto updated = options.pollItems(items, true))
+                items = std::move(*updated);
+            return options.pollItemsFinished();
+        },
+        "popup completes after registration verification");
+    Expect(!scanTimedOut, "verification gate completes without a timeout");
+    Expect(!before.snapshot && before.pending,
+           "a ready helper result must await registration verification before completing a popup");
+    Expect(queries == 2 && items.size() == 1 && items.front().label == L"18",
+           "a changed registration re-queries once and publishes the current action in the same popup");
+}
+// Only the helper boundary fails. The real popup, backoff and scheduler must
+// recover once, and a persistent failure must finish without a retry loop.
+
+// Real registry metadata and notifications drive production publication. Only
+// helper replies and completion order are controlled; no fixture is invoked.
+void TestFolderRegistrationVerification(int mode = 0, snowdesktop::shell_extensions::Context context = snowdesktop::shell_extensions::Context::Folder)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct Registry {
+        HKEY key = nullptr; std::wstring path; bool owned = false;
+        Registry(std::wstring p) : path(std::move(p)) {
+            DWORD disposition = 0;
+            Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                nullptr, &key, &disposition) == ERROR_SUCCESS, "create isolated folder verification fixture");
+            owned = disposition == REG_CREATED_NEW_KEY;
+            Expect(owned, "folder verification fixture has a unique owner");
+        }
+        ~Registry() { if (key) RegCloseKey(key); if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str()); }
+    } registry(L"Software\\SnowDesktopFolderVerification\\" + temp.path.filename().wstring()),
+      noise(L"Software\\Classes\\Local Settings\\SnowDesktopFolderVerification-" + temp.path.filename().wstring());
+    auto put = [&](const wchar_t *key, const wchar_t *name, const wchar_t *value) {
+        HKEY created = nullptr;
+        Expect(RegCreateKeyExW(registry.key, key, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &created, nullptr)
+            == ERROR_SUCCESS, "create isolated menu metadata");
+        const auto status = RegSetValueExW(created, name, 0, REG_SZ, reinterpret_cast<const BYTE *>(value),
+            static_cast<DWORD>((wcslen(value) + 1) * sizeof(wchar_t)));
+        RegCloseKey(created); Expect(status == ERROR_SUCCESS, "write isolated menu metadata");
+    };
+    const std::wstring rootKey = context == ext::Context::Desktop ? L"DesktopBackground" :
+        context == ext::Context::FolderBackground ? L"Directory\\Background" : L"Directory";
+    const auto actionKey = rootKey + L"\\shell\\folder-proof";
+    const auto registrationId = context == ext::Context::Desktop ? "reg:desktopbackground\\shell\\folder-proof" :
+        context == ext::Context::FolderBackground ? "reg:directory\\background\\shell\\folder-proof" : "reg:directory\\shell\\folder-proof";
+    put(actionKey.c_str(), L"MUIVerb", L"17");
+    put((actionKey + L"\\command").c_str(), nullptr, L"unused.exe /17 %1");
+    ext::Request selected, barrier;
+    const auto selectedPath = temp.path / L"selected";
+    std::filesystem::create_directory(selectedPath);
+    selected.paths = {selectedPath.wstring()};
+    selected.background = context == ext::Context::Desktop || context == ext::Context::FolderBackground;
+    selected.context = context;
+    barrier.paths = {(temp.path / L"barrier.txt").wstring()};
+    std::ofstream(barrier.paths.front()) << "private";
+    if (mode == 4) { selected.paths = barrier.paths; selected.background = false; }
+    std::atomic<bool> blocked = false, scopeDone = false, helperReady = false;
+    std::atomic<unsigned> queries = 0, scans = 0, scopeReads = 0, version = 17;
+    std::mutex gateMutex; std::condition_variable gate; bool release = false;
+    const auto readScope = [&] {
+        ++scopeReads;
+        const auto signature = mode == 2 ? 0 : context == ext::Context::Folder ?
+            ext::ReadFolderCatalogueRevision(registry.key, false) : ext::ReadBackgroundCatalogueRevision(context, registry.key, false);
+        scopeDone = true; return signature;
+    };
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
+        if (target.paths != selected.paths) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+        const auto query = ++queries; const auto captured = version.load();
+        return ext::QueryWork{[&, query, captured]() -> std::optional<ext::Reply> {
+            if (query == 1 && !helperReady) return {};
+            ext::Entry entry; entry.key = "folder-proof"; entry.provider = "verb:folder-proof";
+            entry.registration = registrationId; entry.label = std::to_wstring(captured);
+            return ext::Reply{true, {entry}, {}};
+        }, {}};
+    }, [&] {
+        if (++scans > 1) {
+            blocked = true; std::unique_lock lock(gateMutex);
+            if (!gate.wait_for(lock, std::chrono::seconds(20), [&] { return release; }))
+                throw std::runtime_error("full inventory gate exceeded its bound");
+        }
+        auto catalogue = ext::ReadCatalogue(registry.key, false);
+        if (mode == 3) { catalogue.folderRevision = 0; catalogue.backgroundRevisions = {}; } // A persisted/legacy inventory cannot provide proof.
+        return catalogue;
+    }, context == ext::Context::Folder ? ext::MenuService::FolderVerifier(readScope) : ext::MenuService::FolderVerifier{},
+       context == ext::Context::Folder ? ext::MenuService::BackgroundVerifier{} : ext::MenuService::BackgroundVerifier([&](ext::Context scope) {
+           Expect(scope == context, "background verifier receives the actual menu scope"); return readScope();
+       }));
+    struct Release {
+        std::mutex &mutex; std::condition_variable &gate; bool &released;
+        ~Release() { { std::lock_guard lock(mutex); released = true; } gate.notify_all(); }
+    } releaseOnFailure{gateMutex, gate, release};
+    ext::Preferences preferences;
+    ext::SetCommon(preferences, registrationId, ext::CategoryOf(context), true);
+    service.Configure(preferences); service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; }, "initial live folder inventory is ready");
+    service.Query(selected, mode == 4 ? ext::QueryPriority::Execute : ext::QueryPriority::Menu);
+    PumpUntil([&] { return queries.load() == 1; }, "folder native query starts once");
+    const auto before = service.View(selected).revision;
+    if (mode == 1) {
+        version = 18;
+        put(actionKey.c_str(), L"MUIVerb", L"18");
+        put((actionKey + L"\\command").c_str(), nullptr, L"unused.exe /18 %1");
+    }
+    DWORD data = 1;
+    Expect(RegSetValueExW(noise.key, L"Sequence", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&data), sizeof(data))
+        == ERROR_SUCCESS, "emit an actual Classes notification while the folder query is pending");
+    PumpUntil([&] { return blocked.load() && service.View(selected).revision > before; },
+        "full registration verification starts and remains blocked");
+    helperReady = true;
+    if (mode < 3) PumpUntil([&] { return scopeDone.load(); }, "folder verification runs independently of the full scan");
+    if (mode == 0) {
+        PumpUntil([&] { return service.View(selected).snapshot.has_value(); },
+            "unchanged folder metadata publishes while unrelated full inventory is still blocked");
+        Expect(service.Inspect().scanning && queries == 1 && scopeReads == 1,
+            "early folder publication keeps full discovery running without querying the helper again");
+    } else {
+        // A second completed helper job supplies a scheduler barrier after scoped
+        // metadata returned; changed, missing and failed proof must stay pending.
+        ext::Request marker; marker.paths = {(temp.path / L"marker.txt").wstring()};
+        std::ofstream(marker.paths.front()) << "private";
+        marker.startPinOnly = true;
+        service.Query(marker, ext::QueryPriority::Execute);
+        PumpUntil([&] { return service.View(marker).snapshot.has_value(); }, "publication barrier completes");
+        Expect(!service.View(selected).snapshot && service.View(selected).pending,
+            "changed, missing or failed folder proof cannot bypass full registration verification");
+        if (mode >= 3) Expect(scopeReads == 0, "unproven inventories and file selections do not start scoped verification");
+    }
+    { std::lock_guard lock(gateMutex); release = true; } gate.notify_all();
+    PumpUntil([&] { return !service.View(selected).pending && service.View(selected).snapshot.has_value(); },
+        "folder publication finishes after the full verification gate opens");
+    const auto view = service.View(selected);
+    Expect(view.snapshot->entries.size() == 1 && view.snapshot->entries.front().label == (mode == 1 ? L"18" : L"17"),
+        "only the current folder action is published");
+    Expect(queries == (mode == 1 ? 2u : 1u), "changed folder registration re-queries exactly once");
+}
+
+void TestPendingBackgroundCache(int mode = 0, snowdesktop::shell_extensions::Context context = snowdesktop::shell_extensions::Context::Desktop)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    struct Registry
+    {
+        HKEY key = nullptr;
+        std::wstring path;
+        bool owned = false;
+        explicit Registry(std::wstring value) : path(std::move(value))
+        {
+            DWORD disposition = 0;
+            Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS,
+                                   nullptr, &key, &disposition) == ERROR_SUCCESS, "create pending-cache registry");
+            owned = disposition == REG_CREATED_NEW_KEY;
+            Expect(owned, "pending-cache fixture is privately owned");
+        }
+        ~Registry()
+        {
+            if (key) RegCloseKey(key);
+            if (owned) RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+        }
+    } registry(L"Software\\SnowDesktopPendingBackgroundCache\\" + temp.path.filename().wstring()),
+      noise(L"Software\\Classes\\Local Settings\\SnowDesktopPendingBackgroundCache-" + temp.path.filename().wstring());
+    const auto actionPath = context == ext::Context::Desktop ? L"DesktopBackground\\shell\\cache-proof" : L"Directory\\Background\\shell\\cache-proof";
+    const auto registration = context == ext::Context::Desktop ? "reg:desktopbackground\\shell\\cache-proof" : "reg:directory\\background\\shell\\cache-proof";
+    auto caption = std::wstring(L"Verified cached action");
+    auto writeCaption = [&](const std::wstring &value)
+    {
+        HKEY action = nullptr;
+        Expect(RegCreateKeyExW(registry.key, actionPath, 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &action, nullptr) == ERROR_SUCCESS,
+               "create private background action");
+        const auto status = RegSetValueExW(action, L"MUIVerb", 0, REG_SZ, reinterpret_cast<const BYTE *>(value.c_str()),
+                                          static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(action);
+        Expect(status == ERROR_SUCCESS, "write private background action caption");
+    };
+    writeCaption(caption);
+    ext::Request selected;
+    const auto target = temp.path / L"selected";
+    std::filesystem::create_directory(target);
+    selected.paths = {target.wstring()}; selected.background = true; selected.context = context;
+    struct Attributes { std::filesystem::path path; ~Attributes() { SetFileAttributesW(path.c_str(), FILE_ATTRIBUTE_NORMAL); } } attributes{target};
+    std::atomic<unsigned> queries = 0, scans = 0, scopes = 0, scopeFinished = 0;
+    std::atomic<bool> blocked = false;
+    std::atomic<UINT> invoked = 0;
+    std::mutex mutex; std::condition_variable gate; bool release = false;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &request)
+        {
+            if (request.paths != selected.paths) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+            const auto query = ++queries;
+            return ext::QueryWork{
+                [&, query]() -> std::optional<ext::Reply>
+                {
+                    if (query > 1) { std::lock_guard lock(mutex); if (!release) return {}; }
+                    if (mode == 0 && query == 2) return ext::Reply{false, {}, "controlled refresh failure"};
+                    ext::Entry entry;
+                    entry.key = "cache-proof"; entry.provider = "verb:cache-proof"; entry.registration = registration;
+                    entry.label = mode == 1 && query > 1 ? L"Changed registration" : caption;
+                    entry.token = 40 + query;
+                    return ext::Reply{true, {entry}, {}};
+                },
+                [&](UINT token, POINT) { invoked = token; }};
+        },
+        [&]
+        {
+            if (++scans > 1)
+            {
+                blocked = true;
+                std::unique_lock lock(mutex);
+                if (!gate.wait_for(lock, std::chrono::seconds(20), [&] { return release; }))
+                    throw std::runtime_error("pending-cache full scan gate bound");
+            }
+            auto value = ext::ReadCatalogue(registry.key, false);
+            if (mode == 3) value.backgroundRevisions.fill(0); // No live baseline after a disk-only catalogue.
+            return value;
+        }, {},
+        [&](ext::Context scope)
+        {
+            ++scopes;
+            const auto signature = mode == 2 ? 0 : ext::ReadBackgroundCatalogueRevision(scope, registry.key, false);
+            ++scopeFinished;
+            return signature;
+        });
+    struct Release
+    {
+        std::mutex &mutex; std::condition_variable &gate; bool &release;
+        void Now() { { std::lock_guard lock(mutex); release = true; } gate.notify_all(); }
+        ~Release() { Now(); }
+    } cleanup{mutex, gate, release};
+    ext::Preferences preferences;
+    ext::SetCommon(preferences, registration, ext::Category::Background, true);
+    service.Configure(preferences); service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; }, "initial background inventory establishes live proof");
+    service.Query(selected);
+    PumpUntil([&] { auto view = service.View(selected); return !view.pending && view.snapshot.has_value(); },
+              "previous native snapshot is ready");
+    auto before = service.View(selected).revision;
+    if (mode == 1) writeCaption(L"Changed registration");
+    if (mode == 4) Expect(SetFileAttributesW(target.c_str(), FILE_ATTRIBUTE_HIDDEN) != FALSE, "change target attributes");
+    DWORD sequence = 1;
+    auto notify = [&]
+    {
+        Expect(RegSetValueExW(noise.key, L"Sequence", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&sequence), sizeof(sequence)) == ERROR_SUCCESS,
+               "emit real unrelated Classes notification");
+        ++sequence;
+    };
+    notify();
+    PumpUntil([&] { return service.View(selected).revision > before; }, "registry notification marks previous cache stale");
+    auto opened = selected;
+    if (mode == 5) service.Invalidate(selected);
+    if (mode == 7) opened.extended = true;
+    service.Query(opened);
+    PumpUntil([&] { return queries >= 2 && blocked; }, "new native query and full scan are independently held");
+    if (mode == 0 || mode == 1 || mode == 2 || mode == 6)
+        PumpUntil([&] { return scopeFinished > 0; }, "background proof runs before stalled native reply");
+    if (mode == 6)
+    {
+        ext::SetCommon(preferences, registration, ext::Category::Background, false);
+        service.Configure(preferences);
+    }
+    ext::Presentation presentation(opened, preferences, L"", L"", service);
+    std::vector<snowdesktop::modern_menu::Item> items;
+    snowdesktop::modern_menu::Options options;
+    presentation.Attach(items, options, 7);
+    auto poll = [&]
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) { TranslateMessage(&message); DispatchMessageW(&message); }
+        if (options.pollItems) if (auto next = options.pollItems(items, true)) items = std::move(*next);
+    };
+    if (mode == 0)
+    {
+        const auto deadline = GetTickCount64() + 2000;
+        while (items.empty() && GetTickCount64() < deadline)
+        { poll(); if (items.empty()) MsgWaitForMultipleObjectsEx(0, nullptr, 10, QS_ALLINPUT, MWMO_INPUTAVAILABLE); }
+        Expect(items.size() == 1 && items.front().label == caption,
+               "verified background cache appears while native refresh is stalled");
+        Expect(service.View(selected).pending && queries == 2,
+               "display readiness does not complete or restart supervised native work");
+        const auto previousProof = scopeFinished.load();
+        before = service.View(selected).revision;
+        notify();
+        PumpUntil([&] { return service.View(selected).revision > before; }, "later notification arrives during the same pending query");
+        PumpUntil([&] { return scopeFinished > previousProof && !service.MenuDisplay(selected, preferences).pending; },
+                  "later notification obtains independent proof without waiting for native reply");
+        Expect(queries == 2, "repeated unrelated notifications do not restart pending native refresh");
+    }
+    else
+    {
+        poll();
+        Expect(items.empty(), "changed, unverified, explicitly invalidated or disabled background cache remains hidden");
+        if (mode == 3) Expect(scopes == 0, "a missing live baseline cannot be promoted by scoped cache verification");
+        if (mode == 6)
+        {
+            const auto display = service.MenuDisplay(selected, preferences);
+            Expect(display.snapshot && display.snapshot->entries.empty(), "current visibility rules filter proven cached rows");
+        }
+    }
+    std::cout << "pending-cache context=" << static_cast<int>(context) << " mode=" << mode << " scopes=" << scopes
+              << " queries=" << queries << " visible=" << items.size() << std::endl;
+    cleanup.Now();
+    PumpUntil([&] { return !service.View(opened).pending; }, "supervised native refresh reaches completion after release");
+    if (mode == 1)
+    {
+        const auto view = service.MenuDisplay(opened, preferences);
+        Expect(view.snapshot && view.snapshot->entries.front().label == L"Changed registration",
+               "real registration change replaces the old background snapshot");
+    }
+    if (mode == 0)
+    {
+        const auto display = service.MenuDisplay(selected, preferences);
+        Expect(display.snapshot && !display.pending && display.error.empty(), "verified cache survives failed native refresh");
+        std::atomic<bool> acknowledged = false;
+        const auto reference = ext::AppendReference({}, display.snapshot->entries.front());
+        service.Execute(selected, reference, {}, [&](bool ok) { Expect(ok, "fresh background invocation succeeds"); acknowledged = true; });
+        PumpUntil([&] { return acknowledged.load(); }, "background invocation acknowledges its fresh query");
+        Expect(queries == 3 && invoked == 43, "cached display never invokes a retained command token");
+    }
+}
+
+void TestWarmFailureRecovery(bool permanent)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    auto path = L"Software\\Classes\\Local Settings\\SnowDesktopWarmFailure-" + temp.path.filename().wstring();
+    struct Fixture
+    {
+        HKEY key = nullptr;
+        std::wstring path;
+        bool owned = false;
+        ~Fixture()
+        {
+            if (key)
+                RegCloseKey(key);
+            if (owned)
+                RegDeleteTreeW(HKEY_CURRENT_USER, path.c_str());
+        }
+    } fixture{nullptr, path, false};
+    DWORD disposition = 0;
+    Expect(RegCreateKeyExW(HKEY_CURRENT_USER, path.c_str(), 0, nullptr, 0, KEY_ALL_ACCESS, nullptr, &fixture.key,
+                           &disposition) == ERROR_SUCCESS &&
+               disposition == REG_CREATED_NEW_KEY,
+           "create private warm-failure registry fixture");
+    fixture.owned = true;
+    ext::Request request;
+    request.paths = {(temp.path / L"target.txt").wstring()};
+    std::ofstream(request.paths.front()) << "private";
+    std::atomic<unsigned> queries = 0;
+    std::atomic<std::uint64_t> registrationRevision = 17;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const ext::Request &target)
+        {
+            if (target.paths != request.paths)
+                return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+            unsigned n = ++queries;
+            return ext::QueryWork{[n, permanent]
+                                  {
+                                      ext::Reply r;
+                                      if (n == 2 || (permanent && n > 1))
+                                      {
+                                          r.error = "controlled failure after stale warm cache";
+                                          return r;
+                                      }
+                                      r.ok = true;
+                                      ext::Entry e;
+                                      e.provider = "verb:warm-failure";
+                                      e.key = "warm-failure";
+                                      e.label = n == 1 ? L"Old" : L"Recovered";
+                                      r.entries = {e};
+                                      return r;
+                                  },
+                                  {}};
+        },
+        [&]
+        {
+            ext::Catalogue c; c.revision = registrationRevision.load();
+            ext::Registration row; row.id = "reg:warm-failure"; row.types = {L"*"};
+            row.contexts = ext::ContextBit(ext::Context::File); row.verbs = {"warm-failure"};
+            row.revision = c.revision; c.rows = {row};
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:warm-failure", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(request);
+    PumpUntil([&] { return service.View(request).snapshot.has_value(); },
+              "seed a real service cache before invalidation");
+    service.Inspect();
+    PumpUntil([&] { return !service.Inspect().scanning; }, "settle initial inventory before warm-cache notification");
+    auto before = service.View(request).revision;
+    registrationRevision = 18; // A real dependency change still exercises failed refresh recovery.
+    DWORD value = 1;
+    Expect(RegSetValueExW(fixture.key, L"Cache", 0, REG_DWORD, reinterpret_cast<const BYTE *>(&value), sizeof(value)) ==
+               ERROR_SUCCESS,
+           "notify stale warm cache");
+    PumpUntil([&] { return service.View(request).revision > before; },
+              "real Classes notification invalidates cache reuse");
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil(
+        [&]
+        {
+            if (auto next = options.pollItems(items, true))
+                items = std::move(*next);
+            return options.pollItemsFinished();
+        },
+        "popup finishes its stale-cache failure recovery");
+    std::wcout << L"Warm-cache failure recovery: queries=" << queries << L" items=" << items.size() << L" label="
+               << (items.empty() ? L"" : items.front().label) << std::endl;
+    Expect(queries == 3 && (permanent ? items.empty() : items.size() == 1 && items.front().label == L"Recovered"),
+           "new popup must recover once rather than treating a failed stale-cache refresh as successful publication");
+}
+void TestPopupQueryFailureRecovery(bool background, bool permanent)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    ext::Request request;
+    request.paths = {(temp.path / L"target.txt").wstring()};
+    std::ofstream(temp.path / L"target.txt") << "private";
+    std::atomic<unsigned> queries = 0;
+    ext::MenuService service(
+        temp.path / L"cache",
+        [&](const auto &)
+        {
+            const auto query = ++queries;
+            return ext::QueryWork{[query, permanent]
+                                  {
+                                      ext::Reply reply;
+                                      if (query == 1 || permanent)
+                                      {
+                                          reply.error = "transient helper failure";
+                                          return reply;
+                                      }
+                                      reply.ok = true;
+                                      ext::Entry e;
+                                      e.provider = "verb:recovery";
+                                      e.key = "recovery";
+                                      e.label = L"Recovered action";
+                                      reply.entries = {e};
+                                      return reply;
+                                  },
+                                  {}};
+        },
+        []
+        {
+            ext::Catalogue c;
+            c.revision = 17;
+            return c;
+        });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:recovery", ext::Category::Objects, true);
+    service.Configure(prefs);
+    if (background)
+    {
+        service.Query(request, ext::QueryPriority::Prewarm, true);
+        PumpUntil(
+            [&]
+            {
+                auto view = service.View(request);
+                return !view.pending && !view.error.empty();
+            },
+            "background query fails before popup opens");
+    }
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items;
+    menu::Options options;
+    popup.Attach(items, options, 0);
+    PumpUntil(
+        [&]
+        {
+            if (auto updated = options.pollItems(items, true))
+                items = std::move(*updated);
+            return options.pollItemsFinished();
+        },
+        "popup finishes after transient child failure");
+    Expect(queries == 2 && (permanent ? items.empty() : items.size() == 1 && items[0].label == L"Recovered action"),
+           "a transient helper failure must not leave the popup permanently empty or suppressed by prewarm backoff");
+}
+// A failed delegated target query must not trap both display and fresh invocation.
+// Only the native process boundary is controlled; projection, caching, scheduling,
+// command resolution and popup subscription are the production implementation.
+void TestShortcutQueryRecovery(bool permanent = false)
+{
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    ext::Request request;
+    request.paths = {(temp.path / L"original.lnk").wstring()};
+    std::ofstream(request.paths.front()) << "private selection";
+    auto original = request; original.originalShortcutOnly = true;
+    std::atomic<unsigned> fullQueries = 0, originalQueries = 0, invoked = 0;
+    std::atomic<bool> releaseFull = false, firstPopupComplete = false;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
+        if (target.paths != request.paths) return ext::QueryWork{[] { return ext::Reply{true, {}, {}}; }, {}};
+        const auto n = target.originalShortcutOnly ? ++originalQueries : ++fullQueries;
+        const bool recovery = target.originalShortcutOnly;
+        return ext::QueryWork{[&, n, recovery]() -> std::optional<ext::Reply> {
+            ext::Reply reply;
+            if ((!recovery && (n == 1 || !firstPopupComplete)) || (recovery && permanent))
+            { reply.error = "controlled query failure"; return reply; }
+            if (!recovery && n == 2 && !releaseFull) return {};
+            reply.ok = true;
+            ext::Entry group; group.provider = "verb:inspect"; group.key = "inspect"; group.label = L"Original file";
+            ext::Entry child; child.provider = group.provider; child.key = "details"; child.label = L"Details";
+            child.token = recovery && n > 1 ? 101 : 12;
+            group.children = {child}; reply.entries = {group};
+            if (!recovery) {
+                ext::Entry modern; modern.provider = "verb:modern"; modern.key = "modern"; modern.label = L"Modern provider";
+                modern.token = n > 2 ? 203 : 13; reply.entries.push_back(modern);
+            }
+            return reply;
+        }, [&, recovery](UINT token, POINT) {
+            Expect((recovery && token == 101) || (!recovery && token == 203),
+                "popup invocation resolves a fresh token in the displayed command's query lane");
+            ++invoked;
+        }};
+    }, [] { ext::Catalogue c; c.revision = 17; return c; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "verb:modern", ext::Category::Objects, true);
+    service.Configure(prefs);
+    ext::Presentation first(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items; menu::Options options; first.Attach(items, options, 0);
+    PumpUntil([&] { auto v = service.View(request); return !v.pending && !v.error.empty(); }, "controlled full query fails before blocked-display polling");
+    Expect(!options.pollItems(items, false) && items.empty(), "blocked display must not return visible row mutations");
+    ext::Request barrier; barrier.paths = {(temp.path / L"barrier.txt").wstring()};
+    std::ofstream(barrier.paths.front()) << "private scheduler observation";
+    service.Query(barrier, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { return service.View(barrier).snapshot.has_value(); }, "lower-priority barrier observes any recovery started by blocked-display polling");
+    Expect(originalQueries == 1, "query recovery must start while root display updates are deferred");
+    PumpUntil([&] {
+        if (auto next = options.pollItems(items, true)) items = std::move(*next);
+        return options.pollItemsFinished();
+    }, "shortcut recovery publishes after the delegated query fails");
+    if (permanent)
+    {
+        Expect(fullQueries == 1 && originalQueries == 1 && items.empty() && !service.View(original).error.empty(),
+            "a failed original shortcut recovery finishes without an unbounded retry loop");
+        return;
+    }
+    firstPopupComplete = true;
+    Expect(fullQueries == 1 && originalQueries == 1 && items.size() == 1 && items[0].label == L"Original file",
+        "a popup recovers original shortcut commands without repeating the failed target query");
+    Expect(!service.View(request).snapshot && service.View(original).snapshot,
+        "a partial shortcut recovery does not masquerade as a complete query");
+    ext::MenuSnapshotCache disk(temp.path / L"disk");
+    ext::Reply partial; partial.ok = true;
+    Expect(!disk.Store(disk.Capture(original), partial) && !disk.Find(disk.Capture(request)),
+        "partial original shortcut snapshots cannot replace complete disk snapshots");
+    Expect(disk.Store(disk.Capture(request), partial) && !disk.Find(disk.Capture(original)),
+        "recovery requests cannot borrow complete snapshots with a different query identity");
+    ext::Presentation second(request, prefs, L"", L"", service);
+    std::vector<menu::Item> warm; menu::Options warmOptions; second.Attach(warm, warmOptions, 0);
+    Expect(warm.size() == 1 && warm[0].children.size() == 1 && warmOptions.pollItems && !warmOptions.pollItemsFinished(),
+        "the next opening displays recovered rows immediately while remaining subscribed to the complete query");
+    PumpUntil([&] { return fullQueries == 2; }, "complete query refresh starts behind recovered rows");
+    Expect(second.Invoke(warm[0].children[0].command, {}), "recovered child command remains executable");
+    PumpUntil([&] { return invoked == 1; }, "recovered invocation avoids the blocked delegated target");
+    Expect(originalQueries == 2 && !releaseFull, "recovery invocation refreshes independently of a pending complete query");
+    releaseFull = true;
+    PumpUntil([&] {
+        if (auto next = warmOptions.pollItems(warm, true)) warm = std::move(*next);
+        return warmOptions.pollItemsFinished();
+    }, "a healthy complete result supplements recovered original rows");
+    const auto modern = std::find_if(warm.begin(), warm.end(), [](const auto &item) { return item.label == L"Modern provider"; });
+    Expect(std::count_if(warm.begin(), warm.end(), [](const auto &item) { return !item.separator; }) == 2 &&
+        warm[0].label == L"Original file" && modern != warm.end(),
+        "complete discovery retains additional providers without duplicating recovered roots");
+    Expect(second.Invoke(modern->command, {}), "additional complete-query provider remains executable");
+    PumpUntil([&] { return invoked == 2; }, "additional provider invokes through a fresh complete query");
+    Expect(fullQueries == 3 && originalQueries == 2, "recovered and complete commands keep independent execution identities");
+    ext::Presentation third(request, prefs, L"", L"", service);
+    std::vector<menu::Item> complete; menu::Options completeOptions; third.Attach(complete, completeOptions, 0);
+    Expect(complete.size() == 2 && !completeOptions.pollItems, "a healthy complete cache supersedes partial recovery on later openings");
+}
+void TestSlowShortcutQueryRecovery(bool fullFailure = false, bool originalFailure = false)
+{
+    // Real production presentation and scheduling; only helper completion is
+    // controlled. A slow delegated target must not withhold original rows,
+    // drop late providers, or start duplicate recovery queries after failure.
+    namespace ext = snowdesktop::shell_extensions;
+    namespace menu = snowdesktop::modern_menu;
+    TemporaryDirectory temp;
+    ext::Request request; request.paths = {(temp.path / L"slow.lnk").wstring()};
+    std::ofstream(request.paths.front()) << "private selection";
+    auto original = request; original.originalShortcutOnly = true;
+    std::atomic<unsigned> fullQueries = 0, originalQueries = 0, invoked = 0;
+    std::atomic<bool> releaseFull = false;
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &target) {
+        const bool recovery = target.originalShortcutOnly;
+        const auto n = recovery ? ++originalQueries : ++fullQueries;
+        return ext::QueryWork{[&, n, recovery]() -> std::optional<ext::Reply> {
+            if (!recovery && n == 1 && !releaseFull) return {};
+            ext::Reply reply;
+            if (n == 1 && (recovery ? originalFailure : fullFailure))
+            { reply.error = "controlled query failure"; return reply; }
+            reply.ok = true;
+            ext::Entry group; group.provider = "verb:inspect"; group.key = "inspect"; group.label = L"Original file";
+            ext::Entry child; child.provider = group.provider; child.key = "details"; child.label = L"Details";
+            child.token = recovery && n > 1 ? 101 : 12;
+            group.children = {child}; reply.entries = {group};
+            if (!recovery) {
+                ext::Entry extra = child; extra.key = "expanded"; extra.label = L"Late child"; extra.token = n > 1 ? 202 : 14;
+                reply.entries[0].children.push_back(extra);
+                ext::Entry modern; modern.provider = "verb:modern"; modern.key = "modern"; modern.label = L"Modern provider";
+                modern.token = n > 1 ? 203 : 13; reply.entries.push_back(modern);
+            }
+            return reply;
+        }, [&, recovery](UINT token, POINT) {
+            Expect((recovery && token == 101) || (!recovery && (token == 202 || token == 203)),
+                "early rows and late providers invoke fresh tokens through their own query identities");
+            ++invoked;
+        }};
+    }, [] { ext::Catalogue c; c.revision = 17; return c; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "verb:modern", ext::Category::Objects, true);
+    service.Configure(prefs);
+    ext::Presentation popup(request, prefs, L"", L"", service);
+    std::vector<menu::Item> items; menu::Options options; popup.Attach(items, options, 0);
+    PumpUntil([&] {
+        Expect(!options.pollItems(items, false) && items.empty(), "deferred display cannot publish early shortcut rows");
+        const auto view = service.View(original);
+        return originalQueries == 1 && !view.pending && (view.snapshot || !view.error.empty());
+    }, "a pending delegated target starts isolated original discovery while display updates are deferred");
+    Expect(fullQueries == 1 && !releaseFull && !options.pollItemsFinished(),
+        "original discovery preserves the in-flight complete query and its subscription");
+    if (auto next = options.pollItems(items, true)) items = std::move(*next);
+    Expect(originalFailure ? items.empty() : items.size() == 1 && items[0].label == L"Original file",
+        "only a successful isolated result is displayed ahead of the blocked complete query");
+    if (!originalFailure) {
+        Expect(popup.Invoke(items[0].children[0].command, {}), "early original child is executable before target completion");
+        PumpUntil([&] { return invoked == 1; }, "early original invocation uses an independent fresh query");
+        Expect(originalQueries == 2 && !releaseFull, "executing an early child does not wait for the delegated aggregate");
+    }
+    releaseFull = true;
+    PumpUntil([&] {
+        if (auto next = options.pollItems(items, true)) items = std::move(*next);
+        return options.pollItemsFinished();
+    }, "both success and failure finish the subscribed shortcut streams");
+    Expect(fullQueries == 1 && originalQueries == (originalFailure ? 1u : 2u),
+        "a delegated failure after early recovery does not start duplicate or unbounded queries");
+    const auto modern = std::find_if(items.begin(), items.end(), [](const auto &item) { return item.label == L"Modern provider"; });
+    const auto expected = fullFailure ? (originalFailure ? 0 : 1) : 2;
+    Expect(std::count_if(items.begin(), items.end(), [](const auto &item) { return !item.separator; }) == expected &&
+        (fullFailure ? modern == items.end() : modern != items.end()),
+        "late complete discovery retains extra providers without duplicating early roots");
+    if (!fullFailure) {
+        const auto group = std::find_if(items.begin(), items.end(), [](const auto &item) { return item.label == L"Original file"; });
+        Expect(group != items.end() && group->children.size() == 2 && group->children[0].label == L"Details" && group->children[1].label == L"Late child",
+            "late complete discovery supplements children inside an already displayed original group");
+        Expect(popup.Invoke(group->children[1].command, {}), "a late child inside an early group is executable");
+        PumpUntil([&] { return invoked == (originalFailure ? 1u : 2u); }, "late child uses the complete-query identity");
+        Expect(popup.Invoke(modern->command, {}), "a late complete provider remains executable");
+        PumpUntil([&] { return invoked == (originalFailure ? 2u : 3u); }, "late provider execution refreshes the complete query");
+        Expect(fullQueries == 3, "late provider execution uses the complete request rather than original-only discovery");
+    }
+}
+
+void TestMenuPromotesQueuedPrewarm()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    ext::Request blocker, selected, later;
+    blocker.paths = {(temp.path / L"blocker.txt").wstring()};
+    // Equal-length ordered names make equal due ticks deterministic as well.
+    selected.paths = {(temp.path / L"aa-popup.txt").wstring()};
+    later.paths = {(temp.path / L"zz-popup.txt").wstring()};
+    for (const auto &request : {blocker, selected, later})
+        std::ofstream(std::filesystem::path(request.paths.front())) << "private scheduler target";
+    std::atomic<bool> entered = false;
+    bool release = false;
+    std::mutex gateMutex;
+    std::condition_variable gate;
+    std::mutex mutex;
+    std::vector<ext::Request> launched;
+    ext::Reply reply; reply.ok = true;
+    ext::Entry entry; entry.provider = "verb:inspect"; entry.key = "inspect"; entry.label = L"Inspect";
+    reply.entries = {entry};
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &request) {
+        if (request.paths == blocker.paths)
+        {
+            entered = true;
+            std::unique_lock lock(gateMutex);
+            if (!gate.wait_for(lock, std::chrono::seconds(5), [&] { return release; }))
+                throw std::runtime_error("scheduler gate timed out");
+        }
+        { std::lock_guard lock(mutex); launched.push_back(request); }
+        return ext::QueryWork{[reply] { return reply; }, {}};
+    }, [] { return ext::Catalogue{}; });
+    ext::Preferences prefs; ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(blocker, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { return entered.load(); }, "hold the process boundary while queuing selection and popup requests");
+    service.Prewarm(selected);
+    service.Query(selected);
+    service.Query(later);
+    { std::lock_guard lock(gateMutex); release = true; }
+    gate.notify_one();
+    PumpUntil([&] { return service.View(selected).snapshot && service.View(later).snapshot &&
+        !service.View(selected).pending && !service.View(later).pending; }, "both interactive menus complete through the scheduler");
+    std::lock_guard lock(mutex);
+    Expect(launched.size() == 3 && launched[1].paths == selected.paths && launched[2].paths == later.paths,
+        "a popup promotes its queued prewarm ahead of a later popup and queries that selection exactly once");
+}
+
+void TestBackgroundQueriesReserveMenuSlot()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    TemporaryDirectory temp;
+    ext::Request first, second, interactive, start;
+    first.paths = {(temp.path / L"first.txt").wstring()};
+    second.paths = {(temp.path / L"second.txt").wstring()};
+    interactive.paths = {(temp.path / L"interactive.txt").wstring()};
+    start.paths = {(temp.path / L"start.lnk").wstring()}; start.startPinOnly = true;
+    for (const auto &request : {first, second, interactive, start})
+        std::ofstream(std::filesystem::path(request.paths.front())) << "private scheduler target";
+    std::atomic<bool> release = false;
+    std::mutex mutex;
+    std::vector<ext::Request> launched;
+    ext::Reply reply; reply.ok = true;
+    ext::Entry entry; entry.provider = "verb:inspect"; entry.key = "inspect"; entry.label = L"Inspect";
+    reply.entries = {entry};
+    ext::MenuService service(temp.path / L"cache", [&](const ext::Request &request) {
+        if (!request.startPinOnly) { std::lock_guard lock(mutex); launched.push_back(request); }
+        return ext::QueryWork{[&, reply, background = request.paths == first.paths || request.paths == second.paths]() -> std::optional<ext::Reply> {
+            if (background && !release) return {};
+            return reply;
+        }, {}};
+    }, [] { return ext::Catalogue{}; });
+    ext::Preferences prefs;
+    ext::SetCommon(prefs, "verb:inspect", ext::Category::Objects, true);
+    ext::SetCommon(prefs, "state:start-pin", ext::Category::Objects, true);
+    service.Configure(prefs);
+    service.Query(first, ext::QueryPriority::Inspect, true);
+    PumpUntil([&] { std::lock_guard lock(mutex); return launched.size() == 1; }, "first background query occupies the shared worker lane");
+    service.Query(second, ext::QueryPriority::Inspect, true);
+    service.Query(start);
+    // A completed reserved-lane query proves that the worker has processed the
+    // dispatch loop. No latency threshold or sleep is used to infer absence.
+    PumpUntil([&] { const auto view = service.View(start); return view.snapshot && !view.pending; },
+        "reserved Start query provides a causal scheduler barrier");
+    service.Query(interactive);
+    PumpUntil([&] { const auto view = service.View(interactive);
+        std::lock_guard lock(mutex);
+        return (view.snapshot && !view.pending) || launched.size() >= 2; }, "observe which request received the second arbitrary-extension slot");
+    bool reserved = false;
+    { std::lock_guard lock(mutex); reserved = launched.size() == 2 && launched[1].paths == interactive.paths; }
+    release = true;
+    PumpUntil([&] { const auto view = service.View(second); return view.snapshot && !view.pending; }, "queued background discovery resumes after interactive work");
+    Expect(reserved, "background inspection cannot occupy both workers and delay an explicit popup");
+}
+
 void TestVisibilityScheduling()
 {
     // Exercise production configuration, popup projection and scheduler. Only
@@ -1848,6 +5175,49 @@ void TestDisabledQueuedQueries()
     service.Configure({}); release = true;
     PumpUntil([&] { return service.View(requests[2]).snapshot.has_value(); }, "shared inspection completes after ordinary prewarm is disabled");
     Expect(starts == 6 && !service.View(next).snapshot, "only the subscribed inspection survives the replacement prewarm");
+}
+
+void TestNetworkSelectionScheduling()
+{
+    namespace ext = snowdesktop::shell_extensions;
+    for (unsigned remoteContexts : {1u, 2u, 3u, 0u, 16u})
+    {
+        TemporaryDirectory temp;
+        ext::Request remote, local;
+        remote.paths = {L"\\\\127.0.0.1\\SnowDesktopMissingMenuShare\\selection"};
+        local.paths = {(temp.path / L"local.txt").wstring()};
+        std::ofstream(local.paths[0]) << "private scheduler fixture";
+        std::atomic<bool> remoteStarted = false, localStarted = false, release = false;
+        ext::MenuService service(temp.path / L"cache", [&](const ext::Request &request) {
+            const bool network = request.paths == remote.paths;
+            if (network) remoteStarted = true; else localStarted = true;
+            return ext::QueryWork{[&, network]() -> std::optional<ext::Reply> {
+                if (network && !release) return {};
+                ext::Entry entry; entry.provider = "network-action"; entry.label = L"Command";
+                return ext::Reply{true, {entry}, {}};
+            }, {}, {}, [remoteContexts] { return remoteContexts; }};
+        }, [] { ext::Catalogue value; value.revision = 1; return value; });
+        service.Query(remote);
+        service.Query(local);
+        PumpUntil([&] { return remoteStarted && localStarted && service.View(local).snapshot.has_value(); },
+            "NETWORK_METADATA_ISOLATED: a pending network selection cannot block an independent local menu");
+        Expect(service.View(remote).pending, "network completion remains supervised while the local reply publishes");
+        release = true;
+        PumpUntil([&] { return !service.View(remote).pending; }, "network metadata reply finishes its original request");
+        const auto view = service.View(remote);
+        if (remoteContexts >= 1 && remoteContexts <= 3)
+        {
+            Expect(view.snapshot && view.contexts == remoteContexts,
+                "file, folder and mixed network contexts come from the completed helper rather than suffix inference");
+            ext::Preferences prefs;
+            ext::SetHidden(prefs, "network-action", ext::Context::File, false);
+            ext::SetHidden(prefs, "network-action", ext::Context::Folder, true);
+            Expect(ext::VisibleSnapshot(prefs, *view.snapshot, view.contexts).empty() == (remoteContexts != 1),
+                "resolved network folders and mixed selections still obey the current folder hiding rule");
+        }
+        else Expect(!view.snapshot && !view.error.empty(),
+            "missing or invalid helper metadata cannot publish a successful network menu with guessed scope");
+    }
 }
 
 void TestKnownScopeQueryPolicy()
@@ -1995,7 +5365,9 @@ void TestUsefulManagementItems()
     }, registry);
     const auto cold = service.Inspect();
     Expect(cold.catalogue.rows.empty() && cold.scanning, "uncached settings return immediately and start background discovery");
-    PumpUntil([&] { return queries >= 2; }, "uncached settings actively query real baseline objects without requiring opt-ins");
+    // Observe discovery while its first response is held. Background queries
+    // reserve the other slot for a popup, so the gate cannot require a second dispatch.
+    PumpUntil([&] { return queries >= 1; }, "uncached settings actively query a real baseline object without requiring opt-ins");
     const auto pending = service.Inspect();
     Expect(pending.catalogue.rows.empty(), "three thousand unassociated registry records never become disabled settings controls");
     release = true;
@@ -2334,15 +5706,43 @@ void BenchmarkMenus()
     ext::InvalidateMenuCache();
 }
 
+#include "shell/shell_extension_demand_tests.h"
+
 int wmain(int argc, wchar_t **argv)
 {
+    const bool archiveProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-archive-submenus";
+    const bool powerShellProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-powershell-submenus";
+    const bool shortcutProbe = argc == 2 && std::wstring_view(argv[1]) == L"--probe-shortcut-archives";
     const bool nvidiaProbe = argc == 2 && (std::wstring_view(argv[1]) == L"--probe-nvidia-menu" ||
         std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
-    if (nvidiaProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
+    if (nvidiaProbe || archiveProbe || powerShellProbe || shortcutProbe) SetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU", L"1");
     snowdesktop::shell_extensions::QueryExecutor query;
     wchar_t realMode[4]{};
     if(!GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_REAL_MENU",realMode,4)) query=[](const auto& request) {
+        static std::wstring preparedSample;
+        if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename().wstring().starts_with(L"SnowDesktop-MenuInit-"))
+        {
+            wchar_t fault[16]{};
+            GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_MENU_PREPARATION", fault, static_cast<DWORD>(std::size(fault)));
+            if (std::wstring_view(fault) == L"hang") Sleep(INFINITE);
+            if (std::wstring_view(fault) == L"fail") return snowdesktop::shell_extensions::Reply{false, {}, "preparation fault"};
+            preparedSample = request.paths.front();
+        }
         if (!request.paths.empty() && request.paths.front() == L"synthetic-hang") Sleep(INFINITE);
+        if (!request.paths.empty() && std::filesystem::path(request.paths.front()).filename() == L"routing-slots.txt")
+        {
+            namespace ext = snowdesktop::shell_extensions;
+            const auto catalogue = demand_tests::Inventory();
+            if (!request.sourceClsid.empty())
+            {
+                const auto &id = catalogue.rows.front().verbs.front();
+                const int index = request.sourceClsid == std::wstring(id.begin(), id.end()) ? 0 : 1;
+                return ext::Reply{true, {demand_tests::Entry(index)}, {}};
+            }
+            auto extra = demand_tests::Entry(2);
+            extra.key = "unmapped-enabled-command"; extra.provider = "verb:" + extra.key;
+            return ext::Reply{true, {demand_tests::Entry(0), demand_tests::Entry(1), extra}, {}};
+        }
         if(request.paths.size()==3&&request.paths[0]==L"read-disk-cache")
         {
             snowdesktop::shell_extensions::MenuSnapshotCache cache(request.paths[1]);
@@ -2352,6 +5752,8 @@ int wmain(int argc, wchar_t **argv)
         snowdesktop::shell_extensions::Reply reply; reply.ok = true;
         snowdesktop::shell_extensions::Entry entry; entry.label=L"压缩";entry.checked=true;entry.enabled=false;
         entry.key=request.paths.front()==L"synthetic-second" ? "second" : "first";
+        if (request.paths.front() == L"synthetic-prepared")
+        { entry.key = preparedSample.empty() ? "cold" : "prepared"; entry.label = preparedSample; }
         if (request.paths.front() == L"synthetic-stdio")
         {
             DWORD written = 0;
@@ -2401,7 +5803,22 @@ int wmain(int argc, wchar_t **argv)
         };
         invoke=[path=std::filesystem::path(invocationPath)](UINT token,POINT){std::ofstream file(path);file<<token;};
     }
-    if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(std::move(query),std::move(invoke))) return *helper;
+    wchar_t startPinPath[32768]{};
+    snowdesktop::shell_extensions::StartPinExecutor startPin;
+    if (GetEnvironmentVariableW(L"SNOWDESKTOP_TEST_START_PIN", startPinPath, 32768))
+        startPin = [output = std::filesystem::path(startPinPath)](
+            snowdesktop::shell_start_pin::Action action, const std::wstring &path, HWND owner, POINT point) {
+            DWORD process = 0; GetWindowThreadProcessId(owner, &process);
+            const auto bytes = snowdesktop::settings_ipc::Pack(path, action,
+                process == GetCurrentProcessId(), point.x, point.y);
+            const auto temporary = std::filesystem::path(output.wstring() + L".tmp");
+            { std::ofstream file(temporary, std::ios::binary);
+              file.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size())); }
+            std::filesystem::rename(temporary, output);
+            return E_ACCESSDENIED; // Deliberate final failure must still be handled.
+        };
+    if (const auto helper = snowdesktop::shell_extensions::TryRunHelper(
+            std::move(query), std::move(invoke), std::move(startPin))) return *helper;
 
     const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (FAILED(initialized)) return 1;
@@ -2409,37 +5826,160 @@ int wmain(int argc, wchar_t **argv)
     {
         TemporaryDirectory cacheDirectory;
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
-        if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
+        if (shortcutProbe) ProbeShortcutArchives();
+        else if (archiveProbe) ProbeArchiveSubmenus();
+        else if (powerShellProbe) ProbePowerShellSubmenus();
+        else if (nvidiaProbe) ProbeNvidiaCompatibility(std::wstring_view(argv[1]) == L"--probe-nvidia-menu-invoke");
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-menu-settings") BenchmarkManagement();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--benchmark-shell-menu") BenchmarkMenus();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-start-pin-helper") TestExposedStartPinHelper();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-demand-queries") demand_tests::Run();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-bootstrap") TestShellContextMenuBootstrap();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-native-menu-bootstrap") ProbeNativeShellMenuBootstrap(false);
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--probe-legacy-native-menu") ProbeNativeShellMenuBootstrap(true);
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-state-commands")
+        { TestPairedCommandVisibility(); TestPairedCommandRefresh(); TestStartQueryScheduling(); TestExposedStartPinHelper(); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-loading-deadlines")
+        {
+            TestLateInitialRegistrationAttribution(false, false, false, true);
+            TestRegistrationVerificationBeforePopupPublication(true);
+        }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-pending-background-cache")
+        { for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+            for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-folder-registration-verification")
+        { TestRegistryCatalogue(); for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
+            for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+                for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-registry-catalogue")
+            TestRegistryCatalogue();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-initial-snapshot-persistence")
+        { for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-file-snapshot-reuse")
+            TestFileSnapshotNotificationReuse();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-extension-sessions")
+            TestExtensionSessions();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-shortcut-query-recovery")
+        { TestShortcutQueryRecovery(); TestShortcutQueryRecovery(true); TestSourceScheduler(true); TestSlowShortcutQueryRecovery(); TestSlowShortcutQueryRecovery(true); TestSlowShortcutQueryRecovery(false, true); TestSlowShortcutQueryRecovery(true, true); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-attribution-snapshot")
+        { TestMenuDisplayAttributionSnapshot(); TestLateInitialRegistrationAttribution(); TestLateInitialRegistrationAttribution(true); }
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-package-manifest-refresh")
+            TestPackageManifestRefresh();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-network-selection-scheduling")
+            TestNetworkSelectionScheduling();
+        else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-native-catalogue-prime")
+            TestAggregateCataloguePriming();
         else if (argc == 2 && std::wstring_view(argv[1]) == L"--test-menu-query-policy")
         {
+            TestAggregateCataloguePriming();
+            for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode);
+            TestFileSnapshotNotificationReuse();
             TestUnchangedCataloguePersistence();
+            TestIdleCatalogueInvalidation();
+            TestPopupQueryFailureRecovery(false, false);
+            TestPopupQueryFailureRecovery(true, false);
+            TestPopupQueryFailureRecovery(false, true);
+            TestPopupQueryFailureRecovery(true, true);
+            for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+                for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context);
+            TestWarmFailureRecovery(false);
+            TestWarmFailureRecovery(true);
+            TestShortcutQueryRecovery();
+            TestShortcutQueryRecovery(true);
+            TestSourceScheduler(true);
+            TestSlowShortcutQueryRecovery(); TestSlowShortcutQueryRecovery(true); TestSlowShortcutQueryRecovery(false, true); TestSlowShortcutQueryRecovery(true, true);
+            TestLateInitialRegistrationAttribution();
+            TestLateInitialRegistrationAttribution(true, false);
+            TestLateInitialRegistrationAttribution(false, true);
+            TestLateInitialRegistrationAttribution(true, true);
+            TestLateInitialRegistrationAttribution(false, false, true);
+            TestLateInitialRegistrationAttribution(true, false, true);
+            TestMenuDisplayAttributionSnapshot();
+            TestInitialDiscoveryDoesNotBlockPopup();
+            TestLaterRegistryNoiseDoesNotExtendPublication();
+            TestRegistrationVerificationBeforePopupPublication();
+            TestUnrelatedRegistryChangesDuringPopup();
+            TestUnrelatedRegistryChangesDuringPopup(true, false);
+            TestUnrelatedRegistryChangesDuringPopup(true, true);
+            TestBackgroundQueriesReserveMenuSlot();
+            TestMenuPromotesQueuedPrewarm();
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
+            TestNetworkSelectionScheduling();
             TestRegistryCatalogue();
+            for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
+            for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+                for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context);
             TestNvidiaCompatibility();
+            TestNvidiaCompatibilityQueryPolicy(false);
+            TestNvidiaCompatibilityQueryPolicy(true);
+            TestInspectionIndependentPopup(false);
+            TestInspectionIndependentPopup(true);
         }
         else
         {
+            demand_tests::Run();
+            TestAggregateCataloguePriming();
+            for (int mode = 0; mode < 4; ++mode) TestInitialSnapshotPersistence(mode);
+            TestFileSnapshotNotificationReuse();
             TestUnchangedCataloguePersistence();
+            TestIdleCatalogueInvalidation();
             TestCatalogueShutdown();
             RunTests();
             TestDeferredPopups();
             TestCatalogueCache();
             TestRegistryCatalogue();
+            for (int mode = 0; mode < 5; ++mode) TestFolderRegistrationVerification(mode);
+            for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+                for (int mode = 0; mode < 4; ++mode) TestFolderRegistrationVerification(mode, context);
             TestNvidiaCompatibility();
+            TestNvidiaCompatibilityQueryPolicy(false);
+            TestNvidiaCompatibilityQueryPolicy(true);
+            TestInspectionIndependentPopup(false);
+            TestInspectionIndependentPopup(true);
             TestManagementUpdates();
             TestManagementFilters();
             TestSourceAttribution();
-            TestExtensionSessions();
+            TestExposedStartPinHelper();
+            TestPairedCommandVisibility();
+            TestPairedCommandRefresh();
+            TestStartQueryScheduling();
             TestSnapshotPresentation();
             TestPendingCachedClick();
+            TestInvocationOwnerHandoff();
             TestQueryScheduler();
+            TestPopupQueryFailureRecovery(false, false);
+            TestPopupQueryFailureRecovery(true, false);
+            TestPopupQueryFailureRecovery(false, true);
+            TestPopupQueryFailureRecovery(true, true);
+            for (auto context : {snowdesktop::shell_extensions::Context::FolderBackground, snowdesktop::shell_extensions::Context::Desktop})
+                for (int mode = 0; mode < 8; ++mode) TestPendingBackgroundCache(mode, context);
+            TestWarmFailureRecovery(false);
+            TestWarmFailureRecovery(true);
+            TestShortcutQueryRecovery();
+            TestShortcutQueryRecovery(true);
+            TestSourceScheduler(true);
+            TestSlowShortcutQueryRecovery(); TestSlowShortcutQueryRecovery(true); TestSlowShortcutQueryRecovery(false, true); TestSlowShortcutQueryRecovery(true, true);
+            TestLateInitialRegistrationAttribution();
+            TestLateInitialRegistrationAttribution(true, false);
+            TestLateInitialRegistrationAttribution(false, true);
+            TestLateInitialRegistrationAttribution(true, true);
+            TestLateInitialRegistrationAttribution(false, false, true);
+            TestLateInitialRegistrationAttribution(true, false, true);
+            TestMenuDisplayAttributionSnapshot();
+            TestInitialDiscoveryDoesNotBlockPopup();
+            TestLaterRegistryNoiseDoesNotExtendPublication();
+            TestRegistrationVerificationBeforePopupPublication();
+            TestUnrelatedRegistryChangesDuringPopup();
+            TestUnrelatedRegistryChangesDuringPopup(true, false);
+            TestUnrelatedRegistryChangesDuringPopup(true, true);
+            TestBackgroundQueriesReserveMenuSlot();
+            TestMenuPromotesQueuedPrewarm();
             TestVisibilityScheduling();
             TestDisabledQueuedQueries();
             TestKnownScopeQueryPolicy();
+            TestNetworkSelectionScheduling();
             TestSourceScheduler();
             TestSourceDeduplication();
             TestSelectionScopes();

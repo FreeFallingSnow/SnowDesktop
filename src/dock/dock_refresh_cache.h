@@ -49,9 +49,10 @@ public:
             found->second.ticket != ticket)
             return false;
         auto& entry = found->second;
-        if (!replaceCurrent && entry.value && entry.valueTicket == ticket) return false;
+        // Fast local pixels only fill an empty cache. A refresh keeps the last
+        // visible icon across tickets until the complete Shell result arrives.
+        if (!replaceCurrent && entry.value) return false;
         entry.value = std::move(value);
-        entry.valueTicket = ticket;
         entry.valueVersion = entry.requestVersion;
         entry.fresh = true;
         // A provisional local result must retain a failed refinement's retry.
@@ -116,6 +117,14 @@ public:
 
     void Invalidate() { ++generation_; }
 
+    // Window notifications invalidate only that window. Preserve the visible
+    // value and reject any completion belonging to the retired request.
+    void Invalidate(const Key& key)
+    {
+        const auto found = entries_.find(key);
+        if (found != entries_.end()) found->second.generation = 0;
+    }
+
     template<class Predicate>
     void Retain(Predicate keep)
     {
@@ -132,7 +141,6 @@ private:
         std::uint64_t ticket = 0;
         bool fresh = false;
         std::optional<Clock::time_point> retryAt;
-        std::uint64_t valueTicket = 0;
     };
     std::unordered_map<Key, Entry> entries_;
     std::uint64_t generation_ = 1;

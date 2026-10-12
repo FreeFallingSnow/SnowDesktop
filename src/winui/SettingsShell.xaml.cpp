@@ -406,7 +406,7 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.page.dock.description", L"Configure Dock behavior, placement and items."},
     LocalizedFallback{"settings.page.taskbar.description", L"Configure Windows taskbar behavior, default appearance and scenario overrides."},
     LocalizedFallback{"settings.page.widgets.description", L"Manage installed widgets, sources, permissions and instances."},
-    LocalizedFallback{"settings.page.widget.description", L"Declarative settings for this widget instance."},
+    LocalizedFallback{"settings.page.widget.description", L"Adjust this widget's settings."},
     LocalizedFallback{"settings.page.backup.description", L"Back up, restore, migrate and open SnowDesktop data."},
     LocalizedFallback{"settings.page.about.description", L"Version, updates, project links, licenses and third-party notices."},
     LocalizedFallback{"settings.page.developer.description", L"Development overrides and widget authoring tools."},
@@ -466,8 +466,8 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.personalization.colors.description", L"Customize accents, surfaces and gradients."},
     LocalizedFallback{"settings.personalization.menu", L"Context menu"},
     LocalizedFallback{"settings.personalization.menu.description", L"Configure SnowDesktop context-menu appearance."},
-    LocalizedFallback{"settings.personalization.widgets", L"Widgets & layout"},
-    LocalizedFallback{"settings.personalization.widgets.description", L"Adjust layout spacing, widget corners, title bars, category tabs and content row heights."},
+    LocalizedFallback{"settings.personalization.widgets", L"Interface & layout"},
+    LocalizedFallback{"settings.personalization.widgets.description", L"Adjust interface fonts, tooltip font size and layout details."},
     LocalizedFallback{"settings.desktop.layout", L"Icon layout"},
     LocalizedFallback{"settings.desktop.layout.description", L"Adjust icon size, title and list fonts, and shortcut arrows."},
     LocalizedFallback{"settings.desktop.beautify", L"Icon beautification"},
@@ -485,9 +485,9 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.widgets.sources", L"Sources and Workshop"},
     LocalizedFallback{"settings.widgets.sources.description", L"Install widgets and synchronize sources."},
     LocalizedFallback{"settings.widgets.permissions", L"Permissions"},
-    LocalizedFallback{"settings.widgets.permissions.description", L"Review widget capabilities and owner-scoped access."},
+    LocalizedFallback{"settings.widgets.permissions.description", L"Manage access to files, folders and system features."},
     LocalizedFallback{"settings.widget.fields", L"Widget settings"},
-    LocalizedFallback{"settings.widget.fields.description", L"Fields supplied by the widget's v2 settings schema appear here."},
+    LocalizedFallback{"settings.widget.fields.description", L"Settings for this widget are currently unavailable."},
     LocalizedFallback{"settings.backup.layout", L"Layout backup"},
     LocalizedFallback{"settings.backup.layout.description", L"Create and restore desktop-layout backups."},
     LocalizedFallback{"settings.backup.full", L"Full backup and migration"},
@@ -608,7 +608,9 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
             return;
         desktopPage_ =
             std::make_unique<snowdesktop::winui::DesktopPagePresenter>(
-                localize, cardStyle());
+                localize, cardStyle(), [weak = get_weak()](const SettingsRoute& route) {
+                    if (const auto self = weak.get()) (void)self->Navigate(route, true);
+                });
         desktopPage_->SetActions(desktopPageActions_);
     };
     const auto ensureDock = [&]() {
@@ -2746,7 +2748,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerPersonalizationFocus({
                 "personalization.theme",
                 "personalization.globalTheme",
-                "personalization.font",
                 "personalization.backgroundColor",
                 "personalization.borderColor",
                 "personalization.widgetAlpha",
@@ -2778,6 +2779,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(
                 personalizationPage_->WidgetLayoutContent());
             registerPersonalizationFocus({
+                "personalization.font",
+                "personalization.tooltipFontSize",
                 "personalization.cornerRadius",
                 "personalization.barHeight",
                 "personalization.luaWidgetRowHeight",
@@ -2912,14 +2915,13 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     case SettingsPage::Dock:
         if (dockPage_ && generalPage_)
         {
+            dockPage_->SetSupplementalContent(personalizationPage_->DockAppearanceContent(),
+                animationPage_->DockContent(), generalPage_->DockShortcutContent());
             PageCards().Children().Append(dockPage_->DockEnableContent());
-            PageCards().Children().Append(
-                generalPage_->DockShortcutContent());
+            PageCards().Children().Append(dockPage_->DockAppearanceContent());
             PageCards().Children().Append(dockPage_->DockContent());
-            PageCards().Children().Append(personalizationPage_->DockAppearanceContent());
             RegisterFocusTarget("personalization.dockAppearance", personalizationPage_->FocusTarget("personalization.dockAppearance"));
             personalizationPage_->Activate();
-            PageCards().Children().Append(animationPage_->DockContent());
             animationPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
                 if (id == "animation.hover" || id == "animation.hoverScale" || id == "animation.launch" || id == "animation.window")
                     RegisterFocusTarget(std::move(id), element);
@@ -2932,9 +2934,10 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 });
             registerDockFocus({
                 "dock.enable", "dock.position", "dock.layout",
-                "dock.monitor", "dock.thickness", "dock.mergedBarHeight", "dock.lastMonitorUseHomeSize",
+                "dock.monitor", "dock.thickness", "dock.mergedBarHeight", "dock.mergedIconScale", "dock.lastMonitorUseHomeSize",
                 "dock.floatingShortcutMode", "dock.floatingEdgeSwipe",
-                "dock.floatingEdgeSwipeBlockFullscreen",
+                "dock.fullscreenPolicy",
+                "dock.fullscreenExceptions",
                 "dock.showWindowsButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
                 "dock.allowDesktopContentOverlap", "dock.reserveScreenSpace",

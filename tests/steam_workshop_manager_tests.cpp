@@ -1443,18 +1443,33 @@ void TestPartialWorkshopSourceAndPackageMutations()
     auto validationEnteredFuture = validationEntered.get_future();
     auto validationReleaseFuture = validationRelease.get_future().share();
     const auto stalledValidation = PackageValidationQuery::ForProcess().Request(validationKey,
-        [&validationEntered, validationReleaseFuture] {
+        [&validationEntered, validationReleaseFuture, completed = snapshot] {
             validationEntered.set_value();
             validationReleaseFuture.wait();
-            return SteamWorkshopSubscriptionSnapshot{};
+            return completed;
         });
     Check(validationEnteredFuture.wait_for(std::chrono::seconds(2)) == std::future_status::ready,
         "the controlled slow archive validation enters its read-only boundary");
     auto slow = source.QuerySubscriptions(query, error);
     validationRelease.set_value();
-    Check(PackageValidationQuery::Wait(stalledValidation,
-        std::chrono::steady_clock::now() + std::chrono::seconds(2)).has_value(),
-        "the held validation job exits before fixture cleanup");
+    {
+        std::unique_lock lock(stalledValidation->mutex);
+        const bool completed = stalledValidation->changed.wait_for(lock, std::chrono::seconds(2),
+            [&] { return stalledValidation->done; });
+        Check(completed, "the held validation job exits before fixture cleanup");
+        if (completed) stalledValidation->completedAt -= std::chrono::seconds(60);
+    }
+    const auto resumed = source.QuerySubscriptions(query, error);
+    bool completionDelivered = false;
+    {
+        std::lock_guard lock(stalledValidation->mutex);
+        completionDelivered = stalledValidation->delivered;
+    }
+    Check(completionDelivered && error.empty() && resumed.authoritative &&
+        resumed.subscribedPublishedFileIds == std::vector<std::string>{"100"} &&
+        resumed.installable.size() == 1 && resumed.installable[0].manifest.id == id &&
+        resumed.installable[0].manifest.version == "1.1.0" && resumed.localArtifacts.contains("100"),
+        "the real source consumes a late validation at the fallback retry while reading fresh subscriptions");
     ResolveSteamWorkshopSubscriptionRemovals(slow, manager.SteamSubscriptionHistory(), manager.ListPackages());
     const auto slowPlan = BuildSteamWorkshopSyncPlan(manager.ListPackages(), slow);
     Check(error.empty() && slow.error.empty() && slow.authoritative && slow.installable.empty() &&
@@ -1509,6 +1524,30 @@ void TestPartialWorkshopSourceAndPackageMutations()
         manager.InstallArchive(archive, {"steam-workshop", "100@42"}, false,
             installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id).has_value(),
         "a newly present local subscription can reinstall its managed package after removal");
+
+    // Substitute only the completed metadata read to model a folder disappearing
+    // between ACF discovery and validation. Path checks/validation remain real.
+    const auto missingFolder = workshopTestDeployment / L"已移走的工坊目录";
+    SteamWorkshopLocalCache racedCache;
+    racedCache.authoritative = true;
+    racedCache.subscribedPublishedFileIds = {"100"};
+    racedCache.readyItems.push_back({"100", missingFolder});
+    auto libraryKey = std::filesystem::weakly_canonical(steam).lexically_normal().wstring();
+    for (auto& character : libraryKey) character = static_cast<wchar_t>(std::towlower(character));
+    using LibraryQuery = snowdesktop::BoundedFileQuery<SteamWorkshopLocalCache>;
+    const auto metadata = LibraryQuery::ForProcess().Request(libraryKey + L":5080330",
+        [racedCache] { return racedCache; });
+    {
+        std::unique_lock lock(metadata->mutex);
+        Check(metadata->changed.wait_for(lock, std::chrono::seconds(2), [&] { return metadata->done; }),
+            "the disappearing-folder metadata fixture completes before validation");
+    }
+    const auto missing = source.QuerySubscriptions(query, error);
+    Check(error.empty() && missing.installable.empty() && missing.discoveryFailures.size() == 1 &&
+        missing.discoveryFailures[0].error.find("cannot access") != std::string::npos &&
+        missing.discoveryFailures[0].error.find(pathText(missingFolder)) != std::string::npos &&
+        missing.discoveryFailures[0].error.find("Windows error ") != std::string::npos,
+        "a disappeared Workshop directory reports its UTF-8 path and Windows error without mislabelling it unsafe");
 }
 
 void TestSteamWorkshopLocalCache()

@@ -57,7 +57,7 @@ void DesktopApp::ShowBalloonNotification(const std::wstring& title, const std::w
  */
 void DesktopApp::OnTrayCallback(LPARAM lParam)
 {
-    switch (TrayIconController::ClassifyCallback(lParam))
+    switch (trayIconController_.ClassifyCallback(lParam))
     {
     case TrayCallbackAction::ShowContextMenu:
     {

@@ -2,6 +2,7 @@
 #include "app/app.h"
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_rules.h"
+#include "platform/shell_overlay_window.h"
 
 void DesktopApp::StopQuickNavigationAnimationTimeline()
 {
@@ -53,7 +54,7 @@ bool DesktopApp::CreateQuickNavigationWindow()
     if (quickNavigationHwnd_ && IsWindow(quickNavigationHwnd_))
         return true;
 
-    quickNavigationHwnd_ = CreateWindowExW(
+    quickNavigationHwnd_ = snowdesktop::CreateShellOverlayWindowEx(
         WS_EX_TOOLWINDOW |
             (quickNavigationTopmost_ ? WS_EX_TOPMOST : 0) |
             WS_EX_NOREDIRECTIONBITMAP,
@@ -861,6 +862,7 @@ int DesktopApp::GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const
 void DesktopApp::OpenQuickNavigation(
     QuickNavigationInvocationSource source)
 {
+    if (FullscreenBlocksDockReveal(DockRevealSource::AssociatedSurface, nullptr)) return;
     if (dragSession_.IsActive() ||
         dragDropController_.IsExternalDragActive())
         return;
@@ -911,6 +913,13 @@ void DesktopApp::OpenQuickNavigation(
         }
     }
 
+    if (source == QuickNavigationInvocationSource::DockSearch && requestedDockHost)
+    {
+        RECT dockScreen = requestedDockHost->dockRect;
+        OffsetRect(&dockScreen, virtualLeft_, virtualTop_);
+        KeepDockTopmostForAction(dockScreen);
+    }
+
     if (quickNavigationOpen_)
     {
         if (source != QuickNavigationInvocationSource::DockSearch) return;
@@ -952,7 +961,7 @@ void DesktopApp::OpenQuickNavigation(
         {
             (void)FocusKeyboardWindow(
                 quickNavigationSearchEdit_, true,
-                L"Quick navigation search edit");
+                L"Quick navigation search edit", true);
         }
         ApplyFloatingDockLayerPolicy();
         return;
@@ -1029,7 +1038,7 @@ void DesktopApp::OpenQuickNavigation(
         {
             (void)FocusKeyboardWindow(
                 quickNavigationSearchEdit_, true,
-                L"Quick navigation search edit");
+                L"Quick navigation search edit", true);
             SendMessageW(
                 quickNavigationSearchEdit_,
                 EM_SETSEL, 0, -1);
@@ -1038,7 +1047,7 @@ void DesktopApp::OpenQuickNavigation(
         {
             (void)FocusKeyboardWindow(
                 quickNavigationHwnd_, true,
-                L"Quick navigation window");
+                L"Quick navigation window", true);
         }
         ApplyFloatingDockLayerPolicy();
         return;
@@ -1134,14 +1143,14 @@ void DesktopApp::OpenQuickNavigation(
     {
         (void)FocusKeyboardWindow(
             quickNavigationSearchEdit_, true,
-            L"Quick navigation search edit");
+            L"Quick navigation search edit", true);
         SendMessageW(quickNavigationSearchEdit_, EM_SETSEL, 0, -1);
     }
     else
     {
         (void)FocusKeyboardWindow(
             quickNavigationHwnd_, true,
-            L"Quick navigation window");
+            L"Quick navigation window", true);
     }
     ApplyFloatingDockLayerPolicy();
 }

@@ -4,6 +4,8 @@
 #include "item.h"
 #include "common/types.h"
 #include "dock/dock_magnification.h"
+#include "dock/dock_running_drag_rules.h"
+#include "ui/render/inline_tooltip_backdrop.h"
 
 #include <memory>
 #include <vector>
@@ -26,13 +28,14 @@ public:
     void Draw(ID2D1DeviceContext* context, RECT rect, int state) override;
     ComPtr<IDataObject> CreateDataObject() override { return nullptr; }
 
-    size_t GetRunningIndex() const { return runningIndex_; }
+    size_t GetRunningIndex() const;
     std::wstring GetIdentityKey() const;
 
 private:
     DesktopApp* app_ = nullptr;
     Container* container_ = nullptr;
     size_t runningIndex_ = static_cast<size_t>(-1);
+    std::wstring identityKey_;
     RECT bounds_{};
 };
 
@@ -109,6 +112,7 @@ public:
         Slot* targetSlot, HitRegion region, int mods) override;
     void DrawChrome(ID2D1DeviceContext* context, POINT mousePt) override;
     void DrawContents(ID2D1DeviceContext* context) override;
+    void ClearTitleTooltipBackdrop();
     RECT GetBounds() const override;
     BarStyle GetInsertionStyle() const override;
     std::vector<Item*> GetSelectedItems() const override;
@@ -160,6 +164,7 @@ public:
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
     size_t GetInsertIndexAtPoint(POINT pt) const;
+    snowdesktop::dock_running_drag::Target GetRunningDragTarget(POINT pt) const;
     void DrawInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex) const;
 
 private:
@@ -181,12 +186,15 @@ private:
     size_t SortableEntryCount() const;
     size_t FolderEntryCount() const;
     size_t FolderEntryBegin() const;
+    size_t EmptyRunningDragFixedSlots() const;
+    size_t EmptyRunningDragFileSlots() const;
     bool HasOnlyRecycleBinDragSource() const;
     bool HasOnlyFolderDragSource() const;
     int ItemIconSize() const;
     int ItemPitch() const;
     int ScaledSpacing() const;
     int ScaledSeparatorGap() const;
+    float RunningSlotUnits() const;
     int EdgeMargin() const;
     std::vector<RECT> GetLeadingMagnificationRects() const;
     std::vector<RECT> GetTrailingMagnificationRects() const;
@@ -203,6 +211,7 @@ private:
         const RECT& baseRect, const RECT& focusRect,
         POINT pointer) const;
     RECT MagnifyElementRect(const RECT& baseRect, const RECT& focusRect, POINT pointer) const;
+    float TitleTooltipScale() const;
     RECT CalculateTitleTooltipBounds(
         const std::wstring& title,
         const RECT& hoveredBounds,
@@ -241,6 +250,8 @@ private:
     mutable RECT hoveredTitleBoundsCache_{};
     mutable int hoveredTitleBoundsCachePosition_ = -1;
     mutable bool hoveredTitleBoundsCacheLightTheme_ = false;
+    mutable float hoveredTitleBoundsCacheFontSize_ = 0;
+    snowdesktop::InlineTooltipBackdrop titleTooltipBackdrop_;
     // Magnification is a continuous pointer-distance field, but the semantic
     // hover owner needs spatial hysteresis at item and Dock boundaries.
     mutable RECT magnificationFocusRect_{};

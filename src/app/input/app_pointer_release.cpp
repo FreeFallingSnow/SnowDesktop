@@ -2,6 +2,7 @@
 #include "app/popup/categorized_popup_scope.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "desktop/desktop_hover_rules.h"
+#include "drag_drop/drag_input_rules.h"
 #include "steam/steam_app_identity.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_scroll_rules.h"
@@ -46,14 +47,14 @@ void DesktopApp::OnMouseLeave()
     else CancelPopupHover();
     RecordShellHoverTrace(
         ShellHoverTraceEvent::MouseLeaveBegin);
-    if (snowdesktop::desktop_hover_rules::
+    if (HasActiveContextMenuSession() ||
+        snowdesktop::desktop_hover_rules::
             ShouldHoldHoverDuringNativeShellPopup(
                 shellPopupMenuLayerDepth_ > 0))
     {
-        // A native Shell menu owns mouse capture while its modal session is
-        // active. Preserve the complete Dock hover frame so its content and
-        // paired backdrop cannot diverge; EndShellPopupMenuLayer reconciles
-        // once against the real pointer location.
+        // Popup windows temporarily own pointer input. Preserve the complete
+        // Dock hover frame until the menu session unwinds; subsequent live
+        // sampling reconciles the real pointer location.
         RecordShellHoverTrace(
             ShellHoverTraceEvent::MouseLeaveEnd);
         return;
@@ -167,17 +168,17 @@ void DesktopApp::ReconcileDesktopHoverState(
     const HWND shellDialogOwner = ShellDialogOwnerHwnd();
     const bool shellDialogOwnerAvailable =
         shellDialogOwner && IsWindow(shellDialogOwner);
-    if (!snowdesktop::desktop_hover_rules::
+    if (HasActiveContextMenuSession() ||
+        !snowdesktop::desktop_hover_rules::
             ShouldReconcileFromSurfaceSample(
                 shellPopupMenuLayerDepth_ > 0,
                 shellDialogOwnerAvailable,
                 !shellDialogOwnerAvailable ||
                     IsWindowEnabled(shellDialogOwner)))
     {
-        // TrackPopupMenuEx and a synchronously invoked Shell command run a
-        // private modal loop. Real pointer leave messages remain authoritative,
-        // but WindowFromPoint can alternate between a menu/dialog shadow and
-        // the desktop while those Shell-owned windows are being restacked.
+        // Modern menus own a separate input surface; native Shell menus and
+        // commands run private modal loops. WindowFromPoint can alternate
+        // between a menu/dialog shadow and the desktop during restacking.
         // Do not let foreground notifications or the periodic fallback replay
         // passive hover until both the popup layer has unwound and the Shell
         // dialog owner has been re-enabled. The latter tracks Task Dialogs
@@ -194,20 +195,36 @@ void DesktopApp::ReconcileDesktopHoverState(
         const bool passiveHoverCleared =
             lastMousePoint_.x == LONG_MIN &&
             lastMousePoint_.y == LONG_MIN;
-        const bool activateHover =
-            snowdesktop::desktop_hover_rules::
-                ShouldActivateFromSurfaceSample(
-                    true, passiveHoverCleared, mode,
-                    foregroundSettled);
-        POINT baseCursorPoint{};
+        POINT dockScreenPoint = cursorPoint;
+        const HWND dockHitWindow = ClientToScreen(hwnd_, &dockScreenPoint)
+                ? WindowFromPoint(dockScreenPoint) : nullptr;
         const bool pointerOnBaseDesktopSurface =
-            !passiveHoverCleared &&
-            TryGetBaseDesktopHoverPointFromCursor(
-                baseCursorPoint);
+            IsBaseDesktopHoverSurfaceWindow(dockHitWindow);
+        bool pointerInDockLayer = false;
+        for (const auto& host : persistentDockHosts_)
+        {
+            if (host && ShouldShowPersistentDockHost(*host) &&
+                (dockHitWindow == host->hwnd ||
+                    host->backdrop.IsBackdropWindow(dockHitWindow)) &&
+                snowdesktop::floating_dock_rules::IsPointInVisibleLayer(
+                    cursorPoint, host->dockRect,
+                    host->popupRect, host->tooltipRect))
+            {
+                pointerInDockLayer = true;
+                break;
+            }
+        }
+        const bool pointerOnActiveHoverSurface =
+            snowdesktop::desktop_hover_rules::IsActiveHoverSampleSurface(
+                pointerOnBaseDesktopSurface,
+                IsPersistentDockHostWindow(dockHitWindow) ||
+                    IsPersistentDockBackdropWindow(dockHitWindow),
+                pointerInDockLayer);
+        const POINT activeCursorPoint = cursorPoint;
         const bool pointerPositionChanged =
-            pointerOnBaseDesktopSurface &&
-            (baseCursorPoint.x != lastMousePoint_.x ||
-                baseCursorPoint.y != lastMousePoint_.y);
+            pointerOnActiveHoverSurface &&
+            (activeCursorPoint.x != lastMousePoint_.x ||
+                activeCursorPoint.y != lastMousePoint_.y);
         const bool widgetInteractionActive =
             middleButtonWidgetMove_ ||
             widgetAction_ != WidgetAction::None ||
@@ -220,25 +237,39 @@ void DesktopApp::ReconcileDesktopHoverState(
                     mouseDown_,
                     dragSession_.IsActive(),
                     widgetInteractionActive);
+        const bool activateHover = passiveHoverAllowed &&
+            snowdesktop::desktop_hover_rules::ShouldActivateFromSurfaceSample(
+                pointerOnActiveHoverSurface, passiveHoverCleared, mode,
+                foregroundSettled);
         const bool refreshActiveHover =
             snowdesktop::desktop_hover_rules::
                 ShouldRefreshActiveHoverFromSurfaceSample(
-                    pointerOnBaseDesktopSurface,
+                    pointerOnActiveHoverSurface,
                     passiveHoverCleared,
                     pointerPositionChanged,
                     passiveHoverAllowed,
                     mode,
                     foregroundSettled);
+        // A sampled acquisition does not deliver WM_MOUSEMOVE, so it must
+        // restore the leave subscription itself. Do not track Dock content
+        // while a backdrop owns the hit: that would generate repeated leaves.
+        if (passiveHoverAllowed && pointerOnActiveHoverSurface &&
+            (dockHitWindow == hwnd_ || IsPersistentDockHostWindow(dockHitWindow)))
+        {
+            TRACKMOUSEEVENT tracking{ sizeof(tracking) };
+            tracking.dwFlags = TME_LEAVE;
+            tracking.hwndTrack = dockHitWindow;
+            TrackMouseEvent(&tracking);
+        }
         if (activateHover || refreshActiveHover)
         {
             lastMousePoint_ = activateHover
-                ? cursorPoint : baseCursorPoint;
+                ? cursorPoint : activeCursorPoint;
             // A stale floating-Dock leave may have consumed tracking before
-            // the cursor reached the base desktop surface. Keep the title
+            // the cursor reached its final desktop or Dock point. Keep the title
             // HRGN synchronized with the repaired point before presenting so
             // an old visual/input island cannot outlive the hover state.
-            if (refreshActiveHover)
-                UpdateFloatingDockWindowBounds(false);
+            UpdateFloatingDockWindowBounds(false);
             PresentPassiveHoverVisualChange();
             RecordShellHoverTrace(
                 activateHover
@@ -716,75 +747,25 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         return true;
     }
 
-    const auto dispatchWindowCommand =
-        [this, pressedWindowAction](
-            std::function<bool(
-                DockWindowTransitionCapturePolicy)> command) {
-            if (!command)
-                return;
-            const bool requiresFloatingDockClose =
-                snowdesktop::dock_window_rules::
-                    RequiresFloatingDockMinimizeCaptureIsolation(
-                        IsSelectedPersistentDockHostPromoted(),
-                        pressedWindowAction);
-            if (!requiresFloatingDockClose)
-            {
-                command(DockWindowTransitionCapturePolicy::
-                    SnapshotPreferred);
-                return;
-            }
-
-            // A DWM thumbnail contains only the target HWND, so it can animate
-            // minimize without hiding the floating Dock. If registration is
-            // unavailable, retain the proven close-and-snapshot path.
-            if (requiresFloatingDockClose &&
-                command(DockWindowTransitionCapturePolicy::
-                    LiveThumbnailOnly))
-            {
-                return;
-            }
-
-            CloseFloatingDockThen(
-                [command = std::move(command)]() mutable {
-                    command(DockWindowTransitionCapturePolicy::
-                        SnapshotPreferred);
-                },
-                FloatingDockCloseFocusPolicy::PreserveCurrent);
-        };
-
     if (!runningAppKey.empty())
     {
         const auto running = std::find_if(dockUnpinnedRunningApps_.begin(),
             dockUnpinnedRunningApps_.end(), [&](const DockRunningAppInfo& app) {
-                return app.identityKey == runningAppKey;
+                return app.presence.Interactive() && app.identityKey == runningAppKey;
             });
         if (running != dockUnpinnedRunningApps_.end())
         {
             const HWND runningWindow = running->window;
-            dispatchWindowCommand(
-                [this, runningWindow, pressedWindowAction,
-                    pressedTargetWindow, pressedAnchorScreen](
-                    DockWindowTransitionCapturePolicy capturePolicy) {
-                    return ActivateOrToggleDockWindow(
-                        runningWindow, pressedWindowAction,
-                        pressedTargetWindow,
-                        pressedAnchorScreen,
-                        capturePolicy);
-                });
+            ActivateOrToggleDockWindow(
+                runningWindow, pressedWindowAction,
+                pressedTargetWindow, pressedAnchorScreen);
         }
     }
     else if (frequentItemIndex < items_.size())
     {
-        dispatchWindowCommand(
-            [this, frequentItemIndex, pressedWindowAction,
-                pressedTargetWindow, pressedAnchorScreen](
-                DockWindowTransitionCapturePolicy capturePolicy) {
-                return ActivateOrToggleDockItem(
-                    frequentItemIndex, pressedWindowAction,
-                    pressedTargetWindow,
-                    pressedAnchorScreen,
-                    capturePolicy);
-            });
+        ActivateOrToggleDockItem(
+            frequentItemIndex, pressedWindowAction,
+            pressedTargetWindow, pressedAnchorScreen);
     }
     else if (IsLogicalDockEntryType(entryType))
     {
@@ -828,23 +809,20 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         const size_t itemIndex = FindItemIndexByKey(reference);
         if (itemIndex < items_.size())
         {
-            dispatchWindowCommand(
-                [this, itemIndex, pressedWindowAction,
-                    pressedTargetWindow, pressedAnchorScreen](
-                    DockWindowTransitionCapturePolicy capturePolicy) {
-                    return ActivateOrToggleDockItem(
-                        itemIndex, pressedWindowAction,
-                        pressedTargetWindow,
-                        pressedAnchorScreen,
-                        capturePolicy);
-                });
+            ActivateOrToggleDockItem(
+                itemIndex, pressedWindowAction,
+                pressedTargetWindow, pressedAnchorScreen);
         }
     }
     return true;
 }
 
-void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
+void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
+    bool rightButtonRelease)
 {
+    const bool rightDrop = rightButtonItemDrag_;
+    if (!snowdesktop::drag_input_rules::IsItemDragRelease(
+            rightDrop, rightButtonRelease)) return;
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {
@@ -1208,6 +1186,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
                         widgetCollectionGroupTargetIndex_,
                         widgetCollectionGroupInsertIndex_);
             }
+            else if (IsPointOccludedByOpenPopup(upPoint))
+                MessageBeep(MB_ICONWARNING);
             else if (canDock)
             {
                 Widget dockSource(&widgets_[mouseDownWidgetIndex_], this);
@@ -1356,8 +1336,28 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         return;
     }
 
+    if (dockRunningDrag_ && dragSession_.IsActive())
+    {
+        CommitDockRunningDrag(upPoint, static_cast<int>(wp & (MK_CONTROL | MK_SHIFT)));
+        goto cleanup;
+    }
+
+    if (rightDrop)
+    {
+        ResolveCurrentDragTargetAt(upPoint);
+        DWORD releaseKeyState = MK_RBUTTON;
+        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) releaseKeyState |= MK_CONTROL;
+        if (GetAsyncKeyState(VK_MENU) & 0x8000) releaseKeyState |= MK_ALT;
+        if (GetAsyncKeyState(VK_SHIFT) & 0x8000) releaseKeyState |= MK_SHIFT;
+        if (!ChooseRightDragDropAction(upPoint, releaseKeyState,
+                DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK, false))
+            goto cleanup;
+        wp = releaseKeyState;
+        dropPreviewMods = static_cast<int>(releaseKeyState & (MK_CONTROL | MK_ALT | MK_SHIFT));
+    }
+
     // Dock 项轻微拖动后仍落回原项时，按单击处理而不是吞掉本次操作。
-    if (HandleDockClickRelease(upPoint))
+    if (!rightDrop && HandleDockClickRelease(upPoint))
         goto cleanup;
 
     if (IsExternalDropWindowAt(upPoint))
@@ -1374,7 +1374,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         goto cleanup;
     }
 
-    if (TryCommitDockWidgetPairDrop(upPoint,
+    if (TryCommitWidgetPairDragDrop(upPoint, rightDrop ? dropPreviewMods :
             static_cast<int>(wp & (MK_CONTROL | MK_SHIFT)) |
             ((GetAsyncKeyState(VK_MENU) & 0x8000) ? MK_ALT : 0)))
         goto cleanup;
@@ -1403,13 +1403,13 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
         goto cleanup;
     }
 
-    dropPreviewMods = 0;
-    if (GetAsyncKeyState(VK_CONTROL) & 0x8000)
-        dropPreviewMods |= MK_CONTROL;
-    if (GetAsyncKeyState(VK_MENU) & 0x8000)
-        dropPreviewMods |= MK_ALT;
-    if (GetAsyncKeyState(VK_SHIFT) & 0x8000)
-        dropPreviewMods |= MK_SHIFT;
+    if (!rightDrop)
+    {
+        dropPreviewMods = 0;
+        if (GetAsyncKeyState(VK_CONTROL) & 0x8000) dropPreviewMods |= MK_CONTROL;
+        if (GetAsyncKeyState(VK_MENU) & 0x8000) dropPreviewMods |= MK_ALT;
+        if (GetAsyncKeyState(VK_SHIFT) & 0x8000) dropPreviewMods |= MK_SHIFT;
+    }
     commitVisualBeforeDrop =
         dragSession_.TargetRegion() == HitRegion::Handoff;
     if (!commitVisualBeforeDrop)
@@ -1564,7 +1564,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint)
                     goto cleanup;
                 }
             }
-            DWORD shellKeyState = MK_LBUTTON;
+            DWORD shellKeyState = rightDrop && (wp & MK_RBUTTON) ? MK_RBUTTON : MK_LBUTTON;
             if (mods & MK_CONTROL) shellKeyState |= MK_CONTROL;
             if (mods & MK_ALT) shellKeyState |= MK_ALT;
             if (mods & MK_SHIFT) shellKeyState |= MK_SHIFT;

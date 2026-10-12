@@ -39,11 +39,16 @@ public:
         const std::string& notificationId);
 
     bool IsAdded() const { return added_; }
-    static TrayCallbackAction ClassifyCallback(LPARAM value);
+    TrayCallbackAction ClassifyCallback(LPARAM value) const
+    {
+        return ClassifyCallback(value, callbackVersion_);
+    }
+    static TrayCallbackAction ClassifyCallback(LPARAM value, UINT version);
 
 private:
     HICON icon_ = nullptr;
     HWND owner_ = nullptr;
     bool added_ = false;
+    UINT callbackVersion_ = 0;
     std::string activeNotificationId_;
 };

@@ -503,6 +503,42 @@ int RunLargeIconAssetTests()
             !collected.empty() && collected[0].asset && fs::exists(disk / collected[0].asset->previewReference),
             "automatic disk eviction preserves retained sources, active previews, user imports and unrelated files");
     }
+    {
+        const auto disk = root / L"orphan-collection";
+        fs::create_directories(disk);
+        for (const auto* name : {L"raw-1234-64.png", L"preview-5678-128.png", L"steam-96001-landscape-english.png",
+                L"steam-96001-landscape-english.png.failure", L"steam-96001-landscape-english.png-1.download",
+                L"import-abcd.png", L"import-user.png", L"personal.png"})
+            atomic_file::WriteAll(disk / name, "small cache below the disk limit");
+        Queue assets(disk);
+        assets.assets.RetainReferences({"import-abcd.png"});
+        assets.assets.RetainSources({});
+        assets.WaitForNotifications(1);
+        Check(!fs::exists(disk / L"raw-1234-64.png") && !fs::exists(disk / L"preview-5678-128.png") &&
+            !fs::exists(disk / L"steam-96001-landscape-english.png") && fs::exists(disk / L"import-abcd.png") &&
+            !fs::exists(disk / L"steam-96001-landscape-english.png.failure") &&
+            !fs::exists(disk / L"steam-96001-landscape-english.png-1.download") &&
+            fs::exists(disk / L"import-user.png") && fs::exists(disk / L"personal.png"),
+            "an empty complete desktop collects orphan caches below the byte limit without new image requests, preserving referenced imports and unrelated files");
+        assets.assets.RetainReferences({});
+        assets.assets.RetainSources({});
+        assets.WaitForNotifications(2);
+        Check(!fs::exists(disk / L"import-abcd.png"), "an imported image is collected after its last desktop reference is removed");
+        LargeIconAssetRequest image;
+        image.itemKey = L"live-allocation"; image.generation = 1; image.importPath = square; image.pixels = 64;
+        assets.assets.Request(image);
+        auto live = assets.Wait(1);
+        const auto source = live.empty() || !live[0].asset ? std::string{} : live[0].asset->reference;
+        const auto preview = live.empty() || !live[0].asset ? std::string{} : live[0].asset->previewReference;
+        assets.assets.RetainSources({});
+        assets.WaitForNotifications(4);
+        Check(!source.empty() && fs::exists(disk / source) && !preview.empty() && fs::exists(disk / preview),
+            "orphan collection preserves the source and preview of an allocation still held by a desktop item");
+        live.clear(); assets.assets.Cancel(image.itemKey); assets.assets.RetainSources({});
+        assets.WaitForNotifications(5);
+        Check(!source.empty() && !fs::exists(disk / source) && !fs::exists(disk / preview),
+            "a cache-only allocation cannot pin an orphan source and preview forever");
+    }
     if (root.parent_path() == fs::temp_directory_path() && root.filename().wstring().starts_with(L"SnowDesktop-large-icons-"))
         fs::remove_all(root);
     if (SUCCEEDED(initialized)) CoUninitialize();

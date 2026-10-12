@@ -34,6 +34,14 @@ constexpr bool ShouldRetainHoverAcrossMouseLeave(
         pointerOnPairedBackdropWindow;
 }
 
+constexpr bool ShouldClearRejectedDesktopHover(
+    bool hoverPresent, bool pointerOnDockSurface, bool pointerInDockLayer)
+{
+    // A queued desktop move can arrive after the Dock's newer move. Reject
+    // that stale message without clearing the hover owned by the Dock.
+    return hoverPresent && !(pointerOnDockSurface && pointerInDockLayer);
+}
+
 template<typename RearmTracking>
 bool RetainPairedSurfaceMouseLeave(
     bool pointerOnContentWindow,
@@ -50,6 +58,26 @@ bool RetainPairedSurfaceMouseLeave(
     return true;
 }
 
+template<typename RearmTracking>
+bool RetainDockSurfaceMouseLeave(
+    bool pointerOnContentWindow,
+    bool pointerOnPairedBackdropWindow,
+    bool pointerOnBaseDesktopDockSurface,
+    RearmTracking rearmTracking)
+{
+    // Explorer can restack the desktop above a Dock during minimize. The same
+    // logical Dock then receives input through the desktop HWND. Transfer leave
+    // tracking to that HWND without clearing/restarting the hover animation.
+    if (pointerOnBaseDesktopDockSurface)
+    {
+        rearmTracking(false);
+        return true;
+    }
+    return RetainPairedSurfaceMouseLeave(
+        pointerOnContentWindow, pointerOnPairedBackdropWindow,
+        [&] { rearmTracking(true); });
+}
+
 constexpr bool ShouldResamplePassiveMouseMove(
     bool mouseDown,
     bool dragActive,
@@ -58,6 +86,25 @@ constexpr bool ShouldResamplePassiveMouseMove(
     return !mouseDown &&
         !dragActive &&
         !widgetInteractionActive;
+}
+
+constexpr bool CanCoalescePassiveMouseMoves(
+    bool passiveHover, bool pointerButtonsDown,
+    bool transportActive, bool captureActive)
+{
+    // Pressed widget input and OLE retain their own sample/release ordering.
+    // Passive hover needs only the newest point in each consecutive segment.
+    return passiveHover && !pointerButtonsDown &&
+        !transportActive && !captureActive;
+}
+
+constexpr bool ShouldProbeMouseMoveQueue(
+    bool nativeGesture, bool passiveHover, bool postedWorkPending)
+{
+    // User32 already merges physical mouse movement on retrieval. A second
+    // PeekMessage can generate another move (and hit testing) instead of
+    // finding an older sample. Explicitly posted work still needs compaction.
+    return nativeGesture || (passiveHover && postedWorkPending);
 }
 
 constexpr bool ShouldPresentRetainedMouseLeave(
@@ -138,7 +185,7 @@ constexpr bool ShouldActivateFromSurfaceSample(
 }
 
 constexpr bool ShouldRefreshActiveHoverFromSurfaceSample(
-    bool pointerOnBaseDesktopSurface,
+    bool pointerOnActiveHoverSurface,
     bool passiveHoverCleared,
     bool pointerPositionChanged,
     bool passiveHoverAllowed,
@@ -149,10 +196,20 @@ constexpr bool ShouldRefreshActiveHoverFromSurfaceSample(
         mode == ReconcileMode::AllowImmediateActivation ||
         (mode == ReconcileMode::AllowActivationAfterForegroundSettle &&
             foregroundSettled);
-    return pointerOnBaseDesktopSurface &&
+    return pointerOnActiveHoverSurface &&
         !passiveHoverCleared &&
         pointerPositionChanged &&
         passiveHoverAllowed &&
         activationAllowed;
+}
+
+constexpr bool IsActiveHoverSampleSurface(
+    bool pointerOnBaseDesktopSurface,
+    bool pointerOnDockSurface, bool pointerInDockLayer)
+{
+    // A preview/popup bridge is not a passive-hover acquisition surface.
+    // Dock content and its paired backdrop are, within their logical region.
+    return pointerOnBaseDesktopSurface ||
+        (pointerOnDockSurface && pointerInDockLayer);
 }
 }

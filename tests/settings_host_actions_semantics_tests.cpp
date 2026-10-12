@@ -200,14 +200,14 @@ int main(int argc, char** argv)
         "external taskbar reconciliation updates only Windows-owned fields and never persists unrelated Dock drafts");
 
     const std::string_view externalRefresh = Between(run,
-        "settingsHostOptions.refreshExternalState = [this]()",
+        "settingsHostOptions.refreshExternalStateAsync = ",
         "settingsHostOptions.developerToolsVisible = [this]()");
-    Check(externalRefresh.find(
+    Check(!externalRefresh.empty() && externalRefresh.find(
               "SyncSystemTaskbarSettingsFromWindows();") !=
                 std::string_view::npos &&
             externalRefresh.find("IsSystemTaskbarAutoHideEnabled()") ==
                 std::string_view::npos,
-        "window reopen and in-window Taskbar navigation share one external-state reconciliation path");
+        "asynchronous external refresh wiring retains the shared Windows-owned Taskbar reconciliation helper");
 
     const std::string_view generalReload = Between(source,
         "void DesktopApp::LoadGeneralSettingsAndApply()",

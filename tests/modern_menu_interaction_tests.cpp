@@ -1,4 +1,5 @@
 #include "ui/menu/modern_menu.h"
+#include "app/menus/sort_menu.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "shell/shell_extension_menu_presentation.h"
 #include "ui/menu/menu_label.h"
@@ -405,6 +406,8 @@ struct StatusBarKeyboardProbe
     std::vector<snowdesktop::StatusBarItem> items;
     std::vector<snowdesktop::StatusBarInvocation> invoked;
     unsigned paints = 0, dismissals = 0, defaultKeys = 0;
+    bool selected = true;
+    unsigned pointerPresses = 0;
     static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM key, LPARAM bits)
     {
         auto* self = reinterpret_cast<StatusBarKeyboardProbe*>(GetWindowLongPtrW(window, GWLP_USERDATA));
@@ -412,6 +415,15 @@ struct StatusBarKeyboardProbe
         {
             self = static_cast<StatusBarKeyboardProbe*>(reinterpret_cast<CREATESTRUCTW*>(bits)->lpCreateParams);
             SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+        }
+        if (self && (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK || message == WM_RBUTTONDOWN))
+        {
+            const POINT point{GET_X_LPARAM(bits), GET_Y_LPARAM(bits)};
+            const bool doubleClick = message == WM_LBUTTONDBLCLK && self->input.IsDoubleClickTarget(self->items, point);
+            if (self->input.Press(self->items, point, message == WM_RBUTTONDOWN, doubleClick,
+                [&] { self->selected = false; ++self->pointerPresses; }) == snowdesktop::StatusBarAction::Dismiss)
+                ++self->dismissals;
+            return 0;
         }
         // The native bar uses this exact dispatcher and target resolver. Only
         // drawing / foreign-app invocation / dismissal effects are recorded.
@@ -488,8 +500,8 @@ void CheckStatusBarKeyboardMessages()
     SendMessageW(window, WM_KEYDOWN, VK_LEFT, 1);
     SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
     Expect(probe.invoked.size() == 4 && !probe.invoked.back().isTray &&
-        probe.invoked.back().action == StatusBarAction::Menu && probe.invoked.back().bounds.left == 0,
-        "built-in control context requests still open the bar menu at the selected control");
+        probe.invoked.back().action == StatusBarAction::MenuSystem && probe.invoked.back().bounds.left == 0,
+        "built-in control context requests preserve the selected control for its quick settings");
     probe.input.focused.reset();
     SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
     probe.input.focused = 1; probe.items[1].bounds = {};
@@ -503,16 +515,91 @@ void CheckStatusBarKeyboardMessages()
     SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(48, 16));
     SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), MAKELPARAM(-1, -1));
     Expect(probe.invoked.size() == 6 &&
-        probe.invoked[4].action == StatusBarAction::InputMethodPanel &&
-        probe.invoked[5].action == StatusBarAction::InputMethodPanel && probe.invoked[4].bounds.left == 32,
-        "mouse and keyboard IME context requests open the picker panel without invoking the native menu");
+        probe.invoked[4].action == StatusBarAction::InputMethodMenu &&
+        probe.invoked[5].action == StatusBarAction::InputMethodMenu && probe.invoked[4].bounds.left == 32,
+        "mouse and keyboard context requests on the mode button use the active IME menu");
     SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
     Expect(probe.invoked.size() == 7 && probe.invoked.back().action == StatusBarAction::InputMethod,
         "normal IME activation remains distinct from the context menu request");
     probe.items[2].bounds = {};
     SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(48, 16));
     Expect(probe.invoked.size() == 7, "a hidden IME control cannot respond to context clicks");
+    StatusBarItem layout{}; layout.key = "inputMethodLayout"; layout.action = StatusBarAction::InputMethodPanel;
+    layout.bounds = {64, 0, 100, 32}; probe.items.push_back(layout); probe.input.focused = 3;
+    SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
+    SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+    Expect(probe.invoked.size() == 9 && probe.invoked[7].action == StatusBarAction::InputMethodPanel &&
+        probe.invoked[8].action == StatusBarAction::MenuControlCenter,
+        "the separate layout button opens the picker, with visibility and panel options in its control-center context menu");
     Expect(SetKeyboardState(saved) != FALSE, "thread-local key state is restored");
+    // A real no-activate bar used to keep desktop/Dock selection because tray
+    // and blank presses bypass action activation. Record only the host effect;
+    // use the production press state machine and native down messages below.
+    probe.items = {menu, icon};
+    const auto dismissals = probe.dismissals;
+    unsigned expectedPresses = 0;
+    for (const auto point : {POINT{16, 16}, POINT{80, 16}, POINT{112, 16}})
+        for (const UINT message : {WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_LBUTTONDBLCLK})
+        {
+            probe.selected = true;
+            SendMessageW(window, message, 0, MAKELPARAM(point.x, point.y));
+            Expect(!probe.selected && probe.pointerPresses == ++expectedPresses,
+                "built-in, tray and blank native presses clear host selection exactly once at button-down");
+            probe.input.CancelPointer();
+            Expect(!probe.selected, "capture cancellation cannot restore selection cleared at button-down");
+        }
+    Expect(probe.dismissals == dismissals + 2,
+        "blank left/double presses retain dismissal while right presses retain their context path");
+    probe.selected = true;
+    SendMessageW(window, WM_MOUSEMOVE, 0, MAKELPARAM(16, 16));
+    SendMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(16, 16));
+    Expect(probe.selected && probe.pointerPresses == expectedPresses,
+        "hover and an unpaired release do not clear host selection");
+    StatusBarItem taskView = menu;
+    taskView.action = StatusBarAction::TaskView;
+    probe.items = {taskView};
+    SendMessageW(window, WM_LBUTTONDOWN, 0, MAKELPARAM(16, 16));
+    Expect(probe.input.Release(probe.items, {16, 16}, false).accepted,
+        "first Task View press remains armed after clearing selection");
+    probe.selected = true;
+    SendMessageW(window, WM_LBUTTONDBLCLK, 0, MAKELPARAM(16, 16));
+    Expect(!probe.selected && probe.pointerPresses == expectedPresses + 2 &&
+        !probe.input.Release(probe.items, {16, 16}, false).accepted,
+        "Task View double-click clears selection without rearming the suppressed second activation");
+    // Regression: pointer WM_CONTEXTMENU previously discarded every non-IME
+    // item's identity, making its own quick settings impossible to select.
+    const std::pair<StatusBarAction, StatusBarAction> contexts[]{
+        {StatusBarAction::Calendar, StatusBarAction::MenuTime},
+        {StatusBarAction::Notifications, StatusBarAction::MenuTime},
+        {StatusBarAction::Network, StatusBarAction::MenuNetwork},
+        {StatusBarAction::Audio, StatusBarAction::MenuAudio},
+        {StatusBarAction::Power, StatusBarAction::MenuPower},
+        {StatusBarAction::Cpu, StatusBarAction::MenuCpu},
+        {StatusBarAction::Memory, StatusBarAction::MenuMemory},
+        {StatusBarAction::Gpu, StatusBarAction::MenuGpu},
+        {StatusBarAction::Traffic, StatusBarAction::MenuTraffic},
+        {StatusBarAction::ControlCenter, StatusBarAction::MenuControlCenter},
+        {StatusBarAction::QuickSearch, StatusBarAction::MenuQuickSearch},
+        {StatusBarAction::TaskView, StatusBarAction::MenuTaskView},
+        {StatusBarAction::Tray, StatusBarAction::MenuTray}};
+    for (const auto& [normal, context] : contexts)
+    {
+        StatusBarItem target{}; target.action = normal; target.bounds = {0, 0, 32, 32};
+        probe.items = {target}; probe.input.focused = 0;
+        const auto count = probe.invoked.size();
+        SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(16, 16));
+        SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+        Expect(probe.invoked.size() == count + 2 && probe.invoked[count].action == context &&
+            probe.invoked[count + 1].action == context,
+            "pointer and keyboard context menus preserve the same clicked information/button identity");
+        SendMessageW(window, WM_KEYDOWN, VK_RETURN, 1);
+        Expect(probe.invoked.back().action == normal, "quick context settings do not replace normal activation");
+        probe.items[0].bounds = {};
+        const auto hiddenCount = probe.invoked.size();
+        SendMessageW(window, WM_RBUTTONUP, 0, MAKELPARAM(16, 16));
+        SendMessageW(window, WM_CONTEXTMENU, reinterpret_cast<WPARAM>(window), -1);
+        Expect(probe.invoked.size() == hiddenCount, "hidden information controls cannot open item quick settings");
+    }
     DestroyWindow(window);
     UnregisterClassW(definition.lpszClassName, definition.hInstance);
 }
@@ -916,9 +1003,100 @@ void CheckPreviewCompanionOrder(HWND owner)
 
 } // namespace
 
+// Exercise the same rows and layout metadata as the host, on an isolated desktop.
+// This catches vertical direction buttons, third-level cascades and wrong hit targets.
+void CheckSortRows(HWND owner, bool negativeControl)
+{
+    using namespace snowdesktop::modern_menu;
+    for (const UINT dpi : {96U, 192U})
+    {
+        for (size_t row = 0; row < 4; ++row)
+        {
+            for (const bool ascending : {true, false})
+            {
+                const auto labels = [dpi](const char* key) -> std::wstring {
+                    const std::string_view value(key);
+                    if (value == "app.menu.sort_name") return L"Name";
+                    if (value == "app.menu.sort_type") return L"Type";
+                    if (value == "app.menu.sort_size") return L"Size";
+                    if (value == "app.interact.sort_date") return dpi == 96 ? L"Date Modified" : L"Änderungsdatum";
+                    if (value == "app.menu.sort_asc") return dpi == 96 ? L"Ascending" : L"Aufsteigend";
+                    return dpi == 96 ? L"Descending" : L"Absteigend";
+                };
+                Item sort;
+                sort.command = 9000;
+                sort.label = L"Sort by";
+                sort.children = snowdesktop::sort_menu::BuildItems(labels);
+                if (negativeControl)
+                    for (auto& item : sort.children) item.inlineAction = false;
+                std::array<RECT, 12> rectangles{};
+                std::array<bool, 12> observed{};
+                Options options;
+                options.owner = owner;
+                options.anchor = {80, 80};
+                options.dpi = dpi;
+                options.appearance = dpi == 96 ? Appearance::OpaqueLight : Appearance::OpaqueDark;
+                options.onHover = [&](const HoverInfo& hover) {
+                    for (size_t i = 0; i < sort.children.size(); ++i)
+                        if (hover.command == sort.children[i].command)
+                        {
+                            Expect(hover.depth == 1, "sorting actions stay in the second menu panel");
+                            rectangles[i] = hover.itemScreenRect;
+                            observed[i] = true;
+                        }
+                };
+                const size_t target = row * 3 + (ascending ? 1 : 2);
+                gDriveMode = DriveMode::Script;
+                gInputPosted = false;
+                gWatchdogFired = false;
+                gMenuScript = [&](HWND root) {
+                    SendMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                    SendMessageW(root, WM_KEYDOWN, VK_RIGHT, 0);
+                    MenuWindows windows;
+                    EnumThreadWindows(GetCurrentThreadId(), FindMenuWindows, reinterpret_cast<LPARAM>(&windows));
+                    Expect(windows.child != nullptr, "sorting has one child panel");
+                    SendMessageW(windows.child, WM_KEYDOWN, VK_HOME, 0);
+                    for (size_t i = 1; i < rectangles.size(); ++i)
+                        SendMessageW(windows.child, WM_KEYDOWN, VK_DOWN, 0);
+                    for (size_t i = 0; i < 4; ++i)
+                    {
+                        const auto& name = rectangles[i * 3];
+                        const auto& asc = rectangles[i * 3 + 1];
+                        const auto& desc = rectangles[i * 3 + 2];
+                        Expect(observed[i * 3] && observed[i * 3 + 1] && observed[i * 3 + 2],
+                            "keyboard navigation reaches both direction buttons for every field");
+                        Expect(name.top == asc.top && asc.top == desc.top &&
+                            name.bottom == asc.bottom && asc.bottom == desc.bottom &&
+                            asc.left >= name.right && desc.left >= asc.right,
+                            "ascending and descending buttons sit to the right of each field on the same row");
+                    }
+                    const auto& rectangle = rectangles[target];
+                    POINT point{(rectangle.left + rectangle.right) / 2, (rectangle.top + rectangle.bottom) / 2};
+                    ScreenToClient(windows.child, &point);
+                    const auto position = MAKELPARAM(point.x, point.y);
+                    SendMessageW(windows.child, WM_MOUSEMOVE, 0, position);
+                    SendMessageW(windows.child, WM_LBUTTONDOWN, MK_LBUTTON, position);
+                    SendMessageW(windows.child, WM_LBUTTONUP, 0, position);
+                };
+                SetTimer(owner, kDriveTimer, 10, nullptr);
+                SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+                const auto result = Show({sort}, options);
+                KillTimer(owner, kWatchdogTimer);
+                Expect(!gWatchdogFired && result.command == sort.children[target].command,
+                    "a right-hand sorting button executes its own field and direction");
+                const auto selection = snowdesktop::sort_menu::ResolveCommand(result.command);
+                const int expectedModes[] = {0, 1, 3, 2};
+                Expect(selection && selection->mode == expectedModes[row] && selection->ascending == ascending,
+                    "all four fields route both directions to the intended sorting mode");
+            }
+        }
+    }
+    gMenuScript = {};
+}
+
 void RunTrayFocusWindowTests();
 
-int wmain()
+int wmain(int argc, wchar_t** argv)
 {
     // Regression: asynchronous Shell entries belong immediately above More,
     // in a final group after all ordinary host actions.
@@ -1002,6 +1180,9 @@ int wmain()
     SetForegroundWindow(owner);
     SetFocus(owner);
 
+    const bool sortNegativeControl = argc == 2 && std::wstring_view(argv[1]) == L"--sort-layout-negative-control";
+    CheckSortRows(owner, sortNegativeControl);
+    if (sortNegativeControl) return 2; // Expected to fail the same geometry assertion above.
     CheckCascadeWorkArea(owner);
     CheckPreviewCompanionOrder(owner);
     CheckDockRunningMenuTransition(owner);
@@ -1228,6 +1409,47 @@ int wmain()
         DestroyWindow(parent);
         SetActiveWindow(owner);
         SetFocus(owner);
+    }
+    // Right-drag decisions retain their source context, so their host cannot
+    // activate the input proxy from its normal press handler. Exercise the
+    // shared menu's real queue on a no-activate surface with no dismiss hook.
+    {
+        const HWND outside = CreateWindowExW(
+            WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, kOwnerClass, L"",
+            WS_POPUP | WS_VISIBLE, 20, 20, 20, 20,
+            nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        Expect(outside != nullptr, "a no-activate outside menu surface exists");
+        for (const UINT press : {WM_LBUTTONDOWN, WM_RBUTTONDOWN,
+                WM_MBUTTONDOWN, WM_XBUTTONDOWN})
+        {
+            gWatchdogFired = false;
+            HANDLE wake = CreateEventW(nullptr, FALSE, TRUE, nullptr);
+            Expect(wake != nullptr, "outside menu press driver event exists");
+            snowdesktop::modern_menu::Options outsideOptions;
+            outsideOptions.owner = owner;
+            outsideOptions.anchor = {80, 80};
+            outsideOptions.eventPump.scheduledWorkHandle = wake;
+            bool pressPosted = false;
+            outsideOptions.eventPump.dispatchScheduledWork = [&]() {
+                const WPARAM buttons = press == WM_LBUTTONDOWN ? MK_LBUTTON :
+                    press == WM_RBUTTONDOWN ? MK_RBUTTON :
+                    press == WM_MBUTTONDOWN ? MK_MBUTTON :
+                    MAKEWPARAM(MK_XBUTTON1, XBUTTON1);
+                pressPosted = PostMessageW(outside, press, buttons,
+                    MAKELPARAM(5, 5)) != FALSE;
+            };
+            SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+            const auto outsideResult = snowdesktop::modern_menu::Show(
+                adjustmentItems, outsideOptions);
+            KillTimer(owner, kWatchdogTimer);
+            CloseHandle(wake);
+            Expect(pressPosted && !gWatchdogFired &&
+                    outsideResult.command == 0 &&
+                    outsideResult.reason == snowdesktop::modern_menu::ExitReason::Cancelled &&
+                    !snowdesktop::modern_menu::IsActive(),
+                "each outside button closes a shared menu on a no-activate host without choosing a drop action");
+        }
+        DestroyWindow(outside);
     }
     gDriveMode = DriveMode::Simple;
     gDrivePhase = 0;
@@ -2359,6 +2581,105 @@ int wmain()
             Expect(!aboveDock || expanded.bottom <= options.anchorRect.top + 16,
                    "growing a menu above the Dock keeps the Dock clear and scrolls additional rows");
         }
+    // Native popup regression: independent Shell streams may append below a
+    // stationary pointer. The original action must keep its screen bounds and
+    // click identity after both updates, while shifted footer updates wait.
+    for (const auto scenario : {std::pair{false, 0}, std::pair{true, 0},
+                               std::pair{false, 1}, std::pair{false, 2}})
+    {
+        const bool movesHoveredRow = scenario.first;
+        const int rowKind = scenario.second;
+        auto incremental = options;
+        incremental.dpi = 96; incremental.anchor = {200, 200};
+        incremental.rootPlacement = snowdesktop::modern_menu::RootPlacement::Default;
+        incremental.onHover = {}; incremental.pollItemsStablePrefix = true;
+        unsigned phase = 0, streams = 0;
+        bool finished = false, waited = false, selected = false;
+        RECT original{}, after{}, initialWindow{};
+        incremental.onHover = [&](const auto &hover) {
+            if (hover.command != 8270) return;
+            if (!original.right) original = hover.itemScreenRect; else after = hover.itemScreenRect;
+        };
+        incremental.pollItemsFinished = [&] { return finished; };
+        incremental.pollItems = [&](const auto &current, bool canApply) -> std::optional<std::vector<Item>> {
+            const auto root = snowdesktop::modern_menu::ActiveRootWindow();
+            if (!phase++)
+            {
+                SendMessageW(root, WM_MOUSEMOVE, 0, MAKELPARAM(20, 20));
+                TRACKMOUSEEVENT tracking{sizeof(tracking), TME_CANCEL | TME_LEAVE, root, 0};
+                TrackMouseEvent(&tracking);
+                MSG leave{};
+                while (PeekMessageW(&leave, root, WM_MOUSELEAVE, WM_MOUSELEAVE, PM_REMOVE)) {}
+                return {};
+            }
+            if (!canApply) return {};
+            auto updated = current;
+            Item loaded; loaded.command = 8271 + streams; loaded.label = streams ? L"Ordinary" : L"Start";
+            if (movesHoveredRow)
+            {
+                GetWindowRect(root, &initialWindow);
+                updated.insert(updated.begin(), loaded);
+                finished = true;
+                // Queue the leave after the candidate is returned. The real
+                // controller must retain this rejected candidate until safe.
+                PostMessageW(root, WM_MOUSELEAVE, 0, 0);
+                gDriveMode = DriveMode::Script; gInputPosted = false;
+                SetTimer(owner, kDriveTimer, 10, nullptr);
+            }
+            else
+            {
+                updated.push_back(loaded);
+                if (++streams == 2)
+                {
+                    finished = true;
+                    PostMessageW(root, WM_LBUTTONDOWN, 0, MAKELPARAM(20, 20));
+                    PostMessageW(root, WM_LBUTTONUP, 0, MAKELPARAM(20, 20));
+                }
+            }
+            return updated;
+        };
+        incremental.eventPump = {};
+        incremental.eventPump.flushPresentation = [&] {
+            if (!movesHoveredRow || !finished || selected) return;
+            const auto root = snowdesktop::modern_menu::ActiveRootWindow();
+            RECT bounds{}; GetWindowRect(root, &bounds);
+            if (bounds.bottom - bounds.top == initialWindow.bottom - initialWindow.top) waited = true;
+            else
+            {
+                selected = true;
+                PostMessageW(root, WM_KEYDOWN, VK_HOME, 0);
+                PostMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+            }
+        };
+        gMenuScript = [&](HWND) { incremental.eventPump.flushPresentation(); };
+        Item stable; stable.command = 8270; stable.label = L"Open";
+        std::vector<Item> stationaryItems{stable};
+        if (rowKind)
+        {
+            Item peer; peer.command = 8279; peer.label = L"Copy";
+            if (rowKind == 1)
+                stationaryItems.front().quickAction = peer.quickAction = true;
+            else
+            {
+                stationaryItems.front().inlineAction = peer.inlineAction = true;
+                stationaryItems.front().inlineGroup = peer.inlineGroup = 8270;
+            }
+            stationaryItems.push_back(peer);
+        }
+        gWatchdogFired = false; SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto incrementalResult = snowdesktop::modern_menu::Show(stationaryItems, incremental);
+        KillTimer(owner, kWatchdogTimer); KillTimer(owner, kDriveTimer); gMenuScript = {};
+        if (!movesHoveredRow)
+        {
+            if (streams != 2 || gWatchdogFired || incrementalResult.command != 8270 || !EqualRect(&original, &after))
+                std::cerr << "stationary row kind=" << rowKind << " streams=" << streams << " watchdog=" << gWatchdogFired << '\n';
+            Expect(streams == 2 && !gWatchdogFired && incrementalResult.command == 8270 && EqualRect(&original, &after),
+                "ordinary rows, quick actions and inline groups load both streams under a stationary pointer without moving its click target");
+        }
+        else
+            Expect(!gWatchdogFired && incrementalResult.command == 8271 && waited,
+                "an update that shifts the pointed row remains pending until the pointer leaves");
+    }
     // Mouse input and async replacement share the real controller. A result
     // must wait while the user is pointing at or pressing the old More row.
     for (const bool pressed : {false, true})

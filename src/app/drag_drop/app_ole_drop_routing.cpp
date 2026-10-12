@@ -111,9 +111,9 @@ bool DesktopApp::IsDesktopInteractionSurfaceWindow(
         belongsTo(dragPreviewHwnd_) ||
         belongsTo(quickNavigationHwnd_))
         return true;
-    if (dockWindowPreview_ &&
-        belongsTo(dockWindowPreview_->GetWindow()))
-        return true;
+    if (dockWindowPreview_)
+        for (const HWND popup : dockWindowPreview_->GetWindows())
+            if (belongsTo(popup)) return true;
     return desktopBackdropCompositor_.IsBackdropWindow(window) ||
         desktopBackdropCompositor_.IsBackdropWindow(root) ||
         IsPersistentDockBackdropWindow(window) ||

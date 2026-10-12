@@ -24,7 +24,7 @@ void DesktopApp::RefreshDragHintFromKeyboard()
             dragDropController_.IsExternalDragActive()
                 ? DropAction::Copy : DropAction::Move);
 
-    if (GetDockWidgetPairSourceIndex() < widgets_.size() &&
+    if (GetWidgetPairDragSource().widgetIndex < widgets_.size() &&
         !dragDropController_.IsTransportActive())
     {
         RefreshDragTargetAt(dragSession_.CurrentPoint(), mods);
@@ -1414,7 +1414,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
 
     // 弹窗滚动跟随（若弹窗仍打开）
     if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
-        popupWidgetIndex_ < widgets_.size())
+        popupWidgetIndex_ < widgets_.size() && !GetGroupPopupView())
     {
         RECT rPopup = popupRect_;
         RECT content = GetCollectionPopupContentRect(rPopup);

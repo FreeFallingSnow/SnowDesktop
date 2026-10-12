@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "app/popup/popup_window_pair_z_order.h"
+#include "diagnostics/performance_trace.h"
 
 // Floating-Dock window, composition surface and bounds management.
 
@@ -792,6 +793,9 @@ CalculateFloatingDockStableSourceRect(
         ? std::max(appearance.widgetBorderWidth,
             appearance.widgetEdgeHighlightWidth)
         : appearance.widgetBorderWidth;
+    const auto* tooltipPage = GridPageFromPoint({(dockRect.left + dockRect.right) / 2,
+        (dockRect.top + dockRect.bottom) / 2});
+    const float tooltipScale = tooltipPage ? static_cast<float>(tooltipPage->dpiX) / 96.f : 1.f;
     RECT sourceRect =
         snowdesktop::floating_dock_rules::
             ExpandForBorderOverdraw(
@@ -799,7 +803,9 @@ CalculateFloatingDockStableSourceRect(
                     floating_dock_rules::
                         ExpandHostForTitleLayer(
                             dockRect,
-                            dockSettings_.position),
+                            dockSettings_.position,
+                            static_cast<int>(std::ceil(300.f * tooltipScale)),
+                            static_cast<int>(std::ceil(96.f * tooltipScale))),
                 visualEdgeWidth);
 
     if (dockSettings_.showOnlyWhenSummoned || host.container->IsMergedWithStatusBar())
@@ -888,6 +894,7 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     bool forceRegionRefresh)
 {
     snowdesktop::startup_diagnostics::Scope startup(L"Dock.UpdateBounds");
+    snowdesktop::performance::Scope performanceScope("dock", "floating.layout");
     if (!host.active || !host.hwnd ||
         !IsWindow(host.hwnd) ||
         !host.container)
@@ -962,6 +969,16 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
     const bool sourceRectChanged =
         !EqualRect(&previousSourceRect,
             &floatingDockSourceRect_);
+    if (snowdesktop::performance::Enabled())
+    {
+        const unsigned changes = (dockGeometryChanged ? 1u : 0u) |
+            (sourceRectChanged ? 2u : 0u) | (animationRegionChanged ? 4u : 0u) |
+            (titleRegionChanged ? 8u : 0u) | (guideRegionChanged ? 16u : 0u) |
+            (forceRegionRefresh ? 32u : 0u);
+        snowdesktop::performance::Value("dock", "floating.layout_flags",
+            std::to_wstring(reinterpret_cast<UINT_PTR>(host.hwnd)), changes,
+            host.presentationRevision + 1);
+    }
     if (!dockGeometryChanged &&
         !guideRegionChanged &&
         !animationRegionChanged &&
@@ -970,7 +987,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         !sourceRectChanged &&
         !forceRegionRefresh)
     {
-        InvalidateFloatingDockWindow(host);
+        // Content can change at identical bounds (opacity, running marker,
+        // icon pixels). The caller's synchronous presentation still matters.
+        InvalidateFloatingDockWindow(host, immediatePresent);
         return;
     }
     host.guideOcclusionRect = guideOcclusion;
@@ -986,45 +1005,9 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         1, floatingDockSourceRect_.bottom -
             floatingDockSourceRect_.top);
 
-    const PersonalizationSettings& dockAppearance = promoted
-        ? floatingDockPersonalization_
-        : CurrentDockAppearance();
-    const float dockBorderWidth = std::clamp(
-        dockAppearance.widgetEdgeHighlightEnabled
-            ? std::max(dockAppearance.widgetBorderWidth,
-                dockAppearance.widgetEdgeHighlightWidth)
-            : dockAppearance.widgetBorderWidth,
-        kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
-    const int radius = std::max(1,
-        static_cast<int>(std::round(
-            promoted
-                ? floatingDockPersonalization_.cornerRadius
-                : CurrentDockAppearance().cornerRadius)));
-    HRGN windowRegion = snowdesktop::floating_dock_rules::CreateHostWindowRegion(
-        floatingDockRect_, host.animationVisualRect, floatingDockPopupRect_,
-        floatingDockTooltipRect_, floatingDockSourceRect_, radius, dockBorderWidth);
-    if (host.mergedPresentationActive && host.mergedAnimation.IsAnimating())
-    {
-        if (windowRegion) DeleteObject(windowRegion);
-        windowRegion = CreateRectRgn(0, 0, width, height);
-    }
-    RECT guideLocal = guideOcclusion;
-    if (!IsRectEmpty(&guideLocal))
-        OffsetRect(&guideLocal, -floatingDockSourceRect_.left, -floatingDockSourceRect_.top);
-    if (windowRegion && !IsRectEmpty(&guideLocal))
-    {
-        HRGN excluded = CreateRectRgnIndirect(&guideLocal);
-        if (excluded)
-        {
-            CombineRgn(windowRegion, windowRegion, excluded, RGN_DIFF);
-            DeleteObject(excluded);
-        }
-    }
-    host.backdrop.SetOcclusionRect(guideLocal);
-    if (windowRegion &&
-        !SetWindowRgn(
-            dockHostHwnd, windowRegion, FALSE))
-        DeleteObject(windowRegion);
+    // Keep the currently displayed frame's clipping until the candidate
+    // pixels have finished. The frame renderer applies both regions below.
+    host.windowRegionPending = true;
 
     // Popup and title changes only alter the visible/input region inside the
     // stable host allocation. Do not resize the HWND or recreate its DComp
@@ -1118,20 +1101,20 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
             0, 0, 0, 0,
             SWP_NOMOVE | SWP_NOSIZE |
                 SWP_NOACTIVATE);
+        RECT loggedRect{};
+        GetWindowRect(dockHostHwnd, &loggedRect);
+        wchar_t message[224]{};
+        wsprintfW(message,
+            L"Floating Dock shown rect=(%ld,%ld)-(%ld,%ld) exStyle=0x%08X topmost=%d",
+            loggedRect.left, loggedRect.top,
+            loggedRect.right, loggedRect.bottom,
+            static_cast<unsigned>(GetWindowLongPtrW(
+                dockHostHwnd, GWL_EXSTYLE)),
+            (GetWindowLongPtrW(
+                dockHostHwnd, GWL_EXSTYLE) &
+                WS_EX_TOPMOST) != 0);
+        WriteDiagnosticLogEntry(message);
     }
-    RECT loggedRect{};
-    GetWindowRect(dockHostHwnd, &loggedRect);
-    wchar_t message[224]{};
-    wsprintfW(message,
-        L"Floating Dock shown rect=(%ld,%ld)-(%ld,%ld) exStyle=0x%08X topmost=%d",
-        loggedRect.left, loggedRect.top,
-        loggedRect.right, loggedRect.bottom,
-        static_cast<unsigned>(GetWindowLongPtrW(
-            dockHostHwnd, GWL_EXSTYLE)),
-        (GetWindowLongPtrW(
-            dockHostHwnd, GWL_EXSTYLE) &
-            WS_EX_TOPMOST) != 0);
-    WriteDiagnosticLogEntry(message);
     if (!renderedResizeFrame)
         InvalidateFloatingDockWindow(
             host, immediatePresent);
@@ -1142,4 +1125,41 @@ void DesktopApp::UpdateFloatingDockWindowBounds(
         UpdatePersistentDockHostVisibility(host);
     if (dockWindowTransition_)
         dockWindowTransition_->RefreshOcclusion();
+}
+
+bool DesktopApp::ApplyFloatingDockWindowRegion(PersistentDockHost& host)
+{
+    if (!host.windowRegionPending) return true;
+    const auto& appearance = IsPersistentDockHostEffectivelyFloating(host)
+        ? floatingDockPersonalization_ : CurrentDockAppearance();
+    const float borderWidth = std::clamp(appearance.widgetEdgeHighlightEnabled
+        ? std::max(appearance.widgetBorderWidth, appearance.widgetEdgeHighlightWidth)
+        : appearance.widgetBorderWidth, kMinimumWidgetBorderWidth, kMaximumWidgetBorderWidth);
+    const int radius = std::max(1, static_cast<int>(std::round(appearance.cornerRadius)));
+    HRGN region = snowdesktop::floating_dock_rules::CreateHostWindowRegion(
+        host.dockRect, host.animationVisualRect, host.popupRect, host.tooltipRect,
+        host.sourceRect, radius, borderWidth);
+    if (host.mergedPresentationActive && host.mergedAnimation.IsAnimating())
+    {
+        if (region) DeleteObject(region);
+        region = CreateRectRgn(0, 0, host.sourceRect.right - host.sourceRect.left,
+            host.sourceRect.bottom - host.sourceRect.top);
+    }
+    if (!region) return false;
+    RECT guide = host.guideOcclusionRect;
+    if (!IsRectEmpty(&guide))
+    {
+        OffsetRect(&guide, -host.sourceRect.left, -host.sourceRect.top);
+        HRGN excluded = CreateRectRgnIndirect(&guide);
+        const bool clipped = excluded && CombineRgn(region, region, excluded, RGN_DIFF) != ERROR;
+        if (excluded) DeleteObject(excluded);
+        if (!clipped) { DeleteObject(region); return false; }
+    }
+    if (!SetWindowRgn(host.hwnd, region, FALSE))
+    {
+        DeleteObject(region);
+        return false;
+    }
+    host.windowRegionPending = false;
+    return true;
 }

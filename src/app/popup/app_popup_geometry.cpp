@@ -7,19 +7,46 @@
 
 bool DesktopApp::UsesCategorizedPopupControls(const DesktopWidget& widget) const
 {
+    if (IsGroupWidgetType(widget.type)) return true;
+    const bool dockFolder = dockFolderPopupOpen_ && &widget == &dockFolderPopupWidget_;
+    const size_t sourceCount = widget.type == DesktopWidgetType::FolderMapping
+        ? widget.folderEntries.size() : widget.itemKeys.size();
     return popupAnchoredToDock_ &&
         (widget.type == DesktopWidgetType::FileCategories || widget.type == DesktopWidgetType::FolderMapping) &&
         (widget.showSearchBox || widget.showFileCategories) &&
+        // Match the known-file reservation used by the opening geometry. Use
+        // the full source so filtering to no results keeps search accessible.
+        snowdesktop::dock_folder_popup_read::HasCategorizedContent(
+            sourceCount, dockFolder && dockFolderPopupLoading_,
+            dockFolder ? dockFolderPopupKnownItemCount_ : 0) &&
         !UsesCollectionPopupFan(widget);
 }
 
 ScrollingItemWidget* DesktopApp::GetCategorizedPopupView() const
 {
+    if (auto* group = GetGroupPopupView())
+    {
+        const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+        const RECT frame{popupRect_.left, popupRect_.top + metrics.headerHeight,
+            popupRect_.right, popupRect_.bottom - metrics.bottomPadding};
+        group->SetPopupFrame(&frame);
+        return group;
+    }
     const auto* widget = GetOpenPopupWidget();
     if (!widget || !UsesCategorizedPopupControls(*widget)) return nullptr;
     if (dockFolderPopupOpen_) return dockFolderPopupContainer_.get();
     for (const auto& container : containers_)
         if (auto* view = dynamic_cast<FileCategories*>(container.get());
+            view && view->GetWidgetData() == widget) return view;
+    return nullptr;
+}
+
+ScrollingItemWidget* DesktopApp::GetGroupPopupView() const
+{
+    const auto* widget = GetOpenPopupWidget();
+    if (!widget || !IsGroupWidgetType(widget->type)) return nullptr;
+    for (const auto& container : containers_)
+        if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get());
             view && view->GetWidgetData() == widget) return view;
     return nullptr;
 }
@@ -38,6 +65,16 @@ RECT DesktopApp::GetCollectionPopupControlsRect(const RECT& popup) const
     auto* view = GetCategorizedPopupView();
     if (!view) return {};
     const RECT frame = GetCategorizedPopupFrame(popup);
+    if (IsGroupWidgetType(view->GetWidgetData()->type))
+    {
+        CategorizedPopupScope scope(view, frame);
+        // Use the current source/search layout so hidden category rows do not
+        // reserve space. Metadata headers are accounted for by the caller.
+        const RECT content = view->GetContentViewportRect();
+        const LONG bottom = std::max<LONG>(frame.top,
+            content.top - (view->IsDetailsVisible() ? view->GetDetailsHeaderHeight() : 0));
+        return {frame.left, frame.top, frame.right, bottom};
+    }
     CategorizedPopupScope scope(view, frame);
     const auto* widget = view->GetWidgetData();
     LONG bottom = frame.top;
@@ -52,6 +89,11 @@ RECT DesktopApp::GetCategorizedPopupFrame(const RECT& popup) const
 {
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT frame{popup.left, popup.top + metrics.headerHeight, popup.right, popup.bottom};
+    if (const auto* widget = GetOpenPopupWidget(); widget && IsGroupWidgetType(widget->type))
+    {
+        frame.bottom -= metrics.bottomPadding;
+        return frame;
+    }
     const auto* view = GetCategorizedPopupView();
     if (!view) return frame;
     const LONG left = popup.left + metrics.paddingX;
@@ -64,11 +106,12 @@ RECT DesktopApp::GetCategorizedPopupFrame(const RECT& popup) const
         frame.right = right + inset;
         return frame;
     }
-    const int columns = std::max(1, (static_cast<int>(right - left) + metrics.gapX) /
-        std::max(1, metrics.cellWidth + metrics.gapX));
-    const RECT first = GetItemIconRect(RECT{left, 0, left + metrics.cellWidth, metrics.cellHeight});
-    frame.left = first.left - inset;
-    frame.right = first.right + (columns - 1) * (metrics.cellWidth + metrics.gapX) + inset;
+    // Preserve the first label's inset on both sides of the actual popup.
+    // Its minimum width can leave a partial grid track at the trailing edge.
+    const RECT firstTitle = GetItemTextRect(
+        RECT{left, 0, left + metrics.cellWidth, metrics.cellHeight}, false);
+    frame.left = firstTitle.left - inset;
+    frame.right = right - (firstTitle.left - left) + inset;
     return frame;
 }
 
@@ -164,6 +207,7 @@ RECT DesktopApp::GetCollectionPopupFanWorkArea(const DesktopWidget& widget) cons
 
 bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 {
+    if (IsGroupWidgetType(widget.type)) return false;
     namespace layout = snowdesktop::collection_popup_layout;
     // The fan always previews the full source. Search/category preferences
     // apply to its Show all view and must not change the chosen presentation.
@@ -189,6 +233,7 @@ bool DesktopApp::UsesCollectionPopupFan(const DesktopWidget& widget) const
 
 bool DesktopApp::UsesCollectionPopupList(const DesktopWidget& widget) const
 {
+    if (IsGroupWidgetType(widget.type)) return widget.listMode;
     namespace layout = snowdesktop::collection_popup_layout;
     return layout::ResolveView(popupAnchoredToDock_, widget.fanPopup,
         widget.listMode, popupFanShowAll_) == layout::View::List;
@@ -238,8 +283,8 @@ DesktopApp::GetCollectionPopupFanItem(const RECT& popup, size_t index) const
         CollectionPopupFanRootAbove(), mirrored);
     const std::wstring text = GetCollectionPopupFanLabel(index);
     ComPtr<IDWriteTextLayout> textLayout;
-    if (dwriteFactory_ && itemTextFormat_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
-            text.c_str(), static_cast<UINT32>(text.size()), itemTextFormat_.Get(),
+    if (dwriteFactory_ && fanTitleTextFormat_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
+            text.c_str(), static_cast<UINT32>(text.size()), fanTitleTextFormat_.Get(),
             10000.0f, 1000.0f, &textLayout)))
     {
         textLayout->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
@@ -325,6 +370,7 @@ void DesktopApp::EnsureCollectionPopupFanItemVisible(size_t index)
 
 void DesktopApp::ShowAllCollectionPopupItems()
 {
+    if (GetGroupPopupView()) return;
     const auto* widget = GetOpenPopupWidget();
     if (!widget || !UsesCollectionPopupFan(*widget) || GetPopupItemCount(*widget) == 0) return;
     // This is a change of the same popup, not an outside click. Retire queued
@@ -382,6 +428,15 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     // Dock popup or shrink its search and tab controls.
     size_t allItemCount = widget.type == DesktopWidgetType::FolderMapping
         ? widget.folderEntries.size() : widget.itemKeys.size();
+    if (IsGroupWidgetType(widget.type))
+        for (const auto& id : widget.childWidgetIds)
+        {
+            const size_t child = FindWidgetIndexById(id);
+            if (child < widgets_.size())
+                allItemCount = std::max(allItemCount,
+                    widgets_[child].type == DesktopWidgetType::FolderMapping
+                        ? widgets_[child].folderEntries.size() : widgets_[child].itemKeys.size());
+        }
     if (&widget == GetOpenPopupWidget())
         if (auto* categories = dynamic_cast<FileCategories*>(GetCategorizedPopupView()))
             allItemCount = categories->CachedCategoryKeys(L"all").size();
@@ -440,10 +495,56 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             RequiredListRowCount(itemCount)
         : snowdesktop::collection_popup_layout::
             RequiredRowCount(itemCount, columns);
+    auto* groupView = IsGroupWidgetType(widget.type) && &widget == GetOpenPopupWidget()
+        ? GetGroupPopupView() : nullptr;
+    struct GroupPopupSizing
+    {
+        int contentHeight = 0;
+        int overheadHeight = 0;
+    };
+    const auto measureGroupPopup = [&](int popupWidth) {
+        const RECT probe{work.left + metrics.edgeMargin, work.top + metrics.edgeMargin,
+            work.left + metrics.edgeMargin + popupWidth, work.bottom - metrics.edgeMargin};
+        const RECT frame = GetCategorizedPopupFrame(probe);
+        CategorizedPopupScope scope(groupView, frame);
+        const RECT viewport = groupView->GetContentViewportRect();
+        const auto visual = groupView->GetItemVisualMetrics();
+        const float spacing = GetLayoutSpacingScale();
+        const int nativeColumns = listMode ? 1
+            : snowdesktop::collection_popup_layout::ResolveGridColumnCount(
+                viewport.right - viewport.left, visual.minimumGridWidth, spacing);
+        const auto layout = listMode
+            ? snowdesktop::widget_item_layout::ResolveList(viewport,
+                std::max(groupView->GetItemHeight(), visual.minimumListHeight), spacing)
+            : snowdesktop::widget_item_layout::ResolveGrid(viewport, nativeColumns, 0,
+                visual.minimumGridWidth,
+                std::max(groupView->GetItemHeight(), visual.minimumGridHeight), spacing);
+        const size_t minimumItems = static_cast<size_t>(listMode
+            ? snowdesktop::collection_popup_layout::kMinimumListRows
+            : snowdesktop::collection_popup_layout::kEmptyRows * nativeColumns);
+        // Preserve a content-height budget after all native top rows, the popup
+        // title, metadata header and bottom insets have been accounted for.
+        return GroupPopupSizing{
+            snowdesktop::widget_item_layout::ContentHeight(layout, std::max(itemCount, minimumItems)),
+            metrics.headerHeight + metrics.bottomPadding +
+                static_cast<int>(std::max(0L, viewport.top - frame.top) +
+                    std::max(0L, frame.bottom - viewport.bottom))};
+    };
+    const RECT controlProbe = groupView ? RECT{} : GetCollectionPopupControlsRect(
+        RECT{work.left + metrics.edgeMargin, work.top + metrics.edgeMargin,
+            work.left + metrics.edgeMargin + maxWidth, work.bottom - metrics.edgeMargin});
+    const int controlsHeight = std::max(0L, controlProbe.bottom - controlProbe.top);
+    const int detailsHeader =
+        snowdesktop::collection_popup_layout::DetailsVisible(
+            listMode, widget.detailShowModified, widget.detailShowType, widget.detailShowSize)
+        ? snowdesktop::collection_popup_layout::ResolveDetailsHeaderHeight(metrics)
+        : 0;
     const int maxHeight =
         snowdesktop::collection_popup_layout::
             ResolveMaximumHeight(
-                metrics, workHeight);
+                metrics, workHeight, groupView
+                    ? measureGroupPopup(maxWidth).overheadHeight
+                    : controlsHeight + detailsHeader);
     auto popupWidthForColumns = [&](int columnCount) {
         if (listMode)
             return maxWidth;
@@ -455,8 +556,11 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             std::max(0, columnCount - 1) * metrics.gapX;
     };
     auto popupHeightForRows = [&](int rowCount) {
-        const RECT controlProbe = GetCollectionPopupControlsRect(RECT{0, 0, maxWidth, maxHeight});
-        const int controlsHeight = controlProbe.bottom - controlProbe.top;
+        if (groupView)
+        {
+            const auto sizing = measureGroupPopup(popupWidthForColumns(columns));
+            return sizing.contentHeight + sizing.overheadHeight;
+        }
         if (listMode)
         {
             const RECT viewport{
@@ -469,16 +573,6 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
                         ResolveListRowHeight(
                             metrics, listItemFontSizeCu_),
                     GetLayoutSpacingScale());
-            const int detailsHeader =
-                snowdesktop::collection_popup_layout::
-                    DetailsVisible(
-                        UsesCollectionPopupList(widget),
-                        widget.detailShowModified,
-                        widget.detailShowType,
-                        widget.detailShowSize)
-                ? snowdesktop::collection_popup_layout::
-                    ResolveDetailsHeaderHeight(metrics)
-                : 0;
             return metrics.headerHeight + controlsHeight + detailsHeader +
                 snowdesktop::widget_item_layout::ContentHeight(
                     layout, static_cast<size_t>(rowCount)) +
@@ -627,6 +721,12 @@ DesktopApp::GetOpenCollectionPopupLayoutMetrics() const
 
 RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
 {
+    if (auto* group = GetGroupPopupView())
+    {
+        const RECT frame = GetCategorizedPopupFrame(popup);
+        group->SetPopupFrame(&frame);
+        return group->GetContentViewportRect();
+    }
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     if (const auto* widget = GetOpenPopupWidget(); widget && UsesCollectionPopupFan(*widget))
         return popup;

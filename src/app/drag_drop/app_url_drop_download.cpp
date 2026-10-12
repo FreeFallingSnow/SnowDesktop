@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "platform/pending_window_message.h"
+#include "drag_drop/drop_staging.h"
 
 #include <iterator>
 #include <new>
@@ -98,8 +99,8 @@ bool DesktopApp::QueueUrlDropDownload(
         replacementShortcuts.size() > 1)
         return false;
 
-    const std::filesystem::path destinationDirectory(
-        GetDataSubdirectoryPath(L"DropContent"));
+    const auto destinationDirectory = snowdesktop::drop_staging::Directory();
+    if (destinationDirectory.empty()) return false;
     const DWORD attributes = GetFileAttributesW(
         destinationDirectory.c_str());
     if (attributes == INVALID_FILE_ATTRIBUTES ||

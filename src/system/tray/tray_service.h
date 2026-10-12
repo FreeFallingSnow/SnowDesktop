@@ -1,6 +1,7 @@
 #pragma once
 #include "tray_focus.h"
 #include "tray_menu_placement.h"
+#include "tray_change_notifications.h"
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -40,6 +41,9 @@ public:
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
     Snapshot Current() const;
+    void SubscribeChanges(HWND window);
+    void UnsubscribeChanges(HWND window);
+    bool AcknowledgeChange(HWND window, std::uint64_t token);
     void SetGeometry(const std::string& key, RECT rect);
     void ClearGeometries();
     bool Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin focus = {});

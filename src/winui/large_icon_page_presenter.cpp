@@ -193,8 +193,6 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             std::wstring help;
             if (field == Field::ForegroundPosition && !enabled) help = L("largeIcon.positionEffectHelp");
 
-            if (id == "largeIcon.radius") help = L("largeIcon.radiusHelp");
-            if (id == "largeIcon.shape") help = L("largeIcon.shapeHelp");
             if (id == "largeIcon.direction" && !Supported(draft.autoTitleDirection ? 2 : draft.titleDirection)) help = L("largeIcon.titleUnavailable");
             if (id == "largeIcon.autoTitleColor" && (draft.backgroundStyle >= -1 || (draft.backgroundStyle == -3 && draft.defaultBackground != 0))) help = L("largeIcon.themeTextHelp");
             if (field == Field::Crop)
@@ -204,8 +202,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 enabled = id == "largeIcon.positionX" ? snapshot.imageWidth > geometry.sourceWidth + .01 : snapshot.imageHeight > geometry.sourceHeight + .01;
                 if (!enabled) help = L("largeIcon.noCropRoom");
             }
-            row.SetEnabled(enabled); row.help.Text(help);
-            row.help.Visibility(help.empty() ? x::Visibility::Collapsed : x::Visibility::Visible);
+            row.SetText(L(id), std::move(help)); row.SetEnabled(enabled);
         });
     }
     template<class T> std::function<void(Impl&)> Reset(T LargeIconConfig::* member)

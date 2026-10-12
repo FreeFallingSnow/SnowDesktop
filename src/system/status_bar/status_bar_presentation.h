@@ -1,5 +1,6 @@
 #pragma once
 #include "ui/render/native_tooltip_state.h"
+#include <windows.h>
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -9,14 +10,22 @@
 
 namespace snowdesktop
 {
+inline std::wstring StatusBarClockText(const SYSTEMTIME& localTime, bool showSeconds,
+    const wchar_t* locale = LOCALE_NAME_USER_DEFAULT)
+{
+    wchar_t time[64]{}, date[96]{};
+    GetTimeFormatEx(locale, showSeconds ? 0 : TIME_NOSECONDS, &localTime, nullptr, time, 64);
+    GetDateFormatEx(locale, DATE_SHORTDATE, &localTime, nullptr, date, 96, nullptr);
+    return std::wstring(date) + L"   " + time;
+}
+
 // Widths are presentation contracts, independent of a sample's digits. The
 // localized memory label is reserved using its widest percentage separately.
 inline float StatusBarFixedWidth(std::string_view key)
 {
-    if (key == "cpu" || key == "gpu") return 68.f;
     if (key == "traffic") return 152.f;
-    if (key == "controlCenter") return 92.f;
-    if (key == "inputMethod") return 36.f;
+    if (key == "controlCenter") return 84.f;
+    if (key == "inputMethod" || key == "inputMethodLayout") return 28.f;
     return 0.f;
 }
 inline std::wstring StatusBarRate(std::uint64_t bytes)

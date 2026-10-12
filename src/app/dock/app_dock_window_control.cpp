@@ -582,6 +582,20 @@ void CALLBACK DesktopApp::DockForegroundWinEventProc(HWINEVENTHOOK,
         event == EVENT_OBJECT_UNCLOAKED;
 #endif
     if (dockWindowListChanged)
-        dockWindowListChangedTick_.fetch_add(
-            1, std::memory_order_relaxed);
+    {
+        DWORD ownerProcess = 0;
+        if (window) GetWindowThreadProcessId(window, &ownerProcess);
+        if (ownerProcess == GetCurrentProcessId()) return;
+        if (IsWindow(window) &&
+            (GetAncestor(window, GA_ROOT) != window ||
+             !snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
+                 GetWindowLongPtrW(window, GWL_EXSTYLE),
+                 GetWindow(window, GW_OWNER) != nullptr)))
+            return;
+        // Destruction can arrive after the HWND became invalid. The UI checks
+        // its tracked windows before deciding whether discovery is necessary.
+        if (const HWND target = dockForegroundNotificationWindow_.load())
+            PostMessageW(target, kDockWindowListChangedMessage,
+                static_cast<WPARAM>(event), reinterpret_cast<LPARAM>(window));
+    }
 }

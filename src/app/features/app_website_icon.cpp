@@ -22,6 +22,7 @@ void DesktopApp::FetchWebsiteIcon(const std::wstring& path)
         return;
     }
     const std::filesystem::path directory(GetDataSubdirectoryPath(L"website-icons"));
+    dataCleanupWorker_.Cancel();
     websiteIconPendingPath_ = path;
     ShowBalloonNotification(_LW("app.website_icon.fetch"),
         shortcut->path.filename().wstring() + L"\n" + _LW("app.website_icon.fetching"));
@@ -72,6 +73,7 @@ void DesktopApp::OnWebsiteIconReady()
                 RequestLargeIconAsset(i, true);
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
+    ScheduleDataCleanup();
     ShowBalloonNotification(_LW("app.website_icon.fetch"),
         completion->shortcut.path.filename().wstring() + L"\n" +
         (applied ? _LW("app.website_icon.updated") : fetched

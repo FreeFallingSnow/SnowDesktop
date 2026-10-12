@@ -197,15 +197,39 @@ int main()
     SettingsSearchIndexInput catalog;
     PopulateSettingsSearchCatalog(catalog,[](std::string_view key) {return std::wstring(key.begin(),key.end());},false,false);
     const auto find = [&](std::string_view id) {return std::find_if(catalog.staticSettings.begin(),catalog.staticSettings.end(),[&](const auto& descriptor) {return descriptor.focusId == id;});};
+    const auto seconds = find("statusBar.clockShowSeconds");
+    Check(seconds != catalog.staticSettings.end() && seconds->page == SettingsPage::StatusBar,
+        "clock seconds search opens the Status Bar page with its stable focus target");
     Check(find("personalization.savedThemes")->page == SettingsPage::ThemeManager,
         "theme management search targets the independent page");
+    for (const auto focus : {"desktop.softwareDesktopHotkey", "desktop.softwareDesktopHotkey.hotkey"})
+    {
+        const auto entry = find(focus);
+        Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::Desktop,
+            "desktop switching search results open the Desktop page with a stable focus target");
+    }
+    for (const auto focus : {"personalization.font", "personalization.tooltipFontSize"})
+    {
+        const auto entry = find(focus);
+        Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::AppearanceWidgets,
+            "font search results open their independent cards on Interface & layout");
+    }
     Check(find("general.quickNavigation")->page == SettingsPage::QuickNavigation && find("personalization.quickNavigationTheme")->page == SettingsPage::AppearanceTheme,"the shared catalog preserves the theme location and routes navigation behavior to its page");
     Check(find("quickNav.layout.iconSize") != catalog.staticSettings.end() && find("quickNav.color.searchBg") != catalog.staticSettings.end(),"advanced navigation fields are indexed individually");
     Check(find("quickNav.layout.iconSize")->page == SettingsPage::AppearanceTheme && find("quickNav.color.searchBg")->page == SettingsPage::AppearanceTheme,
         "navigation dimensions and colors belong to the original appearance theme page");
-    Check(find("quickNav.prefixes")->page == SettingsPage::QuickNavigation && find("quickNav.defaultCollapsed") == catalog.staticSettings.end(),
+    Check(find("quickNav.prefixes")->page == SettingsPage::QuickNavigation &&
+            find("quickNav.defaultCollapsed") == catalog.staticSettings.end() &&
+            find("quickNav.view") == catalog.staticSettings.end(),
         "functional search settings stay on navigation and the obsolete opening preference is absent");
     Check(!find("general.advancedFeatures")->visible && find("statusBar.controlCenterPanel") == catalog.staticSettings.end(),"shared catalog honors advanced and system capability visibility");
+    Check(find("dock.mergedIconScale") == catalog.staticSettings.end(),
+        "search does not navigate to hidden merged bar controls when no bar is merged");
+    SettingsSearchIndexInput mergedCatalog;
+    PopulateSettingsSearchCatalog(mergedCatalog, [](std::string_view key) { return std::wstring(key.begin(), key.end()); }, false, false, 0, true);
+    Check(std::any_of(mergedCatalog.staticSettings.begin(), mergedCatalog.staticSettings.end(),
+        [](const auto& entry) { return entry.focusId == "dock.mergedIconScale" && entry.page == SettingsPage::Dock; }),
+        "an active merged bar exposes its independent icon scale search target");
     for (int style = 0; style <= 6; ++style)
     {
         SettingsSearchIndexInput menus;

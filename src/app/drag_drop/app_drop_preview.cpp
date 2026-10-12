@@ -162,6 +162,24 @@ DragSourceList DesktopApp::BuildDragSourceList(
                 entry.widgetId = group
                     ? group->GetActiveCollectionId()
                     : originData->activeCategoryId;
+                if (DesktopItem* item = icon->GetDesktopItem())
+                {
+                    const size_t active = FindWidgetIndexById(entry.widgetId);
+                    if (active >= widgets_.size() ||
+                        std::find(widgets_[active].itemKeys.begin(), widgets_[active].itemKeys.end(), item->layoutKey) ==
+                            widgets_[active].itemKeys.end())
+                        for (const auto& childId : originData->childWidgetIds)
+                        {
+                            const size_t child = FindWidgetIndexById(childId);
+                            if (child < widgets_.size() &&
+                                std::find(widgets_[child].itemKeys.begin(), widgets_[child].itemKeys.end(), item->layoutKey) !=
+                                    widgets_[child].itemKeys.end())
+                            {
+                                entry.widgetId = childId;
+                                break;
+                            }
+                        }
+                }
             }
             else if (fileGroupOrigin)
             {

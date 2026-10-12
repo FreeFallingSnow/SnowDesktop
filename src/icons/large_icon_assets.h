@@ -54,6 +54,8 @@ public:
     void Request(LargeIconAssetRequest request);
     void Cancel(const std::wstring& itemKey);
     void RetainReferences(std::vector<std::string> references);
+    // Complete desktop ownership snapshot; also collects when no artwork is requested.
+    void RetainSources(std::vector<LargeIconAssetRequest> sources);
     std::vector<LargeIconAssetResult> TakeCompleted();
     void Stop();
 private:

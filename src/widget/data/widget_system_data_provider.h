@@ -85,6 +85,15 @@ struct WidgetPowerDataSnapshot
     std::string error;
 };
 
+// Native hover metadata; the component network-status payload is unchanged.
+struct WidgetNetworkConnectionDataSnapshot
+{
+    std::uint64_t interfaceId = 0;
+    std::string name;
+    std::string connectivity;
+    bool operator==(const WidgetNetworkConnectionDataSnapshot&) const = default;
+};
+
 struct WidgetNetworkStatusDataSnapshot
 {
     bool available = false;
@@ -97,6 +106,7 @@ struct WidgetNetworkStatusDataSnapshot
     std::int64_t timestampMs = 0;
     std::uint64_t revision = 0;
     std::string error;
+    std::vector<WidgetNetworkConnectionDataSnapshot> connections;
 };
 
 class WidgetNetworkStatusDebouncer

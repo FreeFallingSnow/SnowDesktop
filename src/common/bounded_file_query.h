@@ -17,7 +17,8 @@ namespace snowdesktop
 /** Read-only filesystem jobs may be stuck in a network redirector. Keep their
  * input/result independently owned, bound the caller's wait, and reuse an
  * in-flight job for the same key. Never turn a timeout into an empty success.
- * Completed jobs are refreshed on the next request; no stale authority is used.
+ * Undelivered completions survive for the caller's retry interval. Delivered
+ * or expired jobs are refreshed on the next request.
  */
 template<class Value> class BoundedFileQuery final
 {
@@ -37,19 +38,24 @@ public:
         std::condition_variable changed;
         std::optional<Value> value;
         Clock::time_point completedAt{};
+        Clock::duration undeliveredLifetime = std::chrono::seconds(5);
         bool done = false;
         bool delivered = false;
     };
     using Ticket = std::shared_ptr<Job>;
 
-    Ticket Request(std::wstring key, std::function<Value()> query)
+    Ticket Request(std::wstring key, std::function<Value()> query,
+        Clock::duration undeliveredLifetime = std::chrono::seconds(5))
     {
         std::lock_guard lock(mutex_);
         if (const auto found = jobs_.find(key); found != jobs_.end())
         {
             std::lock_guard jobLock(found->second->mutex);
+            if (!found->second->delivered)
+                found->second->undeliveredLifetime = std::max(
+                    found->second->undeliveredLifetime, undeliveredLifetime);
             if (!found->second->done || (!found->second->delivered &&
-                Clock::now() - found->second->completedAt < std::chrono::seconds(5)))
+                Clock::now() - found->second->completedAt < found->second->undeliveredLifetime))
                 return found->second;
         }
         // A permanently stalled drive gets only one worker, including across
@@ -57,10 +63,11 @@ public:
         std::erase_if(jobs_, [](const auto& entry) {
             std::lock_guard jobLock(entry.second->mutex);
             return entry.second->done && (entry.second->delivered ||
-                Clock::now() - entry.second->completedAt >= std::chrono::seconds(5));
+                Clock::now() - entry.second->completedAt >= entry.second->undeliveredLifetime);
         });
         if (jobs_.size() >= 64) return {};
         auto job = std::make_shared<Job>();
+        job->undeliveredLifetime = undeliveredLifetime;
         jobs_[std::move(key)] = job;
         try
         {

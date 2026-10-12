@@ -177,6 +177,20 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
     std::string error;
     CheckAvailabilityCache(directory, check);
     check(bridge::ThemeSha256("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad", "production package hash matches known SHA256 vector");
+    std::vector<std::future<bool>> hashWorkers;
+    for (int worker = 0; worker < 8; ++worker)
+        hashWorkers.push_back(std::async(std::launch::async, [] {
+            for (int iteration = 0; iteration < 256; ++iteration)
+                if (bridge::ThemeSha256("abc") != "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" ||
+                    bridge::ThemeSha256("") != "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+                    return false;
+            return true;
+        }));
+    bool repeatedHashesValid = true;
+    for (auto& worker : hashWorkers)
+        repeatedHashesValid = worker.get() && repeatedHashesValid;
+    check(repeatedHashesValid,
+        "repeated concurrent production hashes release objects and retain known empty/nonempty digests");
     const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\"]}";
     check(workshop::Capabilities(current,"1") && !workshop::Capabilities(current,"2"), "bridge capability and compatible version are independent requirements");
     check(workshop::Capabilities("{\"progress\":\"starting\"}\n" + current + "\n","1") &&

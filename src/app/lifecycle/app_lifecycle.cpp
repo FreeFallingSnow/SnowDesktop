@@ -1,10 +1,13 @@
 #include "app/app.h"
+#include "app/input/software_desktop_hotkey.h"
 #include "app/popup/categorized_popup_scope.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "desktop/desktop_keyboard_rules.h"
 #include "widget/settings/widget_engine_settings_backend.h"
 #include "widget/settings/widget_settings_service.h"
 #include "platform/http_runtime.h"
+#include "platform/shell_overlay_window.h"
+#include "platform/foreground_fullscreen.h"
 #include "shell/shell_extension_service.h"
 
 // Desktop host lifecycle.
@@ -13,6 +16,9 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    dockExternalMinimize_.reset();
+    snowdesktop::SoftwareDesktopHotkey().Unregister();
+    dataCleanupWorker_.Stop();
     if(systemDataProvider_)systemDataProvider_->Controls()->SetWake({});
     systemPanel_.reset();
     CancelStatusBarActivation();
@@ -99,6 +105,9 @@ DesktopApp::~DesktopApp()
 
 void DesktopApp::ShutdownSettingsInfrastructure() noexcept
 {
+    shellModelWork_.Cancel(L"settings-auto-start");
+    settingsWindowOpening_ = false;
+    settingsWindowOpenRequest_.Cancel();
     steamEntitlementService_.reset();
     settingsWindow_.reset();
     if (widgetSettingsService_)
@@ -396,7 +405,7 @@ void DesktopApp::FocusDesktopInputWindow()
 
 bool DesktopApp::FocusKeyboardWindow(
     HWND target, bool requestForeground,
-    const wchar_t* diagnosticLabel)
+    const wchar_t* diagnosticLabel, bool deliberateFullscreenExit)
 {
     if (!target || !IsWindow(target))
         return false;
@@ -444,15 +453,20 @@ bool DesktopApp::FocusKeyboardWindow(
                 observation.foreground == activationWindow);
         return observation;
     };
-    const auto requestFocus = [target, activationWindow,
-                                  requestForeground]() {
-        if (requestForeground)
-        {
-            ShowWindow(target, SW_SHOWNOACTIVATE);
-            (void)SetForegroundWindow(activationWindow);
-            (void)SetActiveWindow(activationWindow);
-        }
-        (void)SetFocus(target);
+    const auto requestFocus = [this, target, activationWindow,
+                                  requestForeground, deliberateFullscreenExit]() {
+        const bool deliberateExitAllowed = deliberateFullscreenExit &&
+            !FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr);
+        return snowdesktop::fullscreen::GuardFocusRequest(deliberateExitAllowed,
+            snowdesktop::fullscreen::ObserveForeground, [=]() {
+                if (requestForeground)
+                {
+                    ShowWindow(target, SW_SHOWNOACTIVATE);
+                    (void)SetForegroundWindow(activationWindow);
+                    (void)SetActiveWindow(activationWindow);
+                }
+                (void)SetFocus(target);
+            });
     };
 
     FocusObservation observation = observeFocus();
@@ -462,7 +476,12 @@ bool DesktopApp::FocusKeyboardWindow(
         return true;
     }
     TraceDesktopInteraction(L"focus-request", target);
-    requestFocus();
+    if (!requestFocus())
+    {
+        TraceDesktopInteraction(L"focus-suppressed-fullscreen", target);
+        WriteDiagnosticLogEntry(L"Keyboard focus request suppressed: foreground fullscreen");
+        return false;
+    }
     observation = observeFocus();
     TraceDesktopInteraction(L"focus-result", target);
     if (observation.ready)
@@ -475,6 +494,8 @@ bool DesktopApp::FocusKeyboardWindow(
     // GetGUIThreadInfo instead of trusting the local queue again.
     const DWORD attachedThread = observation.foregroundThread;
     const bool shouldAttach =
+        ((deliberateFullscreenExit && !FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) ||
+            !snowdesktop::fullscreen::ObserveForeground()) &&
         snowdesktop::desktop_keyboard_rules::
             ShouldAttachForegroundInputQueue(
                 currentThread, attachedThread,
@@ -485,9 +506,10 @@ bool DesktopApp::FocusKeyboardWindow(
     if (attached)
     {
         TraceDesktopInteraction(L"focus-attached-retry", target);
-        requestFocus();
+        const bool attempted = requestFocus();
         AttachThreadInput(
             currentThread, attachedThread, FALSE);
+        if (!attempted) return false;
     }
     observation = observeFocus();
     TraceDesktopInteraction(L"focus-retry-result", target);
@@ -529,11 +551,14 @@ bool DesktopApp::EnsureFloatingDockInputWindow()
     return floatingDockInputHwnd_ != nullptr;
 }
 
-void DesktopApp::BeginFloatingDockKeyboardSession()
+void DesktopApp::BeginFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 {
+    if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) return;
+    if (!deliberateFullscreenExit && snowdesktop::fullscreen::ObserveForeground())
+        return;
     if (floatingDockKeyboardSessionActive_)
     {
-        RefocusFloatingDockKeyboardSession();
+        RefocusFloatingDockKeyboardSession(deliberateFullscreenExit);
         return;
     }
 
@@ -582,11 +607,17 @@ void DesktopApp::BeginFloatingDockKeyboardSession()
     floatingDockKeyboardSessionActive_ = true;
     ShowWindow(
         floatingDockInputHwnd_, SW_SHOWNOACTIVATE);
-    RefocusFloatingDockKeyboardSession();
+    RefocusFloatingDockKeyboardSession(deliberateFullscreenExit);
 }
 
-void DesktopApp::RefocusFloatingDockKeyboardSession()
+void DesktopApp::RefocusFloatingDockKeyboardSession(bool deliberateFullscreenExit)
 {
+    if (deliberateFullscreenExit && FullscreenBlocksDockReveal(DockRevealSource::Hotkey, nullptr)) return;
+    // Menu/file-operation completions must not reclaim the keyboard after the
+    // user returned to a fullscreen application. Only an allowed explicit
+    // Dock hotkey can deliberately exit fullscreen at the start of a session.
+    if (!deliberateFullscreenExit && snowdesktop::fullscreen::ObserveForeground())
+        return;
     if (!snowdesktop::floating_dock_rules::
             ShouldRefocusFloatingDockKeyboardSession(
                 floatingDockVisible_,
@@ -601,45 +632,8 @@ void DesktopApp::RefocusFloatingDockKeyboardSession()
     // back to the existing logical snapshot.
     ResolveDockSemanticForegroundWindow();
 
-    if (!IsWindowVisible(floatingDockInputHwnd_))
-        ShowWindow(
-            floatingDockInputHwnd_, SW_SHOWNOACTIVATE);
-
-    BOOL activated =
-        SetForegroundWindow(floatingDockInputHwnd_);
-    if (!activated)
-    {
-        const HWND foreground = GetForegroundWindow();
-        const DWORD foregroundThread = foreground
-            ? GetWindowThreadProcessId(
-                foreground, nullptr)
-            : 0;
-        const DWORD currentThread = GetCurrentThreadId();
-        if (foregroundThread != 0 &&
-            foregroundThread != currentThread &&
-            AttachThreadInput(
-                foregroundThread, currentThread, TRUE))
-        {
-            activated =
-                SetForegroundWindow(
-                    floatingDockInputHwnd_);
-            AttachThreadInput(
-                foregroundThread, currentThread, FALSE);
-        }
-    }
-    SetFocus(floatingDockInputHwnd_);
-    if (!activated ||
-        GetFocus() != floatingDockInputHwnd_)
-    {
-        wchar_t message[192]{};
-        wsprintfW(
-            message,
-            L"Floating Dock input proxy focus FAILED hwnd=%p activated=%d focus=%p",
-            floatingDockInputHwnd_,
-            activated != FALSE,
-            GetFocus());
-        WriteDiagnosticLogEntry(message);
-    }
+    (void)FocusKeyboardWindow(floatingDockInputHwnd_, true,
+        L"Floating Dock input proxy", deliberateFullscreenExit);
 }
 
 void DesktopApp::EndFloatingDockKeyboardSession(
@@ -651,6 +645,11 @@ void DesktopApp::EndFloatingDockKeyboardSession(
         return;
     }
 
+    const HWND currentForeground = GetForegroundWindow();
+    DWORD currentForegroundProcess = 0;
+    if (currentForeground)
+        GetWindowThreadProcessId(currentForeground, &currentForegroundProcess);
+    const bool mayRestore = currentForegroundProcess == GetCurrentProcessId();
     HWND restoreWindow =
         focusPolicy ==
                 FloatingDockCloseFocusPolicy::RestorePrevious
@@ -676,10 +675,12 @@ void DesktopApp::EndFloatingDockKeyboardSession(
 
     if (focusPolicy ==
             FloatingDockCloseFocusPolicy::RestorePrevious &&
-        restoreWindow && IsWindow(restoreWindow) &&
+        mayRestore && restoreWindow && IsWindow(restoreWindow) &&
         !IsIconic(restoreWindow))
     {
-        SetForegroundWindow(restoreWindow);
+        snowdesktop::fullscreen::GuardFocusRequest(false,
+            snowdesktop::fullscreen::ObserveForeground,
+            [restoreWindow]() { SetForegroundWindow(restoreWindow); });
     }
 }
 
@@ -743,7 +744,19 @@ HWND DesktopApp::ResolveDockSemanticForegroundWindow()
  */
 void DesktopApp::UpdateHostInputImePosition()
 {
-    if (!inputHwnd_ || !IsWindow(inputHwnd_))
+    // IMM positioning must use the same proxy that receives the composition
+    // messages. Floating Dock keyboard sessions focus their own input window.
+    HWND imeInputHwnd = GetFocus();
+    if (!imeInputHwnd || (imeInputHwnd != inputHwnd_ &&
+        imeInputHwnd != floatingDockInputHwnd_))
+    {
+        imeInputHwnd = floatingDockKeyboardSessionActive_ &&
+                floatingDockVisible_ && floatingDockInputHwnd_ &&
+                IsWindow(floatingDockInputHwnd_)
+            ? floatingDockInputHwnd_
+            : inputHwnd_;
+    }
+    if (!imeInputHwnd || !IsWindow(imeInputHwnd))
         return;
 
     RECT caret{};
@@ -773,23 +786,23 @@ void DesktopApp::UpdateHostInputImePosition()
     }
     if (!hasCaret || !hwnd_ || !IsWindow(hwnd_))
     {
-        SetWindowPos(inputHwnd_, nullptr, -32000, -32000, 1, 1,
+        SetWindowPos(imeInputHwnd, nullptr, -32000, -32000, 1, 1,
             SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
         return;
     }
 
     POINT origin{ caret.left, caret.top };
     ClientToScreen(hwnd_, &origin);
-    HWND parent = GetParent(inputHwnd_);
+    HWND parent = GetParent(imeInputHwnd);
     if (parent && IsWindow(parent))
         ScreenToClient(parent, &origin);
 
-    SetWindowPos(inputHwnd_, HWND_TOP, origin.x, origin.y, 1, 1,
+    SetWindowPos(imeInputHwnd, HWND_TOP, origin.x, origin.y, 1, 1,
         SWP_NOACTIVATE | SWP_SHOWWINDOW);
 
     const LONG caretHeight = std::max<LONG>(
         1, caret.bottom - caret.top);
-    HIMC context = ImmGetContext(inputHwnd_);
+    HIMC context = ImmGetContext(imeInputHwnd);
     if (!context)
         return;
 
@@ -800,10 +813,11 @@ void DesktopApp::UpdateHostInputImePosition()
 
     CANDIDATEFORM candidate{};
     candidate.dwIndex = 0;
-    candidate.dwStyle = CFS_CANDIDATEPOS;
+    candidate.dwStyle = CFS_EXCLUDE;
     candidate.ptCurrentPos = { 0, caretHeight };
+    candidate.rcArea = { 0, 0, 1, caretHeight };
     ImmSetCandidateWindow(context, &candidate);
-    ImmReleaseContext(inputHwnd_, context);
+    ImmReleaseContext(imeInputHwnd, context);
 }
 
 HWND DesktopApp::ShellDialogOwnerHwnd() const
@@ -826,7 +840,7 @@ bool DesktopApp::CreateDesktopOverlayWindow()
         ? desktopWindows_.host
         : GetDesktopWindow();
 
-    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
+    hwnd_ = snowdesktop::CreateShellOverlayWindowEx(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         L"SnowDesktopWindow", L"SnowDesktop",
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance_, this);
@@ -1076,6 +1090,7 @@ void DesktopApp::CompleteExitRequest()
 {
     if (exitRequested_) return;
     exitRequested_ = true;
+    dataCleanupWorker_.Stop();
     // A confirmation may be pumping messages inside task dispatch. Invalidate
     // tasks now, keeping the engine alive until that modal stack has unwound.
     if (widgetEngine_) widgetEngine_->BeginTaskShutdown();

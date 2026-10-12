@@ -1,4 +1,5 @@
 #include "layout/folder_mapping_rules.h"
+#include "desktop/folder_mapping_visibility_cases.h"
 
 #include <iostream>
 #include <string>
@@ -31,6 +32,7 @@ void CheckEqual(const std::wstring& actual,
 
 int main()
 {
+    CheckFolderMappingVisibility(Check);
     std::vector<std::wstring> source{L"C:\\a.txt", L"C:\\b.txt"};
     const auto snapshot = source;
     unsigned reads = 0;

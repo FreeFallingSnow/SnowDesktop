@@ -1,5 +1,7 @@
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
+#include "app/dock/dock_platform_helpers.h"
+#include "app/input/software_desktop_hotkey.h"
 #include "platform/single_instance.h"
 #include "data/atomic_file.h"
 #include "platform/auto_start_manager.h"
@@ -450,7 +452,7 @@ ReconciledAutoStart ReconcileAutoStart() noexcept
 // Settings application, desktop passthrough and retained-surface visibility.
 
 snowdesktop::AutoStartQueryResult DesktopApp::QueryAutoStartState()
-    const noexcept
+    noexcept
 {
     snowdesktop::AutoStartQueryResult result;
     result.packaged = snowdesktop::deployment::IsPackaged();
@@ -466,12 +468,6 @@ snowdesktop::AutoStartQueryResult DesktopApp::QueryAutoStartState()
             snowdesktop::UnifiedAutoStartTaskState::Enabled;
     result.ownerCommand = reconciled.task.target.executable;
     return result;
-}
-
-bool DesktopApp::QueryAutoStartEnabled() const noexcept
-{
-    const snowdesktop::AutoStartQueryResult result = QueryAutoStartState();
-    return result.stateKnown && result.enabled;
 }
 
 snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
@@ -498,6 +494,7 @@ snowdesktop::AutoStartApplyResult DesktopApp::ApplyAutoStartEnabled(
     result.state.enabled = result.state.taskOwnedByCurrentDeployment &&
         task.status == snowdesktop::UnifiedAutoStartTaskState::Enabled;
     result.state.ownerCommand = task.target.executable;
+    settingsAutoStartState_ = result.state;
     if (applied && result.state.stateKnown && result.state.enabled == enabled &&
         result.state.taskOwnedByCurrentDeployment)
     {
@@ -750,6 +747,7 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     desktop.itemIconSizeScale = itemIconSizeScale_;
     desktop.itemFontSizeCu = itemFontSizeCu_;
     desktop.listItemFontSizeCu = listItemFontSizeCu_;
+    desktop.fanTitleFontSizeCu = fanTitleFontSizeCu_;
     desktop.itemFontWeight = static_cast<int>(itemFontWeight_);
     desktop.desktopTitleLines = desktopTitleLines_;
     desktop.largeFolderTitleLines = largeFolderTitleLines_;
@@ -961,6 +959,7 @@ public:
             // Preview animation and surface appearance only; other General fields
             // retain their commit side effects and old-value comparisons.
             const auto& general = snapshot.values.general;
+            app_.generalSettings_.tooltipFontSize = general.tooltipFontSize;
             app_.generalSettings_.animationMode = general.animationMode;
             if (app_.generalSettings_.statusBar != general.statusBar)
             {
@@ -1043,6 +1042,8 @@ public:
                 snapshot.values.desktop.itemFontSizeCu);
             app_.PreviewListItemFontSize(
                 snapshot.values.desktop.listItemFontSizeCu);
+            app_.PreviewFanTitleFontSize(
+                snapshot.values.desktop.fanTitleFontSizeCu);
             app_.PreviewItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
                 snapshot.values.desktop.itemFontWeight));
             app_.SetIconBeautifySettings(
@@ -1086,6 +1087,7 @@ public:
                 app_.generalSettings_, snapshot.values.general))
         {
             app_.generalSettings_ = snapshot.values.general;
+            snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.SyncStatusBar();
             snowdesktop::shell_extensions::SharedMenuService().Configure(app_.generalSettings_.shellExtensions);
             app_.ApplyDesktopPassthroughHotkey();
@@ -1200,6 +1202,7 @@ public:
                 app_.widgetEngine_->SetCalendarDisplayPreferences(app_.generalSettings_.calendarDisplay);
             app_.SetSoftwareDesktopEnabled(
                 app_.generalSettings_.softwareDesktopEnabled, false);
+            snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.ApplyDesktopPassthroughHotkey();
             app_.ApplyFloatingDockHotkey();
             if (dockEnabledChanged)
@@ -1273,6 +1276,7 @@ public:
             app_.SetItemIconSize(desktop.itemIconSizeScale);
             app_.SetItemFontSize(desktop.itemFontSizeCu);
             app_.SetListItemFontSize(desktop.listItemFontSizeCu);
+            app_.SetFanTitleFontSize(desktop.fanTitleFontSizeCu);
             app_.SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
                 desktop.itemFontWeight));
             app_.SetShortcutArrowMode(desktop.shortcutArrowMode);
@@ -1306,6 +1310,7 @@ public:
             app_.ApplyLanguageChange();
             break;
         case Action::RegisterHotkeys:
+            snowdesktop::SoftwareDesktopHotkey().Apply(app_.controlHwnd_, app_.generalSettings_);
             app_.ApplyNavigationHotkey();
             app_.EnsureQuickNavTextFormats();
             app_.EnsureQuickNavigationSearchEdit();
@@ -1323,6 +1328,27 @@ public:
             app_.UpdateLayoutWorkArea();
             app_.LayoutItems();
             break;
+        case Action::GetDockRunningApplications:
+        {
+            auto result = snowdesktop::SettingsActionResult::Success();
+            result.dockApplications = snowdesktop::dock_fullscreen::CollectApplications(
+                app_.dockUnpinnedRunningApps_, app_.dockRunningWindows_,
+                [this](HWND window, const std::wstring& cachedName, const std::wstring& cachedPath)
+                    -> std::optional<DockFullscreenApplication> {
+                    if (!IsWindow(window) || app_.IsDockWindowClosePending(window)) return std::nullopt;
+                    const auto path = cachedPath.empty() ? QueryDockWindowExecutablePath(window) : cachedPath;
+                    std::wstring name = cachedName;
+                    if (name.empty())
+                    {
+                        wchar_t title[512]{};
+                        GetWindowTextW(window, title, static_cast<int>(std::size(title)));
+                        name = title;
+                    }
+                    if (name.empty()) name = std::filesystem::path(path).filename().wstring();
+                    return DockFullscreenApplication{name, path};
+                });
+            return result;
+        }
         case Action::ApplyTaskbar:
             app_.RefreshSystemTaskbarAppearance(true);
             break;
@@ -1522,6 +1548,8 @@ private:
             return "app.settings.quick_navigation";
         case HotkeyTarget::DesktopPassthrough:
             return "app.settings.desktop_passthrough_hotkey";
+        case HotkeyTarget::SoftwareDesktop:
+            return "app.settings.software_desktop_hotkey";
         case HotkeyTarget::FloatingDock:
             return "app.settings.dock_bar";
         case HotkeyTarget::PagePrevious:
@@ -1571,6 +1599,11 @@ private:
                 app_.generalSettings_.desktopPassthroughHotkeyModifiers,
                 app_.generalSettings_.desktopPassthroughHotkeyVirtualKey))
             return { false, HotkeyTarget::DesktopPassthrough };
+        if (conflictsWith(HotkeyTarget::SoftwareDesktop,
+                app_.generalSettings_.softwareDesktopHotkeyEnabled,
+                app_.generalSettings_.softwareDesktopHotkeyModifiers,
+                app_.generalSettings_.softwareDesktopHotkeyVirtualKey))
+            return { false, HotkeyTarget::SoftwareDesktop };
         if (conflictsWith(HotkeyTarget::FloatingDock,
                 app_.generalSettings_.dockEnabled &&
                     app_.dockSettings_.floatingShortcutMode,
@@ -1607,6 +1640,13 @@ private:
 
         switch (target)
         {
+        case HotkeyTarget::SoftwareDesktop:
+            if (app_.generalSettings_.softwareDesktopHotkeyEnabled &&
+                matches(app_.generalSettings_.softwareDesktopHotkeyModifiers,
+                    app_.generalSettings_.softwareDesktopHotkeyVirtualKey))
+                return { snowdesktop::SoftwareDesktopHotkey().Matches(modifiers, virtualKey),
+                    HotkeyTarget::None };
+            break;
         case HotkeyTarget::QuickNavigation:
             if (app_.navigationSettings_.enabled &&
                 matches(app_.navigationSettings_.modifiers,
@@ -1741,13 +1781,32 @@ bool DesktopApp::IsSettingsApplicationWindow(HWND window) const noexcept
 void DesktopApp::TryShowPendingSettingsWindow()
 {
     if (!settingsWindowOpenRequest_.Pending() ||
-        !startupInitializationComplete_)
+        !startupInitializationComplete_ || settingsWindowOpening_)
         return;
 
     const snowdesktop::SettingsRoute route =
         settingsWindowOpenRequest_.Route();
+    const auto revision = settingsWindowOpenRequest_.Revision();
     CloseQuickNavigation(false);
-    const bool shown = settingsWindow_ && settingsWindow_->Open(route);
+    settingsWindowOpening_ = true;
+    if (!settingsWindow_ || !settingsWindow_->Open(route,
+        [this, route, revision](bool shown) {
+            CompleteSettingsWindowOpen(route, revision, shown);
+        }))
+        CompleteSettingsWindowOpen(route, revision, false);
+}
+
+void DesktopApp::CompleteSettingsWindowOpen(const snowdesktop::SettingsRoute& route,
+    std::uint64_t revision, bool shown)
+{
+    settingsWindowOpening_ = false;
+    // A later click owns both its destination and its post-open action. An
+    // older acknowledgement must not consume an exit confirmation or route.
+    if (!settingsWindowOpenRequest_.IsCurrent(revision))
+    {
+        TryShowPendingSettingsWindow();
+        return;
+    }
     if (shown)
     {
         if (route.page == snowdesktop::SettingsPage::General &&
@@ -1897,7 +1956,7 @@ void DesktopApp::ToggleDesktopPassthrough()
     // Never hide the desktop if its visible mouse escape surface failed.
     if (!desktopPassthroughIndicator_.Show(instance_,
             desktopPassthroughHotkeyHwnd_, kDesktopPassthroughExitMessage,
-            _LW("app.desktop_passthrough.exit_hint")))
+            _LW("app.desktop_passthrough.exit_hint"), dcompDevice_.Get(), dwriteFactory_.Get()))
     {
         WriteDiagnosticLogEntry(L"Desktop passthrough edge indicator creation failed");
         return;
@@ -2041,6 +2100,15 @@ void DesktopApp::ApplyCollectionPopupAppearance()
     collectionPopupAppearance_ = snowdesktop::ResolveSurfaceTheme(
         generalSettings_.collectionPopupAppearance, globalAppearance,
         generalSettings_.collectionPopupTheme, false, &generalSettings_.globalCollectionPopupAppearance);
+    // Panel presets control the surface; menus keep the global style.
+    collectionPopupAppearance_.contextMenuStyle = globalAppearance.contextMenuStyle;
+    if (snowdesktop::SetNativeTooltipPreferences(generalSettings_.tooltipFontSize, collectionPopupAppearance_))
+    {
+        InvalidateAllWidgetSlots();
+        InvalidateDockContainers();
+        InvalidateFloatingDockWindow(false);
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    }
     collectionPopupLightTheme_ =
         collectionPopupAppearance_.contentTheme == 1;
     collectionPopupGlassTheme_ =

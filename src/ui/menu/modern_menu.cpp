@@ -1,10 +1,12 @@
 #include "ui/render/app_font.h"
 #include "modern_menu.h"
 #include "ui/input/text_input_state.h"
+#include "platform/foreground_fullscreen.h"
 
 #include "menu_icon_render.h"
 #include "modern_menu_appearance_rules.h"
 #include "modern_menu_scroll_hint.h"
+#include "modern_menu_dynamic_items_rules.h"
 
 #include <dwmapi.h>
 #include <imm.h>
@@ -255,21 +257,36 @@ public:
 
         MSG message{};
         bool quitReceived = false;
+        std::optional<std::vector<Item>> pendingItems;
         while (!done_ && !quitReceived)
         {
             if (options_.pollItems)
             {
-                const bool canApply = popups_.size() == 1 && popups_.front()->hoveredItem < 0 &&
+                const bool canApply = popups_.size() == 1 &&
+                                      (popups_.front()->hoveredItem < 0 ||
+                                       (options_.pollItemsStablePrefix && popups_.front()->scrollOffset == 0)) &&
                                       !pointerPressed_ && !HIWORD(GetQueueStatus(QS_MOUSEBUTTON)) &&
                                       !(GetAsyncKeyState(VK_LBUTTON) & 0x8000) &&
                                       !(GetAsyncKeyState(VK_RBUTTON) & 0x8000);
-                if (auto updated = options_.pollItems(rootItems_, canApply); updated && canApply)
+                if (!pendingItems)
+                    pendingItems = options_.pollItems(rootItems_, canApply);
+                bool stable = true;
+                const int hovered = popups_.empty() ? -1 : popups_.front()->hoveredItem;
+                if (pendingItems && hovered >= 0)
+                {
+                    stable = options_.pollItemsStablePrefix &&
+                        PreservesHoveredRow(rootItems_, *pendingItems, hovered);
+                }
+                if (pendingItems && canApply && stable)
                 {
                     const int selected = popups_.front()->keyboardItem;
                     const UINT selectedCommand = selected >= 0 && static_cast<size_t>(selected) < rootItems_.size()
                         ? rootItems_[selected].command : 0;
-                    rootItems_ = std::move(*updated);
+                    rootItems_ = std::move(*pendingItems);
+                    pendingItems.reset();
                     RefreshPopup(*popups_.front(), true);
+                    if (hovered >= 0)
+                        SetHoveredItem(*popups_.front(), hovered, false, false);
                     if (selectedCommand)
                         for (size_t i = 0; i < rootItems_.size(); ++i)
                             if (rootItems_[i].command == selectedCommand)
@@ -280,7 +297,8 @@ public:
                                 SetHoveredItem(*popups_.front(), static_cast<int>(i), true, false);
                                 break;
                             }
-                    options_.pollItems = {};
+                    if (!options_.pollItemsFinished || options_.pollItemsFinished())
+                        options_.pollItems = {};
                 }
             }
             const HANDLE scheduledWork =
@@ -309,6 +327,23 @@ public:
                         static_cast<int>(message.wParam));
                     quitReceived = true;
                     break;
+                }
+                const bool pointerPress =
+                    message.message == WM_LBUTTONDOWN ||
+                    message.message == WM_RBUTTONDOWN ||
+                    message.message == WM_MBUTTONDOWN ||
+                    message.message == WM_XBUTTONDOWN ||
+                    message.message == WM_NCLBUTTONDOWN ||
+                    message.message == WM_NCRBUTTONDOWN ||
+                    message.message == WM_NCMBUTTONDOWN ||
+                    message.message == WM_NCXBUTTONDOWN;
+                if (pointerPress && !IsPopupWindow(message.hwnd))
+                {
+                    // Desktop, Dock and popup hosts can use MA_NOACTIVATE,
+                    // so an outside press need not generate WM_ACTIVATE.
+                    // Close through the shared menu loop before the host
+                    // handles the click, retaining ordinary click routing.
+                    Cancel();
                 }
                 if (!HandleAccessKeyMessage(message))
                 {
@@ -374,8 +409,11 @@ public:
         if (!superseded_ && !externalActivation_ && options_.owner &&
             IsWindow(options_.owner) && IsWindowVisible(options_.owner))
         {
-            SetForegroundWindow(options_.owner);
-            SetFocus(options_.owner);
+            snowdesktop::fullscreen::GuardFocusRequest(false,
+                snowdesktop::fullscreen::ObserveForeground, [this]() {
+                    SetForegroundWindow(options_.owner);
+                    SetFocus(options_.owner);
+                });
         }
         TraceOwnedPopupZOrder(L"after-focus-restore", nullptr, true);
         // Destroying the popup and restoring focus can synchronously repaint
@@ -925,7 +963,8 @@ private:
                             ? metrics_.leftPadding + metrics_.iconColumnWidth + metrics_.textGap
                             : metrics_.outerInset * 2;
                     inlineWidths[i] =
-                        std::max(metrics_.rowHeight * (item.compactInlineAction ? 2 : 1),
+                        std::max(metrics_.rowHeight *
+                                     (item.compactInlineAction && !item.fitInlineActionToContent ? 2 : 1),
                                  static_cast<int>(labelSize.cx) + leading + metrics_.outerInset * 2);
                 }
                 continue;
@@ -1075,6 +1114,11 @@ private:
                 }
                 const int narrowWidth = metrics_.rowHeight;
                 const int compactWidth = metrics_.rowHeight * 2;
+                const auto compactActionWidth = [&](int actionIndex) {
+                    const auto& action = (*popup.items)[actionIndex];
+                    return action.measureInlineAction && inlineWidths[actionIndex] > 0
+                        ? inlineWidths[actionIndex] : compactWidth;
+                };
                 int flexibleCount = 0;
                 int fixedWidth = 0;
                 for (size_t i = position; i <= runEnd; ++i)
@@ -1084,9 +1128,7 @@ private:
                     if (action.label.empty())
                         fixedWidth += narrowWidth;
                     else if (action.compactInlineAction)
-                        fixedWidth += action.measureInlineAction
-                                          ? std::max(compactWidth, inlineWidths[regularIndices[i]])
-                                          : compactWidth;
+                        fixedWidth += compactActionWidth(regularIndices[i]);
                     else
                         ++flexibleCount;
                 }
@@ -1104,9 +1146,7 @@ private:
                     const int requestedWidth =
                         action.label.empty() ? narrowWidth
                                              : (action.compactInlineAction
-                                                    ? (action.measureInlineAction
-                                                           ? std::max(compactWidth, inlineWidths[actionIndex])
-                                                           : compactWidth)
+                                                    ? compactActionWidth(actionIndex)
                                                     : flexibleWidth);
                     const int actionWidth = i == runEnd
                         ? shadowSize_ + width - editorInset - left

@@ -1,5 +1,6 @@
 #pragma once
 #include <windows.h>
+#include "dock/dock_layout_settings.h"
 #include <algorithm>
 #include <cmath>
 #include <optional>
@@ -10,16 +11,45 @@
 
 namespace snowdesktop
 {
-inline bool StatusBarUsesTwoLineClock(bool merged, float height, float scale)
+// Clip only the shared edge. Corners and panels separated by a gap keep it.
+inline std::vector<RECT> StatusBarEdgeSegments(RECT frame, DockPosition position, RECT dock)
 {
-    return merged && height >= 40.f * scale;
+    const bool horizontal = position == DockPosition::Top || position == DockPosition::Bottom;
+    const bool touching = !IsRectEmpty(&dock) &&
+        (position == DockPosition::Top ? std::abs(frame.bottom - dock.top) <= 1 :
+         position == DockPosition::Bottom ? std::abs(frame.top - dock.bottom) <= 1 :
+         position == DockPosition::Left ? std::abs(frame.right - dock.left) <= 1 : std::abs(frame.left - dock.right) <= 1);
+    const LONG begin = horizontal ? frame.left : frame.top;
+    const LONG end = horizontal ? frame.right : frame.bottom;
+    const LONG cutBegin = std::max(begin, horizontal ? dock.left : dock.top);
+    const LONG cutEnd = std::min(end, horizontal ? dock.right : dock.bottom);
+    if (!touching || cutBegin >= cutEnd) return {frame};
+    std::vector<RECT> segments;
+    if (cutBegin > begin)
+    {
+        auto first = frame;
+        if (horizontal) first.right = cutBegin; else first.bottom = cutBegin;
+        segments.push_back(first);
+    }
+    if (cutEnd < end)
+    {
+        auto last = frame;
+        if (horizontal) last.left = cutEnd; else last.top = cutEnd;
+        segments.push_back(last);
+    }
+    return segments;
+}
+
+inline bool StatusBarUsesTwoLineClock(bool merged)
+{
+    return merged;
 }
 inline std::wstring StatusBarClockDisplay(std::wstring_view value, bool twoLineClock)
 {
     std::wstring result(value);
     if (twoLineClock)
         if (const auto separator = result.find(L"   "); separator != std::wstring::npos)
-            result.replace(separator, 3, L"\n");
+            result = result.substr(separator + 3) + L"\n" + result.substr(0, separator);
     return result;
 }
 inline RECT StatusBarCompactTarget(RECT bounds, float scale, bool twoLineClock)
@@ -82,14 +112,14 @@ struct MergedStatusBarLayout
     RECT center{}, clock{}, notifications{};
     std::vector<RECT> right;
 };
-// The Dock keeps its symmetric reservation. The clock and notification target
-// form the last group on the complete bar; tray items never follow them.
-inline MergedStatusBarLayout LayoutMergedStatusBar(LONG width, LONG height, float scale,
+// The clock and notification target form the last group on the complete bar.
+// Merged bars also keep the Dock's symmetric central reservation.
+inline MergedStatusBarLayout LayoutRightStatusBar(LONG width, LONG height, float scale,
     LONG padding, LONG clockWidth, LONG notificationWidth, std::span<const LONG> rightWidths,
-    std::optional<std::size_t> controlIndex)
+    std::optional<std::size_t> controlIndex, bool merged = false)
 {
     MergedStatusBarLayout result;
-    result.center = MergedStatusBarCenter(width, height, scale);
+    if (merged) result.center = MergedStatusBarCenter(width, height, scale);
     const LONG centerWidth = result.center.right - result.center.left;
     clockWidth = std::max(0L, clockWidth);
     notificationWidth = std::max(0L, notificationWidth);
@@ -131,5 +161,12 @@ inline MergedStatusBarLayout LayoutMergedStatusBar(LONG width, LONG height, floa
         if (notificationWidth) result.notifications = {group.left + clockWidth, 0, group.right, height};
     }
     return result;
+}
+inline MergedStatusBarLayout LayoutMergedStatusBar(LONG width, LONG height, float scale,
+    LONG padding, LONG clockWidth, LONG notificationWidth, std::span<const LONG> rightWidths,
+    std::optional<std::size_t> controlIndex)
+{
+    return LayoutRightStatusBar(width, height, scale, padding, clockWidth, notificationWidth,
+        rightWidths, controlIndex, true);
 }
 }

@@ -131,13 +131,18 @@ inline Metrics ResolveMetrics(
 
 inline int ResolveMaximumHeight(
     const Metrics& metrics,
-    int workHeight)
+    int workHeight,
+    int controlsHeight = 0)
 {
     const int availableHeight = std::max(
         1, workHeight - metrics.edgeMargin * 2);
-    return std::min(
+    const int baselineHeight = std::min(
         availableHeight,
         std::max(1, metrics.maximumHeight));
+    // Visible controls may enlarge the frame instead of taking height from
+    // the scroll viewport. The work area remains the hard limit.
+    return baselineHeight + std::min(
+        std::max(0, controlsHeight), availableHeight - baselineHeight);
 }
 
 inline bool DetailsVisible(
@@ -193,6 +198,16 @@ inline int PreferredColumnCount(
             static_cast<int>(std::min<std::size_t>(
                 itemCount, kMaximumColumns))),
         minimumColumns, maximumColumns);
+}
+
+inline int ResolveGridColumnCount(
+    int viewportWidth, int minimumCellWidth, float spacingScale)
+{
+    const int cell = std::max(1, minimumCellWidth);
+    const float spacing = std::isfinite(spacingScale)
+        ? std::clamp(spacingScale, 0.5f, 2.0f) : 1.0f;
+    const int gap = std::max(0, static_cast<int>(std::round(cell * kGapPercentX * spacing)));
+    return std::clamp(std::max(1, viewportWidth) / (cell + gap), 1, kMaximumColumns);
 }
 
 inline int RequiredRowCount(

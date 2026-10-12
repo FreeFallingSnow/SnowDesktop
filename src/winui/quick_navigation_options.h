@@ -29,16 +29,9 @@ public:
         root_.Spacing(8);
         notice_.Severity(winrt::Microsoft::UI::Xaml::Controls::InfoBarSeverity::Error);
         notice_.IsClosable(false); notice_.IsOpen(false); root_.Children().Append(notice_);
-        if (!appearanceOnly_)
-        {
-            auto opening = Section("quickNav.opening", {}, [this] {commit_([](auto& value) {value.desktopViewMode = QuickNavigationDesktopViewMode::Tile;});});
-            view_.SelectionChanged([this](auto&&, auto&&) {if (!sync_ && view_.SelectedIndex() >= 0) commit_([mode = static_cast<QuickNavigationDesktopViewMode>(view_.SelectedIndex())](auto& value) {value.desktopViewMode = mode;});});
-            AddRow(opening, "quickNav.view", view_, [](auto& value) {value.desktopViewMode = QuickNavigationDesktopViewMode::Tile;});
-            focus_.emplace("quickNav.defaultCollapsed", opening);
-        }
         if (appearanceOnly_)
         {
-            auto layout = Group("quickNav.layout", [this] {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});});
+            auto layout = Group("quickNav.layout", [this] {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});}, "quickNav.layout.pixelHint");
             AddNumber(layout, "expandedWidth", &QuickNavigationLayout::expandedWidth, 400, 1800);
             AddNumber(layout, "collapsedWidth", &QuickNavigationLayout::collapsedWidth, 360, 1400);
             AddNumber(layout, "maximumHeight", &QuickNavigationLayout::maximumHeight, 220, 1400);
@@ -60,7 +53,7 @@ public:
         }
         if (!appearanceOnly_)
         {
-            auto prefixes = Section("quickNav.prefixes", "quickNav.prefixes.hint", [this] {commit_([](auto& value) {value.prefixes = NavigationSettings{}.prefixes;});});
+            auto prefixes = Group("quickNav.prefixes", [this] {commit_([](auto& value) {value.prefixes = NavigationSettings{}.prefixes;});}, "quickNav.prefixes.hint");
             constexpr const char* typeKeys[] = {"quickNav.type.app", "quickNav.type.file", "quickNav.type.web", "quickNav.type.settings", "quickNav.type.run", "quickNav.type.calculator"};
             for (size_t i = 0; i < prefixes_.size(); ++i)
             {
@@ -74,7 +67,7 @@ public:
                 });
                 AddRow(prefixes, typeKeys[i], prefixes_[i], [i](auto& value) {value.prefixes[i] = NavigationSettings{}.prefixes[i];});
             }
-            auto engines = Section("quickNav.engines", {}, [this] {commit_([](auto& value) {value.engines = NavigationSettings{}.engines; value.defaultEngine = "bing";});});
+            auto engines = Group("quickNav.engines", [this] {commit_([](auto& value) {value.engines = NavigationSettings{}.engines; value.defaultEngine = "bing";});});
             defaultEngine_.SelectionChanged([this](auto&&, auto&&) {
                 const int index = defaultEngine_.SelectedIndex();
                 if (!sync_ && index >= 0 && static_cast<size_t>(index) < values_.engines.size())
@@ -127,7 +120,7 @@ public:
                 current->editor->picker.IsAlphaEnabled(true);
                 current->editor->picker.IsAlphaSliderVisible(true);
                 current->editor->picker.IsAlphaTextInputVisible(true);
-                current->editor->SetText(L(std::string("quickNav.color.") + name), L(ColorHint(name)), L("app.settings.cancel"));
+                current->editor->SetText(L(std::string("quickNav.color.") + name), {}, L("app.settings.cancel"));
                 presenter_controls::AddRestoreDefaultAction(current->editor->row, L("app.settings.restore_default"), [this, name] {commit_([name](auto& value) {value.colors.erase(name);});});
                 colorGroups.at(area).Children().Append(current->editor->row.root);
                 focus_.emplace("quickNav.color." + name,current->editor->row.root);
@@ -144,7 +137,6 @@ public:
         sync_ = true; values_ = values; light_ = light; glass_ = glass; hasValues_ = true;
         if (!appearanceOnly_)
         {
-            view_.SelectedIndex(static_cast<int>(values.desktopViewMode));
             for (size_t i = 0; i < prefixes_.size(); ++i)
                 if (prefixes_[i].Text() != winrt::to_hstring(values.prefixes[i])) prefixes_[i].Text(winrt::to_hstring(values.prefixes[i]));
             if (enginesChanged) BuildEngines();
@@ -165,17 +157,14 @@ public:
     {
         sync_ = true;
         for (const auto& [key, label] : labels_) label.Text(L(key));
-        for (const auto& [key, row] : rows_) row->SetText(L(key), key.starts_with("quickNav.layout.") ? L(LayoutHint(key)) : std::wstring{});
+        for (const auto& [key, row] : rows_) row->SetText(L(key), key == "quickNav.layout.visibleRows" ? L("quickNav.layout.rowsHint") : std::wstring{});
         for (const auto& [key, group] : groups_) group.Header(winrt::box_value(L(key)));
         if (!appearanceOnly_)
         {
-            view_.Items().Clear();
-            for (const char* key : {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial"}) view_.Items().Append(winrt::box_value(L(key)));
-            view_.SelectedIndex(static_cast<int>(values_.desktopViewMode));
             addEngine_.Content(winrt::box_value(L("quickNav.engine.add")));
             if (hasValues_) BuildEngines();
         }
-        for (const auto& color : colors_) color->editor->SetText(L(std::string("quickNav.color.") + color->key), L(ColorHint(color->key)), L("app.settings.cancel"));
+        for (const auto& color : colors_) color->editor->SetText(L(std::string("quickNav.color.") + color->key), {}, L("app.settings.cancel"));
         sync_ = false;
     }
     void Register(const std::function<void(std::string, const winrt::Microsoft::UI::Xaml::FrameworkElement&)>& registrar) const
@@ -199,19 +188,6 @@ private:
     struct Number {std::string key; int QuickNavigationLayout::*field; NumberBox box;};
     struct Color {std::string key; std::unique_ptr<presenter_controls::ColorFlyoutEditor> editor;};
     std::wstring L(std::string_view key) const {return localize_(key);}
-    static const char* ColorHint(std::string_view key)
-    {
-        if (key == "resultFill" || key == "resultBorder" || key == "iconPlateFill" || key == "iconPlateBorder" ||
-            key == "tabDefaultFill" || key == "tabDefaultStroke" || key == "tabActiveStroke" || key == "tabHoverStroke")
-            return "quickNav.colorHint.transparent";
-        return "quickNav.colorHint.opacity";
-    }
-    static const char* LayoutHint(std::string_view key)
-    {
-        if (key.ends_with("visibleRows")) return "quickNav.layout.rowsHint";
-        if (key.ends_with("labelLines")) return "quickNav.layout.linesHint";
-        return "quickNav.layout.pixelHint";
-    }
     bool Accept(const NavigationSettings& candidate)
     {
         const bool valid = ValidateNavigationSearchConfiguration(candidate);
@@ -229,35 +205,22 @@ private:
         panel.Children().Append(row->root); focus_.emplace(key, control);
         rows_.emplace_back(key, row.get()); rowStorage_.push_back(std::move(row));
     }
-    Panel Section(std::string key, std::string hint, std::function<void()> reset)
-    {
-        Panel panel; panel.Spacing(12);
-        winrt::Microsoft::UI::Xaml::Controls::Border card; card.Style(cardStyle_); card.Child(panel);
-        winrt::Microsoft::UI::Xaml::Controls::Grid heading;
-        winrt::Microsoft::UI::Xaml::Controls::TextBlock title; title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        title.Text(L(key)); title.VerticalAlignment(winrt::Microsoft::UI::Xaml::VerticalAlignment::Center);
-        title.Margin({0,0,40,0}); title.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap);
-        labels_.emplace_back(key, title); heading.Children().Append(title);
-        winrt::Microsoft::UI::Xaml::Controls::Button button; presenter_controls::ConfigureRestoreDefaultButton(button,L("app.settings.restore_default"));
-        button.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
-        button.Click([reset](auto&&, auto&&) {reset();}); heading.Children().Append(button); panel.Children().Append(heading);
-        if (!hint.empty()) {winrt::Microsoft::UI::Xaml::Controls::TextBlock text; text.Text(L(hint)); text.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap); text.Opacity(.68); panel.Children().Append(text); labels_.emplace_back(hint,text);}
-        root_.Children().Append(card); focus_.emplace(key,panel); return panel;
-    }
-    Panel Group(std::string key, std::function<void()> reset)
+    Panel Group(std::string key, std::function<void()> reset, std::string hint = {})
     {
         Panel panel; panel.Spacing(12); panel.Padding({20,8,20,16});
         winrt::Microsoft::UI::Xaml::Controls::Button button; presenter_controls::ConfigureRestoreDefaultButton(button,L("app.settings.restore_default"));
         button.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
         button.Click([reset](auto&&, auto&&) {reset();}); panel.Children().Append(button);
+        if (!hint.empty())
+        {
+            winrt::Microsoft::UI::Xaml::Controls::TextBlock text;
+            text.Text(L(hint)); text.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap); text.Opacity(.68);
+            panel.Children().Append(text); labels_.emplace_back(hint, text);
+        }
         winrt::Microsoft::UI::Xaml::Controls::Expander expander; expander.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
         expander.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch); expander.Header(winrt::box_value(L(key))); expander.Content(panel);
-        if (appearanceOnly_) root_.Children().Append(expander);
-        else
-        {
-            winrt::Microsoft::UI::Xaml::Controls::Border card; card.Style(cardStyle_); card.Padding({0,0,0,0}); card.Child(expander);
-            root_.Children().Append(card);
-        }
+        expander.IsExpanded(false);
+        root_.Children().Append(expander);
         groups_.emplace_back(key,expander); focus_.emplace(key,expander); return panel;
     }
     void AddNumber(Panel panel, const char* key, int QuickNavigationLayout::* field, int min, int max)
@@ -322,7 +285,7 @@ private:
     Localize localize_; std::function<void(Edit)> commit_; winrt::Microsoft::UI::Xaml::Style cardStyle_{nullptr}; NavigationSettings values_;
     bool appearanceOnly_ = false, sync_ = false, hasValues_ = false, light_ = false, glass_ = false;
     Panel root_, engineRows_;
-    winrt::Microsoft::UI::Xaml::Controls::ComboBox view_, defaultEngine_;
+    winrt::Microsoft::UI::Xaml::Controls::ComboBox defaultEngine_;
     winrt::Microsoft::UI::Xaml::Controls::InfoBar notice_;
     winrt::Microsoft::UI::Xaml::Controls::Button addEngine_;
     winrt::Microsoft::UI::Xaml::Controls::Expander engineManagement_;

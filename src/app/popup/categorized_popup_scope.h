@@ -19,9 +19,12 @@ public:
     ~CategorizedPopupScope()
     {
         if (!view_) return;
-        view_->SetPopupFrame(nullptr);
         if (wasPopupHosted_) view_->SetPopupFrame(&savedFrame_);
-        else if (wasHosted_) view_->SetHostedFrame(&savedFrame_);
+        else
+        {
+            view_->SetPopupFrame(nullptr);
+            if (wasHosted_) view_->SetHostedFrame(&savedFrame_);
+        }
     }
     CategorizedPopupScope(const CategorizedPopupScope&) = delete;
     CategorizedPopupScope& operator=(const CategorizedPopupScope&) = delete;

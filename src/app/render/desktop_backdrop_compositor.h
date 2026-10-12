@@ -92,6 +92,12 @@ public:
     void ClearGenieTransform();
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
     void BeginFrame(bool completeCollection);
+    // Dock full redraws collect plain panel data until their content surface
+    // is ready. No live visual, native region, or seen flag changes here, so
+    // another target's shared-controller commit cannot publish this candidate.
+    bool BeginStagedFrame();
+    bool ApplyStagedFrame();
+    void DiscardStagedFrame();
     /**
      * @brief 注册或更新一个圆角玻璃面板。
      * @param ownerKey 非零时作为跨几何变化保持稳定的面板身份；零值保留
@@ -112,8 +118,8 @@ public:
     /** @brief Apply a local card matrix and its projected window region in this frame's transaction. */
     bool SetPanelTransform(std::uintptr_t ownerKey,
         const D2D1_MATRIX_4X4_F& matrix, const RECT& projectedFrame);
-    /** @brief 立即移除指定矩形对应的玻璃面板并同步辅助窗口区域。 */
-    bool RemovePanel(const RECT& frame);
+    /** @brief 移除玻璃面板并同步区域；非零 ownerKey 定位稳定身份，零值按矩形查找。 */
+    bool RemovePanel(const RECT& frame, std::uintptr_t ownerKey = 0);
     /** @brief 在完整收集帧中保留一个由交接事务临时拥有的面板。 */
     bool KeepPanel(const RECT& frame);
     /** @brief 修改指定面板透明度；由 CommitVisualChanges 统一提交。 */

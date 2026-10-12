@@ -1,6 +1,7 @@
 #include "lua_logical_slot.h"
 
 #include "core/item.h"
+#include "widget/runtime/widget_item_layout.h"
 
 #include <algorithm>
 #include <cmath>
@@ -63,7 +64,7 @@ bool DrawDropSurface(ID2D1DeviceContext* context,
 
 bool DrawDropIndicator(ID2D1DeviceContext* context,
     const LogicalSlotHostSurface& surface, Slot* slot,
-    HitRegion region, BarStyle insertionStyle)
+    HitRegion region, BarStyle insertionStyle, float itemPad)
 {
     if (!context || !slot || !surface.dropStyle.foreground ||
         region == HitRegion::None || region == HitRegion::Handoff ||
@@ -96,8 +97,8 @@ bool DrawDropIndicator(ID2D1DeviceContext* context,
     if (insertionStyle == BarStyle::VBar)
     {
         const float x = region == HitRegion::SortBefore
-            ? static_cast<float>(bounds.left) - lineWidth / 2.0f
-            : static_cast<float>(bounds.right) - lineWidth / 2.0f;
+            ? static_cast<float>(bounds.left) - itemPad - lineWidth / 2.0f
+            : static_cast<float>(bounds.right) + itemPad - lineWidth / 2.0f;
         context->FillRectangle(D2D1::RectF(
             x, static_cast<float>(bounds.top) + 2.0f,
             x + lineWidth, static_cast<float>(bounds.bottom) - 2.0f),
@@ -106,8 +107,8 @@ bool DrawDropIndicator(ID2D1DeviceContext* context,
     else
     {
         const float y = region == HitRegion::SortBefore
-            ? static_cast<float>(bounds.top) - lineWidth / 2.0f
-            : static_cast<float>(bounds.bottom) - lineWidth / 2.0f;
+            ? static_cast<float>(bounds.top) - itemPad - lineWidth / 2.0f
+            : static_cast<float>(bounds.bottom) + itemPad - lineWidth / 2.0f;
         context->FillRectangle(D2D1::RectF(
             static_cast<float>(bounds.left) + 4.0f, y,
             static_cast<float>(bounds.right) - 4.0f, y + lineWidth),
@@ -451,12 +452,26 @@ void LuaLogicalSlotContainer::DrawDropPreview(
     }
     const BarStyle insertionStyle =
         InsertionStyleForSurface(*surface);
+    const bool verticalBar = insertionStyle == BarStyle::VBar;
+    const std::size_t index = slot->GetIndex();
+    float itemPad = 0.0f;
+    if (index < surface->items.size())
+    {
+        if (region == HitRegion::SortBefore && index > 0)
+            itemPad = snowdesktop::widget_item_layout::InsertionBoundaryPad(
+                surface->items[index - 1].bounds,
+                slot->GetBounds(), verticalBar);
+        else if (region == HitRegion::SortAfter && index + 1 < surface->items.size())
+            itemPad = snowdesktop::widget_item_layout::InsertionBoundaryPad(
+                slot->GetBounds(),
+                surface->items[index + 1].bounds, verticalBar);
+    }
     const bool styledSurface = DrawDropSurface(context, *surface);
     const bool styledIndicator = DrawDropIndicator(
         context, *surface, slot, region,
-        insertionStyle);
+        insertionStyle, itemPad);
     if (!styledIndicator &&
         !(region == HitRegion::Empty && styledSurface))
         slot->DrawDropIndicatorWithStyle(
-            context, region, insertionStyle);
+            context, region, insertionStyle, itemPad);
 }

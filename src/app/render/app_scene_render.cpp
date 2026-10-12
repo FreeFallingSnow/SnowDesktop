@@ -7,6 +7,7 @@
 #include "icons/large_icon_shape_geometry.h"
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
+#include "widget/runtime/widget_item_layout.h"
 #include "widgets/collection_group_rules.h"
 
 // Desktop scene composition: static cache, dynamic overlays and frame orchestration.
@@ -46,22 +47,6 @@ void DesktopApp::DrawStaticBackground(
     // lastMousePoint_ 绘制 item hover。
     if (popupOccludesPointer)
         lastMousePoint_ = { LONG_MIN, LONG_MIN };
-
-    // Saved placement is already known even when Shell has not returned the
-    // item yet. These are visual marks only, never synthetic selectable files.
-    if (initialShellReadPending_ && !hiddenMode)
-        for (const auto& [key, record] : layoutRecords_)
-        {
-            if (!record.hasGrid || collectedKeysCache_.contains(ToUpperInvariant(key)) ||
-                FindItemIndexByKey(key) != static_cast<size_t>(-1))
-                continue;
-            if (const auto visibility = settingsIconVisibility_.find(ToUpperInvariant(key));
-                visibility != settingsIconVisibility_.end() && !visibility->second)
-                continue;
-            const RECT bounds = GetGridRect(gridPages_, record.cell, record.span);
-            if (!IsRectEmptyRect(bounds) && intersectsUpdate(bounds))
-                DrawPlaceholderIcon(ctx, -1, GetItemIconRect(bounds), 1.0f);
-        }
 
     // Desktop icons
     const bool mouseOverWidget = IsPointOverWidgetChrome(lastMousePoint_);
@@ -221,10 +206,14 @@ void DesktopApp::DrawDesktopForeground(
     ID2D1DeviceContext* ctx,
     bool hiddenMode)
 {
+    if (hiddenMode)
+        navHotEdgeHintBackdrop_.Clear([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
     snowdesktop::performance::Scope performanceScope("dock", "desktop.foreground");
     for (const auto& container : containers_)
     {
         auto* dock = dynamic_cast<DockContainer*>(container.get());
+        if (dock && hiddenMode && !dockSettings_.keepWhenDesktopHidden)
+            dock->ClearTitleTooltipBackdrop();
         if (!dock ||
             (hiddenMode && !dockSettings_.keepWhenDesktopHidden) ||
             IsDockHostedByPersistentHost(dock))
@@ -237,10 +226,8 @@ void DesktopApp::DrawDesktopForeground(
 
     DrawDynamicOverlays(ctx, hiddenMode);
     DrawLargeIconInteractionOverlay(ctx);
-    if (desktopIconsHidden_ && showHiddenHint_)
-        DrawHiddenHintOverlay(ctx);
-    if (showWidgetAddedHint_ && !IsUsageGuideVisible())
-        DrawWidgetAddedHintOverlay(ctx);
+    DrawHiddenHintOverlay(ctx);
+    DrawWidgetAddedHintOverlay(ctx);
     DrawUsageGuideHintOverlay(ctx);
     // Independent Dock content and backdrop HWNDs must expose the guide's
     // desktop hit area as well as its pixels. Native menus stay above both.
@@ -422,9 +409,14 @@ void DesktopApp::DrawDynamicOverlays(
                 targetDock &&
                 IsDockHostedByPersistentHost(targetDock);
             const bool targetIsFloatingDock =
-                renderingPersistentDockHost_ &&
-                targetContainer ==
-                    renderingPersistentDockHost_->container;
+                targetHostedByDockHost &&
+                (!renderingFloatingDock_ ||
+                    (renderingPersistentDockHost_ &&
+                        targetContainer ==
+                            renderingPersistentDockHost_->container));
+            // The desktop pass has no current Dock host. It must still
+            // recognize a hosted target and leave its guidance to that host;
+            // a duplicate below the Dock is blurred into a colored halo.
             if (!snowdesktop::drag_visual_rules::
                     DropPreviewBelongsToRenderSurface(
                         renderingFloatingDock_,
@@ -437,6 +429,7 @@ void DesktopApp::DrawDynamicOverlays(
 
         RECT clipViewport{};
         RECT popupTargetRect{};
+        float popupInsertionPad = 0.0f;
         auto* wc = dynamic_cast<WidgetContainer*>(targetContainer);
         const DesktopWidget* openPopupWidget =
             GetOpenPopupWidget();
@@ -469,15 +462,25 @@ void DesktopApp::DrawDynamicOverlays(
                 popupTargetRect = popup;
                 const RECT content =
                     GetCollectionPopupContentRect(popup);
-                clipViewport = (UsesCollectionPopupList(*openPopupWidget) || UsesCollectionPopupFan(*openPopupWidget))
+                const auto metrics = GetOpenCollectionPopupLayoutMetrics();
+                const bool listMode = UsesCollectionPopupList(*openPopupWidget);
+                const bool fanMode = UsesCollectionPopupFan(*openPopupWidget);
+                // List rows use their own font/spacing-dependent geometry.
+                // Both sides of a boundary must meet halfway across that gap.
+                popupInsertionPad = listMode && !fanMode
+                    ? snowdesktop::widget_item_layout::InsertionBoundaryPad(
+                        GetCollectionPopupItemRect(popup, 0),
+                        GetCollectionPopupItemRect(popup, 1), false)
+                    : static_cast<float>(fanMode ? metrics.gapY : metrics.gapX) * 0.5f;
+                const long insertionGutter =
+                    static_cast<long>(std::ceil(popupInsertionPad)) + 2;
+                clipViewport = (listMode || fanMode)
                     ? snowdesktop::popup_drag_rules::
                         ExpandInsertionClipVertically(
-                            content, popup,
-                            kCollectionPopupGapY / 2 + 2)
+                            content, popup, insertionGutter)
                     : snowdesktop::popup_drag_rules::
                         ExpandInsertionClipHorizontally(
-                            content, popup,
-                            kCollectionPopupGapX / 2 + 2);
+                            content, popup, insertionGutter);
             }
             else
             {
@@ -575,7 +578,7 @@ void DesktopApp::DrawDynamicOverlays(
                 else
                     targetSlot->DrawDropIndicatorWithStyle(ctx, targetRegion,
                         UsesCollectionPopupList(*openPopupWidget) ? BarStyle::HBar : BarStyle::VBar,
-                        static_cast<float>(kCollectionPopupGapX) * 0.5f);
+                        popupInsertionPad);
             }
             else
             {

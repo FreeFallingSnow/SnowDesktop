@@ -1,8 +1,11 @@
 #include "app/app.h"
+#include "dock/dock_window_source_cloak.h"
 #include "dock_platform_helpers.h"
 #include "dock_taskbar_diagnostics.h"
 #include "app/shell/initial_icon_bitmap.h"
 #include "drag_drop/drag_input_rules.h"
+#include "settings/animation_settings.h"
+#include "diagnostics/performance_trace.h"
 
 // Running-window discovery, visual state and activation behavior.
 
@@ -10,6 +13,14 @@ namespace
 {
 
 constexpr UINT kDockWindowActivationObservationIntervalMs = 100;
+
+bool IsDockConsentActivationProxy(HWND window)
+{
+    if (!window || !IsWindow(window)) return false;
+    wchar_t className[128]{};
+    return GetClassNameW(window, className, static_cast<int>(std::size(className))) &&
+        wcscmp(className, L"$$$Secure UAP Dummy Window Class For Interim Dialog") == 0;
+}
 
 void LogDockWindowActivation(HWND target, const wchar_t* phase,
     int showCommand = 0, BOOL accepted = TRUE, DWORD error = ERROR_SUCCESS)
@@ -157,6 +168,38 @@ DesktopApp::RequestDockWindowActivation(
     HWND target, bool wasMinimized)
 {
     CancelAllDockWindowActivationObservations();
+    if (IsDockConsentActivationProxy(target))
+    {
+        // Restoring this normal-desktop proxy through DefWindowProc only
+        // foregrounds an empty window. The task-switch request lets Windows
+        // reveal its consent UI. Issue it once for the exact clicked window,
+        // outside the UI thread; never treat the proxy's foreground as proof
+        // that the secure-desktop dialog was shown.
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(target, &process);
+        const HWND requestForeground = GetForegroundWindow();
+        const ULONGLONG queuedAt = GetTickCount64();
+        const std::wstring key = L"dock-consent-activate:" + std::to_wstring(process) + L":" +
+            std::to_wstring(thread) + L":" + std::to_wstring(reinterpret_cast<UINT_PTR>(target));
+        const bool queued = shellModelWork_.Submit(key,
+            [target, process, thread, requestForeground, queuedAt] {
+                DWORD currentProcess = 0;
+                const DWORD currentThread = GetWindowThreadProcessId(target, &currentProcess);
+                if (!process || !thread || currentProcess != process || currentThread != thread ||
+                    !IsDockConsentActivationProxy(target) || !IsWindowVisible(target) ||
+                    IsHungAppWindow(target) || GetTickCount64() - queuedAt > 1000 ||
+                    GetForegroundWindow() != requestForeground)
+                    return false;
+                LogDockWindowActivation(target, L"consent-task-switch-request");
+                SwitchToThisWindow(target, TRUE);
+                LogDockWindowActivation(target, L"consent-task-switch-returned");
+                return true;
+            }, [](bool) {}, hwnd_, kBackgroundShellReadyMessage);
+        LogDockWindowActivation(target, queued ? L"consent-task-switch-queued" : L"consent-task-switch-not-queued");
+        DockWindowActivationOutcome outcome;
+        outcome.restored = !wasMinimized;
+        return outcome;
+    }
     BeginDockWindowActivationObservation(
         target, wasMinimized);
     RequestDockWindowShow(target, wasMinimized);
@@ -334,6 +377,7 @@ void DesktopApp::RefreshDockForegroundState()
 {
     if (!generalSettings_.dockEnabled)
         return;
+    const DWORD observedForegroundTick = dockForegroundChangedTick_.load();
     const HWND foreground = ResolveDockSemanticForegroundWindow();
     const int primaryButton = GetSystemMetrics(SM_SWAPBUTTON)
         ? VK_RBUTTON : VK_LBUTTON;
@@ -366,30 +410,85 @@ void DesktopApp::RefreshDockForegroundState()
             RefreshTrackedDockForegroundState(
                 app, foreground, matchesForeground, isMinimized);
     }
+    // Foreground feedback has already updated the tracked model. Do not turn
+    // this same notification into another process/identity scan on the timer.
+    // Unknown windows and membership changes keep their separate list revision.
+    dockRunningWindowsForegroundTick_ = observedForegroundTick;
     // This path only mutates window state: retained drag wrappers, item order,
     // identities and bitmaps remain owned by the periodic discovery model.
     if (changed)
         InvalidateDockRects();
 }
 
+void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
+{
+    snowdesktop::performance::Scope performanceScope("dock", "running.notification");
+    if (!window) return;
+    const auto tracks = [window](const auto& state) {
+        return state.window == window ||
+            std::find(state.trackedWindows.begin(), state.trackedWindows.end(), window) !=
+                state.trackedWindows.end();
+    };
+    const bool tracked = std::any_of(dockRunningWindows_.begin(), dockRunningWindows_.end(),
+            [&](const auto& pair) { return tracks(pair.second); }) ||
+        std::any_of(dockUnpinnedRunningApps_.begin(), dockUnpinnedRunningApps_.end(), tracks);
+    // Focus/minimize feedback already has a cheap tracked-state path. A new
+    // foreground window still gets immediate discovery if its show was missed.
+    const bool stateOnly = event == EVENT_SYSTEM_FOREGROUND ||
+        event == EVENT_SYSTEM_MINIMIZESTART || event == EVENT_SYSTEM_MINIMIZEEND;
+    if (tracked && stateOnly)
+    {
+        return;
+    }
+    if (!tracked && !IsDockTaskWindow(window)) return;
+
+    if (tracked && (event == EVENT_OBJECT_CREATE || event == EVENT_OBJECT_SHOW))
+    {
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(window, &process);
+        const auto identity = dockWindowAppIds_.PeekValue(window,
+            std::to_wstring(process) + L":" + std::to_wstring(thread));
+        // Repeated show events for an already identified task do not change
+        // its membership. Unknown metadata can still receive a targeted retry.
+        if (identity && !identity->empty())
+        {
+            RefreshDockForegroundState();
+            return;
+        }
+    }
+    dockWindowAppIds_.Invalidate(window);
+    dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+    RefreshDockRunningWindows();
+}
+
 void DesktopApp::RefreshDockRunningWindows(
     bool invalidateChanged, HWND preferredWindow)
 {
+    if (invalidateChanged && dockWindowTransition_ && dockWindowTransition_->IsActive())
+    {
+        // Background discovery can spend tens of milliseconds in process/Shell queries.
+        // Preserve the dirty revisions for the maintenance timer after handoff;
+        // animation frames and widget drawing share this thread.
+        // Explicit action lookups (invalidateChanged=false) must still resolve
+        // missing targets, rather than launching a duplicate application.
+        RefreshDockForegroundState();
+        snowdesktop::performance::Value("dock", "running.discovery_deferred", {}, 1);
+        return;
+    }
     // Dock slots own the DockEntryItem/DockRunningItem wrappers retained by a
     // DragSession. The OLE nested loop continues to dispatch maintenance
     // timers after capture and mouseDown_ are cleared, so rebuilding the
     // running-app model here would invalidate those source pointers before
     // native hand-back or synchronous drop completion.
-    if (snowdesktop::drag_input_rules::ShouldDeferModelReload(
+    if (mouseDown_ || snowdesktop::drag_input_rules::ShouldDeferModelReload(
             dragSession_.HasContext(),
             dragDropController_.IsTransportActive()))
     {
         return;
     }
+    snowdesktop::performance::Scope performanceScope("dock", "running.discovery");
     PruneDockPendingCloseWindows();
     const DWORD observedWindowStateTick = dockWindowListChangedTick_.load();
-    if (observedWindowStateTick != dockRunningWindowsStateTick_)
-        dockWindowAppIds_.Invalidate();
     dockWindowAppIds_.Retain([](HWND window) { return IsWindow(window) != FALSE; });
     struct DockWindowTarget
     {
@@ -435,17 +534,22 @@ void DesktopApp::RefreshDockRunningWindows(
     }
 
     std::vector<DockAppIdentity> fixedIdentities;
+    bool fixedIdentityPending = false;
     for (const DockEntry& entry : dockEntries_)
     {
         if (entry.type != DockEntryType::DesktopItem) continue;
         const size_t itemIndex = FindItemIndexByKey(entry.reference);
         if (itemIndex >= items_.size()) continue;
-        DockAppIdentity identity = ResolveDockAppIdentity(itemIndex);
+        bool pending = false;
+        DockAppIdentity identity = ResolveDockAppIdentity(itemIndex, &pending);
+        fixedIdentityPending |= pending;
         if (identity.kind != DockAppIdentityKind::None)
             fixedIdentities.push_back(std::move(identity));
     }
     std::vector<RunningWindowCandidate> runningCandidates;
     std::unordered_map<std::wstring, size_t> runningCandidateIndices;
+    const bool hasApplicationPins = std::any_of(fixedIdentities.begin(), fixedIdentities.end(),
+        [](const auto& identity) { return !identity.appUserModelId.empty(); });
 
     const HWND preferredRoot = preferredWindow && IsWindow(preferredWindow)
         ? GetAncestor(preferredWindow, GA_ROOT) : nullptr;
@@ -467,6 +571,9 @@ void DesktopApp::RefreshDockRunningWindows(
         std::unordered_map<DWORD, std::wstring> processPaths;
         std::unordered_map<DWORD,
             std::vector<std::wstring>> processAncestors;
+        bool fixedIdentityPending = false;
+        bool hasApplicationPins = false;
+        std::unordered_map<DWORD, std::wstring> processAppIds;
     };
     const DockProcessParentMap processParents =
         generalSettings_.dockEnabled
@@ -475,18 +582,21 @@ void DesktopApp::RefreshDockRunningWindows(
     EnumContext context{ this, &targets, scoringForeground, actualForeground, &fixedIdentities,
         &runningCandidates, &runningCandidateIndices,
         &dockPendingCloseWindows_, &processParents };
+    context.fixedIdentityPending = fixedIdentityPending;
+    context.hasApplicationPins = hasApplicationPins;
 
     if (generalSettings_.dockEnabled)
     {
         EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
             auto* context = reinterpret_cast<EnumContext*>(parameter);
+            snowdesktop::dock_source_cloak::RecoverStale(window);
             if (!IsDockTaskWindow(window) ||
                 (context->pendingCloseWindows &&
                  context->pendingCloseWindows->contains(window)))
                 return TRUE;
 
             DWORD processId = 0;
-            GetWindowThreadProcessId(window, &processId);
+            const DWORD threadId = GetWindowThreadProcessId(window, &processId);
             const bool ownedByCurrentProcess =
                 processId == GetCurrentProcessId();
             const bool applicationLevelWindow =
@@ -514,7 +624,16 @@ void DesktopApp::RefreshDockRunningWindows(
                         processId,
                         *context->processParents);
             }
-            const std::wstring appUserModelId = context->owner->GetDockWindowAppUserModelIdAsync(window);
+            std::wstring appUserModelId = context->owner->GetDockWindowAppUserModelIdAsync(window);
+            if (appUserModelId.empty() &&
+                (context->hasApplicationPins || context->fixedIdentityPending))
+            {
+                // Package identity is available directly from the process;
+                // do not wait for the Shell window property query to pin it.
+                auto [idIt, newProcess] = context->processAppIds.try_emplace(processId);
+                if (newProcess) idIt->second = QueryDockProcessAppUserModelId(processId);
+                appUserModelId = idIt->second;
+            }
 
             int score = DockWindowsShareActivationGroup(
                 window, context->scoringForeground) ? 1000 : 0;
@@ -544,7 +663,6 @@ void DesktopApp::RefreshDockRunningWindows(
                 target.score = score;
             }
 
-            if (pathIt->second.empty()) return TRUE;
             bool fixed = false;
             for (const DockAppIdentity& identity : *context->fixedIdentities)
             {
@@ -562,8 +680,12 @@ void DesktopApp::RefreshDockRunningWindows(
             }
             if (fixed) return TRUE;
 
-            const std::wstring identityKey = !appUserModelId.empty()
-                ? L"AUMID:" + appUserModelId : L"EXE:" + pathIt->second;
+            // The first running presentation must not wait for a Shell query.
+            // Executable identity is usable now; refine its ID/artwork later
+            // without restarting the same window's entrance animation.
+            const std::wstring identityKey = snowdesktop::dock_app_identity_rules::RunningWindowIdentity(
+                pathIt->second, appUserModelId, reinterpret_cast<UINT_PTR>(window), processId, threadId);
+            if (identityKey.empty()) return TRUE;
             wchar_t titleBuffer[512]{};
             GetWindowTextW(window, titleBuffer, static_cast<int>(std::size(titleBuffer)));
             std::wstring title = titleBuffer;
@@ -644,11 +766,22 @@ void DesktopApp::RefreshDockRunningWindows(
         for (const DockRunningAppInfo& existing : dockUnpinnedRunningApps_)
         {
             const auto found = runningCandidateIndices.find(existing.identityKey);
-            if (found == runningCandidateIndices.end() ||
-                found->second >= runningCandidates.size() || consumed[found->second])
-                continue;
-            consumed[found->second] = true;
-            stableCandidates.push_back(std::move(runningCandidates[found->second]));
+            size_t index = found != runningCandidateIndices.end() ? found->second : runningCandidates.size();
+            if (index == runningCandidates.size())
+                for (size_t candidateIndex = 0; candidateIndex < runningCandidates.size(); ++candidateIndex)
+                {
+                    const auto& candidate = runningCandidates[candidateIndex];
+                    if (!consumed[candidateIndex] && candidate.executablePath == existing.executablePath &&
+                        std::find(existing.trackedWindows.begin(), existing.trackedWindows.end(), candidate.window) !=
+                            existing.trackedWindows.end())
+                    {
+                        index = candidateIndex;
+                        break;
+                    }
+                }
+            if (index >= runningCandidates.size() || consumed[index]) continue;
+            consumed[index] = true;
+            stableCandidates.push_back(std::move(runningCandidates[index]));
         }
         for (size_t i = 0; i < runningCandidates.size(); ++i)
         {
@@ -661,6 +794,9 @@ void DesktopApp::RefreshDockRunningWindows(
     std::vector<DockRunningAppInfo> runningApps;
     runningApps.reserve(runningCandidates.size());
     const int requiredIconSize = GetMaximumShellIconBitmapSize();
+    const double animationNow = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    const bool animatePresence = dockRunningAppsInitialized_ &&
+        snowdesktop::animation::RuntimeAnimationsEnabled();
     std::vector<bool> reused(dockUnpinnedRunningApps_.size(), false);
     for (RunningWindowCandidate& candidate : runningCandidates)
     {
@@ -675,10 +811,19 @@ void DesktopApp::RefreshDockRunningWindows(
         info.minimized = candidate.minimized;
         info.foreground = candidate.foreground;
         info.trackedWindows = std::move(candidate.trackedWindows);
+        bool refineIdentityArtwork = false;
         for (size_t i = 0; i < dockUnpinnedRunningApps_.size(); ++i)
         {
             DockRunningAppInfo& old = dockUnpinnedRunningApps_[i];
-            if (reused[i] || old.identityKey != info.identityKey) continue;
+            const bool sameWindow = (old.executablePath == info.executablePath ||
+                old.executablePath.empty() || info.executablePath.empty()) &&
+                std::find(old.trackedWindows.begin(), old.trackedWindows.end(), info.window) !=
+                    old.trackedWindows.end();
+            if (reused[i] || (old.identityKey != info.identityKey && !sameWindow)) continue;
+            info.presence = old.presence;
+            refineIdentityArtwork = (old.appUserModelId != info.appUserModelId &&
+                !info.appUserModelId.empty()) ||
+                (old.executablePath.empty() && !info.executablePath.empty());
             if (old.iconBitmap &&
                 (old.iconRequestedSize >= requiredIconSize ||
                  snowdesktop::icon_render_rules::
@@ -697,9 +842,12 @@ void DesktopApp::RefreshDockRunningWindows(
             reused[i] = true;
             break;
         }
-        if (!info.iconBitmap)
+        info.presence.SetVisible(true, animationNow, animatePresence,
+            snowdesktop::animation::RuntimeDurationScale());
+        if (!info.iconBitmap || refineIdentityArtwork)
         {
-            info.iconRequestedSize = requiredIconSize;
+            const int requestSize = std::max(requiredIconSize, info.iconRequestedSize);
+            info.iconRequestedSize = requestSize;
             const auto key = info.identityKey;
             const auto path = info.executablePath;
             const auto appId = info.appUserModelId;
@@ -708,45 +856,46 @@ void DesktopApp::RefreshDockRunningWindows(
             GetWindowThreadProcessId(window, &process);
             const auto queuedAt = GetTickCount64();
             dockIconWork_.Submit(L"dock-running:" + key + L"\n" +
-                std::to_wstring(requiredIconSize), [path, appId, window, process, requiredIconSize, queuedAt] {
+                std::to_wstring(requestSize), [path, appId, window, process, requestSize, queuedAt] {
                 const auto started = GetTickCount64();
                 auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
                 result->bitmap = snowdesktop::initial_icon_bitmap::ReadRunning(!appId.empty(),
-                    [&] { return GetLocalIconResourceBitmap(path, result->size, requiredIconSize); },
+                    [&] { return GetLocalIconResourceBitmap(path, result->size, requestSize); },
                     [&]() -> HBITMAP {
                         DWORD current = 0;
                         GetWindowThreadProcessId(window, &current);
                         if (!process || current != process) return nullptr;
-                        return CreateDockWindowProvidedIconBitmap(window, result->size, requiredIconSize);
+                        return CreateDockWindowProvidedIconBitmap(window, result->size, requestSize);
                     });
                 WriteDiagnosticLogEntry((L"Dock local running icon: queueMs=" + std::to_wstring(started - queuedAt) +
                     L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                     std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                 return result;
-            }, [window, process, path, appId, requiredIconSize, queuedAt] {
+            }, [window, process, path, appId, requestSize, queuedAt] {
                 const auto started = GetTickCount64();
                 auto result = std::make_shared<snowdesktop::BackgroundBitmap>();
                 DWORD current = 0;
                 GetWindowThreadProcessId(window, &current);
                 if (current == process)
                     result->bitmap = CreateDockWindowIconBitmap(window, path, appId,
-                        result->size, requiredIconSize);
+                        result->size, requestSize);
                 WriteDiagnosticLogEntry((L"Dock Shell running icon: queueMs=" + std::to_wstring(started - queuedAt) +
                     L" readMs=" + std::to_wstring(GetTickCount64() - started) + L" bitmap=" +
                     std::to_wstring(result->bitmap ? 1 : 0) + L" path=" + path).c_str());
                 return result;
-            }, [this, key, path, appId, requiredIconSize](auto result, bool refined) {
+            }, [this, key, path, appId, requestSize](auto result, bool refined) {
                 if (!result || !result->bitmap) return;
                 for (auto& app : dockUnpinnedRunningApps_)
                 {
+                    if (!app.presence.Visible()) continue;
                     if (app.identityKey != key || app.executablePath != path ||
-                        app.appUserModelId != appId || app.iconRequestedSize > requiredIconSize) continue;
+                        app.appUserModelId != appId || app.iconRequestedSize > requestSize) continue;
                     // A slow local completion must not replace a refined icon.
                     if (!refined && app.iconBitmap) return;
                     if (app.iconBitmap) { EraseD2DIconCacheForBitmap(app.iconBitmap); DeleteObject(app.iconBitmap); }
                     app.iconBitmap = std::exchange(result->bitmap, nullptr);
                     app.iconBitmapSize = result->size;
-                    app.iconRequestedSize = requiredIconSize;
+                    app.iconRequestedSize = requestSize;
                     InvalidateDragStaticScene();
                     InvalidateDockRects();
                     break;
@@ -754,6 +903,24 @@ void DesktopApp::RefreshDockRunningWindows(
             }, hwnd_, kBackgroundShellReadyMessage);
         }
         runningApps.push_back(std::move(info));
+    }
+
+    // Keep an exiting presentation at its old position until its axis share is
+    // zero. It owns the bitmap but no longer owns an actionable window.
+    for (size_t i = 0; i < dockUnpinnedRunningApps_.size(); ++i)
+    {
+        if (reused[i]) continue;
+        auto& old = dockUnpinnedRunningApps_[i];
+        DockRunningAppInfo exiting = old;
+        exiting.presence.SetVisible(false, animationNow, animatePresence,
+            snowdesktop::animation::RuntimeDurationScale());
+        if (exiting.presence.IsHidden()) continue;
+        old.iconBitmap = nullptr;
+        exiting.window = nullptr;
+        exiting.trackedWindows.clear();
+        exiting.foreground = exiting.selected = false;
+        runningApps.insert(runningApps.begin() + static_cast<std::ptrdiff_t>(
+            std::min(i, runningApps.size())), std::move(exiting));
     }
 
     bool runningLayoutChanged = runningApps.size() != dockUnpinnedRunningApps_.size();
@@ -765,6 +932,8 @@ void DesktopApp::RefreshDockRunningWindows(
             const DockRunningAppInfo& old = dockUnpinnedRunningApps_[i];
             const DockRunningAppInfo& current = runningApps[i];
             if (old.identityKey != current.identityKey)
+                runningLayoutChanged = true;
+            if (old.presence.Amount() != current.presence.Amount())
                 runningLayoutChanged = true;
             if (old.window != current.window || old.minimized != current.minimized ||
                 old.foreground != current.foreground || old.title != current.title)
@@ -779,6 +948,8 @@ void DesktopApp::RefreshDockRunningWindows(
         old.iconBitmap = nullptr;
     }
     dockUnpinnedRunningApps_ = std::move(runningApps);
+    dockRunningAppsInitialized_ = true;
+    EnsureUiAnimationFrame();
 
     if (runningLayoutChanged)
     {
@@ -799,6 +970,7 @@ void DesktopApp::RefreshDockRunningWindows(
         dockForegroundChangedTick_.load();
     dockRunningWindowsStateTick_ = observedWindowStateTick;
     dockRunningWindowsRefreshTick_ = GetTickCount();
+    UpdateDockExternalMinimizeTargets();
 }
 
 bool DesktopApp::ActivateOrToggleDockItem(
@@ -806,8 +978,7 @@ bool DesktopApp::ActivateOrToggleDockItem(
     std::optional<snowdesktop::dock_window_rules::DockClickAction>
         pressedAction,
     HWND pressedTarget,
-    std::optional<RECT> pressedAnchorScreen,
-    DockWindowTransitionCapturePolicy minimizeCapturePolicy)
+    std::optional<RECT> pressedAnchorScreen)
 {
     DismissDockWindowPreviewUntilLeave();
     if (itemIndex >= items_.size()) return false;
@@ -908,6 +1079,9 @@ bool DesktopApp::ActivateOrToggleDockItem(
             ? DockClickAction::Restore
             : DockClickAction::Minimize;
     }
+    if (pressedAnchorScreen &&
+        (action == DockClickAction::Minimize || action == DockClickAction::Restore))
+        KeepDockTopmostForAction(*pressedAnchorScreen);
     const HWND transitionKeepBelowWindow =
         floatingDockHost_ &&
             IsPersistentDockHostEffectivelyFloating(
@@ -927,24 +1101,14 @@ bool DesktopApp::ActivateOrToggleDockItem(
         const bool shouldMinimize =
             !IsIconic(target) || reverseRestore;
         if (shouldMinimize)
-            snowdesktop::dock_taskbar_diagnostics::Begin(target, L"dock-minimize");
-        bool transitionStarted = false;
+            PrepareDockWindowMinimize(target, L"dock-minimize");
         if (shouldMinimize &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
-            transitionStarted =
-                dockWindowTransition_->StartMinimize(
-                    target, *pressedAnchorScreen,
-                    minimizeCapturePolicy,
-                    transitionKeepBelowWindow);
-        }
-        if (shouldMinimize &&
-            minimizeCapturePolicy ==
-                DockWindowTransitionCapturePolicy::LiveThumbnailOnly &&
-            !transitionStarted)
-        {
-            return false;
+            dockWindowTransition_->StartMinimize(
+                target, *pressedAnchorScreen,
+                transitionKeepBelowWindow);
         }
         if (shouldMinimize)
         {
@@ -1001,8 +1165,7 @@ bool DesktopApp::ActivateOrToggleDockWindow(
     std::optional<snowdesktop::dock_window_rules::DockClickAction>
         pressedAction,
     HWND pressedTarget,
-    std::optional<RECT> pressedAnchorScreen,
-    DockWindowTransitionCapturePolicy minimizeCapturePolicy)
+    std::optional<RECT> pressedAnchorScreen)
 {
     DismissDockWindowPreviewUntilLeave();
     HWND requestedTarget =
@@ -1016,6 +1179,11 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         return true;
     HWND target = GetAncestor(requestedTarget, GA_ROOT);
     if (!target) target = requestedTarget;
+    if (IsDockConsentActivationProxy(target))
+    {
+        RequestDockWindowActivation(target, IsIconic(target) != FALSE);
+        return true;
+    }
     if (dockWindowTransition_ &&
         dockWindowTransition_->IsActive() &&
         !dockWindowTransition_->IsActiveFor(
@@ -1053,6 +1221,9 @@ bool DesktopApp::ActivateOrToggleDockWindow(
             ? DockClickAction::Restore
             : DockClickAction::Minimize;
     }
+    if (pressedAnchorScreen &&
+        (action == DockClickAction::Minimize || action == DockClickAction::Restore))
+        KeepDockTopmostForAction(*pressedAnchorScreen);
     const HWND transitionKeepBelowWindow =
         floatingDockHost_ &&
             IsPersistentDockHostEffectivelyFloating(
@@ -1071,24 +1242,14 @@ bool DesktopApp::ActivateOrToggleDockWindow(
         const bool shouldMinimize =
             !minimized || reverseRestore;
         if (shouldMinimize)
-            snowdesktop::dock_taskbar_diagnostics::Begin(target, L"dock-minimize");
-        bool transitionStarted = false;
+            PrepareDockWindowMinimize(target, L"dock-minimize");
         if (shouldMinimize &&
             dockWindowTransition_ &&
             pressedAnchorScreen)
         {
-            transitionStarted =
-                dockWindowTransition_->StartMinimize(
-                    target, *pressedAnchorScreen,
-                    minimizeCapturePolicy,
-                    transitionKeepBelowWindow);
-        }
-        if (shouldMinimize &&
-            minimizeCapturePolicy ==
-                DockWindowTransitionCapturePolicy::LiveThumbnailOnly &&
-            !transitionStarted)
-        {
-            return false;
+            dockWindowTransition_->StartMinimize(
+                target, *pressedAnchorScreen,
+                transitionKeepBelowWindow);
         }
         if (shouldMinimize)
         {
@@ -1187,54 +1348,11 @@ void DesktopApp::ActivateDockWindowFromPreviewAnimated(HWND window)
             ResolveDockWindowPreviewClickAction(
                 IsIconic(target) != FALSE,
                 windowForeground);
-    // Mirror the Dock-icon command path: minimize first tries a target-only
-    // DWM thumbnail while keeping the floating layer visible, and closes it
-    // only when that path is unavailable. Restore and plain foreground
-    // activation deliberately keep it visible. Closing the host dismisses
-    // the preview and clears the stored anchor, so read the anchor first.
     const RECT anchor = dockWindowPreviewAnchorScreen_;
-    std::function<bool(DockWindowTransitionCapturePolicy)> command =
-        [this, window, action, anchor](
-            DockWindowTransitionCapturePolicy capturePolicy) {
-            if (!window || !IsWindow(window))
-                return false;
-            if (!IsRectEmpty(&anchor) &&
-                ActivateOrToggleDockWindow(
-                    window, action, nullptr, anchor,
-                    capturePolicy))
-                return true;
-            // Propagate an isolated live attempt's failure so the caller can
-            // retry after removing the floating layer. Native activation here
-            // used to consume that signal and could invert a minimize click.
-            if (capturePolicy ==
-                DockWindowTransitionCapturePolicy::LiveThumbnailOnly)
-                return false;
-            ActivateDockWindowFromPreview(window);
-            return true;
-        };
-    const bool requiresFloatingDockClose =
-        snowdesktop::dock_window_rules::
-            RequiresFloatingDockMinimizeCaptureIsolation(
-                IsSelectedPersistentDockHostPromoted(),
-                action);
-    if (requiresFloatingDockClose &&
-        command(DockWindowTransitionCapturePolicy::
-            LiveThumbnailOnly))
-    {
+    if (!IsRectEmpty(&anchor) &&
+        ActivateOrToggleDockWindow(window, action, nullptr, anchor))
         return;
-    }
-    if (requiresFloatingDockClose)
-    {
-        CloseFloatingDockThen(
-            [command = std::move(command)]() mutable {
-                command(DockWindowTransitionCapturePolicy::
-                    SnapshotPreferred);
-            },
-            FloatingDockCloseFocusPolicy::PreserveCurrent);
-        return;
-    }
-    command(DockWindowTransitionCapturePolicy::
-        SnapshotPreferred);
+    ActivateDockWindowFromPreview(window);
 }
 
 void DesktopApp::ActivateDockWindowFromPreview(HWND window)
@@ -1287,9 +1405,9 @@ void DesktopApp::HandleDockWindowRestoreTransition(
                     IsDockWindowClosePending(target)))
         {
             // Only submit the maximized/normal restore here. The transition
-            // keeps its final snapshot visible while the target processes the
-            // request, so the UI thread never waits inside the animation end
-            // frame and no second restore can alter the placement.
+            // restores the cloaked source before its visual timeline starts,
+            // letting the application finish its native restore underneath the
+            // animation. This remains asynchronous and submits no second restore.
             const DockWindowActivationOutcome outcome =
                 RequestDockWindowActivation(target, true);
             UpdateDockWindowActivationState(
@@ -1353,8 +1471,9 @@ void DesktopApp::UpdateDockWindowActivationState(
     InvalidateDockRects();
 }
 
-std::wstring DesktopApp::GetDockWindowAppUserModelIdAsync(HWND window)
+std::wstring DesktopApp::GetDockWindowAppUserModelIdAsync(HWND window, bool* pending)
 {
+    if (pending) *pending = false;
     DWORD process = 0;
     const DWORD thread = GetWindowThreadProcessId(window, &process);
     if (!process || !thread) return {};
@@ -1371,14 +1490,73 @@ std::wstring DesktopApp::GetDockWindowAppUserModelIdAsync(HWND window)
                 DWORD current = 0;
                 const DWORD currentThread = GetWindowThreadProcessId(window, &current);
                 if (current != process || currentThread != thread) return;
+                const bool firstCompletion = !dockWindowAppIds_.PeekValue(
+                    window, std::to_wstring(process) + L":" + std::to_wstring(thread)).has_value();
                 const auto lifetime = id.empty() ? std::chrono::seconds(5)
                     : std::chrono::seconds(30);
                 const auto changed = dockWindowAppIds_.PublishWithLifetimeChanged(
                     window, ticket, std::move(id), lifetime);
                 // Identical completions must not invalidate the ten-second
                 // fallback clock and form an enumerate/query/enumerate loop.
-                if (changed && *changed) dockRunningWindowsRefreshTick_ = 0;
+                if (changed && (*changed || firstCompletion)) dockRunningWindowsRefreshTick_ = 0;
             }, hwnd_, kBackgroundShellReadyMessage);
         });
+    if (pending) *pending = !request.sameSourceVersion && !request.fresh;
     return request.sameSourceVersion ? request.value.value_or(L"") : std::wstring{};
+}
+
+bool DesktopApp::AdvanceDockRunningAnimations(double nowMilliseconds)
+{
+    snowdesktop::performance::Scope performanceScope("dock", "running.animation");
+    // Item wrappers may also be retained between button down and the drag
+    // threshold. Rebuilding animated slots in that interval invalidates them.
+    if (mouseDown_ || snowdesktop::drag_input_rules::ShouldDeferModelReload(
+            dragSession_.HasContext(), dragDropController_.IsTransportActive()))
+        return true;
+
+    RECT desktopDirty{};
+    for (const auto& container : containers_)
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get());
+            dock && !FindPersistentDockHost(dock))
+        {
+            RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
+                dock->GetAnimationVisualBounds(), dockSettings_.position);
+            UnionRect(&desktopDirty, &desktopDirty, &bounds);
+        }
+    bool keep = false;
+    for (auto& app : dockUnpinnedRunningApps_)
+    {
+        if (snowdesktop::animation::RuntimeAnimationsEnabled())
+            app.presence.Advance(nowMilliseconds);
+        else
+            app.presence.SetVisible(app.presence.Visible(), nowMilliseconds, false);
+        keep |= app.presence.IsAnimating();
+        if (app.presence.IsHidden() && app.iconBitmap)
+        {
+            EraseD2DIconCacheForBitmap(app.iconBitmap);
+            DeleteObject(app.iconBitmap);
+            app.iconBitmap = nullptr;
+        }
+    }
+    std::erase_if(dockUnpinnedRunningApps_, [](const auto& app) { return app.presence.IsHidden(); });
+    InvalidateDockContainers();
+    InvalidateDragStaticScene();
+    for (const auto& container : containers_)
+        if (auto* dock = dynamic_cast<DockContainer*>(container.get()))
+        {
+            if (FindPersistentDockHost(dock))
+                RequestDockAnimationPresentation(*dock);
+            else
+            {
+                RECT bounds = snowdesktop::floating_dock_rules::ExpandHostForTitleLayer(
+                    dock->GetAnimationVisualBounds(), dockSettings_.position);
+                UnionRect(&desktopDirty, &desktopDirty, &bounds);
+            }
+        }
+    if (!IsRectEmpty(&desktopDirty) && hwnd_ && IsWindow(hwnd_))
+    {
+        InflateRect(&desktopDirty, 4, 4);
+        RequestDesktopDockAnimationPresentation(desktopDirty);
+    }
+    return keep;
 }

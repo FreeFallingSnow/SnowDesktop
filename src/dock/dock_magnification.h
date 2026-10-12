@@ -735,6 +735,15 @@ inline RECT MoveOverflowViewportWithScrollableVisuals(
     return viewport;
 }
 
+// A perpendicular status bar keeps its reservation during magnification.
+// Clipping the expanded background prevents two translucent panels overlapping
+// and creating a new material seam at the expanded edge.
+inline RECT ClipPanelToWorkArea(RECT panel, RECT workArea)
+{
+    RECT clipped{};
+    return IntersectRect(&clipped, &panel, &workArea) ? clipped : panel;
+}
+
 inline RECT ExtendPanelAlongDockAxis(
     RECT panel, const RECT& visualElement, DockPosition position,
     int axisMargin = 0)

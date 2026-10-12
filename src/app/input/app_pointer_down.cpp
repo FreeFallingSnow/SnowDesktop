@@ -9,6 +9,10 @@
 
 void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 {
+    // Outside presses dismiss the shared menu before dispatch, but its drop
+    // context stays alive until the menu loop returns. Do not replace it.
+    if (rightButtonItemDrag_ ||
+        (HasActiveContextMenuSession() && dragSession_.HasContext())) return;
     CancelPopupHover(true);
     BeginRenameClick(wp, POINT{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)});
     dockPressedClosedCollectionPopup_ = false;
@@ -104,7 +108,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             return;
         }
     }
-    DockContainer* pointDock = GetDockContainerAtPoint(pt);
+    auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;
+    DockContainer* pointDock = popupGroup ? nullptr : GetDockContainerAtPoint(pt);
     PersistentDockHost* pointDockHost =
         FindPersistentDockHost(pointDock);
     const bool popupOwnedByPointDock =
@@ -210,7 +215,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     if (IsCollectionPopupInteractive())
     {
         auto* view = GetCategorizedPopupView();
-        if (view)
+        if (view && !GetGroupPopupView())
         {
             const RECT popup = GetCollectionPopupRect(*GetOpenPopupWidget());
             const RECT frame = GetCategorizedPopupFrame(popup);
@@ -303,7 +308,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             popupWidget = &widgets_[popupWidgetIndex_];
             pressedPopupToggle = pressedOpenPopupDockToggle;
         }
-        if (popupWidget && !pressedPopupToggle)
+        if (popupWidget && !pressedPopupToggle && !GetGroupPopupView())
         {
             const RECT popup = GetCollectionPopupRect(*popupWidget);
             if (UsesCollectionPopupFan(*popupWidget))
@@ -505,6 +510,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     if (IsCollectionPopupInteractive() &&
         popupWidgetIndex_ < widgets_.size() &&
+        !GetGroupPopupView() &&
         !pressedOpenPopupDockToggle)
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -614,31 +620,17 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     dockPressedWindowAction_ =
         snowdesktop::dock_window_rules::DockClickAction::None;
     dockPressedTargetWindow_ = nullptr;
+    const RECT popupGroupFrame = popupGroup ? popupGroup->GetFrameRect() : RECT{};
+    if (popupGroup && !PtInRect(&popupGroupFrame, pt))
+    {
+        mouseDown_ = false;
+        mouseDownHit_ = nullptr;
+        return;
+    }
     if (DockContainer* dock = pointDock)
     {
         if (dock->ContainsInteractivePoint(pt))
         {
-            const auto primeDockMinimizeSnapshot =
-                [this, dock]() {
-                    if ((IsDockContainerEffectivelyFloating(dock) &&
-                            snowdesktop::animation::RuntimeWindowEffect() != 3) ||
-                        dockPressedWindowAction_ !=
-                            snowdesktop::dock_window_rules::
-                                DockClickAction::Minimize ||
-                        !dockPressedTargetWindow_ ||
-                        !dockWindowTransition_)
-                        return;
-
-                    // Paint the pressed state before snapshot capture blocks
-                    // this UI thread, then overlap capture with the natural
-                    // button-down/button-up interval.
-                    snowdesktop::dock_taskbar_diagnostics::Begin(
-                        dockPressedTargetWindow_, L"dock-snapshot-prime");
-                    UpdateWindow(hwnd_);
-                    dockWindowTransition_->
-                        PrimeMinimizeSnapshot(
-                            dockPressedTargetWindow_);
-                };
             if (dock->IsWindowsButtonPoint(pt))
             {
                 mouseDown_ = false;
@@ -665,8 +657,19 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             if (DockEntryItem* dockItem = dock->EntryAtPoint(pt))
             {
                 if (!ctrl) ClearSelection();
-                dockItem->SetSelected(true);
                 dockPressedEntry_ = dockItem->GetEntryIndex();
+                // Popup toggles and single-click launches are actions, so do
+                // not flash a selection indicator while the button is held.
+                // The pressed item still seeds dragging without selection.
+                if (dockPressedEntry_ < dockEntries_.size())
+                {
+                    const DockEntry& entry = dockEntries_[dockPressedEntry_];
+                    if (ctrl ||
+                        (!dockSettings_.singleClickLaunchItems &&
+                            !IsLogicalDockEntryType(entry.type) &&
+                            !IsFolderDockEntry(entry)))
+                        dockItem->SetSelected(true);
+                }
                 if (dockPressedEntry_ < dockEntries_.size() &&
                     IsLogicalDockEntryType(dockEntries_[dockPressedEntry_].type))
                 {
@@ -700,7 +703,6 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = dockItem;
                 SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                primeDockMinimizeSnapshot();
                 return;
             }
             if (DockRunningItem* runningItem = dock->RunningItemAtPoint(pt))
@@ -735,13 +737,13 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = runningItem;
                 SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                primeDockMinimizeSnapshot();
                 return;
             }
             if (DockFrequentItem* frequentItem = dock->FrequentItemAtPoint(pt))
             {
                 if (!ctrl) ClearSelection();
-                frequentItem->SetSelected(true);
+                if (ctrl || !dockSettings_.singleClickLaunchItems)
+                    frequentItem->SetSelected(true);
                 dockPressedFrequentItem_ = frequentItem->GetItemIndex();
                 if (dockPressedFrequentItem_ < items_.size())
                 {
@@ -765,7 +767,6 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 mouseDownHit_ = frequentItem;
                 SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
-                primeDockMinimizeSnapshot();
                 return;
             }
             if (!ctrl) ClearSelection();
@@ -791,6 +792,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 continue;
             auto* searchable = dynamic_cast<ScrollingItemWidget*>(c.get());
             if (!searchable) continue;
+            if (popupGroup && searchable != popupGroup) continue;
             RECT sr = searchable->GetSearchBoxRect();
             if (!IsRectEmptyRect(sr) && PtInRect(&sr, pt))
             {
@@ -815,6 +817,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     for (size_t n = widgets_.size(); n > 0; --n)
     {
         size_t wi = n - 1;
+        if (popupGroup) continue;
         WidgetHit wh = HitTestStandaloneWidget(wi, pt);
         if (wh == WidgetHit::None) continue;
 
@@ -893,6 +896,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
 
     for (size_t wi = 0; wi < widgets_.size(); ++wi)
     {
+        if (popupGroup && popupGroup->GetWidgetData() != &widgets_[wi]) continue;
         if (desktopIconsHidden_ &&
             !widgets_[wi].keepWhenDesktopHidden)
             continue;
@@ -931,8 +935,8 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     wc->GetScrollOffset();
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = nullptr;
-                SetCapture(hwnd_);
-                InvalidateRect(hwnd_, &widgets_[wi].bounds, FALSE);
+                SetCapture(interactionCaptureHwnd);
+                InvalidateRect(hwnd_, popupGroup ? &popupGroupFrame : &widgets_[wi].bounds, FALSE);
                 return;
             }
         }
@@ -1093,7 +1097,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     selectionController_.RememberAnchor(selectionScope, selectionKey);
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = memberItem;
-                SetCapture(hwnd_);
+                SetCapture(interactionCaptureHwnd);
                 InvalidateRect(hwnd_, nullptr, FALSE);
                 SyncKeyboardNavFromSelection();
                 return;
@@ -1106,7 +1110,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
             marqueeWidgetIndex_ = wi;
             marqueeInitialScrollOffset_ = wc->GetScrollOffset();
             mouseDownHit_ = nullptr;
-            SetCapture(hwnd_);
+            SetCapture(interactionCaptureHwnd);
             InvalidateRect(hwnd_, nullptr, FALSE);
             return;
         }
@@ -1202,7 +1206,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     group->GetSourceTabItemAtPoint(pt);
                 if (mouseDownHit_)
                 {
-                    SetCapture(hwnd_);
+                    SetCapture(interactionCaptureHwnd);
                     SyncKeyboardNavFromSelection();
                 }
                 SaveLayoutSlots();
@@ -1227,7 +1231,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     {
                         mouseDownWidgetIndex_ = wi;
                         mouseDownHit_ = nullptr;
-                        SetCapture(hwnd_);
+                        SetCapture(interactionCaptureHwnd);
                     }
                     DesktopWidget* categorizedData =
                         &widgets_[wi];
@@ -1257,7 +1261,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                             group->GetTabItemAtPoint(pt);
                         if (mouseDownHit_)
                         {
-                            SetCapture(hwnd_);
+                            SetCapture(interactionCaptureHwnd);
                             SyncKeyboardNavFromSelection();
                         }
                     }
@@ -1297,7 +1301,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     pt, (wp & MK_SHIFT) != 0);
                 mouseDownWidgetIndex_ = wi;
                 mouseDownHit_ = nullptr;
-                SetCapture(hwnd_);
+                SetCapture(interactionCaptureHwnd);
                 UpdateHostInputImePosition();
             }
             InvalidateRect(hwnd_, nullptr, FALSE);

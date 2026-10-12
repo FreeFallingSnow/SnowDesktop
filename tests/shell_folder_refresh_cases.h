@@ -1,6 +1,123 @@
 // Included inside the slot runtime test namespace. Exercise the production
 // subscription, event routing and read-selection boundaries without a desktop
 // host or real user data. The filesystem reader is replaced only in scope tests.
+// A Shell content update arriving during restore must not invalidate the item
+// pointers used by the Dock, or temporarily turn an application into a link.
+void TestDesktopContentRefreshKeepsLiveItems()
+{
+    using namespace snowdesktop::shell_refresh;
+    std::vector<DesktopItem> items(2);
+    auto& app = items[0];
+    app.layoutKey = L"C:\\DESKTOP\\VIDEO.LNK";
+    app.parsingName = L"C:\\Desktop\\Video.lnk";
+    app.name = L"Video";
+    app.sysIconIndex = 7;
+    app.modifiedTime = FILETIME{1, 0};
+    app.fileSize = 40;
+    app.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    app.iconState = IconState::FullQuality;
+    app.isShortcut = app.isApplicationShortcut = true;
+    app.shortcutTarget.classified = app.shortcutTarget.application = true;
+    app.gridCell = {L"saved", 3, 2};
+    app.slot = 17;
+    app.selected = app.isCut = true;
+    items[1].layoutKey = L"C:\\DESKTOP\\NOTES.TXT";
+    items[1].parsingName = L"C:\\Desktop\\Notes.txt";
+    items[1].name = L"Notes.txt";
+    items[1].iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    items[1].iconState = IconState::FullQuality;
+    const auto* appAddress = &app;
+    const HBITMAP bitmap = app.iconBitmap;
+    Check(bitmap && items[1].iconBitmap, "content refresh fixture owns its visible bitmaps");
+    Snapshot snapshot;
+    snapshot.desktopComplete = true;
+    // Enumeration order is allowed to differ from the live collection order.
+    snapshot.desktopItems.push_back(CloneReadItem(items[1]));
+    snapshot.desktopItems.push_back(CloneReadItem(app));
+    snapshot.desktopItems[1].modifiedTime = FILETIME{2, 0};
+    snapshot.desktopItems[1].sysIconIndex = 9;
+    int queued = 0;
+    Check(ApplyDesktopContentRefresh(items, snapshot, [&](const DesktopItem& item) {
+        ++queued;
+        Check(&item == appAddress && item.modifiedTime->dwLowDateTime == 2,
+            "only the changed live item is queued with its new source version");
+    }), "an unchanged desktop membership takes the content path instead of full reload");
+    Check(queued == 1 && &items[0] == appAddress && app.iconBitmap == bitmap &&
+        app.gridCell.pageId == L"saved" && app.gridCell.column == 3 && app.slot == 17 &&
+        app.selected && app.isCut && app.sysIconIndex == 9 && app.iconState == IconState::Loading,
+        "content refresh preserves order, object addresses, bitmap ownership, selection and layout");
+    Check(app.isShortcut && app.isApplicationShortcut && !app.shortcutArrow &&
+        !app.shortcutTarget.classified,
+        "pending content classification keeps the confirmed application badge and invalidates the old target");
+    snowdesktop::shell_icon_request::ApplyPresentation(app,
+        snowdesktop::shell_icon_request::Phase::Phase2, false, false);
+    Check(app.isApplicationShortcut && !app.shortcutArrow,
+        "bitmap refinement cannot turn the retained application into a shortcut badge");
+    snowdesktop::shell_icon_request::ApplyPresentation(app,
+        snowdesktop::shell_icon_request::Phase::Shortcut, true, false);
+    Check(!app.isApplicationShortcut && app.shortcutArrow,
+        "a confirmed changed target still replaces the previous application classification");
+    auto reject = [&](Snapshot& read, const char* name) {
+        const auto before = app.modifiedTime;
+        int calls = 0;
+        Check(!ApplyDesktopContentRefresh(items, read, [&](const auto&) { ++calls; }) &&
+            calls == 0 && SameTime(app.modifiedTime, before) && &items[0] == appAddress,
+            name);
+    };
+    Snapshot structural;
+    structural.desktopComplete = true;
+    structural.desktopItems.push_back(CloneReadItem(app));
+    reject(structural, "deleted membership requires a full reload without partial mutation");
+    structural.desktopItems.push_back(CloneReadItem(items[1]));
+    structural.desktopItems[0].modifiedTime = FILETIME{99, 0};
+    structural.desktopItems[1].name = L"Renamed.txt";
+    reject(structural, "renamed membership validates the entire snapshot before changing any item");
+    structural.desktopItems[1] = CloneReadItem(app);
+    reject(structural, "duplicate identities cannot use the content-only path");
+    structural.desktopItems[1] = CloneReadItem(items[1]);
+    structural.desktopComplete = false;
+    reject(structural, "failed reads cannot update desktop content or membership");
+    structural.desktopComplete = true;
+    structural.desktopIncremental = true;
+    reject(structural, "partial startup reads retain the existing startup merge path");
+    structural.desktopIncremental = false;
+    structural.folders.emplace(L"C:\\MAPPED", FolderSnapshot{});
+    reject(structural, "a desktop snapshot carrying folder changes retains the full reconciliation path");
+}
+
+void TestShortcutBadgeSurvivesSourceRefresh()
+{
+    using namespace snowdesktop::shell_refresh;
+    DesktopItem previous;
+    previous.sysIconIndex = 7;
+    previous.modifiedTime = FILETIME{1, 0};
+    previous.isShortcut = previous.isApplicationShortcut = true;
+    previous.shortcutTarget.classified = previous.shortcutTarget.application = true;
+    previous.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    previous.iconState = IconState::FullQuality;
+    DesktopItem refreshed;
+    refreshed.sysIconIndex = 7;
+    refreshed.modifiedTime = FILETIME{2, 0};
+    PreserveRuntime(refreshed, previous);
+    Check(refreshed.iconBitmap && !previous.iconBitmap && refreshed.isApplicationShortcut &&
+        !refreshed.shortcutArrow && !refreshed.shortcutTarget.classified &&
+        refreshed.iconState == IconState::Loading,
+        "full desktop reconciliation keeps the confirmed badge while refreshing changed shortcut content");
+    FolderEntry oldEntry;
+    oldEntry.sysIconIndex = 7;
+    oldEntry.lastWriteTime = FILETIME{1, 0};
+    oldEntry.isShortcut = oldEntry.isApplicationShortcut = true;
+    oldEntry.shortcutTarget.classified = true;
+    oldEntry.iconBitmap = CreateBitmap(1, 1, 1, 32, nullptr);
+    FolderEntry newEntry;
+    newEntry.sysIconIndex = 7;
+    newEntry.lastWriteTime = FILETIME{2, 0};
+    PreserveRuntime(newEntry, oldEntry);
+    Check(newEntry.iconBitmap && !oldEntry.iconBitmap && newEntry.isApplicationShortcut &&
+        !newEntry.shortcutArrow && !newEntry.shortcutTarget.classified,
+        "mapped-folder aliases also retain their badge independently of pending target resolution");
+}
+
 void TestPopupTargetRebinding()
 {
     using namespace snowdesktop::dock_folder_popup_read;
@@ -44,54 +161,120 @@ void TestPopupTargetRebinding()
         "direct mappings and unchanged cached source versions keep their independent read path");
 }
 
+void TestFolderPopupControlReservation()
+{
+    using namespace snowdesktop::dock_folder_popup_read;
+    using snowdesktop::shell_refresh::FolderSnapshot;
+    const std::wstring path = L"C:\\popup";
+    bool available = false, loading = false;
+    std::size_t count = 0;
+    constexpr std::size_t knownCount = 13;
+    const auto apply = [&](const auto& result) { count = result.entries.size(); };
+    Check(Refresh(path, nullptr, available, loading, [](const auto&) {}, apply) &&
+        HasCategorizedContent(count, loading, knownCount),
+        "a known nonempty folder reserves search and tabs before the opening snapshot is sized");
+
+    FolderSnapshot listing;
+    listing.path = path;
+    listing.complete = true;
+    listing.entries.resize(knownCount);
+    Check(Refresh(path, &listing, available, loading, [](const auto&) {}, apply) &&
+        !loading && HasCategorizedContent(count, loading, knownCount),
+        "the loaded folder keeps the same control footprint at animation handoff");
+    Check(HasCategorizedContent(count, false, 0),
+        "a full nonempty source keeps search accessible when filtering has no results");
+
+    listing.complete = false;
+    listing.error = ERROR_ACCESS_DENIED;
+    Check(Refresh(path, &listing, available, loading, [](const auto&) {}, apply) &&
+        !available && count == knownCount && HasCategorizedContent(count, loading, knownCount),
+        "a failed refresh retains the existing source and its controls");
+
+    listing.complete = true;
+    listing.error = ERROR_SUCCESS;
+    listing.entries.clear();
+    Check(Refresh(path, &listing, available, loading, [](const auto&) {}, apply) &&
+        available && !loading && !HasCategorizedContent(count, loading, knownCount),
+        "a confirmed empty folder releases search and tab space despite an older known count");
+    Check(!HasCategorizedContent(0, true, 0) && !HasCategorizedContent(0, false, 0),
+        "an unknown or confirmed empty source does not create control placeholders");
+}
+
 void TestFolderFirstListing()
 {
     using namespace snowdesktop::dock_folder_popup_read;
-    using snowdesktop::popup_animation_rules::State;
+    using namespace snowdesktop::popup_animation_rules;
+    using snowdesktop::shell_refresh::FolderSnapshot;
     Check(HasFanContent(true, 0) && HasFanContent(true, 13) &&
         !HasFanContent(false, 0) && HasFanContent(false, 1),
         "a folder's pending/empty listing cannot downgrade its fan preference; empty collections retain their fallback");
-    State animation;
-    animation.Configure(false, 2.4);
-    animation.Open(100);
-    animation.Advance(400); // The loading label has already finished appearing.
-    Check(RevealFirstEntries(animation, true, 0, 13, true, true, 410) &&
-        animation.IsAnimating() && animation.GetVisual().progress == 0.0f,
-        "a delayed first folder listing must start a fan reveal instead of appearing fully unfolded");
-    animation.Advance(518);
-    Check(animation.GetVisual().progress > 0.49f && animation.GetVisual().progress < 0.51f,
-        "the entries get their own complete fan duration after the loading label");
-    Check(!RevealFirstEntries(animation, true, 13, 13, true, true, 520) &&
-        animation.GetVisual().progress > 0.49f,
-        "duplicate listings and later icon refreshes cannot restart a populated fan");
-    Check(!RevealFirstEntries(animation, false, 0, 13, true, true, 520) &&
-        !RevealFirstEntries(animation, true, 0, 0, true, true, 520) &&
-        !RevealFirstEntries(animation, true, 0, 13, false, true, 520) &&
-        !RevealFirstEntries(animation, true, 0, 13, true, false, 520),
-        "unchanged geometry, empty, failed and disabled-animation results cannot restart opening");
-    State grid;
-    grid.Open(100);
-    grid.Advance(190);
-    Check(RevealFirstEntries(grid, true, 0, 9, true, true, 200) &&
-        grid.IsAnimating() && grid.GetVisual().progress == 0.0f,
-        "a first grid listing that outgrows the loading frame cannot jump straight to full size");
-    grid.Advance(245);
-    Check(grid.GetVisual().progress > 0.49f && grid.GetVisual().progress < 0.51f,
-        "the enlarged grid has observable intermediate opening frames");
-    animation.Close(520);
-    Check(!RevealFirstEntries(animation, true, 0, 13, true, true, 540) && animation.IsClosing(),
-        "a late listing cannot reverse the user's close action");
-    animation.ResetHidden();
-    Check(!RevealFirstEntries(animation, true, 0, 13, true, true, 800) && animation.IsHidden(),
-        "late results cannot reopen a hidden fan");
-    animation.Open(900);
-    Check(RevealFirstEntries(animation, true, 0, 9, true, true, 920) &&
-        animation.IsAnimating() && animation.GetVisual().progress == 0.0f,
-        "reopening starts a fresh fan even after a prior delayed load and close");
+    // Exercise the production listing and content-refresh dispatch together for
+    // fan/grid scale and fade effects, including native and fallback animation.
+    for (const auto& effect : std::array<std::pair<bool, double>, 3>{{
+            {false, 2.4}, {false, 1.0}, {true, 1.0}}})
+    {
+        for (const bool native : {false, true})
+        {
+            State animation;
+            animation.Configure(effect.first, effect.second);
+            const auto duration = static_cast<std::uint64_t>(animation.DurationMilliseconds(true));
+            FolderSnapshot listing;
+            listing.path = L"C:\\popup";
+            listing.complete = true;
+            bool available = false, loading = true;
+            std::size_t count = 0;
+            int queued = 0, prepared = 0, retired = 0;
+            const auto refresh = [&](std::uint64_t now, bool compositor) {
+                Check(Refresh(listing.path, &listing, available, loading,
+                    [](const auto&) {}, [&](const auto& result) { count = result.entries.size(); }),
+                    "the current folder listing is accepted before refreshing popup content");
+                return RefreshContent(animation, now, compositor,
+                    [&] { ++queued; }, [&] { ++prepared; }, [&] { ++retired; });
+            };
+            animation.Open(100);
+            animation.Advance(100 + duration);
+            refresh(110 + duration, false); // The open popup is still empty.
+            listing.entries.resize(13);
+            Check(refresh(120 + duration, false) == ContentRefreshAction::Stable &&
+                count == 13 && available && !loading && !animation.IsAnimating() &&
+                animation.GetVisual().progress == 1.0f && animation.IsInteractive(),
+                "a completed empty popup accepts its first files without replaying opening");
+
+            animation.ResetHidden();
+            animation.Open(1000); // Only a user opening starts a fresh timeline.
+            count = 0;
+            queued = prepared = retired = 0;
+            const auto halfway = 1000 + duration / 2;
+            const auto action = refresh(halfway, native);
+            Check(count == 13 && animation.IsAnimating() && animation.IsInteractive() &&
+                action == (native ? ContentRefreshAction::ContinueCompositor :
+                    ContentRefreshAction::ContinueAnimation) &&
+                queued == (native ? 1 : 0) && prepared == (native ? 0 : 1) &&
+                retired == (native ? 0 : 1),
+                "first files refresh the existing native surface or fallback frame during opening");
+            animation.Advance(1000 + duration);
+            Check(!animation.IsAnimating() && animation.GetVisual().progress == 1.0f,
+                "first files retain the original opening deadline for fan, grid and fade effects");
+
+            animation.Close(2000);
+            count = 0;
+            refresh(2000 + duration / 2, native);
+            Check(count == 13 && animation.IsClosing() && !animation.IsInteractive(),
+                "a late first listing cannot reverse the user's close action");
+            animation.Advance(2000 + duration);
+            Check(animation.IsHidden() && !animation.IsAnimating(),
+                "closing still completes at its original deadline after files arrive");
+            count = 0;
+            Check(refresh(2010 + duration, false) == ContentRefreshAction::Stable &&
+                count == 13 && animation.IsHidden(),
+                "a late listing cannot reopen a hidden popup");
+        }
+    }
 }
 
 void TestFolderRefreshScopeAndReads()
 {
+    TestFolderPopupControlReservation();
     TestFolderFirstListing();
     TestPopupTargetRebinding();
     using namespace snowdesktop::shell_refresh;

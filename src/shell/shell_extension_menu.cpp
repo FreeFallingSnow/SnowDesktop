@@ -1,4 +1,6 @@
 #include "shell_extension_menu.h"
+#include "shell_extension_menu_query.h"
+#include "shell_extension_source.h"
 #include "shell_extension_diagnostics.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_cache.h"
@@ -7,6 +9,7 @@
 #include "settings/settings_process.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_context_menu_site.h"
+#include "shell_start_pin.h"
 #include <algorithm>
 #include <atomic>
 #include <array>
@@ -26,7 +29,9 @@ using Microsoft::WRL::ComPtr;
 namespace
 {
 constexpr size_t kMaximumEntries = 2048;
+constexpr std::uint64_t kMenuSignatureSeed = 14695981039346656037ull;
 std::atomic<unsigned> sessions{0};
+std::atomic<unsigned> startPinSessions{0};
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
 // Event probes are constant-time. No registry tree scan occurs on each click.
 // Watch the nearest existing ancestor too, so creating a Blocked key invalidates
@@ -37,8 +42,9 @@ struct RegistryWatch
     // Waiting must not consume the notification before Changed() rearms it.
     HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::wstring path;
+    unsigned traceId = 0;
     bool armed = false;
-    RegistryWatch(HKEY hive, const wchar_t *subkey) : root(hive), path(subkey) { Arm(); }
+    RegistryWatch(HKEY hive, const wchar_t *subkey, unsigned id) : root(hive), path(subkey), traceId(id) { Arm(); }
     ~RegistryWatch()
     {
         if (key) RegCloseKey(key);
@@ -59,11 +65,14 @@ struct RegistryWatch
         ResetEvent(event);
         armed = RegNotifyChangeKeyValue(key, TRUE, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET |
             REG_NOTIFY_THREAD_AGNOSTIC, event, TRUE) == ERROR_SUCCESS;
+        MenuTrace("registry.watch", !armed ? "failed" : existing == path ? "target" : "ancestor", 0, traceId);
     }
     bool Changed()
     {
         if (!armed) { Arm(); return false; }
-        if (armed && WaitForSingleObject(event, 0) == WAIT_TIMEOUT) return false;
+        const auto wait = WaitForSingleObject(event, 0);
+        if (wait == WAIT_TIMEOUT) return false;
+        MenuTrace("registry.change", wait == WAIT_OBJECT_0 ? "signal" : "wait_failure", 0, traceId);
         Arm();
         return true; // Failure is conservative: do not reuse stale state.
     }
@@ -81,11 +90,11 @@ struct CacheState
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\nvcplui.exe",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\Shell Extensions",
                               L"Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer"})
-                watches.push_back(std::make_unique<RegistryWatch>(root, path));
+                watches.push_back(std::make_unique<RegistryWatch>(root, path, static_cast<unsigned>(watches.size())));
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"));
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize", 8));
         watches.push_back(std::make_unique<RegistryWatch>(HKEY_CURRENT_USER,
-            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts"));
+            L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts", 9));
     }
     std::uint64_t Poll()
     {
@@ -184,7 +193,7 @@ void IdentifyEntries(std::vector<Entry> &entries)
         const auto verb = Utf8(Lower(Wide(entry.key)));
         if (!verb.empty() && counts[verb] == 1)
             entry.provider = "verb:" + verb;
-        else
+        else if (entry.provider.empty())
         {
             // Prefer canonical verbs; unidentified commands use their visible
             // label and submenu verb signature, scoped to the selected context.
@@ -198,7 +207,7 @@ void IdentifyEntries(std::vector<Entry> &entries)
                 }
             };
             collect(entry.children);
-            std::uint64_t signature = 14695981039346656037ull;
+            std::uint64_t signature = kMenuSignatureSeed;
             for (const auto &key : verbs)
             {
                 for (unsigned char c : key)
@@ -220,27 +229,7 @@ struct Pidl
         CoTaskMemFree(value);
     }
 };
-struct TemporaryMenuFile
-{
-    HANDLE handle = INVALID_HANDLE_VALUE;
-    std::wstring path;
-    TemporaryMenuFile()
-    {
-        GUID id{};
-        if (FAILED(CoCreateGuid(&id))) return;
-        wchar_t guid[40]{};
-        StringFromGUID2(id, guid, 40);
-        path = (std::filesystem::temp_directory_path() /
-                (std::wstring(L"SnowDesktop-MenuInit-") + guid + L".txt")).wstring();
-        handle = CreateFileW(path.c_str(), GENERIC_READ | GENERIC_WRITE,
-                             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_NEW,
-                             FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_DELETE_ON_CLOSE, nullptr);
-    }
-    ~TemporaryMenuFile()
-    {
-        if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle);
-    }
-};
+using TemporaryMenuFile = ShellMenuInitializationFile;
 std::wstring RegistryString(const std::wstring &key, const wchar_t *name = nullptr)
 {
     wchar_t value[32768]{};
@@ -265,7 +254,9 @@ struct Native
     ShellContextMenuSite site;
     HMENU menu = CreatePopupMenu();
     std::wstring directory;
+    std::vector<std::wstring> paths;
     bool metadataOnly = false;
+    bool shortcutObjects = false;
     ComPtr<IShellItem> nvidiaApplication;
     ~Native()
     {
@@ -290,6 +281,7 @@ struct Host
     bool invoked = false;
     size_t count = 0;
     bool fileAssociationsReady = false;
+    StartPinExecutor startPin;
     struct RegisteredIcon { std::wstring name, friendlyName, module; };
     std::map<Context, std::vector<RegisteredIcon>> registeredIcons;
     struct ResourceIcon
@@ -328,7 +320,7 @@ struct Host
         }
         return DefWindowProcW(hwnd, msg, wp, lp);
     }
-    Host()
+    explicit Host(StartPinExecutor executor) : startPin(std::move(executor))
     {
         WNDCLASSW cls{};
         cls.lpfnWndProc = Proc;
@@ -559,9 +551,9 @@ struct Host
             progress("initialize root menu");
             MenuMessage(source, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(menu), 0);
         }
-        // Read only materialized entries. Initializing every Shell cascade here
-        // can synchronously enumerate network/cloud providers before the user
-        // ever opens them. Deferred popups retain their native menu session.
+        // Already materialized cascades need no initialization. Placeholder
+        // popups are prepared in this supervised helper's STA menu state;
+        // unsupported owner-drawn popups retain their native menu session.
         progress("read popup: " + Utf8(title));
         for (int i = 0; i < GetMenuItemCount(menu) && count < kMaximumEntries; ++i)
         {
@@ -583,7 +575,7 @@ struct Host
             entry.checked = (item.fState & MFS_CHECKED) != 0;
             const auto verb = Verb(source, item.wID);
             entry.key = Utf8(verb);
-            if (OwnedVerb(verb))
+            if (OwnedVerb(verb) && IsRootMenuCommand(source.menu, item.wID))
                 continue;
             if (item.fType & MFT_OWNERDRAW || (!entry.separator && entry.label.empty()))
             {
@@ -594,6 +586,25 @@ struct Host
             }
             else if (item.hSubMenu)
             {
+                if (depth < 8 && InspectPopup(item.hSubMenu) == PopupContents::Deferred)
+                {
+                    // Keep the original placeholder root's identity so an
+                    // existing opt-in still applies after adding its children.
+                    // IdentifyEntries still prefers a unique canonical verb.
+                    if (depth == 0)
+                        entry.provider = "menu:" + Utf8(Lower(entry.label)) + ":" + std::to_string(kMenuSignatureSeed);
+                    progress("initialize deferred popup: " + Utf8(entry.label));
+                    auto *previous = tracking;
+                    tracking = &source;
+                    TryMaterializePopup(item.hSubMenu, window, static_cast<UINT>(i), [&] {
+                        if (source.shortcutObjects || source.site.HostWindow()) return false;
+                        progress("prepare deferred popup view: " + Utf8(entry.label));
+                        if (!source.site.Initialize(source.folder.Get(), window)) return false;
+                        source.site.Attach(source.context.Get());
+                        return true;
+                    }, PopupNeedsInitialView(verb));
+                    tracking = previous;
+                }
                 if (!RequiresNativePopup(item.hSubMenu))
                     entry.children = Read(source, item.hSubMenu, provider, depth + 1, entry.label);
                 const bool placeholder = entry.children.empty() ||
@@ -651,16 +662,18 @@ struct Host
         count = 0;
         invoked = false;
     }
-    bool catalogueInitialized = false;
+    bool catalogueInitialized = false, fileCatalogueInitialized = false;
     void NvidiaCompatibility(const Request &request, Reply &reply)
     {
-        if (!request.background || ResolveContext(request) != Context::Desktop || !request.sourceClsid.empty() ||
+        if (request.omitNvidiaCompatibility || !request.background || ResolveContext(request) != Context::Desktop || !request.sourceClsid.empty() ||
             !NvidiaControlPanelRegistered() || !HandlerEnabled(NvidiaControlPanelClsid)) return;
+        progress("activate NVIDIA compatibility factory");
         CLSID clsid{};
         if (FAILED(CLSIDFromString(NvidiaControlPanelClsid, &clsid))) return;
         ComPtr<IContextMenu> extension;
         const auto factory = CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&extension));
         if (!NvidiaCompatibilityRequired(request, true, true, factory)) return;
+        progress("bind NVIDIA compatibility application");
         auto item = NvidiaControlPanelApplication();
         if (!item) return;
         auto source = std::make_unique<Native>();
@@ -671,10 +684,12 @@ struct Host
             source->directory = std::filesystem::path(filePath).parent_path().wstring();
             CoTaskMemFree(filePath);
         }
+        progress("query NVIDIA compatibility default menu");
         if (!source->menu || FAILED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&source->context))) ||
             FAILED(source->context->QueryContextMenu(source->menu, 0, 1, 0x7fff, CMF_DEFAULTONLY))) return;
         const auto command = DefaultApplicationOpen(source->context.Get(), source->menu);
         if (!command) return;
+        progress("read NVIDIA compatibility name");
         PWSTR name = nullptr;
         if (FAILED(item->GetDisplayName(SIGDN_NORMALDISPLAY, &name)) || !name) return;
         Entry entry;
@@ -682,6 +697,7 @@ struct Host
         if (entry.label.empty()) return;
         entry.key = "{3d1975af-48c6-4f8e-a182-be0e08fa86a9}";
         entry.registration = NvidiaControlPanelRegistration;
+        progress("read NVIDIA compatibility image");
         ComPtr<IShellItemImageFactory> image;
         HBITMAP bitmap = nullptr;
         if (SUCCEEDED(item.As(&image)) && SUCCEEDED(image->GetImage({20, 20}, SIIGBF_ICONONLY, &bitmap)))
@@ -698,21 +714,104 @@ struct Host
     }
     Reply Query(const Request &request)
     {
-        auto reply = QueryOnce(request);
-        if (request.sourceClsid.empty() && !catalogueInitialized && reply.ok)
+        return QueryWithCataloguePriming(request, catalogueInitialized, fileCatalogueInitialized,
+            [&](const Request &target, bool priming) { return QueryOnce(target, priming); });
+    }
+    Reply QueryShortcutObjects(const Request &request, Native &delegated,
+        IShellFolder *selectionFolder, PCIDLIST_ABSOLUTE folderId,
+        std::vector<PCIDLIST_ABSOLUTE> raw)
+    {
+        // ShellLink contributes a target menu to the usual aggregate. Build
+        // file operations from the original selection instead. Do not load
+        // lnkfile's ShellLink context handler back into this aggregate.
+        auto actual = std::make_unique<Native>();
+        actual->directory = delegated.directory; actual->paths = request.paths;
+        actual->shortcutObjects = true;
+        actual->folder = selectionFolder;
+        ComPtr<IShellFolder> desktop;
+        Pidl desktopId;
+        const bool sameFolder = std::all_of(request.paths.begin(), request.paths.end(), [&](const auto &path) {
+            return Lower(std::filesystem::path(path).parent_path().wstring()) == Lower(delegated.directory);
+        });
+        if (!sameFolder)
         {
-            // The first aggregate primes Windows' packaged extension catalogue.
-            // On a cold process it can return success before Terminal and other
-            // IExplorerCommand registrations become visible. Rebind once before
-            // publishing that first menu; all tokens belong to this final query.
-            // This stays inside the same supervised deadline, without sleeps or
-            // eagerly expanding third-party cascades. Warm requests query once.
-            reply = QueryOnce(request);
-            catalogueInitialized = reply.ok;
+            if (FAILED(SHGetDesktopFolder(&desktop)) ||
+                FAILED(SHGetSpecialFolderLocation(nullptr, CSIDL_DESKTOP, &desktopId.value))) return {};
+            selectionFolder = desktop.Get(); folderId = desktopId.value;
+            actual->folder = desktop;
         }
+        std::vector<PCUITEMID_CHILD> children;
+        for (auto id : raw) children.push_back(sameFolder ? ILFindLastID(id) : reinterpret_cast<PCUITEMID_CHILD>(id));
+        ASSOCIATIONELEMENT classes[] = {
+            {ASSOCCLASS_STAR, nullptr, nullptr},
+            {ASSOCCLASS_PROGID_STR, nullptr, L"AllFilesystemObjects"},
+        };
+        ComPtr<IQueryAssociations> associations;
+        if (FAILED(AssocCreateForClasses(classes, static_cast<ULONG>(std::size(classes)), IID_PPV_ARGS(&associations)))) return {};
+        DEFCONTEXTMENU description{};
+        description.hwnd = window; description.psf = selectionFolder; description.pidlFolder = folderId;
+        description.cidl = static_cast<UINT>(children.size()); description.apidl = children.data();
+        description.punkAssociationInfo = associations.Get();
+        if (FAILED(SHCreateDefaultContextMenu(&description, IID_PPV_ARGS(&actual->context))) ||
+            FAILED(actual->context->QueryContextMenu(actual->menu, 0, 1, 0x7fff,
+                CMF_ITEMMENU | (request.extended ? CMF_EXTENDEDVERBS : 0)))) return {};
+        Reply reply; reply.entries = Read(*actual, actual->menu, "");
+        IdentifyEntries(reply.entries);
+        menus.push_back(std::move(actual));
+
+        if (request.originalShortcutOnly)
+        {
+            for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
+            if (count >= kMaximumEntries) return {};
+            IdentifyEntries(reply.entries); reply.ok = true;
+            return reply;
+        }
+
+        // Packaged/modern providers may be present only in the delegated
+        // aggregate. Rebind a provider only when that fresh aggregate actually
+        // returned its canonical COM identity. Metadata probes and registry
+        // discovery still cannot introduce executable menu entries.
+        ComPtr<IDataObject> data;
+        if (FAILED(selectionFolder->GetUIObjectOf(window, static_cast<UINT>(children.size()), children.data(),
+            IID_IDataObject, nullptr, reinterpret_cast<void **>(data.GetAddressOf())))) return {};
+        std::set<std::wstring> rebound;
+        for (int i = 0; i < GetMenuItemCount(delegated.menu); ++i)
+        {
+            MENUITEMINFOW item{sizeof(item)}; item.fMask = MIIM_ID;
+            if (!GetMenuItemInfoW(delegated.menu, i, TRUE, &item)) continue;
+            const auto identity = Verb(delegated, item.wID);
+            CLSID clsid{};
+            if (identity.empty() || FAILED(CLSIDFromString(identity.c_str(), &clsid)) ||
+                !HandlerEnabled(identity) || !rebound.insert(Lower(identity)).second ||
+                std::any_of(reply.entries.begin(), reply.entries.end(), [&](const auto &entry) {
+                    return Lower(Wide(entry.key)) == Lower(identity);
+                })) continue;
+            auto provider = std::make_unique<Native>();
+            provider->directory = delegated.directory; provider->paths = request.paths;
+            provider->folder = selectionFolder; provider->shortcutObjects = true;
+            ComPtr<IShellExtInit> initialize;
+            if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&provider->context))) ||
+                FAILED(provider->context.As(&initialize)) || FAILED(initialize->Initialize(nullptr, data.Get(), nullptr)) ||
+                FAILED(provider->context->QueryContextMenu(provider->menu, 0, 1, 0x7fff,
+                    CMF_ITEMMENU | (request.extended ? CMF_EXTENDEDVERBS : 0)))) continue;
+            auto entries = Read(*provider, provider->menu, "");
+            std::erase_if(entries, [](const auto &entry) { return entry.separator; });
+            if (entries.size() == 1)
+            {
+                auto &entry = entries.front();
+                entry.key = Utf8(identity); entry.provider = "verb:" + Utf8(Lower(identity));
+                reply.entries.push_back(std::move(entry));
+                menus.push_back(std::move(provider));
+            }
+            else
+                std::erase_if(commands, [&](const auto &command) { return command.second.source == provider.get(); });
+        }
+        for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
+        if (count >= kMaximumEntries) return {};
+        IdentifyEntries(reply.entries); reply.ok = true;
         return reply;
     }
-    Reply QueryOnce(const Request &request)
+    Reply QueryOnce(const Request &request, bool priming = false)
     {
         ReleaseMenu();
         progress("validate paths");
@@ -724,6 +823,9 @@ struct Host
                 return {};
         if (request.background && request.paths.size() != 1)
             return {};
+        if (request.startPinOnly && (request.background || request.catalogueOnly || request.paths.size() != 1 ||
+            !request.sourceClsid.empty() || !request.sourceKey.empty())) return {};
+        if (request.originalShortcutOnly && !CanQueryOriginalShortcutObjects(request)) return {};
         std::vector<std::unique_ptr<Pidl>> pidls;
         std::vector<PCIDLIST_ABSOLUTE> raw;
         for (const auto &path : request.paths)
@@ -746,35 +848,51 @@ struct Host
             FAILED(SHCreateItemFromIDList(folderId.value, IID_PPV_ARGS(&folderItem))) ||
             FAILED(folderItem->BindToHandler(nullptr, BHID_SFObject, IID_PPV_ARGS(&folder))))
             return {};
+        // Desktop menus bind the virtual root below, but their view site must
+        // retain the requested filesystem directory rather than enumerate the
+        // desktop namespace and its network/application children.
+        const auto viewFolder = folder;
         auto native = std::make_unique<Native>();
         native->directory = directory;
-        std::unique_ptr<TemporaryMenuFile> warmFile;
-        std::unique_ptr<Native> warmMenu;
-        if (request.sourceClsid.empty() && !fileAssociationsReady && ResolveContext(request) == Context::Folder)
+        native->paths = request.paths;
+        const bool shortcutSelection = !request.background &&
+            std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
+                return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+            });
+        std::unique_ptr<ShellFileMenuPrimer> filePrimer;
+        if (!request.startPinOnly && request.sourceClsid.empty() && !fileAssociationsReady &&
+            (ResolveContext(request) == Context::Folder || shortcutSelection))
         {
             // File-menu initialization primes Shell association handlers before
             // folder-only extensions create windows from their DLL entry point.
+            // A folder shortcut reaches those handlers through ShellLink even
+            // though the selected .lnk is itself classified as a file.
             // The sample is private, never invoked, and deleted by the kernel
             // even if this supervised process is terminated on timeout.
             progress("initialize file associations");
-            warmFile = std::make_unique<TemporaryMenuFile>();
-            ComPtr<IShellItem> item;
-            warmMenu = std::make_unique<Native>();
-            if (warmFile->handle != INVALID_HANDLE_VALUE &&
-                SUCCEEDED(SHCreateItemFromParsingName(warmFile->path.c_str(), nullptr, IID_PPV_ARGS(&item))) &&
-                SUCCEEDED(item->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&warmMenu->context))))
-                fileAssociationsReady = SUCCEEDED(warmMenu->context->QueryContextMenu(
-                    warmMenu->menu, 0, 1, 0x7fff, CMF_NORMAL | CMF_ITEMMENU));
+            filePrimer = std::make_unique<ShellFileMenuPrimer>();
+            fileAssociationsReady = filePrimer->Initialize();
         }
-        // Source probes only supply metadata for commands already returned by
-        // the real aggregate. They never contribute displayed/executable items.
-        if (!request.sourceClsid.empty())
+        if (request.originalShortcutOnly)
         {
-            native->metadataOnly = true;
+            progress("query original shortcut objects");
+            return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
+        }
+        // Source queries supply metadata without retaining executable authority.
+        // Popup clicks are always re-resolved through a fresh real aggregate.
+        if (request.startPinOnly || !request.sourceClsid.empty())
+        {
+            native->metadataOnly = !request.startPinOnly;
+            constexpr auto startHandler = L"{470C0EBD-5D73-4D58-9CED-E91E22E23282}";
+            if (request.startPinOnly && !HandlerEnabled(startHandler)) return Reply{true, {}, {}};
+            if (!request.sourceClsid.empty() && !HandlerEnabled(request.sourceClsid)) return Reply{true, {}, {}};
+            if (!request.sourceClsid.empty() && !request.sourceKey.empty() &&
+                !SourceRegistered(request.sourceClsid, request.sourceKey)) return Reply{true, {}, {}};
             CLSID clsid{};
-            if (FAILED(CLSIDFromString(request.sourceClsid.c_str(), &clsid))) return {};
+            if (FAILED(CLSIDFromString(request.startPinOnly ? startHandler : request.sourceClsid.c_str(), &clsid))) return {};
             if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&native->context))))
             {
+                if (request.startPinOnly) return {};
                 ComPtr<IExplorerCommand> command;
                 if (FAILED(CoCreateInstance(clsid, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&command)))) return {};
                 ComPtr<IShellItemArray> selection;
@@ -784,6 +902,9 @@ struct Host
                 if (FAILED(command->GetTitle(selection.Get(), &title)) || !title) return {};
                 Entry entry; entry.label = DecodeMenuLabel(title).text; CoTaskMemFree(title);
                 wchar_t guid[40]{}; StringFromGUID2(canonical, guid, 40); entry.key = Utf8(guid);
+                if (!request.sourceKey.empty() &&
+                    (!HandlerEnabled(request.sourceClsid) || !SourceRegistered(request.sourceClsid, request.sourceKey)))
+                    return Reply{true, {}, {}};
                 Reply reply; reply.ok = true; reply.entries.push_back(std::move(entry)); return reply;
             }
             ComPtr<IDataObject> data;
@@ -794,10 +915,10 @@ struct Host
                     FAILED(selection->BindToHandler(nullptr, BHID_DataObject, IID_PPV_ARGS(&data)))) return {};
             }
             HKEY type = nullptr;
-            RegOpenKeyExW(HKEY_CLASSES_ROOT, request.sourceKey.c_str(), 0, KEY_READ, &type);
+            if (!request.sourceKey.empty()) RegOpenKeyExW(HKEY_CLASSES_ROOT, request.sourceKey.c_str(), 0, KEY_READ, &type);
             ComPtr<IShellExtInit> initialize;
             const HRESULT initialized = SUCCEEDED(native->context.As(&initialize))
-                ? initialize->Initialize(request.background ? folderId.value : nullptr, data.Get(), type) : E_NOINTERFACE;
+                ? initialize->Initialize(request.background || request.startPinOnly ? folderId.value : nullptr, data.Get(), type) : E_NOINTERFACE;
             if (type) RegCloseKey(type);
             if (FAILED(initialized)) return {};
         }
@@ -835,30 +956,59 @@ struct Host
             }
             else
             {
-                ComPtr<IShellItemArray> selection;
-                if (FAILED(SHCreateShellItemArrayFromIDLists(static_cast<UINT>(raw.size()), raw.data(), &selection)) ||
-                    FAILED(selection->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&native->context))))
+                // BHID_SFUIObject only supports a flat, same-folder array.
+                // Desktop-relative PIDLs represent the original objects from
+                // every selected directory without substituting link targets.
+                ComPtr<IShellFolder> desktop;
+                if (FAILED(SHGetDesktopFolder(&desktop))) return {};
+                std::vector<PCUITEMID_CHILD> children;
+                for (auto id : raw) children.push_back(reinterpret_cast<PCUITEMID_CHILD>(id));
+                if (FAILED(desktop->GetUIObjectOf(window, static_cast<UINT>(children.size()), children.data(),
+                    IID_IContextMenu, nullptr, reinterpret_cast<void **>(native->context.GetAddressOf()))))
                     return {};
+                folder = std::move(desktop);
             }
         }
-        // A Shell view is needed for invoking view-dependent verbs, not for
-        // enumerating the aggregate. Creating it before loading extensions can
-        // make Shell window hooks re-enter item binding from a handler's DllMain.
-        native->folder = folder;
+        // View-dependent invocation and deferred cascades need a Shell view.
+        // Ordinary aggregate enumeration does not. Attach only after loading
+        // handlers: an earlier view can make Shell window hooks re-enter item
+        // binding from a handler's DllMain.
+        native->folder = request.background ? viewFolder : folder;
         progress("query context menu");
         if (FAILED(native->context->QueryContextMenu(native->menu, 0, 1, 0x7fff,
                                                      CMF_NORMAL | (request.background ? 0 : CMF_ITEMMENU) |
                                                          (request.extended ? CMF_EXTENDEDVERBS : 0))))
             return {};
+        if (priming)
+        {
+            // Retain loaded association providers until the final rebind, but
+            // do not initialize cascades, read icons or resolve optional apps
+            // for the first catalogue that will never be published.
+            menus.push_back(std::move(native));
+            return Reply{true, {}, {}};
+        }
+        if (shortcutSelection && !request.startPinOnly && request.sourceClsid.empty())
+            return QueryShortcutObjects(request, *native, folder.Get(), folderId.value, raw);
         Reply reply;
-        if (!request.background && ResolveContext(request) == Context::File) fileAssociationsReady = true;
+        if (!request.startPinOnly && request.sourceClsid.empty() && !request.background && ResolveContext(request) == Context::File)
+            fileAssociationsReady = true;
         reply.entries = Read(*native, native->menu, "");
-        if (request.sourceClsid.empty())
+        if (request.startPinOnly)
+            std::erase_if(reply.entries, [](const auto &entry) {
+                const auto *pair = StatePairForVerb(entry.key);
+                return !pair || pair->id != "state:start-pin";
+            });
+        if (!request.startPinOnly)
             for (auto &entry : reply.entries) RegisteredBitmap(entry, request);
+        progress("resolve NVIDIA compatibility application");
         NvidiaCompatibility(request, reply);
+        progress("NVIDIA compatibility finished");
         if (count >= kMaximumEntries)
             return {};
         IdentifyEntries(reply.entries);
+        if (!request.sourceClsid.empty() && !request.sourceKey.empty() &&
+            (!HandlerEnabled(request.sourceClsid) || !SourceRegistered(request.sourceClsid, request.sourceKey)))
+            return Reply{true, {}, {}};
         reply.ok = true;
         menus.push_back(std::move(native));
         return reply;
@@ -873,41 +1023,50 @@ struct Host
             item.fMask = MIIM_ID | MIIM_SUBMENU;
             if (!GetMenuItemInfoW(menu, i, TRUE, &item))
                 continue;
-            if (OwnedVerb(Verb(source, item.wID)))
+            if (OwnedVerb(Verb(source, item.wID)) && IsRootMenuCommand(source.menu, item.wID))
                 EnableMenuItem(menu, i, MF_BYPOSITION | MF_GRAYED);
             if (item.hSubMenu)
                 DisableOwned(source, item.hSubMenu, depth + 1);
         }
     }
-    void Invoke(UINT token, POINT point)
+    bool Stateful(UINT token)
+    {
+        const auto found = commands.find(token);
+        return found != commands.end() && !found->second.native &&
+            StatePairForVerb(Utf8(Verb(*found->second.source, found->second.offset + 1)));
+    }
+    HRESULT Invoke(UINT token, POINT point, ShellInvocationOwner invocationOwner = {})
     {
         auto found = commands.find(token);
         if (found == commands.end() || invoked)
-            return;
+            return E_INVALIDARG;
         invoked = true;
         auto command = found->second;
         auto &source = *command.source;
-        if (source.metadataOnly) return;
+        if (source.metadataOnly) return E_ACCESSDENIED;
         if (source.nvidiaApplication)
         {
             // Recheck registration/security and the installed target at click.
             // A stale menu cannot launch an unregistered or blocked provider,
             // a replacement application, or a newly disabled default command.
-            if (!NvidiaControlPanelRegistered() || !HandlerEnabled(NvidiaControlPanelClsid)) return;
+            if (!NvidiaControlPanelRegistered() || !HandlerEnabled(NvidiaControlPanelClsid)) return E_ACCESSDENIED;
             auto current = NvidiaControlPanelApplication();
             int order = 1;
-            if (!current || FAILED(source.nvidiaApplication->Compare(current.Get(), SICHINT_CANONICAL, &order)) || order) return;
+            if (!current || FAILED(source.nvidiaApplication->Compare(current.Get(), SICHINT_CANONICAL, &order)) || order) return E_INVALIDARG;
             source.context.Reset();
             DestroyMenu(source.menu); source.menu = CreatePopupMenu();
             if (!source.menu || FAILED(current->BindToHandler(nullptr, BHID_SFUIObject, IID_PPV_ARGS(&source.context))) ||
-                FAILED(source.context->QueryContextMenu(source.menu, 0, 1, 0x7fff, CMF_DEFAULTONLY))) return;
+                FAILED(source.context->QueryContextMenu(source.menu, 0, 1, 0x7fff, CMF_DEFAULTONLY))) return E_FAIL;
             const auto refreshed = DefaultApplicationOpen(source.context.Get(), source.menu);
-            if (!refreshed) return;
+            if (!refreshed) return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
             command.offset = *refreshed;
         }
-        else
+        else if (!source.shortcutObjects && (command.native || !shell_start_pin::CommandAction(source.context.Get(), command.offset)))
         {
-            source.site.Initialize(source.folder.Get(), window);
+            // Deferred children already belong to this live view/menu session.
+            // Do not detach their site and recreate it between read and click.
+            if (!source.site.HostWindow())
+                source.site.Initialize(source.folder.Get(), window);
             source.site.Attach(source.context.Get());
         }
         if (command.native)
@@ -920,13 +1079,14 @@ struct Host
                 TrackPopupMenuEx(popup, TPM_RETURNCMD | TPM_RIGHTBUTTON, point.x, point.y, window, nullptr);
             tracking = nullptr;
             if (!chosen)
-                return;
+                return HRESULT_FROM_WIN32(ERROR_CANCELLED);
             command.offset = chosen - 1;
         }
         // Keep application-owned file operations out of the native fallback.
         // Their desktop/Dock semantics are handled by the existing host menu.
-        if (!source.nvidiaApplication && OwnedVerb(Verb(source, command.offset + 1)))
-            return;
+        if (!source.nvidiaApplication && OwnedVerb(Verb(source, command.offset + 1)) &&
+            IsRootMenuCommand(source.menu, command.offset + 1))
+            return E_ACCESSDENIED;
         std::function<bool(HMENU, int)> enabled = [&](HMENU menu, int depth) {
             if (depth > 16)
                 return false;
@@ -944,19 +1104,44 @@ struct Host
             return false;
         };
         if (!enabled(source.menu, 0))
-            return;
-        source.site.SetInvocationOwner(window);
+            return E_ACCESSDENIED;
+        // Exposed commands run in this supervised helper rather than in the
+        // classic host menu. Start pinning still requires Explorer's thread,
+        // and must use this live session's original shortcut, never its target.
+        if (const auto result = shell_start_pin::Route(source.context.Get(), command.offset, source.paths,
+                [&](shell_start_pin::Action action, const std::wstring &path) {
+                    return startPin ? startPin(action, path, window, point) : E_NOTIMPL;
+                }))
+        {
+            return *result; // A rejected/failed Start request must never invoke locally.
+        }
+        const HWND owner = invocationOwner.Resolve();
+        const HWND commandOwner = owner ? owner : window;
+        if (owner)
+        {
+            DWORD foregroundProcess = 0;
+            GetWindowThreadProcessId(GetForegroundWindow(), &foregroundProcess);
+            // A slow fresh query must not steal focus after the user switches
+            // apps. With the originating app still active, hand off to the
+            // persistent input owner and consent broker immediately at click.
+            if (foregroundProcess == invocationOwner.process || foregroundProcess == GetCurrentProcessId())
+            {
+                SetForegroundWindow(owner);
+                AllowSetForegroundWindow(ASFW_ANY);
+            }
+        }
+        source.site.SetInvocationOwner(commandOwner);
         CMINVOKECOMMANDINFOEX invoke{};
         invoke.cbSize = sizeof(invoke);
         invoke.fMask = CMIC_MASK_UNICODE | CMIC_MASK_PTINVOKE | CMIC_MASK_NOASYNC;
-        invoke.hwnd = window;
+        invoke.hwnd = commandOwner;
         invoke.lpVerb = MAKEINTRESOURCEA(command.offset);
         invoke.lpVerbW = MAKEINTRESOURCEW(command.offset);
         invoke.nShow = SW_SHOWNORMAL;
         invoke.ptInvoke = point;
         std::string ansi;
         SetShellInvocationDirectory(invoke, source.directory, ansi);
-        source.context->InvokeCommand(reinterpret_cast<CMINVOKECOMMANDINFO *>(&invoke));
+        return source.context->InvokeCommand(reinterpret_cast<CMINVOKECOMMANDINFO *>(&invoke));
     }
 };
 } // namespace
@@ -982,18 +1167,21 @@ void InvalidateMenuCache()
 
 struct Session::Impl
 {
-    // One idle worker per UI thread, never shared across active sessions.
+    // One prepared ordinary worker and one system Start worker per owning STA.
     static thread_local std::vector<std::unique_ptr<Impl>> idle;
     settings_ipc::Channel channel;
     std::shared_ptr<settings_ipc::SettingsProcess> process = std::make_shared<settings_ipc::SettingsProcess>();
     std::optional<Reply> reply;
+    unsigned selectionContexts = 0;
+    std::set<UINT> statefulTokens;
     std::string stage;
     std::filesystem::path sampleDirectory;
     std::vector<std::filesystem::path> retiredSamples;
     ULONGLONG born = GetTickCount64(), started = 0;
     std::uint64_t generation = 0;
     DWORD timeout = 8000;
-    bool delivered = false, detached = false, succeeded = false;
+    bool delivered = false, detached = false, succeeded = false, startPinOnly = false;
+    bool ownsSessionSlot = false, preparationOnly = false, preparationReady = false, preparationFailed = false;
     void RemoveRetiredSamples()
     {
         for (const auto &directory : retiredSamples)
@@ -1018,33 +1206,107 @@ struct Session::Impl
         if (!detached) process->Stop();
         RemoveSample();
         RemoveRetiredSamples();
+        if (ownsSessionSlot) (startPinOnly ? startPinSessions : sessions).fetch_sub(1);
     }
 };
 thread_local std::vector<std::unique_ptr<Session::Impl>> Session::Impl::idle;
-Session::Session(const Request &request, DWORD queryTimeoutMs)
+Session::PreparationState Session::PollPreparedMenuWorker()
 {
-    MenuTiming timing("helper_start");
-    if (sessions.fetch_add(1) >= 2)
-    {
-        sessions.fetch_sub(1);
-        throw settings_ipc::ProtocolError("too many Shell menus");
-    }
+    const auto generation = MenuCacheGeneration();
+    const auto now = GetTickCount64();
+    std::erase_if(Impl::idle, [&](const auto &worker) {
+        return worker->preparationOnly && (worker->preparationFailed || worker->generation != generation ||
+            !worker->process->Running() || now - worker->born >= kWorkerLifetimeMs ||
+            (!worker->preparationReady && now - worker->started >= worker->timeout));
+    });
+    for (const auto &worker : Impl::idle) if (worker->preparationOnly)
+        return worker->preparationReady ? PreparationState::Ready : PreparationState::Pending;
+    return PreparationState::Absent;
+}
+bool Session::PrepareFirstMenuWorker(DWORD timeoutMs)
+{
+    if (PollPreparedMenuWorker() != PreparationState::Absent) return true;
+    auto worker = std::make_unique<Impl>();
+    if (sessions.fetch_add(1) >= 2) { sessions.fetch_sub(1); return false; }
+    worker->ownsSessionSlot = worker->preparationOnly = true;
+    worker->generation = MenuCacheGeneration();
+    worker->started = GetTickCount64();
+    worker->timeout = std::clamp<DWORD>(timeoutMs, 100, 8000);
+    worker->channel.Bind<void, std::string>("menu.progress", [p = worker.get()](std::string stage) {
+        p->stage = std::move(stage);
+    });
+    worker->channel.Bind<void, bool>("menu.prepared", [p = worker.get()](bool ready) {
+        p->preparationReady = ready; p->preparationFailed = !ready;
+        MenuTrace("preparation", ready ? "ready" : "failed", double(GetTickCount64() - p->started));
+    });
     try
     {
+        worker->process->Start(worker->channel, L"--shell-menu-helper");
+        worker->channel.Notify("menu.prepare");
+        Impl::idle.push_back(std::move(worker));
+        MenuTrace("preparation", "started");
+        return true;
+    }
+    catch (...) { return false; }
+}
+void Session::ReleasePreparedMenuWorker()
+{
+    std::erase_if(Impl::idle, [](const auto &worker) { return worker->preparationOnly; });
+}
+Session::Session(const Request &request, DWORD queryTimeoutMs, bool usePreparedWorker)
+{
+    MenuTiming timing("helper_start");
+    auto &counter = request.startPinOnly ? startPinSessions : sessions;
+    bool acquiredSlot = false;
+    try
+    {
+        PollPreparedMenuWorker();
         const auto generation = MenuCacheGeneration();
         auto &idle = Impl::idle;
         std::erase_if(idle, [=](const auto &worker) { return worker->generation != generation || !worker->process->Running() || GetTickCount64() - worker->born >= kWorkerLifetimeMs; });
-        const bool reused = !idle.empty();
-        if (reused) { impl_ = std::move(idle.back()); idle.pop_back(); }
-        else impl_ = std::make_unique<Impl>();
+        const auto available = std::find_if(idle.begin(), idle.end(), [&](const auto &worker) {
+            return request.startPinOnly ? worker->startPinOnly : usePreparedWorker && worker->preparationOnly;
+        });
+        bool reused = available != idle.end();
+        if (reused) { impl_ = std::move(*available); idle.erase(available); }
+        if (!impl_ || !impl_->ownsSessionSlot)
+        {
+            if (counter.fetch_add(1) >= (request.startPinOnly ? 1u : 2u))
+            {
+                counter.fetch_sub(1);
+                throw settings_ipc::ProtocolError("too many Shell menus");
+            }
+            acquiredSlot = true;
+        }
+        if (!impl_) impl_ = std::make_unique<Impl>();
+        impl_->startPinOnly = request.startPinOnly;
+        impl_->ownsSessionSlot = true; acquiredSlot = false;
+        if (impl_->preparationOnly)
+        {
+            // The immediate popup never waits for preparation. Backgrounds keep
+            // their original host: priming another context can alter their rows.
+            if (!impl_->preparationReady || impl_->preparationFailed || request.background ||
+                request.context == Context::Desktop || request.catalogueOnly ||
+                !request.sourceClsid.empty() || !request.sourceKey.empty())
+            {
+                impl_->process->Stop(); impl_->channel.Close(); reused = false;
+                impl_->born = GetTickCount64();
+            }
+            impl_->preparationOnly = impl_->preparationReady = impl_->preparationFailed = false;
+        }
         impl_->generation = generation;
         impl_->started = GetTickCount64();
         impl_->delivered = impl_->succeeded = false;
+        impl_->statefulTokens.clear();
         impl_->reply.reset();
+        impl_->selectionContexts = 0;
         impl_->stage = "start helper";
         impl_->timeout = std::clamp<DWORD>(queryTimeoutMs, 100, 8000);
         impl_->channel.Bind<void, std::string>("menu.progress", [p = impl_.get()](std::string stage) {
             p->stage = std::move(stage);
+        });
+        impl_->channel.Bind<void, unsigned>("menu.selection_contexts", [p = impl_.get()](unsigned contexts) {
+            p->selectionContexts = contexts;
         });
         impl_->channel.Bind<void, Reply>("menu.reply", [p = impl_.get()](Reply result) {
             if (!result.ok && result.error.empty()) result.error = "query failed at " + p->stage;
@@ -1060,13 +1322,18 @@ Session::Session(const Request &request, DWORD queryTimeoutMs)
     catch (...)
     {
         impl_.reset();
-        sessions.fetch_sub(1);
+        if (acquiredSlot) counter.fetch_sub(1);
         throw;
     }
 }
 Session::~Session()
 {
-    if (impl_ && impl_->delivered && impl_->succeeded && !impl_->detached && impl_->process->Running() &&
+    const bool startPinOnly = impl_->startPinOnly;
+    // Arbitrary extensions can keep timers/windows alive after releasing their
+    // COM menu. Retire the query process with the session so those callbacks
+    // cannot run between menus. Invoked helpers retain their detached lifetime.
+    // Only the dedicated system Start-pin handler is eligible for reuse.
+    if (startPinOnly && impl_->delivered && impl_->succeeded && !impl_->detached && impl_->process->Running() &&
         impl_->generation == Caches().generation)
     {
         try
@@ -1077,18 +1344,26 @@ Session::~Session()
                 impl_->retiredSamples.push_back(std::move(impl_->sampleDirectory));
                 impl_->sampleDirectory.clear();
             }
-            // Keep loaded modules, not menus/COM objects that may hold a file.
+            // Keep the system handler loaded, not its menu/COM selection.
             // The ordered release acknowledgement retires only prior samples,
             // even if the next query has already acquired this worker.
             impl_->channel.Notify("menu.release");
             impl_->born = GetTickCount64();
-            if (Impl::idle.size() < 2) Impl::idle.push_back(std::move(impl_));
+            const auto pooled = std::count_if(Impl::idle.begin(), Impl::idle.end(), [=](const auto &worker) {
+                return worker->startPinOnly == startPinOnly;
+            });
+            if (pooled < 1)
+            {
+                impl_->ownsSessionSlot = false;
+                startPinSessions.fetch_sub(1);
+                Impl::idle.push_back(std::move(impl_));
+            }
         }
         catch (...) { /* A disconnected worker is destroyed instead of pooled. */ }
     }
-    sessions.fetch_sub(1);
 }
 void Session::ReleaseIdleWorker() { Impl::idle.clear(); }
+unsigned Session::SelectionContexts() const noexcept { return impl_->selectionContexts; }
 DWORD Session::ProcessId() const noexcept { return impl_->process->ProcessId(); }
 std::optional<Reply> Session::Poll()
 {
@@ -1103,19 +1378,41 @@ std::optional<Reply> Session::Poll()
         return {};
     impl_->delivered = true;
     impl_->succeeded = impl_->reply->ok;
+    std::function<void(const std::vector<Entry> &)> identify = [&](const auto &entries) {
+        for (const auto &entry : entries)
+        { if (entry.token && !entry.native && StatePairForVerb(entry.key)) impl_->statefulTokens.insert(entry.token);
+          identify(entry.children); }
+    };
+    identify(impl_->reply->entries);
     MenuTrace("query", impl_->succeeded ? "success" : "failure", double(GetTickCount64() - impl_->started), static_cast<unsigned>(impl_->reply->entries.size()));
     return std::move(impl_->reply);
 }
-void Session::Invoke(UINT token, POINT position)
+void Session::Invoke(UINT token, POINT position, HWND owner)
 {
     if (!impl_->delivered || !impl_->process->Running())
         throw settings_ipc::ProtocolError("Shell command session is no longer available");
     MenuTiming timing("invoke_ack");
     AllowSetForegroundWindow(impl_->process->ProcessId());
-    // Request acknowledgement only queues the invocation; arbitrary extension
+    const auto invocationOwner = ShellInvocationOwner::Capture(owner);
+    impl_->succeeded = false; // An invoked or failed session can never return to the query pool.
+    if (impl_->statefulTokens.contains(token))
+    {
+        // This STA is the service worker, never the desktop UI thread. Observe
+        // completion of these bounded state changes before retiring the cache.
+        const auto result = impl_->channel.CallWithTimeout<HRESULT>(12000, "menu.invoke-stateful",
+            token, position.x, position.y, invocationOwner.window, invocationOwner.process, invocationOwner.thread);
+        timing.Record("completed");
+        if (FAILED(result)) throw settings_ipc::ProtocolError("Shell state command failed: " +
+            std::to_string(static_cast<unsigned long>(result)));
+    }
+    // Request acknowledgement only queues arbitrary extension invocation;
     // code is dispatched afterwards, so this does not wait for a dialog.
-    impl_->channel.CallWithTimeout<void>(1000, "menu.invoke", token, position.x, position.y);
-    timing.Record("acknowledged");
+    else
+    {
+        impl_->channel.CallWithTimeout<void>(1000, "menu.invoke", token, position.x, position.y,
+            invocationOwner.window, invocationOwner.process, invocationOwner.thread);
+        timing.Record("acknowledged");
+    }
     auto process = impl_->process;
     impl_->detached = true;
     std::thread([process] {
@@ -1124,7 +1421,7 @@ void Session::Invoke(UINT token, POINT position)
         process->Stop();
     }).detach();
 }
-std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke)
+std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke, StartPinExecutor startPin)
 {
     if (!settings_ipc::IsSettingsProcessCommand(L"--shell-menu-helper"))
         return {};
@@ -1135,8 +1432,13 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke)
     {
         settings_ipc::Channel channel;
         settings_ipc::OpenInheritedSettingsChannel(channel, L"--shell-menu-helper");
-        Host host;
-        host.progress = [&](const auto &stage) { channel.Notify("menu.progress", stage); };
+        Host host(std::move(startPin));
+        host.progress = [&](const auto &stage) { MenuTrace("helper.stage", stage); channel.Notify("menu.progress", stage); };
+        // Retain bootstrap objects until process retirement: extensions can keep
+        // window/timer callbacks referring to their menu even after QCM returns.
+        std::unique_ptr<TemporaryMenuFile> preparationSample;
+        std::unique_ptr<Host> filePreparation, backgroundPreparation;
+        bool actualQueryReceived = false;
         bool invocationQueued = false;
         ULONGLONG lastQuery = GetTickCount64();
         ULONGLONG invokedAt = 0, dispatchedAt = 0;
@@ -1144,26 +1446,81 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke)
             if (!invocationQueued)
                 PostQuitMessage(0);
         });
+        channel.Bind<void>("menu.prepare", [&] {
+            if (actualQueryReceived || invocationQueued || preparationSample) return;
+            preparationSample = std::make_unique<TemporaryMenuFile>();
+            bool prepared = preparationSample->handle != INVALID_HANDLE_VALUE;
+            if (prepared)
+            {
+                Request file; file.paths = {preparationSample->path};
+                Request background; background.paths = {std::filesystem::path(preparationSample->path).parent_path().wstring()};
+                background.background = true; background.context = Context::FolderBackground;
+                if (query) prepared = query(file).ok && query(background).ok;
+                else
+                {
+                    filePreparation = std::make_unique<Host>(StartPinExecutor{});
+                    backgroundPreparation = std::make_unique<Host>(StartPinExecutor{});
+                    filePreparation->progress = backgroundPreparation->progress = host.progress;
+                    prepared = filePreparation->QueryOnce(file, true).ok &&
+                        backgroundPreparation->QueryOnce(background, true).ok;
+                }
+            }
+            // Successful retained aggregates initialize file providers before
+            // the real selection arrives. Its fresh aggregate owns all published
+            // tokens; it need not repeat the unpublished file priming pass.
+            if (prepared)
+                host.fileAssociationsReady = host.fileCatalogueInitialized = true;
+            channel.Notify("menu.prepared", prepared);
+        });
         channel.Bind<void, Request>("menu.query", [&](Request request) {
             if (invocationQueued) return;
+            actualQueryReceived = true;
             lastQuery = GetTickCount64();
-            channel.Notify("menu.reply", query ? query(request) : host.Query(request));
+            auto reply = query ? query(request) : host.Query(request);
+            if (reply.ok)
+            {
+                unsigned contexts = 0;
+                if (request.background || request.context == Context::Desktop)
+                    contexts = ContextBit(ResolveContext(request));
+                else for (const auto &path : request.paths)
+                {
+                    const auto attributes = GetFileAttributesW(path.c_str());
+                    if (attributes == INVALID_FILE_ATTRIBUTES) { contexts = 0; break; }
+                    contexts |= ContextBit(attributes & FILE_ATTRIBUTE_DIRECTORY ? Context::Folder : Context::File);
+                }
+                // This separate notification leaves persisted Reply data intact.
+                // Network/reconnect waits stay within the helper's query deadline.
+                channel.Notify("menu.selection_contexts", contexts);
+            }
+            channel.Notify("menu.reply", std::move(reply));
         });
         channel.Bind<void>("menu.release", [&] {
             if (invocationQueued) return;
             host.ReleaseMenu();
             channel.Notify("menu.released");
         });
-        channel.Bind<void, UINT, LONG, LONG>("menu.invoke", [&](UINT token, LONG x, LONG y) {
+        channel.Bind<void, UINT, LONG, LONG, std::uint64_t, DWORD, DWORD>("menu.invoke",
+            [&](UINT token, LONG x, LONG y, std::uint64_t ownerWindow, DWORD ownerProcess, DWORD ownerThread) {
             if (invocationQueued)
                 return;
             invocationQueued = true;
             dispatchedAt = GetTickCount64();
-            channel.Post([&, token, x, y] {
+            channel.Post([&, token, x, y, ownerWindow, ownerProcess, ownerThread] {
                 if (invoke) invoke(token, {x, y});
-                else host.Invoke(token, {x, y});
+                else host.Invoke(token, {x, y}, {ownerWindow, ownerProcess, ownerThread});
                 invokedAt = GetTickCount64();
             });
+        });
+        channel.Bind<HRESULT, UINT, LONG, LONG, std::uint64_t, DWORD, DWORD>("menu.invoke-stateful",
+            [&](UINT token, LONG x, LONG y, std::uint64_t ownerWindow, DWORD ownerProcess, DWORD ownerThread) {
+            if (invocationQueued || (!invoke && !host.Stateful(token))) return E_INVALIDARG;
+            invocationQueued = true;
+            dispatchedAt = GetTickCount64();
+            HRESULT execution = S_OK;
+            if (invoke) invoke(token, {x, y});
+            else execution = host.Invoke(token, {x, y}, {ownerWindow, ownerProcess, ownerThread});
+            invokedAt = GetTickCount64();
+            return execution;
         });
         MSG msg{};
         bool running = true;
@@ -1206,6 +1563,14 @@ std::optional<int> TryRunHelper(QueryExecutor query, InvokeExecutor invoke)
     }
     OleUninitialize();
     return result;
+}
+bool CanQueryOriginalShortcutObjects(const Request &request)
+{
+    return !request.background && !request.catalogueOnly && !request.startPinOnly &&
+        request.context != Context::Desktop && request.sourceClsid.empty() && request.sourceKey.empty() &&
+        std::any_of(request.paths.begin(), request.paths.end(), [](const auto &path) {
+            return lstrcmpiW(PathFindExtensionW(path.c_str()), L".lnk") == 0;
+        });
 }
 Context ResolveContext(const Request &request)
 {

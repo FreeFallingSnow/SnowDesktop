@@ -1,6 +1,8 @@
 #include "dock_settings.h"
 #include "theme/taskbar_appearance.h"
 #include "dock_gradient_storage.h"
+#include "dock_fullscreen_storage.h"
+#include "common/utils.h"
 #include "theme/surface_theme.h"
 
 #include "data/data_paths.h"
@@ -633,20 +635,22 @@ public:
         // A retained mapping/TAP from an earlier host is not this launch's
         // connection. Inject once per host/Explorer pair to retire that DLL
         // and bind activation observation and native entry points together.
-        const bool ownsConnection = injectedExplorerProcessId_ == explorerProcessId;
-        const bool alreadyInjected = ownsConnection && !nativeMissing && state_->explorerProcessId == explorerProcessId &&
-            state_->status >= snowdesktop::taskbar_hook::kStatusInjecting;
-        if (alreadyInjected && !resolveSymbols)
+        const bool ownsConnection = injectedExplorerProcessId_ == explorerProcessId &&
+            snowdesktop::taskbar_hook::AreTaskbarThreadsConnected(
+                taskbars, explorerProcessId, GetCurrentProcessId());
+        const bool alreadyInjected = ownsConnection && !nativeMissing;
+        const bool retryAppearance = appearanceEnabled &&
+            state_->status == snowdesktop::taskbar_hook::kStatusFailed;
+        if (alreadyInjected && !resolveSymbols && !retryAppearance)
             return true;
         if (injectionInFlight_.load(std::memory_order_acquire))
             return false;
         constexpr ULONGLONG kFailedInjectionRetryDelayMs = 10000;
-        if (!alreadyInjected && state_->explorerProcessId == explorerProcessId &&
+        if ((!alreadyInjected || retryAppearance) && !resolveSymbols &&
+            state_->explorerProcessId == explorerProcessId &&
             now - lastInjectionAttemptTick_ < kFailedInjectionRetryDelayMs)
             return false;
 
-        const bool appearanceConnected = ownsConnection && state_->explorerProcessId == explorerProcessId &&
-            state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
         state_->explorerProcessId = explorerProcessId;
         lastInjectionAttemptTick_ = now;
         if (resolveSymbols)
@@ -659,10 +663,14 @@ public:
             MemoryBarrier();
             InterlockedIncrement(&state_->generation);
         }
-        if (!appearanceConnected)
+        // Symbol retries and native reattachment must not erase the independent
+        // XAML failure/status reported by Explorer.
+        if (!ownsConnection)
+        {
             InterlockedExchange(&state_->status,
                 snowdesktop::taskbar_hook::kStatusInjecting);
-        InterlockedExchange(&state_->lastError, ERROR_SUCCESS);
+            InterlockedExchange(&state_->lastError, ERROR_SUCCESS);
+        }
         if (injectionCancelEvent_)
             ResetEvent(injectionCancelEvent_);
         injectionInFlight_.store(true, std::memory_order_release);
@@ -673,10 +681,10 @@ public:
             const auto executable = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktop.exe";
             const auto symbolCache = std::filesystem::path(GetDataDirectoryPath()) / L"ShellHookSymbols";
             injectionThread_ = std::thread([this, primaryTaskbar, explorerProcessId,
-                    appearanceConnected, alreadyInjected, resolveSymbols, executable, symbolCache,
+                    alreadyInjected, retryAppearance, resolveSymbols, executable, symbolCache,
                     taskbars = std::move(taskbars)] {
-                const bool injected = alreadyInjected || Inject(primaryTaskbar, explorerProcessId,
-                    taskbars, appearanceConnected);
+                const bool injected = (alreadyInjected && !retryAppearance) || Inject(primaryTaskbar, explorerProcessId,
+                    taskbars);
                 if (injected && resolveSymbols)
                     ResolveAdapter(explorerProcessId, taskbars, executable, symbolCache);
                 {
@@ -790,44 +798,33 @@ private:
     }
 
     bool Inject(HWND taskbar, DWORD expectedExplorerProcessId,
-        const std::vector<HWND>& taskbars, bool appearanceConnected)
+        const std::vector<HWND>& taskbars)
     {
-        const std::filesystem::path hookPath =
-            snowdesktop::deployment::GetTaskbarHookPath();
-        if (!std::filesystem::is_regular_file(hookPath))
+        if (selectedHookPath_.empty()) selectedHookPath_ = snowdesktop::deployment::GetTaskbarHookPath();
+        if (!std::filesystem::is_regular_file(selectedHookPath_))
         {
             return Fail(expectedExplorerProcessId, ERROR_FILE_NOT_FOUND);
         }
 
-        HANDLE readyEvent = CreateEventW(nullptr, TRUE, FALSE,
-            snowdesktop::taskbar_hook::kReadyEventName);
-        if (!readyEvent)
-            return Fail(expectedExplorerProcessId, GetLastError());
-        ResetEvent(readyEvent);
-
         HANDLE explorerProcess = OpenProcess(SYNCHRONIZE, FALSE,
             expectedExplorerProcessId);
 
-        HMODULE module = LoadLibraryW(hookPath.c_str());
-        if (!module)
-        {
-            const DWORD error = GetLastError();
-            if (explorerProcess)
-                CloseHandle(explorerProcess);
-            CloseHandle(readyEvent);
-            return Fail(expectedExplorerProcessId, error);
-        }
-        auto hookProc = reinterpret_cast<HOOKPROC>(
-            GetProcAddress(module, "SnowDesktopTaskbarHookProc"));
-        const DWORD error = hookProc
-            ? snowdesktop::taskbar_hook::ConnectTaskbarThreads(taskbar, taskbars,
-                expectedExplorerProcessId, module, hookProc, readyEvent,
-                explorerProcess, injectionCancelEvent_, appearanceConnected)
-            : ERROR_INVALID_FUNCTION;
-        FreeLibrary(module);
+        const DWORD error = snowdesktop::taskbar_hook::ConnectTaskbarRuntime(taskbar, taskbars,
+            expectedExplorerProcessId, GetCurrentProcessId(), selectedHookPath_, explorerProcess,
+            injectionCancelEvent_, [this] {
+                if (selectedHookPath_ != snowdesktop::deployment::GetTaskbarHookPath()) return std::wstring{};
+                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] shared instance did not acknowledge; selecting isolated runtime");
+                return snowdesktop::deployment::GetIsolatedTaskbarHookPath();
+            });
         if (explorerProcess)
             CloseHandle(explorerProcess);
-        CloseHandle(readyEvent);
+        if (error != ERROR_SUCCESS && error != ERROR_CANCELLED)
+        {
+            const std::wstring message = L"[TaskbarHookConnection] explorerPid=" +
+                std::to_wstring(expectedExplorerProcessId) + L" error=" + std::to_wstring(error) +
+                L" runtime=" + selectedHookPath_;
+            WriteDiagnosticLogEntry(message.c_str());
+        }
 
         if (error == ERROR_CANCELLED) return false;
         if (error != ERROR_SUCCESS) return Fail(expectedExplorerProcessId, error);
@@ -835,7 +832,8 @@ private:
         std::lock_guard lock(mutex_);
         const bool connected = state_ &&
             state_->explorerProcessId == expectedExplorerProcessId &&
-            state_->status >= snowdesktop::taskbar_hook::kStatusConnected;
+            snowdesktop::taskbar_hook::AreTaskbarThreadsConnected(
+                taskbars, expectedExplorerProcessId, GetCurrentProcessId());
         if (connected) injectedExplorerProcessId_ = expectedExplorerProcessId;
         return connected;
     }
@@ -861,6 +859,7 @@ private:
     ULONGLONG lastInjectionAttemptTick_ = 0;
     DWORD symbolAttemptProcessId_ = 0;
     DWORD injectedExplorerProcessId_ = 0;
+    std::wstring selectedHookPath_;
     ULONGLONG lastSymbolAttemptTick_ = 0;
 };
 
@@ -1092,8 +1091,6 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.floatingEdgeSwipeEnabled);
     if (ReadDoubleField(text, "edgeRevealGesture", value))
         settings.edgeRevealGesture = value == 1 ? 1 : 0;
-    ReadBoolField(text, "floatingEdgeSwipeBlockFullscreen",
-        settings.floatingEdgeSwipeBlockFullscreen);
     if (ReadDoubleField(text, "monitorScope", value))
     {
         settings.monitorScope = static_cast<DockMonitorScope>(
@@ -1149,6 +1146,10 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
     if (ReadDoubleField(text, "thicknessScale", value))
         settings.thicknessScale = ClampDockScale(static_cast<float>(value));
+    // Preserve the previous shared scale when opening an older settings file.
+    settings.mergedIconScale = ClampMergedDockIconScale(settings.thicknessScale);
+    if (ReadDoubleField(text, "mergedIconScale", value))
+        settings.mergedIconScale = ClampMergedDockIconScale(static_cast<float>(value));
     if (ReadDoubleField(text, "hoverEffect", value) && std::isfinite(value) && value >= 0 && value <= 2 && std::floor(value) == value)
         settings.hoverEffect = static_cast<int>(value);
     if (ReadDoubleField(text, "hoverScale", value))
@@ -1206,12 +1207,22 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));
     if (const auto* appearance = gradientDocument.Find("customAppearance"))
         if (!snowdesktop::DecodePanelAppearance(*appearance, settings.customAppearance)) return false;
+    settings.fullscreenPolicy = snowdesktop::dock_fullscreen::DecodePolicy(gradientDocument);
+    if (!snowdesktop::dock_fullscreen::DecodeExceptions(gradientDocument, settings.fullscreenExceptions)) return false;
     NormalizeDockSettings(settings);
     return true;
 }
 
 bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
 {
+    const auto validPolicy = [](DockFullscreenPolicy policy) {
+        const int value = static_cast<int>(policy);
+        return value >= 0 && value <= 2;
+    };
+    if (!validPolicy(settings.fullscreenPolicy) || settings.fullscreenExceptions.size() > 128) return false;
+    for (const auto& entry : settings.fullscreenExceptions)
+        if (!validPolicy(entry.policy) || snowdesktop::dock_fullscreen::NormalizeExecutable(entry.executable).empty())
+            return false;
     std::ostringstream gradientFields;
     if (!snowdesktop::WriteTaskbarGradients(gradientFields, settings)) return false;
     const auto customAppearance = snowdesktop::EncodePanelAppearance(settings.customAppearance);
@@ -1235,8 +1246,19 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
          << ",\n";
     file << "  \"edgeRevealGesture\": " << settings.edgeRevealGesture << ",\n";
+    file << "  \"fullscreenPolicy\": " << static_cast<int>(settings.fullscreenPolicy) << ",\n";
+    file << "  \"fullscreenExceptions\": [";
+    for (size_t i = 0; i < settings.fullscreenExceptions.size(); ++i)
+    {
+        const auto& entry = settings.fullscreenExceptions[i];
+        if (i) file << ',';
+        file << "{\"executable\":\"" << JsonEscapeUtf8(entry.executable)
+            << "\",\"policy\":" << static_cast<int>(entry.policy) << '}';
+    }
+    file << "],\n";
+    // Older builds can still honor the gesture portion of the preference.
     file << "  \"floatingEdgeSwipeBlockFullscreen\": "
-         << (settings.floatingEdgeSwipeBlockFullscreen ? "true" : "false")
+         << (settings.fullscreenPolicy != DockFullscreenPolicy::Allow ? "true" : "false")
          << ",\n";
     file << "  \"monitorScope\": "
          << static_cast<int>(settings.monitorScope) << ",\n";
@@ -1262,6 +1284,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"summonOnlyLinkedPreferencesAreBase\": true,\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
+    file << "  \"mergedIconScale\": " << settings.mergedIconScale << ",\n";
     file << "  \"lastMonitorUseHomeSize\": " << (settings.lastMonitorUseHomeSize ? "true" : "false") << ",\n";
     file << "  \"mergedBarHeight\": " << settings.mergedBarHeight << ",\n";
     file << "  \"hoverEffect\": " << snowdesktop::animation::NormalizeHoverEffect(settings.hoverEffect) << ",\n";

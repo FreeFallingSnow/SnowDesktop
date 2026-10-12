@@ -3,6 +3,7 @@
 #include "layout/page_navigation_rules.h"
 #include "ui/menu/right_click_contract.h"
 #include "widgets/lua_logical_slot.h"
+#include "dock/dock_drop_rules.h"
 
 #include <utility>
 
@@ -172,7 +173,7 @@ bool DesktopApp::ShowHostInputContextMenu(
  * @param dockHost 按下发生于 Dock 时为对应 Host，否则为空。
  */
 void DesktopApp::OnRightButtonDown(
-    PersistentDockHost* dockHost)
+    PersistentDockHost* dockHost, POINT point)
 {
     // Nonactivating Dock Hosts do not dismiss another menu on their own.
     // Unwind that session before release starts an asynchronous running-app
@@ -182,8 +183,8 @@ void DesktopApp::OnRightButtonDown(
     POINT cursor{};
     if (quickNavigationOpen_ && GetCursorPos(&cursor))
     {
-        const POINT point{cursor.x - virtualLeft_, cursor.y - virtualTop_};
-        if (!PtInRect(&quickNavigationRect_, point)) CloseQuickNavigation(false);
+        const POINT quickNavigationPoint{cursor.x - virtualLeft_, cursor.y - virtualTop_};
+        if (!PtInRect(&quickNavigationRect_, quickNavigationPoint)) CloseQuickNavigation(false);
     }
     CancelPopupHover(true);
     CancelRenameClick();
@@ -193,6 +194,275 @@ void DesktopApp::OnRightButtonDown(
     // Right-click menu interaction is never an edge-swipe gesture. Cancel an
     // already armed stroke synchronously instead of waiting for the sampler.
     floatingDockEdgeSwipeDetector_.SuppressUntilEdgeLeave();
+    suppressRightButtonUp_ = false;
+    // Tray and quick-navigation menus also use this preparation hook, without
+    // a native item press. Only routed pointer coordinates may start a drag.
+    if (point.x == LONG_MIN || point.y == LONG_MIN) return;
+    if (largeIconGesture_ || mouseDown_ || dragSession_.HasContext() ||
+        dragDropController_.IsTransportActive() || middleButtonWidgetMove_ ||
+        widgetAction_ != WidgetAction::None ||
+        IsPointInUsageGuide(point))
+        return;
+    if (!luaWidgetPanelRequest_.widgetId.empty() &&
+        luaWidgetPanelAnimation_.IsInteractive())
+    {
+        const RECT panel = GetLuaWidgetPanelRect();
+        if (luaWidgetPanelRequest_.modal || PtInRect(&panel, point))
+            return;
+    }
+
+    ClearPopupMouseDownItem();
+    Item* pressed = nullptr;
+    mouseDownWidgetIndex_ = static_cast<size_t>(-1);
+    auto* popupGroup = IsPointOccludedByOpenPopup(point) ? GetGroupPopupView() : nullptr;
+    const DesktopWidget* popupWidget = GetOpenPopupWidget();
+    if (popupWidget && IsCollectionPopupInteractive() &&
+        !GetGroupPopupView() &&
+        (!desktopIconsHidden_ || IsOpenPopupRetained()))
+    {
+        const RECT popup = GetCollectionPopupRect(*popupWidget);
+        if (PtInRect(&popup, point))
+        {
+            const RECT content = GetCollectionPopupContentRect(popup);
+            if (!PtInRect(&content, point)) return;
+            for (size_t i = 0; i < GetPopupItemCount(*popupWidget); ++i)
+            {
+                if (!HitTestCollectionPopupItem(popup, i, point)) continue;
+                if (dockFolderPopupOpen_)
+                {
+                    const size_t index = GetPopupFolderEntryIndex(*popupWidget, i);
+                    if (index >= dockFolderPopupWidget_.folderEntries.size()) return;
+                    popupMouseDownItem_ = std::make_unique<FolderEntryIcon>(
+                        &dockFolderPopupWidget_.folderEntries[index],
+                        dockFolderPopupContainer_.get(), this);
+                }
+                else
+                {
+                    const auto keys = GetPopupItemKeys(*popupWidget);
+                    if (i >= keys.size()) return;
+                    const size_t index = FindItemIndexByKey(keys[i]);
+                    if (index >= items_.size()) return;
+                    for (auto& container : containers_)
+                    {
+                        auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+                        if (!widget || widget->GetWidgetData() != popupWidget) continue;
+                        popupMouseDownItem_ = std::make_unique<DesktopIcon>(
+                            &items_[index], widget, this);
+                        mouseDownWidgetIndex_ = popupWidgetIndex_;
+                        break;
+                    }
+                }
+                if (!popupMouseDownItem_) return;
+                popupMouseDownItem_->SetBounds(GetCollectionPopupItemRect(popup, i));
+                pressed = popupMouseDownItem_.get();
+                break;
+            }
+            if (!pressed) return; // Popup gaps must not reach covered icons.
+        }
+    }
+    if (!pressed)
+    {
+        if (auto* dock = popupGroup ? nullptr : GetDockContainerAtPoint(point))
+        {
+            pressed = dock->EntryAtPoint(point);
+            if (!pressed) return; // Running-app and search buttons are actions.
+        }
+    }
+    if (!pressed)
+    {
+        for (auto it = containers_.rbegin(); it != containers_.rend(); ++it)
+        {
+            auto* widget = dynamic_cast<WidgetContainer*>(it->get());
+            if (popupGroup && widget != popupGroup) continue;
+            if (!widget || widget->IsCollapsed() ||
+                (desktopIconsHidden_ && !IsRetainedContainer(widget))) continue;
+            const WidgetHit hit = widget->HitTestWidget(point);
+            if (hit == WidgetHit::None) continue;
+            if (auto* group = dynamic_cast<FileGroup*>(widget);
+                group && hit == WidgetHit::SourceTab)
+                pressed = group->GetSourceTabItemAtPoint(point);
+            else if (auto* collectionGroup = dynamic_cast<CollectionGroup*>(widget);
+                collectionGroup && hit == WidgetHit::CategoryTab)
+                pressed = collectionGroup->GetTabItemAtPoint(point);
+            else if (hit == WidgetHit::Content)
+            {
+                const RECT body = widget->GetBodyRect();
+                for (auto& slot : widget->GetSlots())
+                {
+                    const RECT bounds = slot->GetBounds();
+                    if (PtInRect(&body, point) && PtInRect(&bounds, point))
+                    {
+                        pressed = slot->GetItem();
+                        break;
+                    }
+                }
+            }
+            if (widget->GetWidgetData())
+                mouseDownWidgetIndex_ = FindWidgetIndexById(widget->GetWidgetData()->id);
+            if (!pressed) return; // Chrome and empty content keep their context menu.
+            break;
+        }
+    }
+    if (!pressed && !popupGroup && !IsPointOverWidgetChrome(point))
+        pressed = HitTestIcon(point);
+    if (!pressed || !pressed->GetContainer()) return;
+    if (!pressed->IsSelected())
+    {
+        ClearSelection();
+        if (dockFolderPopupOpen_ &&
+            pressed->GetContainer() == dockFolderPopupContainer_.get())
+            for (auto& entry : dockFolderPopupWidget_.folderEntries)
+                entry.selected = false;
+        pressed->SetSelected(true);
+    }
+    mouseDown_ = true;
+    mouseDownHit_ = pressed;
+    mouseDownPoint_ = point;
+    rightButtonItemDrag_ = true;
+    const HWND capture = dockHost ? dockHost->hwnd :
+        handlingFloatingPopupInput_ ? floatingPopupHwnd_ : hwnd_;
+    SetCapture(capture);
+    SyncKeyboardNavFromSelection();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+int DesktopApp::PointerGestureVirtualKey() const
+{
+    return middleButtonWidgetMove_ ? VK_MBUTTON :
+        rightButtonItemDrag_ ? VK_RBUTTON : VK_LBUTTON;
+}
+
+bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
+    DWORD allowedEffects, bool externalSource)
+{
+    const bool luaFileDrop = HitTestLuaFileDropTarget(point) < widgets_.size();
+    Container* target = dragSession_.TargetContainer();
+    Slot* slot = dragSession_.TargetSlot();
+    const HitRegion region = dragSession_.TargetRegion();
+    const bool dockRemoval = !externalSource &&
+        !GetDockDragOutRemovalHint(point).empty();
+    if (!luaFileDrop && !dockRemoval &&
+        (!target || region == HitRegion::None || region == HitRegion::Blocked))
+        return false;
+
+    if (region == HitRegion::Handoff && slot && slot->GetItem())
+    {
+        const std::wstring path = slot->GetItem()->GetPath();
+        const DWORD attributes = path.empty() ? INVALID_FILE_ATTRIBUTES :
+            GetFileAttributesW(path.c_str());
+        // Application and namespace targets own their native right-drag verbs.
+        // Folder handoffs use our materialization pipeline and need a choice
+        // before it starts. Folder shortcuts still delegate to the Shell.
+        if ((attributes == INVALID_FILE_ATTRIBUTES ||
+                (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
+                (!externalSource && dragSession_.SourceList().FilePaths().empty())) &&
+            !dragSession_.SourceList().hasWidgets)
+            return true;
+    }
+
+    struct Choice { UINT command; DWORD effect; DWORD modifiers; const char* label; };
+    const Choice choices[] = {
+        {1, DROPEFFECT_MOVE, MK_SHIFT, "widget.base.move"},
+        {2, DROPEFFECT_COPY, MK_CONTROL, "widget.base.copy_label"},
+        {3, DROPEFFECT_LINK, MK_ALT, "widget.base.create_shortcut"},
+    };
+    HMENU menu = CreatePopupMenu();
+    if (!menu) return false;
+    bool hasChoice = false;
+    for (const auto& choice : choices)
+    {
+        if ((allowedEffects & choice.effect) == 0) continue;
+        bool accepted = false;
+        if (luaFileDrop)
+            accepted = choice.effect == DROPEFFECT_COPY;
+        else if (dockRemoval)
+            accepted = choice.effect == DROPEFFECT_MOVE;
+        else if (dynamic_cast<DockContainer*>(target))
+        {
+            if (externalSource)
+                accepted = choice.effect == snowdesktop::dock_drop_rules::
+                    ChooseExternalMappingEffect(allowedEffects);
+            else if (dynamic_cast<DockContainer*>(dragSession_.Source()))
+                accepted = choice.effect == DROPEFFECT_MOVE;
+            else if (dragSession_.SourceList().hasFolderEntries)
+                accepted = choice.effect == DROPEFFECT_LINK;
+            else
+                accepted = choice.effect == DROPEFFECT_MOVE || choice.effect == DROPEFFECT_COPY;
+        }
+        else if (dragSession_.SourceList().hasWidgets)
+            accepted = choice.effect == DROPEFFECT_MOVE;
+        else if (externalSource)
+            accepted = dragDropController_.ExternalSummary().fileCount > 0 ||
+                choice.effect == DROPEFFECT_COPY;
+        else if (region == HitRegion::Handoff)
+            accepted = !dragSession_.SourceList().FilePaths().empty();
+        else
+        {
+            const DropPreviewList preview = BuildDropPreviewList(
+                dragSession_.SourceList(), target, slot, region,
+                static_cast<int>(choice.modifiers), point);
+            const DropAction action = DropActionFromMods(static_cast<int>(choice.modifiers));
+            accepted = !preview.Empty() &&
+                (preview.action == action ||
+                    (action == DropAction::Move && preview.consumeDockSource));
+        }
+        if (accepted)
+        {
+            const bool dockTarget = dynamic_cast<DockContainer*>(target) != nullptr;
+            const bool copyCreatesDockMapping = dockTarget && !luaFileDrop &&
+                region != HitRegion::Handoff && choice.effect == DROPEFFECT_COPY;
+            const char* label = externalSource && dockTarget
+                ? "widget.base.create_shortcut"
+                : copyCreatesDockMapping
+                    ? "app.dock.create_mapping_action" : choice.label;
+            AppendMenuW(menu, MF_STRING, choice.command, _LW(label));
+            hasChoice = true;
+        }
+    }
+    if (!hasChoice) { DestroyMenu(menu); return false; }
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, 4, _LW("app.settings.cancel"));
+
+    POINT screenPoint = point;
+    ClientToScreen(hwnd_, &screenPoint);
+    PrepareMenuIconsForPoint(screenPoint);
+    SetMenuItemIcon(menu, 1, L"\uF0B2");
+    SetMenuItemIcon(menu, 2, snowdesktop::menu_fluent_glyphs::kCopy,
+        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, 3, snowdesktop::menu_fluent_glyphs::kLinkAdd,
+        MenuIconFont::FluentRegular);
+    if (externalSource && dynamic_cast<DockContainer*>(target))
+    {
+        // Dock ingress maps a reference even when the source only offers copy.
+        for (const auto& choice : choices)
+            SetMenuItemIcon(menu, choice.command,
+                snowdesktop::menu_fluent_glyphs::kLinkAdd,
+                MenuIconFont::FluentRegular);
+    }
+    SetMenuItemIcon(menu, 4, L"\uF00D");
+
+    // Retain source/target bindings while the menu pumps messages, with no
+    // active pointer gesture that could update the destination or commit twice.
+    dragSession_.DeactivateForDrop();
+    mouseDown_ = false;
+    mouseDownHit_ = nullptr;
+    ReleaseCapturePreservingPointerState();
+    CommitDragVisualEndBeforeShellOperation();
+    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
+    DestroyMenu(menu);
+    ClearMenuIcons();
+    RestoreDesktopWindowLayer();
+    for (const auto& choice : choices)
+    {
+        if (choice.command != command) continue;
+        if (!dragSession_.ResumeAfterDropDecision()) return false;
+        // The user already selected a verb. Use a left-button Shell handoff so
+        // the native target does not show a second right-drag action menu.
+        keyState = MK_LBUTTON | choice.modifiers;
+        dragSession_.UpdateActionFromMods(static_cast<int>(choice.modifiers));
+        return true;
+    }
+    return false;
 }
 
 /**
@@ -203,12 +473,26 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
     PersistentDockHost* const rightButtonPressDockHost =
         std::exchange(rightButtonDownDockHost_, nullptr);
+    const bool consumeRelease = std::exchange(suppressRightButtonUp_, false);
+    if (rightButtonItemDrag_)
+    {
+        if (dragSession_.IsActive())
+        {
+            OnLeftButtonUpAt(MK_RBUTTON,
+                {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)}, true);
+            return;
+        }
+        CancelPointerPressWithoutCaptureRelease();
+        ReleaseCapturePreservingPointerState();
+    }
+    if (consumeRelease) return;
     // A right click cancels placement as one complete press/release gesture.
     // Preserve surface ownership on press, then consume release without a menu.
     if (largeIconGesture_) { CancelLargeIconGesture(); return; }
     if (renameController_.IsActive()) return;
     keyboardNavVisualFocus_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    auto* popupGroup = IsPointOccludedByOpenPopup(pt) ? GetGroupPopupView() : nullptr;
     POINT screenPt = pt;
     ClientToScreen(hwnd_, &screenPt);
 
@@ -245,7 +529,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             return;
     }
 
-    DockContainer* dock = GetDockContainerAtPoint(pt);
+    DockContainer* dock = popupGroup ? nullptr : GetDockContainerAtPoint(pt);
     PersistentDockHost* contextDockHost = dock
         ? FindPersistentDockHost(dock)
         : nullptr;
@@ -290,8 +574,9 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
                     size_t itemIndex = FindItemIndexByKey(dockItem->GetReference());
                     if (itemIndex < items_.size())
                     {
-                        items_[itemIndex].selected =
-                            dockItem->IsSelected();
+                        // Menu commands need the launcher as their target even
+                        // when its running indicator suppresses Dock selection.
+                        items_[itemIndex].selected = true;
                         items_[itemIndex].bounds = dockItemBounds;
                         InvalidateRect(hwnd_, nullptr, FALSE);
                         ShowItemContextMenu(
@@ -331,6 +616,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             {
                 ClearSelection();
                 frequentItem->SetSelected(true);
+                items_[itemIndex].selected = true;
                 items_[itemIndex].bounds = dock->GetElementVisualRect(
                     frequentItem->GetBounds(), pt);
                 InvalidateRect(hwnd_, nullptr, FALSE);
@@ -373,7 +659,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
     }
 
     const size_t standaloneInputWidget =
-        HitTestStandaloneWidgetIndex(pt);
+        popupGroup ? static_cast<size_t>(-1) : HitTestStandaloneWidgetIndex(pt);
     if (standaloneInputWidget < widgets_.size() &&
         widgets_[standaloneInputWidget].type ==
             DesktopWidgetType::LuaScript)
@@ -503,6 +789,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         }
     }
     else if (popupWidgetIndex_ < widgets_.size() &&
+        !GetGroupPopupView() &&
         popupOccludesPoint)
     {
         RECT popup = GetCollectionPopupRect(widgets_[popupWidgetIndex_]);
@@ -547,6 +834,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         auto* group =
             dynamic_cast<FileGroup*>(it->get());
         if (!group) continue;
+        if (popupGroup && group != popupGroup) continue;
         const std::wstring childId =
             group->SourceIdAtPoint(pt);
         if (childId.empty()) continue;
@@ -598,6 +886,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         auto* group =
             dynamic_cast<CollectionGroup*>(it->get());
         if (!group) continue;
+        if (popupGroup && group != popupGroup) continue;
         const std::wstring collectionId =
             group->CategoryIdAtPoint(pt);
         if (collectionId.empty()) continue;
@@ -659,6 +948,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
         auto* logicalSlot =
             dynamic_cast<LuaLogicalSlotContainer*>(it->get());
         if (!logicalSlot) continue;
+        if (popupGroup) continue;
         const auto itemHit = logicalSlot->ItemAtPoint(pt);
         if (!itemHit) continue;
         if (snowdesktop::right_click_contract::ResolveSlotItemMenu(
@@ -691,6 +981,7 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             continue;
         auto* wc = dynamic_cast<WidgetContainer*>(it->get());
         if (!wc || wc->IsCollapsed()) continue;
+        if (popupGroup && wc != popupGroup) continue;
 
         WidgetHit wh = wc->HitTestWidget(pt);
         if (wh == WidgetHit::MoveHandle || wh == WidgetHit::ResizeHandle)
@@ -839,6 +1130,14 @@ void DesktopApp::OnRightButtonUp(LPARAM lp)
             ShowItemContextMenu(screenPt, static_cast<int>(itemIndex));
             return;
         }
+    }
+
+    if (popupGroup)
+    {
+        SelectWidgetOnly(popupWidgetIndex_);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        ShowWidgetContextMenu(screenPt, popupWidgetIndex_);
+        return;
     }
 
     // Check widget hit after member items.

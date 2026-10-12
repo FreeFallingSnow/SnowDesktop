@@ -3,6 +3,7 @@
 #include "common/types.h"
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
 
 namespace snowdesktop::widget_pair_drop
@@ -47,8 +48,31 @@ constexpr Action ResolveAction(Options options, bool control, bool shift, bool a
     return options.merge ? Action::Merge : Action::None;
 }
 
+inline bool CanUseSource(const std::vector<DesktopWidget>& widgets,
+    size_t sourceIndex, std::wstring_view sourceGroupId = {})
+{
+    if (sourceIndex >= widgets.size() || widgets[sourceIndex].id.empty())
+        return false;
+    const auto& source = widgets[sourceIndex];
+    const DesktopWidget* owner = nullptr;
+    for (const auto& widget : widgets)
+        for (const auto& child : widget.childWidgetIds)
+            if (child == source.id)
+            {
+                if (owner) return false;
+                owner = &widget;
+            }
+    if (sourceGroupId.empty()) return owner == nullptr;
+    if (!owner || owner->id != sourceGroupId) return false;
+    const auto group = GetOptions(source.type, source.type).group;
+    return (owner->type == DesktopWidgetType::CollectionGroup &&
+            group == Action::CreateCollectionGroup) ||
+        (owner->type == DesktopWidgetType::FileGroup &&
+            group == Action::CreateFileGroup);
+}
+
 inline bool CanPair(const std::vector<DesktopWidget>& widgets,
-    size_t sourceIndex, size_t targetIndex)
+    size_t sourceIndex, size_t targetIndex, std::wstring_view sourceGroupId = {})
 {
     if (sourceIndex >= widgets.size() || targetIndex >= widgets.size() ||
         sourceIndex == targetIndex)
@@ -58,11 +82,32 @@ inline bool CanPair(const std::vector<DesktopWidget>& widgets,
     if (source.id.empty() || target.id.empty() || source.id == target.id ||
         !GetOptions(source.type, target.type).Available())
         return false;
-    // This gesture combines standalone components, never hidden group children.
+    // Only an explicitly dragged label can release a child from its current
+    // owner. Targets remain standalone; stale or ambiguous ownership rejects.
+    if (!CanUseSource(widgets, sourceIndex, sourceGroupId)) return false;
     for (const auto& widget : widgets)
         for (const auto& child : widget.childWidgetIds)
-            if (child == source.id || child == target.id) return false;
+            if (child == target.id) return false;
     return true;
+}
+
+inline void DetachGroupedSource(std::vector<DesktopWidget>& widgets,
+    const std::wstring& sourceId, std::wstring_view sourceGroupId)
+{
+    if (sourceGroupId.empty()) return;
+    for (auto& group : widgets)
+    {
+        if (group.id != sourceGroupId) continue;
+        const auto member = std::find(group.childWidgetIds.begin(),
+            group.childWidgetIds.end(), sourceId);
+        const size_t index = static_cast<size_t>(
+            std::distance(group.childWidgetIds.begin(), member));
+        std::erase(group.childWidgetIds, sourceId);
+        if (group.activeCategoryId == sourceId)
+            group.activeCategoryId = group.childWidgetIds.empty() ? L"" :
+                group.childWidgetIds[std::min(index, group.childWidgetIds.size() - 1)];
+        return;
+    }
 }
 
 // Production model transaction. No filesystem operation is involved: item keys
@@ -71,15 +116,17 @@ inline bool CanPair(const std::vector<DesktopWidget>& widgets,
 template <typename NormalizeKey>
 bool Apply(std::vector<DesktopWidget>& widgets, std::vector<DockEntry>& dock,
     size_t sourceIndex, size_t targetIndex, Action action,
-    DesktopWidget group, NormalizeKey&& normalizeKey)
+    DesktopWidget group, NormalizeKey&& normalizeKey,
+    std::wstring_view sourceGroupId = {})
 {
-    if (!CanPair(widgets, sourceIndex, targetIndex)) return false;
+    if (!CanPair(widgets, sourceIndex, targetIndex, sourceGroupId)) return false;
     const auto options = GetOptions(widgets[sourceIndex].type, widgets[targetIndex].type);
     if (action == Action::None ||
         (action == Action::Merge ? !options.merge : action != options.group))
         return false;
     const std::wstring sourceId = widgets[sourceIndex].id;
     const std::wstring targetId = widgets[targetIndex].id;
+    const std::wstring sourceOwnerId(sourceGroupId);
     if (action == Action::Merge)
     {
         auto keys = widgets[targetIndex].itemKeys;
@@ -94,6 +141,7 @@ bool Apply(std::vector<DesktopWidget>& widgets, std::vector<DockEntry>& dock,
                 claimed.push_back(normalized);
             }
         }
+        DetachGroupedSource(widgets, sourceId, sourceOwnerId);
         widgets[targetIndex].itemKeys = std::move(keys);
         widgets[sourceIndex].itemKeys.clear();
         widgets.erase(widgets.begin() + static_cast<std::ptrdiff_t>(sourceIndex));
@@ -109,6 +157,7 @@ bool Apply(std::vector<DesktopWidget>& widgets, std::vector<DockEntry>& dock,
         group.activeCategoryId = targetId;
         group.dissolveWhenSingle = true;
         widgets.push_back(std::move(group));
+        DetachGroupedSource(widgets, sourceId, sourceOwnerId);
         widgets[sourceIndex].selected = false;
         widgets[targetIndex].selected = false;
     }

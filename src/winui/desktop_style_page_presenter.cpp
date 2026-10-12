@@ -251,7 +251,7 @@ struct DesktopStylePagePresenter::Impl
             actions.updateDock(generation, SettingsUpdateMode::PreviewAndCommit, std::move(edit));
     }
     void AddToggle(const muxc::StackPanel& parent, const char* key,
-        const char* help, const char* focus, ReadToggle read,
+        std::string_view help, const char* focus, ReadToggle read,
         std::function<void(bool)> write, ReadToggle enabled = {})
     {
         auto toggle = std::make_unique<Toggle>();
@@ -271,7 +271,7 @@ struct DesktopStylePagePresenter::Impl
         toggles.push_back(std::move(toggle));
     }
     void AddDockToggle(const muxc::StackPanel& parent, const char* key,
-        const char* help, const char* focus, bool DockSettings::* member,
+        std::string_view help, const char* focus, bool DockSettings::* member,
         ReadToggle enabled = {})
     {
         AddToggle(parent, key, help, focus,
@@ -281,7 +281,7 @@ struct DesktopStylePagePresenter::Impl
             }, std::move(enabled));
     }
     void AddChoice(const muxc::StackPanel& parent, const char* key,
-        const char* help, const char* focus, std::vector<std::string> options,
+        std::string_view help, const char* focus, std::vector<std::string> options,
         ReadChoice read, std::function<void(int)> write, ReadToggle enabled = {})
     {
         auto choice = std::make_unique<Choice>();
@@ -421,7 +421,7 @@ struct DesktopStylePagePresenter::Impl
             [this](int index) { EmitDock([index](auto& value) { value.monitorScope = static_cast<DockMonitorScope>(index); }); }, DockEnabled);
         AddDockToggle(dockCard, "settings.dock.showOnlyWhenSummoned", "settings.dock.showOnlyWhenSummoned.description",
             "desktopStyle.dock.showOnlyWhenSummoned", &DockSettings::showOnlyWhenSummoned, DockEnabled);
-        AddToggle(dockCard, "app.dock.floating_edge_swipe", "app.dock.floating_edge_swipe_hint",
+        AddToggle(dockCard, "app.dock.floating_edge_swipe", {},
             "desktopStyle.dock.edgeSwipe",
             [](const auto&, const auto& value) {
                 return dock_settings_rules::IsFloatingEdgeSwipeEnabled(value.showOnlyWhenSummoned, value.floatingEdgeSwipeEnabled);
@@ -488,11 +488,11 @@ struct DesktopStylePagePresenter::Impl
             [this](int index) { EmitGeneral([index](auto& value) { value.statusBar.monitorScope = static_cast<DockMonitorScope>(index); }); }, BarEnabled);
 
         const auto animationCard = AddSection(style, "settings.animation.dock");
-        AddChoice(animationCard, "settings.animation.hover", "settings.animation.hover.description", "desktopStyle.animation.hover",
+        AddChoice(animationCard, "settings.animation.hover", {}, "desktopStyle.animation.hover",
             {"settings.animation.option.noMagnification", "settings.animation.option.singleIcon", "settings.animation.option.wave"},
             [](const auto&, const auto& value) { return animation::NormalizeHoverEffect(value.hoverEffect); },
             [this](int index) { EmitDock([index](auto& value) { value.hoverEffect = index; }); }, AnimationEnabled);
-        AddChoice(animationCard, "settings.animation.launch", "settings.animation.launch.description", "desktopStyle.animation.launch",
+        AddChoice(animationCard, "settings.animation.launch", {}, "desktopStyle.animation.launch",
             {"settings.animation.option.off", "settings.animation.option.bounce", "settings.animation.option.gentleScale"},
             [](const auto&, const auto& value) { return animation::NormalizeLaunchEffect(value.launchEffect); },
             [this](int index) { EmitDock([index](auto& value) { value.launchEffect = index; }); }, AnimationEnabled);
@@ -605,9 +605,10 @@ struct DesktopStylePagePresenter::Impl
         items.Spacing(3);
         items.HorizontalAlignment(mux::HorizontalAlignment::Center);
         items.VerticalAlignment(mux::VerticalAlignment::Center);
-        const int spacing = static_cast<int>(std::round(12 * ClampDockScale(settings.thicknessScale)));
+        const float scale = ResolveDockScale(settings, merged);
+        const int spacing = static_cast<int>(std::round(12 * scale));
         const int mergedIconSize = static_cast<int>(std::round((settings.mergedBarHeight -
-            2 * MergedDockVerticalPadding(settings.mergedBarHeight, spacing)) * ClampDockScale(settings.thicknessScale)));
+            2 * MergedDockVerticalPadding(settings.mergedBarHeight, spacing)) * scale));
         const double iconExtent = nativeTaskbar ? 30 : merged ? mergedIconSize : 40;
         const double extent = nativeTaskbar ? 40 : merged ? iconExtent + spacing : 48;
         const auto append = [&](const mux::UIElement& icon, bool running = false) {
@@ -694,8 +695,8 @@ struct DesktopStylePagePresenter::Impl
         {
             if (merged && item.key == "quickSearch") continue;
             muxc::Grid cell;
-            const bool twoLineClock = StatusBarUsesTwoLineClock(merged, static_cast<float>(mergedHeightDip), 1.f);
-            cell.Height(merged && item.key == "clock" && twoLineClock ? 40 : 32);
+            const bool twoLineClock = StatusBarUsesTwoLineClock(merged);
+            cell.Height(merged && item.key == "clock" ? (std::min)(40, mergedHeightDip) : 32);
             if (item.key == "controlCenter")
             {
                 muxc::StackPanel controls;
@@ -712,9 +713,10 @@ struct DesktopStylePagePresenter::Impl
                 text.Text(item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text);
                 text.FontSize(12);
                 text.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-                text.TextAlignment(mux::TextAlignment::Center);
+                const bool mergedClock = merged && item.key == "clock";
+                text.TextAlignment(mergedClock ? mux::TextAlignment::Right : mux::TextAlignment::Center);
                 text.VerticalAlignment(mux::VerticalAlignment::Center);
-                text.Margin({8, 0, 8, 0});
+                text.Margin(mergedClock ? mux::Thickness{4, 0, 4, 0} : mux::Thickness{8, 0, 8, 0});
                 cell.Children().Append(text);
             }
             else

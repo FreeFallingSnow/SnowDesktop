@@ -24,7 +24,13 @@ struct TrayDragFeedback
     std::function<void(std::string_view, POINT)> move;
     std::function<void()> end;
 };
-enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter, TaskView, SystemCalendar, InputMethod, InputMethodMenu, InputMethodPanel };
+enum class StatusBarAction { Calendar, Tray, Network, Audio, Power, ControlCenter, Settings, Menu, QuickSearch, SystemMenu, None, Notifications, Cpu, Memory, Gpu, Traffic, Dismiss, SystemControlCenter, TaskView, SystemCalendar, InputMethod, InputMethodMenu, InputMethodPanel,
+    MenuTime, MenuTray, MenuNetwork, MenuAudio, MenuPower, MenuControlCenter, MenuQuickSearch, MenuSystem, MenuTaskView, MenuCpu, MenuMemory, MenuGpu, MenuTraffic, SystemInputMethodPanel };
+inline bool IsStatusBarContextMenuAction(StatusBarAction action)
+{
+    return action == StatusBarAction::Menu ||
+        (action >= StatusBarAction::MenuTime && action <= StatusBarAction::MenuTraffic);
+}
 struct StatusBarMonitor
 {
     std::wstring id;
@@ -38,6 +44,7 @@ struct StatusBarDockState
     HWND window = nullptr; // Visible merged content window, never owned by bar.
     RECT inputBounds{}; // Screen pixels, only for a visible merged Dock.
     bool interacting = false; // This monitor's bar-owned activation/menu/panel.
+    RECT adjacentDockBounds{}; // Visible separate edge Dock panel, in screen pixels.
 };
 class StatusBar final
 {
@@ -93,7 +100,7 @@ public:
     // Icon/bar sizing excludes this merged strip's own reservation. Actual
     // desktop placement still uses the Shell-constrained work area above.
     RECT MergedSizingWorkArea(HMONITOR monitor, RECT screenWorkArea) const;
-    HRESULT ShowInputMethod(RECT anchor, bool context);
+    HRESULT ShowInputMethod(RECT anchor, bool context, bool layoutPanel = false);
     std::shared_ptr<tray::Service> Tray() const;
     void SetTrayDragHandlers(std::function<void(const StatusBarSettings&)> changed,
         std::function<bool(std::string_view, POINT)> dropOutside);
@@ -109,6 +116,9 @@ public:
     // glass target and complete screen-space coverage before icons inherit it.
     bool HasMergedGlassBackdrop(HMONITOR monitor, const RECT& screenFrame) const;
     void SetDockChanged(std::function<void(bool geometry)> changed);
+    // Host-private selection boundary for pointer presses, including tray icons
+    // and merged blank background. Does not activate the no-activate bar.
+    void SetPointerPressed(std::function<void()> pressed);
     // Application-owned window observations; must not enable taskbar effects.
     void SetSceneProvider(std::function<StatusBarSceneState(HMONITOR)> provider);
     void SetGraphicsFailureHandler(std::function<void(HRESULT)> handler);

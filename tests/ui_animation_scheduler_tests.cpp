@@ -3,13 +3,16 @@
 #include "settings/animation_settings.h"
 #include "layout/popup_animation_rules.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
+#include "system/status_bar/status_bar_task_view_input.h"
 #include "system/status_bar/status_bar_activation.h"
+#include "system/status_bar/status_bar_input_method.h"
 #include "system/panel/system_panel_transition.h"
 
 #include <windows.h>
 
 #include <cstdlib>
 #include <iostream>
+#include <stdexcept>
 
 namespace
 {
@@ -120,6 +123,123 @@ void TestStatusBarContinuationDispatch()
         "a later explicit click after cancellation remains a new deliverable action");
     DestroyWindow(window);
     UnregisterClassW(name, cls.hInstance);
+}
+
+void TestInputMethodTargetRecovery()
+{
+    namespace input = snowdesktop::status_bar_input_method;
+    // Replace only Windows observations/activation. Use the production request
+    // and real UI scheduler; no desktop host or machine input method is changed.
+    struct Fixture
+    {
+        snowdesktop::UiAnimationScheduler scheduler;
+        input::Snapshot sample, desktop, resolved;
+        double now = 0;
+        bool alive = true, windowsValid = true;
+        HRESULT activation = S_OK, result = E_PENDING;
+        unsigned activations = 0, desktopQueries = 0, completions = 0, selections = 0;
+        snowdesktop::UiScheduleToken token = 0;
+        std::wstring stage;
+        void Start(std::optional<input::Snapshot> target = {})
+        {
+            input::TargetCallbacks callbacks;
+            callbacks.sample = [this] { return sample; };
+            callbacks.desktop = [this] { ++desktopQueries; return desktop; };
+            callbacks.valid = [this](const auto& value) {
+                return windowsValid && value.foreground && value.thread && value.layout;
+            };
+            callbacks.activate = [this](const auto&) { ++activations; return activation; };
+            callbacks.current = [this](auto value) { return alive && token == value; };
+            callbacks.nowMilliseconds = [this] { return now; };
+            callbacks.trace = [this](const wchar_t* value, const auto&, const auto&, HRESULT, unsigned, double) {
+                stage = value;
+            };
+            callbacks.finished = [this](auto, HRESULT value, input::Snapshot valueTarget) {
+                ++completions; result = value; resolved = std::move(valueTarget);
+                // The host can execute selection only after a successful handoff.
+                if (value == S_OK) ++selections;
+            };
+            token = input::ScheduleTarget(scheduler, target, std::move(callbacks));
+        }
+        void Tick(double time) { now = time; WaitAndDispatch(scheduler); }
+    };
+    input::Snapshot app;
+    app.foreground = reinterpret_cast<HWND>(1); app.focus = reinterpret_cast<HWND>(2);
+    app.thread = 10; app.layout = reinterpret_cast<HKL>(0x0804);
+    auto panel = app; panel.foreground = reinterpret_cast<HWND>(3); panel.focus = panel.foreground; panel.thread = 20;
+    auto desktop = app; desktop.foreground = reinterpret_cast<HWND>(4); desktop.focus = nullptr; desktop.thread = 30;
+    {
+        Fixture f; f.desktop = desktop; f.Start(); f.Tick(16);
+        Check(f.completions == 0 && f.desktopQueries == 0,
+            "a transient empty foreground cannot produce an invalid selectable target or immediate desktop fallback");
+        f.sample = app; f.Tick(32);
+        Check(f.result == S_OK && f.resolved == app && f.selections == 1 && f.desktopQueries == 0 && !f.scheduler.HasScheduledWork(),
+            "foreground recovery before the deadline opens the picker for the live app exactly once");
+    }
+    {
+        Fixture f; f.desktop = desktop; f.Start(); f.Tick(249);
+        Check(f.completions == 0, "desktop fallback does not bypass the acquisition deadline");
+        f.Tick(250);
+        Check(f.result == S_OK && f.resolved == desktop && f.stage == L"capture-desktop" && f.desktopQueries == 1,
+            "persistent absence of a foreground uses the current Shell desktop without a cached app");
+    }
+    {
+        Fixture f; f.Start(); f.Tick(250);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_NOT_FOUND) && f.selections == 0,
+            "missing foreground and missing Shell cannot expose a selectable empty target");
+    }
+    {
+        Fixture f; f.sample = app; f.sample.layout = nullptr; f.desktop = desktop; f.Start(); f.Tick(250);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_NOT_FOUND) && f.desktopQueries == 0,
+            "a known but unavailable app is never replaced by the desktop");
+    }
+    {
+        Fixture f; f.sample = panel; f.Start(app); f.Tick(16);
+        Check(f.activations == 1 && f.completions == 0,
+            "successful asynchronous activation is not mistaken for restored input focus");
+        f.sample = app; f.sample.focus = nullptr; f.Tick(32);
+        Check(f.selections == 0 && f.activations == 1, "missing child focus continues waiting without requesting activation again");
+        f.sample = app; f.sample.layout = reinterpret_cast<HKL>(0x0409); f.Tick(48);
+        Check(f.result == S_OK && f.resolved.layout == reinterpret_cast<HKL>(0x0409) && f.selections == 1 && !f.scheduler.HasScheduledWork(),
+            "selection begins once after focus recovery and receives the current keyboard layout");
+    }
+    {
+        Fixture f; f.sample = panel; f.activation = E_ACCESSDENIED; f.Start(app); f.Tick(16);
+        Check(f.result == E_ACCESSDENIED && f.stage == L"restore-denied" && f.activations == 1 && f.selections == 0,
+            "foreground activation denial has a distinct failure and never executes selection");
+    }
+    {
+        Fixture f; f.sample = panel; f.Start(app); f.Tick(16); f.windowsValid = false; f.Tick(32);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_INVALID_WINDOW_HANDLE) && f.activations == 1 && f.selections == 0,
+            "destruction or reuse of the saved target cancels restoration before selection");
+    }
+    {
+        Fixture f; f.sample = panel; f.Start(app); f.Tick(16); f.Tick(750);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_TIMEOUT) && f.stage == L"restore-timeout" && f.activations == 1 && f.selections == 0,
+            "an unresponsive target stops at the bounded deadline without repeated focus stealing");
+    }
+    {
+        Fixture f; f.sample = panel; f.Start(app); f.Tick(16);
+        f.sample = app; f.sample.foreground = reinterpret_cast<HWND>(5); f.Tick(32);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_CANCELLED) && f.stage == L"restore-focus-moved" && f.selections == 0,
+            "a newly activated third window cancels the old selection instead of stealing its focus");
+    }
+    {
+        Fixture f; f.sample = panel; f.Start(app); f.alive = false; f.Tick(16);
+        Check(f.result == HRESULT_FROM_WIN32(ERROR_CANCELLED) && f.activations == 0 && f.selections == 0,
+            "hidden or destroyed host lifetime cancels before native activation");
+    }
+    {
+        Fixture f; f.Start(); f.scheduler.Cancel(f.token); f.sample = app; f.Start(); f.Tick(16);
+        Check(f.completions == 1 && f.selections == 1,
+            "a replacement bar request removes the old deadline and delivers only the new target");
+    }
+    {
+        Fixture f; f.sample = desktop; f.sample.focus = reinterpret_cast<HWND>(6); f.sample.thread = 40;
+        f.Start(desktop); f.Tick(16);
+        Check(f.result == S_OK && f.resolved.focus == f.sample.focus && f.activations == 0,
+            "a desktop captured without child focus accepts its live child on restoration");
+    }
 }
 
 void TestSystemPanelTransitionHandoff()
@@ -282,9 +402,11 @@ void TestTaskViewMouseHandoff()
 {
     using namespace snowdesktop;
     using Result = StatusBarShortcutResult;
-    Check(ResolveStatusBarShellChord(StatusBarAction::TaskView, true, false).pointerQuietMilliseconds == GetDoubleClickTime() &&
-        ResolveStatusBarShellChord(StatusBarAction::TaskView, false, true).pointerQuietMilliseconds == GetDoubleClickTime(),
-        "both Windows versions finish the configured double-click interval before opening Task View");
+    const auto chord = ResolveStatusBarShellChord(StatusBarAction::TaskView, true, false);
+    const auto legacyChord = ResolveStatusBarShellChord(StatusBarAction::TaskView, false, true);
+    Check(chord.pointerQuietMilliseconds == 0 && chord.waitForPointerRelease &&
+        legacyChord.pointerQuietMilliseconds == 0 && legacyChord.waitForPointerRelease,
+        "both Windows versions open Task View without a fixed double-click delay");
     UiAnimationScheduler scheduler;
     Check(scheduler.Initialize(), "Task View handoff scheduler initializes");
     // Run the production scheduler/input construction with only time, physical
@@ -294,8 +416,10 @@ void TestTaskViewMouseHandoff()
     int sends = 0;
     bool current = true;
     std::vector<Result> outcomes;
-    const auto queue = [&](UINT quiet = 500) {
-        return ScheduleStatusBarShellShortcut(scheduler, {VK_TAB, false, quiet}, {
+    const auto queue = [&](UINT quiet = 0) {
+        auto request = chord;
+        request.pointerQuietMilliseconds = quiet;
+        return ScheduleStatusBarShellShortcut(scheduler, request, {
             [&](int code) { return code == held; },
             [&](UINT count, INPUT*, int) { ++sends; return count; },
             [&](auto) { return current; },
@@ -303,28 +427,148 @@ void TestTaskViewMouseHandoff()
             [&] { return now; }});
     };
     queue();
+    WaitAndDispatch(scheduler);
+    Check(sends == 1 && outcomes == std::vector<Result>{Result::Sent} && !scheduler.HasScheduledWork(),
+        "first Task View release sends at the next dispatch without waiting for double-click time");
+    outcomes.clear(); held = VK_LBUTTON; queue();
     now = 499; WaitAndDispatch(scheduler);
-    Check(sends == 0 && outcomes.empty(), "first release does not expose Shell to the second click");
+    Check(sends == 1 && outcomes.empty(), "held pointer is never handed to an opening Shell surface");
+    held = 0; WaitAndDispatch(scheduler);
+    Check(sends == 2 && outcomes == std::vector<Result>{Result::Sent},
+        "pointer release completes the request without starting a new quiet interval");
+
+    // Negative control: the former production chord cannot meet the same
+    // first-dispatch expectation. Keep that wait only as installation fallback.
+    outcomes.clear(); now = 0; queue(500);
+    now = 499; WaitAndDispatch(scheduler);
+    Check(sends == 2 && outcomes.empty(), "fallback still finishes the double-click interval");
     held = VK_LBUTTON; WaitAndDispatch(scheduler);
     now = 1000; WaitAndDispatch(scheduler);
-    Check(sends == 0, "held second press cannot open Task View under the pointer");
+    Check(sends == 2, "fallback held second press cannot open Task View under the pointer");
     held = 0; now = 1499; WaitAndDispatch(scheduler);
-    Check(sends == 0, "releasing the second press still leaves its quiet interval");
+    Check(sends == 2, "fallback release still leaves its quiet interval");
     now = 1500; WaitAndDispatch(scheduler);
-    Check(sends == 1 && outcomes == std::vector<Result>{Result::Sent} && !scheduler.HasScheduledWork(),
-        "completed double-click opens exactly once, with no deferred replay");
+    Check(sends == 3 && outcomes == std::vector<Result>{Result::Sent} && !scheduler.HasScheduledWork(),
+        "fallback completed double-click opens exactly once, with no deferred replay");
 
     outcomes.clear(); queue(); current = false; WaitAndDispatch(scheduler);
-    Check(sends == 1 && outcomes == std::vector<Result>{Result::Cancelled} && !scheduler.HasScheduledWork(),
+    Check(sends == 3 && outcomes == std::vector<Result>{Result::Cancelled} && !scheduler.HasScheduledWork(),
         "foreground change, hidden bar or externally opened Task View cancels the delayed request");
     current = true; outcomes.clear(); queue();
     held = VK_RBUTTON; now = 7000; WaitAndDispatch(scheduler);
-    Check(sends == 1 && outcomes == std::vector<Result>{Result::TimedOut} && !scheduler.HasScheduledWork(),
+    Check(sends == 3 && outcomes == std::vector<Result>{Result::TimedOut} && !scheduler.HasScheduledWork(),
         "held mouse cannot leave an unbounded deferred opening request");
     held = 0; outcomes.clear();
     queue(5000); now = 12000; WaitAndDispatch(scheduler);
-    Check(sends == 2 && outcomes == std::vector<Result>{Result::Sent},
+    Check(sends == 4 && outcomes == std::vector<Result>{Result::Sent},
         "maximum Windows double-click interval has its own budget before the input timeout");
+}
+
+void TestTaskViewPointerGuard()
+{
+    using snowdesktop::TaskViewPointerGuard;
+    // Model the physical second click landing in Shell after it covers the
+    // original button. Time and raw hook events are the only replaced inputs.
+    TaskViewPointerGuard guard({-100, 0, -68, 32}, 500);
+    Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 100, false), "unarmed monitor leaves input alone");
+    guard.Arm(100);
+    Check(!guard.Filter(WM_RBUTTONDOWN, {-90, 16}, 110, false) &&
+        !guard.Filter(WM_MOUSEMOVE, {-90, 16}, 110, false) &&
+        !guard.Filter(WM_LBUTTONDOWN, {200, 16}, 110, false) &&
+        !guard.Filter(WM_LBUTTONUP, {-90, 16}, 110, false),
+        "other buttons, pointer motion, unrelated clicks and unmatched releases pass through");
+    Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 120, true), "injected clicks are not consumed");
+    Check(guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 130, false),
+        "rapid physical repeat at the covered Task View button is intercepted");
+    Check(!guard.Filter(WM_LBUTTONUP, {-90, 16}, 140, true),
+        "injected release cannot complete a consumed physical press");
+    Check(!guard.CanStop(800), "expiry cannot unhook halfway through a consumed press");
+    Check(guard.Filter(WM_LBUTTONUP, {200, 200}, 810, false) && guard.CanStop(810),
+        "matching physical release is consumed outside the button after expiry before unhooking");
+    Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 820, false), "expired shield allows later clicks");
+
+    TaskViewPointerGuard cancelled({0, 0, 32, 32}, 5000);
+    cancelled.Arm(0);
+    Check(cancelled.Filter(WM_LBUTTONDOWN, {16, 16}, 1, false), "maximum double-click interval protects repeats");
+    cancelled.Cancel();
+    Check(!cancelled.CanStop(2) && cancelled.Filter(WM_LBUTTONUP, {16, 16}, 3, false) && cancelled.CanStop(3),
+        "cancellation also drains a consumed press before removing its hook");
+    TaskViewPointerGuard expired({0, 0, 32, 32}, 500);
+    expired.Arm(0xffffff00u);
+    Check(!expired.CanStop(0xf3u) && expired.CanStop(0xf4u) &&
+        !expired.Filter(WM_LBUTTONDOWN, {16, 16}, 0xf4u, false),
+        "deadline is bounded across Windows tick-counter wrap and wins before a new press");
+}
+
+HWND taskViewHookFixtureWindow = nullptr;
+HOOKPROC taskViewHookFixtureCallback = nullptr;
+DWORD taskViewHookFixtureThread = 0;
+bool taskViewHookFixtureFails = false;
+constexpr wchar_t kTaskViewHookFixtureClass[] = L"SnowDesktopTaskViewHookFixture";
+
+HHOOK WINAPI InstallTaskViewHookFixture(int type, HOOKPROC callback, HINSTANCE instance, DWORD targetThread)
+{
+    Check(type == WH_MOUSE_LL && targetThread == 0, "Task View shield requests the low-level mouse boundary");
+    taskViewHookFixtureThread = GetCurrentThreadId();
+    taskViewHookFixtureCallback = callback;
+    if (taskViewHookFixtureFails) return nullptr;
+    taskViewHookFixtureWindow = CreateWindowExW(0, kTaskViewHookFixtureClass, L"", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, instance, nullptr);
+    return reinterpret_cast<HHOOK>(taskViewHookFixtureWindow);
+}
+BOOL WINAPI UninstallTaskViewHookFixture(HHOOK hook)
+{
+    Check(GetCurrentThreadId() == taskViewHookFixtureThread, "shield uninstalls on its own input thread");
+    return DestroyWindow(reinterpret_cast<HWND>(hook));
+}
+
+void TestTaskViewInputMonitorLifetime()
+{
+    using namespace snowdesktop;
+    WNDCLASSW windowClass{};
+    windowClass.hInstance = GetModuleHandleW(nullptr);
+    windowClass.lpszClassName = kTaskViewHookFixtureClass;
+    windowClass.lpfnWndProc = [](HWND window, UINT message, WPARAM wp, LPARAM lp) -> LRESULT {
+        if (message == WM_APP + 1) return taskViewHookFixtureCallback(HC_ACTION, wp, lp);
+        return DefWindowProcW(window, message, wp, lp);
+    };
+    Check(RegisterClassW(&windowClass) != 0, "Task View input fixture registers");
+    const LowLevelMouseHook::Api api{&InstallTaskViewHookFixture, &UninstallTaskViewHookFixture};
+    UiAnimationScheduler scheduler;
+    Check(scheduler.Initialize(), "shield lifetime scheduler initializes");
+    auto request = StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 5000, api);
+    Check(request && taskViewHookFixtureThread != GetCurrentThreadId(),
+        "shield receives raw input on a dedicated thread instead of the UI thread");
+    request.reset(); // Model scheduler cancellation before SendInput.
+    WaitAndDispatch(scheduler);
+    Check(!scheduler.HasScheduledWork() && !IsWindow(taskViewHookFixtureWindow),
+        "cancelled unarmed request releases its independent monitor without completion callback");
+
+    request = StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 5000, api);
+    Check(request != nullptr, "shield can be installed again after cancellation");
+    request->Begin();
+    MSLLHOOKSTRUCT down{}; down.pt = {16, 16};
+    Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONDOWN,
+        reinterpret_cast<LPARAM>(&down)) == 1, "production hook callback consumes the covered-button repeat");
+    request->Cancel(); request.reset();
+    WaitAndDispatch(scheduler);
+    Check(scheduler.HasScheduledWork() && IsWindow(taskViewHookFixtureWindow),
+        "shortcut completion leaves the shield alive until its consumed release");
+    down.pt = {200, 200};
+    Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONUP,
+        reinterpret_cast<LPARAM>(&down)) == 1, "production hook callback pairs the release outside the button");
+    WaitAndDispatch(scheduler);
+    Check(!scheduler.HasScheduledWork() && !IsWindow(taskViewHookFixtureWindow),
+        "cancelled consumed press uninstalls immediately after its paired release");
+    request = StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 5000, api);
+    Check(request != nullptr, "shield can restart for a later independent request");
+    request->Begin(); request.reset(); scheduler.CancelAll();
+    Check(!IsWindow(taskViewHookFixtureWindow), "scheduler shutdown joins and releases the shield");
+    taskViewHookFixtureFails = true;
+    Check(!StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 500, api) &&
+        !scheduler.HasScheduledWork(), "hook installation failure returns the signal for the safe delayed fallback");
+    taskViewHookFixtureFails = false;
+    Check(UnregisterClassW(kTaskViewHookFixtureClass, windowClass.hInstance) != FALSE, "fixture unregisters after hook shutdown");
 }
 
 void TestStatusBarShellShortcuts()
@@ -341,6 +585,14 @@ void TestStatusBarShellShortcuts()
         ResolveStatusBarClick(Action::Dismiss, true) == Action::Dismiss,
         "ordinary click opens the local panel and blank click still dismisses with Ctrl held");
     StatusBarSettings settings;
+    Check(ResolveStatusBarClick(Action::InputMethodPanel, false, settings, true) == Action::InputMethodPanel &&
+        ResolveStatusBarClick(Action::InputMethodPanel, true, settings, true) == Action::SystemInputMethodPanel &&
+        ResolveStatusBarClick(Action::InputMethod, true, settings, true) == Action::InputMethod,
+        "the default layout picker and Ctrl override are separate from input-mode toggling");
+    settings.inputMethodSystemPanel = true;
+    Check(ResolveStatusBarClick(Action::InputMethodPanel, false, settings, false) == Action::SystemInputMethodPanel &&
+        ResolveStatusBarClick(Action::SystemInputMethodPanel, false, settings, true) == Action::SystemInputMethodPanel,
+        "the saved system layout picker works independently of Quick Settings support and preserves resolved intent");
     Check(ResolveStatusBarClick(Action::Calendar, false, settings, true) == Action::Calendar &&
         ResolveStatusBarClick(Action::ControlCenter, false, settings, true) == Action::ControlCenter,
         "new click options preserve the existing local-panel defaults");
@@ -479,9 +731,12 @@ void TestStatusBarShellShortcuts()
 int main()
 {
     TestStatusBarContinuationDispatch();
+    TestInputMethodTargetRecovery();
     TestSystemPanelTransitionHandoff();
     TestTaskViewTransition();
     TestTaskViewMouseHandoff();
+    TestTaskViewPointerGuard();
+    TestTaskViewInputMonitorLifetime();
     TestStatusBarShellShortcuts();
     namespace motion = snowdesktop::animation;
     Check(!motion::ResolveEnabled(motion::FollowSystem, false) &&
@@ -594,6 +849,106 @@ int main()
         "independent animation surfaces advance from one frame timestamp");
     Check(!scheduler.HasScheduledWork(),
         "completed frame callbacks leave no active request");
+
+    {
+        // Production batch boundary; substitute only model state and pixels.
+        // Closing one item while hover settles must present both final states
+        // once, without coupling the two animation lifetimes.
+        UiAnimationScheduler batch;
+        int dockOwner = 0, secondDockOwner = 0;
+        int hover = 0, presence = 0, paints = 0, secondPaints = 0;
+        int paintedHover = 0, paintedPresence = 0;
+        const auto request = [&] {
+            batch.RequestFramePresentation(&dockOwner, [&] {
+                ++paints;
+                paintedHover = hover;
+                paintedPresence = presence;
+                batch.DispatchDue(); // Paint/native-menu reentry is guarded.
+            });
+        };
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++hover;
+            request();
+            return hover < 2;
+        });
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++presence;
+            request();
+            return false;
+        });
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            batch.RequestFramePresentation(&secondDockOwner, [&] { ++secondPaints; });
+            return false;
+        });
+        WaitAndDispatch(batch);
+        Check(paints == 1 && secondPaints == 1 && paintedHover == 1 && paintedPresence == 1,
+            "one Dock presents both latest states once, independently of other Dock owners");
+        Check(batch.HasScheduledWork(), "presence completion cannot stop the hover track");
+        WaitAndDispatch(batch);
+        Check(paints == 2 && paintedHover == 2 && paintedPresence == 1 && !batch.HasScheduledWork(),
+            "the surviving hover track presents its terminal frame and then stops");
+        request();
+        Check(paints == 3,
+            "same-bounds content or immediate pointer feedback presents synchronously outside an animation snapshot");
+
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) -> bool {
+            request();
+            throw std::runtime_error("failed model callback after invalidation");
+        });
+        WaitAndDispatch(batch);
+        Check(paints == 4 && !batch.HasScheduledWork(),
+            "a failed animation callback cannot strand its pending terminal presentation");
+
+        // Shell modal pump uses the same end-of-snapshot presentation boundary.
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++hover; request(); return false;
+        });
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++presence; request(); return false;
+        });
+        UiAnimationScheduler::MessagePumpScope pump(batch, [&] {
+            Check(paintedHover == hover && paintedPresence == presence,
+                "modal presentation flush observes both updated animation states");
+        });
+        Check(pump.IsAvailable(), "batch regression creates the real message-only Shell pump");
+        const ULONGLONG deadline = GetTickCount64() + 3000;
+        while (batch.HasScheduledWork() && GetTickCount64() < deadline)
+        {
+            MSG message{};
+            if (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+            { TranslateMessage(&message); DispatchMessageW(&message); }
+            else MsgWaitForMultipleObjectsEx(0, nullptr, 50, QS_ALLINPUT, MWMO_INPUTAVAILABLE);
+        }
+        Check(paints == 5 && !batch.HasScheduledWork(),
+            "a nested Shell loop coalesces the two Dock tracks before flushing");
+
+        int cancelledPaints = 0;
+        batch.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            batch.RequestFramePresentation(&dockOwner, [&] { batch.CancelAll(); });
+            batch.RequestFramePresentation(&secondDockOwner, [&] { ++cancelledPaints; });
+            return false;
+        });
+        WaitAndDispatch(batch);
+        Check(cancelledPaints == 0 && !batch.HasScheduledWork(),
+            "cancellation during presentation prevents later owners from publishing a retired batch");
+
+        int oldHover = 0, oldPresence = 0, oldPaints = 0;
+        bool oldMixedFrame = false;
+        UiAnimationScheduler eager;
+        const auto oldPaint = [&] {
+            ++oldPaints;
+            oldMixedFrame |= oldHover != oldPresence;
+        };
+        eager.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++oldHover; oldPaint(); return false;
+        });
+        eager.StartAnimation(UiAnimationSurface::FloatingDock, [&](double) {
+            ++oldPresence; oldPaint(); return false;
+        });
+        WaitAndDispatch(eager);
+        Check(oldPaints == 2 && oldMixedFrame,
+            "negative control: presenting inside each track exposes a mixed frame and duplicate paint");
+    }
 
     {
         // Protect against replaying an old pose after a slow component update.

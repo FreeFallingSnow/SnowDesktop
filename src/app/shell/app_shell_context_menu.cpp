@@ -43,18 +43,18 @@ void DesktopApp::ShowFolderEntryContextMenu(
         GetSelectedFolderEntryPaths();
     const bool hasSelection = !selectedPaths.empty();
     const bool singleSelection = selectedPaths.size() == 1;
-    bool administratorShortcutSelected = false;
+    bool administratorLaunchSelected = false;
     for (const auto& path : selectedPaths)
     {
         if (snowdesktop::ShellLaunchWorker::
-                ShortcutRequestsAdministrator(path))
+                PathRequestsAdministrator(path))
         {
-            administratorShortcutSelected = true;
+            administratorLaunchSelected = true;
             break;
         }
     }
     const bool canOpen =
-        hasSelection && !administratorShortcutSelected;
+        hasSelection && !administratorLaunchSelected;
     const bool canRunAsAdministrator =
         singleSelection &&
         IsAdministratorRunnablePath(selectedPaths.front());
@@ -107,7 +107,7 @@ void DesktopApp::ShowFolderEntryContextMenu(
         kContextDeleteCommand, _LW("app.settings.delete"));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu,
-        singleSelection ? MF_STRING : MF_STRING | MF_GRAYED,
+        hasSelection ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextMoreCommand, _LW("app.menu.more_options"));
 
     SetMenuItemIcon(menu, kContextOpenCommand, L"");
@@ -208,12 +208,12 @@ void DesktopApp::ShowFolderEntryContextMenu(
         DeleteSelectedFolderEntries(false);
         break;
     case kContextMoreCommand:
-        if (singleSelection)
+        if (hasSelection)
         {
             if (keepQuickNavigationOpen)
                 SetQuickNavigationTopmost(false);
-            ShowShellItemContextMenuForPath(
-                fullPath, screenPoint);
+            ShowShellItemContextMenuForPaths(
+                selectedPaths, screenPoint);
             if (keepQuickNavigationOpen)
                 SetQuickNavigationTopmost(true);
         }

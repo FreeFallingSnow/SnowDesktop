@@ -1,9 +1,14 @@
 #include "shell_extension_catalogue.h"
+#include <atomic>
+#include <future>
+#include <thread>
+#include <stdexcept>
 #include "shell_extension_diagnostics.h"
 #include "ui/menu/menu_label.h"
 #include <algorithm>
 #include <cwctype>
 #include <map>
+#include <optional>
 #include <set>
 #include <mutex>
 #include <shlwapi.h>
@@ -29,8 +34,14 @@ std::string Utf8(const std::wstring &s)
 struct Key
 {
     HKEY value = nullptr;
-    Key(HKEY root, const std::wstring &path) { RegOpenKeyExW(root, path.c_str(), 0, KEY_READ, &value); }
-    ~Key() { if (value) RegCloseKey(value); }
+    bool owned = false;
+    Key(HKEY root, const std::wstring &path, REGSAM access = KEY_READ)
+    {
+        RegOpenKeyExW(root, path.c_str(), 0, access, &value);
+        // Opening an empty path on a predefined key returns the borrowed root.
+        owned = value && value != root;
+    }
+    ~Key() { if (owned) RegCloseKey(value); }
     Key(const Key &) = delete;
 };
 std::vector<std::wstring> Children(HKEY root, const std::wstring &path)
@@ -60,14 +71,17 @@ std::vector<std::wstring> Values(HKEY root, const std::wstring &path)
 }
 std::wstring Read(HKEY root, const std::wstring &path, const wchar_t *name = nullptr)
 {
-    wchar_t text[32768]{}; DWORD bytes = sizeof(text);
-    if (RegGetValueW(root, path.c_str(), name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, text, &bytes)) return {};
+    if (!root) return {};
+    // RegGetValue terminates successful string reads. Preserve the empty-data
+    // case without clearing a 64 KiB buffer for every catalogue value.
+    wchar_t text[32768]; text[0] = 0; DWORD bytes = sizeof(text);
+    if (RegGetValueW(root, path.empty() ? nullptr : path.c_str(), name, RRF_RT_REG_SZ | RRF_RT_REG_EXPAND_SZ, nullptr, text, &bytes)) return {};
     return text;
 }
 bool Has(HKEY root, const std::wstring &path, const wchar_t *name)
 {
     DWORD bytes = 0;
-    return RegGetValueW(root, path.c_str(), name, RRF_RT_ANY, nullptr, nullptr, &bytes) == ERROR_SUCCESS;
+    return root && RegGetValueW(root, path.empty() ? nullptr : path.c_str(), name, RRF_RT_ANY, nullptr, nullptr, &bytes) == ERROR_SUCCESS;
 }
 bool Blocked(const std::wstring &clsid, HKEY user = HKEY_CURRENT_USER, HKEY machine = HKEY_LOCAL_MACHINE)
 {
@@ -262,24 +276,260 @@ Application ModuleApplication(const std::wstring &module)
     cache[key] = {stamp, result};
     return result;
 }
+// Index small ASCII value lists only for this verb. Missing metadata fields do
+// not need individual registry queries. Unicode, large or unsuccessful lists
+// retain direct reads; policy presence checks always use the live registry.
+struct KeyValues
+{
+    HKEY key; bool indexed = false; std::vector<std::wstring> names;
+    explicit KeyValues(HKEY source) : key(source)
+    {
+        DWORD count = 0, maximumName = 0;
+        if (!key || RegQueryInfoKeyW(key, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr,
+            &count, &maximumName, nullptr, nullptr, nullptr) != ERROR_SUCCESS || count > 32 || maximumName >= 256) return;
+        for (DWORD index = 0; index < count; ++index)
+        {
+            wchar_t name[256]; DWORD length = 256;
+            if (RegEnumValueW(key, index, name, &length, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) return;
+            std::wstring normal(name, length);
+            for (auto &letter : normal)
+            {
+                if (letter > 127) return;
+                if (letter >= L'A' && letter <= L'Z') letter += L'a' - L'A';
+            }
+            names.push_back(std::move(normal));
+        }
+        indexed = true;
+    }
+    std::wstring String(const wchar_t *name = nullptr) const
+    {
+        if (indexed)
+        {
+            std::wstring normal = name ? name : L"";
+            for (auto &letter : normal) if (letter >= L'A' && letter <= L'Z') letter += L'a' - L'A';
+            if (std::find(names.begin(), names.end(), normal) == names.end()) return {};
+        }
+        return Read(key, L"", name);
+    }
+};
+// Cache parsed XML only, never registration or policy. Every scan re-enumerates
+// packages and verifies file ID, size, write/change times before reusing results.
+// Missing, malformed or unidentifiable files are not negatively cached.
+struct ManifestVerb { std::wstring clsid, id, type; };
+struct ManifestStamp
+{
+    ULONGLONG volume;
+    std::array<BYTE, 16> fileId;
+    LONGLONG size, written, changed;
+    bool operator==(const ManifestStamp &) const = default;
+};
+struct ManifestFile
+{
+    HANDLE handle;
+    explicit ManifestFile(const std::wstring &path) : handle(CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr)) {}
+    ~ManifestFile() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+    std::optional<ManifestStamp> Stamp() const
+    {
+        FILE_ID_INFO id{}; FILE_BASIC_INFO basic{}; FILE_STANDARD_INFO standard{};
+        if (handle == INVALID_HANDLE_VALUE || !GetFileInformationByHandleEx(handle, FileIdInfo, &id, sizeof(id)) ||
+            !GetFileInformationByHandleEx(handle, FileBasicInfo, &basic, sizeof(basic)) ||
+            !GetFileInformationByHandleEx(handle, FileStandardInfo, &standard, sizeof(standard))) return {};
+        ManifestStamp stamp{id.VolumeSerialNumber, {}, standard.EndOfFile.QuadPart,
+            basic.LastWriteTime.QuadPart, basic.ChangeTime.QuadPart};
+        std::copy(std::begin(id.FileId.Identifier), std::end(id.FileId.Identifier), stamp.fileId.begin());
+        return stamp;
+    }
+};
+std::wstring ManifestAttribute(IXMLDOMNode *node, const wchar_t *name)
+{
+    ComPtr<IXMLDOMNamedNodeMap> attributes; ComPtr<IXMLDOMNode> value;
+    BSTR key = SysAllocString(name), text = nullptr;
+    if (node && SUCCEEDED(node->get_attributes(&attributes)) && attributes) attributes->getNamedItem(key, &value);
+    if (value) value->get_text(&text);
+    std::wstring result = text ? text : L"";
+    SysFreeString(key); SysFreeString(text); return result;
+}
+std::vector<ManifestVerb> ReadManifestVerbs(const std::wstring &path)
+{
+    struct Cached { ManifestStamp stamp; std::vector<ManifestVerb> verbs; };
+    static std::mutex cacheMutex;
+    static std::map<std::wstring, Cached> cache;
+    ManifestFile file(path);
+    const auto stamp = file.Stamp();
+    if (stamp)
+    {
+        std::lock_guard lock(cacheMutex);
+        const auto found = cache.find(path);
+        if (found != cache.end() && found->second.stamp == *stamp) return found->second.verbs;
+    }
+    ComPtr<IXMLDOMDocument2> document;
+    if (FAILED(CoCreateInstance(__uuidof(DOMDocument60), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&document)))) return {};
+    document->put_async(VARIANT_FALSE); document->put_validateOnParse(VARIANT_FALSE); document->put_resolveExternals(VARIANT_FALSE);
+    VARIANT filename{}; VariantInit(&filename); filename.vt = VT_BSTR;
+    filename.bstrVal = SysAllocString(path.c_str());
+    VARIANT_BOOL loaded = VARIANT_FALSE; document->load(filename, &loaded); VariantClear(&filename);
+    if (!loaded) return {};
+    BSTR query = SysAllocString(L"//*[local-name()='Extension' and @Category='windows.fileExplorerContextMenus']//*[local-name()='Verb']");
+    ComPtr<IXMLDOMNodeList> nodes; document->selectNodes(query, &nodes); SysFreeString(query);
+    if (!nodes) return {};
+    long count = 0; nodes->get_length(&count);
+    std::vector<ManifestVerb> result;
+    for (long i = 0; i < count; ++i)
+    {
+        ComPtr<IXMLDOMNode> verb, parent; nodes->get_item(i, &verb); verb->get_parentNode(&parent);
+        result.push_back({ManifestAttribute(verb.Get(), L"Clsid"), ManifestAttribute(verb.Get(), L"Id"), ManifestAttribute(parent.Get(), L"Type")});
+    }
+    // Recheck the open object and the current path. A replacement during XML
+    // loading must not associate a new manifest with the old file identity.
+    ManifestFile current(path);
+    if (stamp && file.Stamp() == stamp && current.Stamp() == stamp)
+    {
+        std::lock_guard lock(cacheMutex);
+        if (cache.size() >= 1024) cache.clear();
+        cache.insert_or_assign(path, Cached{*stamp, result});
+    }
+    return result;
+}
+
 struct Scanner
 {
     HKEY classes;
+    bool capture = false;
+    std::vector<std::pair<Registration, std::wstring>> captured;
     Catalogue result;
+    std::vector<Registration> folderRows;
+    std::array<std::vector<Registration>, 2> backgroundRows;
     std::map<std::string, size_t> ids;
+    // One inventory contains many registrations of the same provider. Reuse
+    // their metadata only within this scan; the next scan rechecks files,
+    // registration values and policy instead of retaining negative results.
+    struct HandlerMetadata { std::wstring label, module, icon; Application application; };
+    std::map<std::wstring, HandlerMetadata> handlers;
+    std::map<std::wstring, Application> commands, applications;
+    std::map<std::wstring, std::wstring> labels;
+    std::map<std::wstring, bool> policies;
+    std::map<std::wstring, Entry> images;
+    std::map<std::wstring, std::uint64_t> assets;
+    std::map<std::wstring, std::vector<std::wstring>> associations;
+    std::uint64_t AssetRevision(const std::wstring &location)
+    {
+        if (location.empty()) return 0;
+        const auto [it, inserted] = assets.try_emplace(location);
+        if (!inserted) return it->second;
+        wchar_t path[32768]{};
+        wcsncpy_s(path, location.c_str(), _TRUNCATE);
+        PathParseIconLocationW(path);
+        auto module = LocalModule(path[0] == L'@' ? path + 1 : path);
+        WIN32_FILE_ATTRIBUTE_DATA data{};
+        if (!module.empty() && GetFileAttributesExW(module.c_str(), GetFileExInfoStandard, &data))
+            it->second = Hash(settings_ipc::Pack(module, data.dwFileAttributes,
+                data.ftLastWriteTime.dwHighDateTime, data.ftLastWriteTime.dwLowDateTime,
+                data.nFileSizeHigh, data.nFileSizeLow));
+        return it->second;
+    }
+    const std::vector<std::wstring> &Associations(const std::wstring &type)
+    {
+        const auto [it, inserted] = associations.try_emplace(type);
+        if (inserted)
+        {
+            it->second.push_back(Read(classes, type));
+            if (classes == HKEY_CLASSES_ROOT)
+                it->second.push_back(Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + type + L"\\UserChoice", L"ProgId"));
+        }
+        return it->second;
+    }
+    std::wstring Label(const std::wstring &text)
+    {
+        if (text.empty() || text.front() != L'@') return text;
+        const auto [it, inserted] = labels.try_emplace(text);
+        if (inserted) it->second = Localized(text);
+        return it->second;
+    }
+    bool IsBlocked(const std::wstring &clsid)
+    {
+        if (clsid.empty()) return false;
+        const auto [it, inserted] = policies.try_emplace(Lower(clsid));
+        if (inserted) it->second = Blocked(clsid);
+        return it->second;
+    }
+    Application ApplicationForModule(const std::wstring &module)
+    {
+        if (module.empty()) return {};
+        const auto [it, inserted] = applications.try_emplace(module);
+        if (inserted) it->second = ModuleApplication(module);
+        return it->second;
+    }
+    Application CommandApplication(const std::wstring &command)
+    {
+        if (command.empty()) return {};
+        const auto [it, inserted] = commands.try_emplace(command);
+        if (inserted) it->second = ApplicationForModule(CommandModule(command));
+        return it->second;
+    }
+    const HandlerMetadata &Handler(const std::wstring &clsid)
+    {
+        const auto [it, inserted] = handlers.try_emplace(Lower(clsid));
+        if (inserted && !clsid.empty())
+        {
+            auto &info = it->second;
+            const auto root = L"CLSID\\" + clsid;
+            info.module = Read(classes, root + L"\\InprocServer32");
+            const auto module = LocalModule(info.module);
+            info.application = module.empty() ? CommandApplication(Read(classes, root + L"\\LocalServer32")) : ApplicationForModule(module);
+            info.label = Read(classes, root);
+            info.icon = Read(classes, root + L"\\DefaultIcon");
+        }
+        return it->second;
+    }
     Application HandlerApplication(const std::wstring &clsid)
     {
-        if (clsid.empty()) return {};
-        const auto root = L"CLSID\\" + clsid;
-        auto module = LocalModule(Read(classes, root + L"\\InprocServer32"));
-        if (module.empty()) module = CommandModule(Read(classes, root + L"\\LocalServer32"));
-        return ModuleApplication(module);
+        return Handler(clsid).application;
+    }
+    void Image(Entry &entry, const std::wstring &icon)
+    {
+        if (icon.empty()) return;
+        const auto [image, inserted] = images.try_emplace(icon);
+        if (inserted) LoadIcon(image->second, icon);
+        entry.width = image->second.width; entry.height = image->second.height;
+        entry.pixels = image->second.pixels;
+    }
+    std::uint64_t FolderRevision()
+    {
+        return ScopedRevision(folderRows);
+    }
+    std::uint64_t BackgroundRevision(Context scope)
+    {
+        return ScopedRevision(backgroundRows[scope == Context::Desktop ? 1 : 0]);
+    }
+    static std::uint64_t ScopedRevision(std::vector<Registration> &rows)
+    {
+        std::sort(rows.begin(), rows.end(), [](const auto &a, const auto &b) {
+            return std::tie(a.id, a.sources, a.contexts) < std::tie(b.id, b.sources, b.contexts);
+        });
+        return Hash(settings_ipc::Pack(rows));
     }
     void Add(Registration row, const std::wstring &icon)
     {
+        // Workers keep individual sources; the caller applies the original
+        // scan order and global identity/row limit before loading images.
+        if (capture) { captured.emplace_back(std::move(row), icon); return; }
+        row.menuRevision = Hash(settings_ipc::Pack(row.menuRevision ? row.menuRevision : row.revision,
+            icon, AssetRevision(icon)));
         if (row.types.empty()) row.types.push_back(L"*");
         if (row.id.empty() || result.rows.size() >= 16384) return;
         row.display.provider = row.id;
+        if (row.contexts & ContextBit(Context::Folder))
+        {
+            auto source = row; Image(source.display, icon);
+            folderRows.push_back(std::move(source));
+        }
+        for (size_t i = 0; i < backgroundRows.size(); ++i)
+            if (row.contexts & ContextBit(i ? Context::Desktop : Context::FolderBackground))
+            {
+                auto source = row; Image(source.display, icon);
+                backgroundRows[i].push_back(std::move(source));
+            }
         if (const auto it = ids.find(row.id); it != ids.end())
         {
             auto &existing = result.rows[it->second];
@@ -290,7 +540,7 @@ struct Scanner
             existing.systemEnabled |= row.systemEnabled;
             return;
         }
-        LoadIcon(row.display, icon);
+        Image(row.display, icon);
         ids[row.id] = result.rows.size();
         result.rows.push_back(std::move(row));
     }
@@ -299,39 +549,47 @@ struct Scanner
         for (const auto &verb : Children(classes, root + L"\\shell"))
         {
             const auto path = root + L"\\shell\\" + verb;
-            const auto handler = Read(classes, path, L"ExplorerCommandHandler");
+            Key key(classes, path, KEY_QUERY_VALUE);
+            if (!key.value) continue;
+            Key commandKey(classes, path + L"\\command", KEY_QUERY_VALUE);
+            KeyValues values(key.value);
+            const auto handler = values.String(L"ExplorerCommandHandler");
             Registration row;
             row.kind = RegistrationKind::Verb;
             row.id = "reg:" + Utf8(Lower(path));
             row.contexts = contexts; row.types = types; row.sources = {path};
             row.verbs = {Utf8(Lower(verb))};
             if (!handler.empty()) row.verbs.push_back(Utf8(Lower(handler)));
-            row.systemEnabled = !Has(classes, path, L"LegacyDisable") && !Has(classes, path, L"ProgrammaticAccessOnly") && !Blocked(handler);
-            auto label = Read(classes, path, L"MUIVerb");
-            if (label.empty()) label = Read(classes, path);
+            row.systemEnabled = !Has(key.value, L"", L"LegacyDisable") && !Has(key.value, L"", L"ProgrammaticAccessOnly") && !IsBlocked(handler);
+            auto label = values.String(L"MUIVerb");
+            if (label.empty()) label = values.String();
             if (label.empty()) label = verb;
-            row.display.label = DecodeMenuLabel(Localized(label)).text;
-            const auto command = Read(classes, path + L"\\command");
-            const auto delegate = Read(classes, path + L"\\command", L"DelegateExecute");
+            row.display.label = DecodeMenuLabel(Label(label)).text;
+            const auto command = Read(commandKey.value, L"");
+            const auto delegate = Read(commandKey.value, L"", L"DelegateExecute");
+            const auto subCommands = values.String(L"SubCommands");
             row.application = !handler.empty() ? HandlerApplication(handler) :
-                !delegate.empty() ? HandlerApplication(delegate) : ModuleApplication(CommandModule(command));
+                !delegate.empty() ? HandlerApplication(delegate) : CommandApplication(command);
             // Never infer equivalence from the caption, verb alone, or a bare
             // SubCommands list. Keep arguments case-sensitive and compare the
             // complete payload rather than a collision-prone display hash.
             if (!command.empty() || !handler.empty() || !delegate.empty())
             {
                 const auto identity = settings_ipc::Pack(Lower(verb), command, Lower(handler), Lower(delegate),
-                    Read(classes, path, L"SubCommands"), Read(classes, path, L"ExtendedSubCommandsKey"));
+                    subCommands, values.String(L"ExtendedSubCommandsKey"));
                 row.commandIdentity.assign(reinterpret_cast<const char *>(identity.data()), identity.size());
             }
-            auto icon = Read(classes, path, L"Icon");
-            if (icon.empty() && !handler.empty()) icon = Read(classes, L"CLSID\\" + handler + L"\\InprocServer32");
+            auto icon = values.String(L"Icon");
+            if (icon.empty() && !handler.empty()) icon = Handler(handler).module;
             if (icon.empty())
             {
                 if (!command.empty()) { wchar_t exe[32768]{}; wcsncpy_s(exe, command.c_str(), _TRUNCATE); PathRemoveArgsW(exe); PathUnquoteSpacesW(exe); icon = exe; }
             }
             // Include values that affect applicability, not volatile registry write times.
-            row.revision = Hash(settings_ipc::Pack(Read(classes, path + L"\\command"), handler, Read(classes, path, L"AppliesTo"), Read(classes, path, L"MultiSelectModel"), Has(classes, path, L"Extended"), Read(classes, path, L"SubCommands")));
+            row.revision = Hash(settings_ipc::Pack(command, handler, values.String(L"AppliesTo"), values.String(L"MultiSelectModel"), Has(key.value, L"", L"Extended"), subCommands));
+            const auto module = !handler.empty() ? Handler(handler).module :
+                !delegate.empty() ? Handler(delegate).module : CommandModule(command);
+            row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(module)));
             Add(std::move(row), icon);
         }
         for (const auto &name : Children(classes, root + L"\\shellex\\ContextMenuHandlers"))
@@ -344,24 +602,14 @@ struct Scanner
             Registration row;
             row.kind = RegistrationKind::Handler; row.id = "clsid:" + Utf8(Lower(clsid));
             row.contexts = contexts; row.types = types; row.sources = {path}; row.verbs = {Utf8(Lower(clsid))};
-            row.systemEnabled = !Blocked(clsid);
-            auto label = Read(classes, L"CLSID\\" + clsid);
-            row.display.label = Localized(label.empty() ? name : label);
-            const auto module = Read(classes, L"CLSID\\" + clsid + L"\\InprocServer32");
-            row.application = HandlerApplication(clsid);
-            row.revision = Hash(settings_ipc::Pack(module));
-            auto icon = Read(classes, L"CLSID\\" + clsid + L"\\DefaultIcon");
-            Add(std::move(row), icon.empty() ? module : icon);
+            row.systemEnabled = !IsBlocked(clsid);
+            const auto &info = Handler(clsid);
+            row.display.label = Label(info.label.empty() ? name : info.label);
+            row.application = info.application;
+            row.revision = Hash(settings_ipc::Pack(info.module));
+            row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(info.module)));
+            Add(std::move(row), info.icon.empty() ? info.module : info.icon);
         }
-    }
-    static std::wstring Attribute(IXMLDOMNode *node, const wchar_t *name)
-    {
-        ComPtr<IXMLDOMNamedNodeMap> attributes; ComPtr<IXMLDOMNode> value;
-        BSTR key = SysAllocString(name), text = nullptr;
-        if (node && SUCCEEDED(node->get_attributes(&attributes)) && attributes) attributes->getNamedItem(key, &value);
-        if (value) value->get_text(&text);
-        std::wstring result = text ? text : L"";
-        SysFreeString(key); SysFreeString(text); return result;
     }
     void Packages()
     {
@@ -370,24 +618,12 @@ struct Scanner
         {
             const auto directory = Read(classes, root + L"\\" + package, L"PackageRootFolder");
             if (directory.empty()) continue;
-            ComPtr<IXMLDOMDocument2> document;
-            if (FAILED(CoCreateInstance(__uuidof(DOMDocument60), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&document)))) return;
-            document->put_async(VARIANT_FALSE); document->put_validateOnParse(VARIANT_FALSE); document->put_resolveExternals(VARIANT_FALSE);
-            VARIANT filename{}; VariantInit(&filename); filename.vt = VT_BSTR;
-            filename.bstrVal = SysAllocString((directory + L"\\AppxManifest.xml").c_str());
-            VARIANT_BOOL loaded = VARIANT_FALSE; document->load(filename, &loaded); VariantClear(&filename);
-            if (!loaded) continue;
-            BSTR query = SysAllocString(L"//*[local-name()='Extension' and @Category='windows.fileExplorerContextMenus']//*[local-name()='Verb']");
-            ComPtr<IXMLDOMNodeList> nodes; document->selectNodes(query, &nodes); SysFreeString(query);
-            if (!nodes) continue;
-            long count = 0; nodes->get_length(&count);
-            for (long i = 0; i < count; ++i)
+            for (const auto &verb : ReadManifestVerbs(directory + L"\\AppxManifest.xml"))
             {
-                ComPtr<IXMLDOMNode> verb, parent; nodes->get_item(i, &verb); verb->get_parentNode(&parent);
-                auto clsid = Attribute(verb.Get(), L"Clsid");
-                const auto id = Attribute(verb.Get(), L"Id");
+                auto clsid = verb.clsid;
+                const auto &id = verb.id;
+                const auto &type = verb.type;
                 if (clsid.size() == 36) clsid = L"{" + clsid + L"}";
-                const auto type = Attribute(parent.Get(), L"Type");
                 if (clsid.empty() || type.empty()) continue;
                 const auto first = package.find(L'_'), last = package.rfind(L'_');
                 const auto family = first != std::wstring::npos && last > first ? package.substr(0, first) + package.substr(last) : package;
@@ -397,13 +633,129 @@ struct Scanner
                 row.sources = {L"package:" + package + L":" + id}; row.verbs = {Utf8(Lower(clsid))};
                 row.contexts = type == L"Directory" ? ContextBit(Context::Folder) : type == L"Directory\\Background" ? ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop) : ContextBit(Context::File);
                 if (type != L"*" && type != L"Directory" && type != L"Directory\\Background") row.types = {Lower(type)};
-                row.systemEnabled = !Blocked(clsid); row.display.label = family.substr(0, family.find(L'_'));
+                row.systemEnabled = !IsBlocked(clsid); row.display.label = family.substr(0, family.find(L'_'));
                 row.revision = Hash(settings_ipc::Pack(package, id, clsid));
                 Add(std::move(row), L"");
             }
         }
     }
 };
+struct FileRoot
+{
+    std::wstring path;
+    std::vector<std::wstring> types;
+};
+std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
+    HKEY classes, const std::vector<std::wstring> &roots,
+    std::map<std::wstring, std::vector<std::wstring>> &sourceValues)
+{
+    std::map<std::wstring, std::vector<std::wstring>> types;
+    std::optional<Key> choices;
+    if (classes == HKEY_CLASSES_ROOT)
+        choices.emplace(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts", KEY_QUERY_VALUE);
+    const auto readAssociation = [classes, &choices](const std::wstring &name) {
+        Key extension(classes, name, KEY_QUERY_VALUE);
+        const auto queryRoot = extension.value ? extension.value : classes;
+        const auto queryPath = extension.value ? std::wstring{} : name;
+        std::map<std::wstring, std::vector<std::wstring>> result;
+        result[Lower(name)].push_back(Lower(name));
+        const auto prog = Read(queryRoot, queryPath); if (!prog.empty()) result[Lower(prog)].push_back(Lower(name));
+        // Preserve the original values used by row fingerprints in this scan.
+        // A new Scanner reads fresh values; this does not cache associations across scans.
+        std::vector<std::wstring> values{prog};
+        const auto perceived = Read(queryRoot, queryPath, L"PerceivedType");
+        if (!perceived.empty()) result[L"systemfileassociations\\" + Lower(perceived)].push_back(Lower(name));
+        result[L"systemfileassociations\\" + Lower(name)].push_back(Lower(name));
+        for (const auto &progId : Values(queryRoot, queryPath.empty() ? L"OpenWithProgids" : name + L"\\OpenWithProgids")) result[Lower(progId)].push_back(Lower(name));
+        if (classes == HKEY_CLASSES_ROOT)
+        {
+            const auto choice = choices && choices->value
+                ? Read(choices->value, name + L"\\UserChoice", L"ProgId")
+                : Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + name + L"\\UserChoice", L"ProgId");
+            if (!choice.empty()) result[Lower(choice)].push_back(Lower(name));
+            values.push_back(choice);
+        }
+        return std::pair{std::move(result), std::move(values)};
+    };
+    std::vector<std::wstring> fileTypes;
+    for (const auto &name : roots)
+        if (!name.empty() && name.front() == L'.') fileTypes.push_back(name);
+    using Associated = std::pair<std::map<std::wstring, std::vector<std::wstring>>, std::vector<std::wstring>>;
+    std::vector<Associated> associated(fileTypes.size());
+    // Each extension reads independent registration values. Keep results apart
+    // and merge in root order so parallel completion cannot alter associations.
+    if (fileTypes.size() < 64)
+        for (size_t i = 0; i < fileTypes.size(); ++i) associated[i] = readAssociation(fileTypes[i]);
+    else
+    {
+        std::atomic_size_t next = 0;
+        std::vector<std::future<void>> workers;
+        try
+        {
+            for (unsigned i = 0; i < std::clamp(std::thread::hardware_concurrency() / 2u, 2u, 8u); ++i)
+                workers.push_back(std::async(std::launch::async, [&] {
+                    while (true)
+                    {
+                        const auto index = next.fetch_add(1, std::memory_order_relaxed);
+                        if (index >= fileTypes.size()) break;
+                        associated[index] = readAssociation(fileTypes[index]);
+                    }
+                }));
+            for (auto &worker : workers) worker.get();
+        }
+        catch (...)
+        {
+            // Drain writers before a clean serial read replaces every result.
+            workers.clear();
+            for (size_t i = 0; i < fileTypes.size(); ++i) associated[i] = readAssociation(fileTypes[i]);
+        }
+    }
+    for (size_t i = 0; i < associated.size(); ++i)
+    {
+        for (auto &[name, values] : associated[i].first)
+            types[name].insert(types[name].end(), values.begin(), values.end());
+        sourceValues[Lower(fileTypes[i])] = std::move(associated[i].second);
+    }
+    return types;
+}
+void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots)
+{
+    const auto files = ContextBit(Context::File);
+    auto serial = [&] { for (const auto &root : roots) scanner.Root(root.path, files, root.types); };
+    // Small/private inventories avoid thread setup. Two to eight workers bound
+    // additional CPU work while native menu helpers remain active.
+    if (roots.size() < 64) { serial(); return; }
+    std::vector<std::vector<std::pair<Registration, std::wstring>>> results(roots.size());
+    std::atomic_size_t next = 0;
+    std::vector<std::future<void>> workers;
+    const unsigned workerCount = std::clamp(std::thread::hardware_concurrency() / 2u, 2u, 8u);
+    try
+    {
+        for (unsigned i = 0; i < workerCount; ++i)
+            workers.push_back(std::async(std::launch::async, [&] {
+                const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+                if (FAILED(initialized)) throw std::runtime_error("metadata COM initialization");
+                struct Cleanup { ~Cleanup() { CoUninitialize(); } } cleanup;
+                Scanner local{scanner.classes}; local.capture = true;
+                while (true)
+                {
+                    const auto index = next.fetch_add(1, std::memory_order_relaxed);
+                    if (index >= roots.size()) break;
+                    local.Root(roots[index].path, files, roots[index].types);
+                    results[index] = std::move(local.captured); local.captured.clear();
+                }
+            }));
+        for (auto &worker : workers) worker.get();
+    }
+    catch (...)
+    {
+        // Futures drain before their inputs/results can be released. No
+        // worker row has entered the inventory, so fallback starts cleanly.
+        workers.clear(); results.clear(); serial(); return;
+    }
+    for (auto &result : results)
+        for (auto &row : result) scanner.Add(std::move(row.first), row.second);
+}
 }
 Catalogue ReadCatalogue(HKEY classes, bool packages)
 {
@@ -415,32 +767,19 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
     scanner.Root(L"Directory\\Background", ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop));
     scanner.Root(L"DesktopBackground", ContextBit(Context::Desktop));
     const auto roots = Children(classes, L"");
-    std::map<std::wstring, std::vector<std::wstring>> types;
-    for (const auto &name : roots)
-        if (!name.empty() && name.front() == L'.')
-        {
-            types[Lower(name)].push_back(Lower(name));
-            const auto prog = Read(classes, name); if (!prog.empty()) types[Lower(prog)].push_back(Lower(name));
-            const auto perceived = Read(classes, name, L"PerceivedType");
-            if (!perceived.empty()) types[L"systemfileassociations\\" + Lower(perceived)].push_back(Lower(name));
-            types[L"systemfileassociations\\" + Lower(name)].push_back(Lower(name));
-            for (const auto &progId : Values(classes, name + L"\\OpenWithProgids")) types[Lower(progId)].push_back(Lower(name));
-            if (classes == HKEY_CLASSES_ROOT)
-            {
-                const auto choice = Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + name + L"\\UserChoice", L"ProgId");
-                if (!choice.empty()) types[Lower(choice)].push_back(Lower(name));
-            }
-        }
+    auto types = ReadTypeAssociations(classes, roots, scanner.associations);
     const std::set<std::wstring> special{L"*", L"allfilesystemobjects", L"directory", L"folder", L"drive", L"desktopbackground", L"clsid", L"interface", L"typelib"};
+    std::vector<FileRoot> fileRoots;
     for (const auto &name : roots)
         if (!special.contains(Lower(name)))
         {
             auto &extensions = types[Lower(name)];
             if (extensions.empty()) extensions.push_back(L"progid:" + Lower(name));
-            scanner.Root(name, files, extensions);
+            fileRoots.push_back({name, extensions});
         }
     for (const auto &name : Children(classes, L"SystemFileAssociations"))
-        scanner.Root(L"SystemFileAssociations\\" + name, files, types[L"systemfileassociations\\" + Lower(name)]);
+        fileRoots.push_back({L"SystemFileAssociations\\" + name, types[L"systemfileassociations\\" + Lower(name)]});
+    ReadFileRoots(scanner, fileRoots);
     if (packages) scanner.Packages();
     for (auto &row : scanner.result.rows)
     {
@@ -449,17 +788,44 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
         for (const auto &type : row.types)
             if (!type.empty() && type.front() == L'.')
             {
-                associations.push_back(Read(classes, type));
-                if (classes == HKEY_CLASSES_ROOT)
-                    associations.push_back(Read(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts\\" + type + L"\\UserChoice", L"ProgId"));
+                const auto &values = scanner.Associations(type);
+                associations.insert(associations.end(), values.begin(), values.end());
             }
         row.revision = Hash(settings_ipc::Pack(row.revision, associations));
+        row.menuRevision = Hash(settings_ipc::Pack(row.menuRevision, associations,
+            row.sources, row.types, row.verbs, row.contexts, row.systemEnabled,
+            row.display.label, row.commandIdentity, row.application));
         row.revision = Hash(settings_ipc::Pack(row.revision, row.sources, row.types, row.verbs, row.contexts, row.systemEnabled, row.display.label, row.display.pixels, row.commandIdentity, row.application));
     }
     std::sort(scanner.result.rows.begin(), scanner.result.rows.end(), [](const auto &a, const auto &b) { return a.id < b.id; });
     scanner.result.revision = Hash(settings_ipc::Pack(scanner.result.rows));
+    scanner.result.folderRevision = scanner.FolderRevision();
+    scanner.result.backgroundRevisions = {scanner.BackgroundRevision(Context::FolderBackground), scanner.BackgroundRevision(Context::Desktop)};
     timing.Record("complete", static_cast<unsigned>(scanner.result.rows.size()));
     return std::move(scanner.result);
+}
+std::uint64_t ReadFolderCatalogueRevision(HKEY classes, bool packages)
+{
+    MenuTiming timing("folder.catalogue");
+    Scanner scanner{classes};
+    const auto folders = ContextBit(Context::Folder);
+    scanner.Root(L"AllFilesystemObjects", ContextBit(Context::File) | folders);
+    scanner.Root(L"Directory", folders); scanner.Root(L"Folder", folders); scanner.Root(L"Drive", folders);
+    if (packages) scanner.Packages();
+    timing.Record("complete", static_cast<unsigned>(scanner.folderRows.size()));
+    return scanner.FolderRevision();
+}
+std::uint64_t ReadBackgroundCatalogueRevision(Context scope, HKEY classes, bool packages)
+{
+    if (scope != Context::FolderBackground && scope != Context::Desktop) return 0;
+    MenuTiming timing(scope == Context::Desktop ? "desktop.catalogue" : "background.catalogue");
+    Scanner scanner{classes};
+    scanner.Root(L"Directory\\Background", ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop));
+    if (scope == Context::Desktop) scanner.Root(L"DesktopBackground", ContextBit(Context::Desktop));
+    if (packages) scanner.Packages();
+    const auto revision = scanner.BackgroundRevision(scope);
+    timing.Record("complete", static_cast<unsigned>(scanner.backgroundRows[scope == Context::Desktop ? 1 : 0].size()));
+    return revision;
 }
 bool HandlerEnabled(const std::wstring &clsid, HKEY user, HKEY machine)
 {

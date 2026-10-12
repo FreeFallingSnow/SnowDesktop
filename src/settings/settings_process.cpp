@@ -161,6 +161,11 @@ void SettingsProcess::Start(Channel& channel, std::wstring_view childCommand)
     STARTUPINFOEXW startup{};
     startup.StartupInfo.cb = sizeof(startup);
     startup.StartupInfo.dwFlags = STARTF_USESHOWWINDOW;
+    // Background menu queries must not trigger Windows' startup busy cursor.
+    // This controls this helper's launch feedback; third-party subprocesses
+    // still need the query-session lifetime bound in the Shell menu host.
+    if (childCommand == L"--shell-menu-helper")
+        startup.StartupInfo.dwFlags |= STARTF_FORCEOFFFEEDBACK;
     if (nullStream.value)
     {
         startup.StartupInfo.dwFlags |= STARTF_USESTDHANDLES;

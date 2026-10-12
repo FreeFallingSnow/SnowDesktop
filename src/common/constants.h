@@ -12,7 +12,6 @@
 constexpr wchar_t kWindowClassName[] = L"SnowDesktopNativeProofWindow";
 constexpr wchar_t kControlWindowClassName[] = L"SnowDesktopControlWindow";
 constexpr wchar_t kInputWindowClassName[] = L"SnowDesktopInputWindow";
-constexpr wchar_t kHintWindowClassName[] = L"SnowDesktopDragHintWindow";
 constexpr wchar_t kQuickNavigationWindowClassName[] = L"SnowDesktopQuickNavigationWindow";
 constexpr wchar_t kFloatingDockWindowClassName[] = L"SnowDesktopFloatingDockWindow";
 constexpr wchar_t kFloatingPopupWindowClassName[] = L"SnowDesktopFloatingPopupWindow";
@@ -184,15 +183,9 @@ constexpr UINT kContextNewMenu = 41400;
 constexpr UINT kContextSettingsCommand = 41401;
 constexpr UINT kContextGridAdjustmentMenu = 41402;
 constexpr UINT kContextGridAdjustmentDone = 41403;
-constexpr UINT kContextFontSizeSmall = 41404;
-constexpr UINT kContextFontSizeMedium = 41405;
-constexpr UINT kContextFontSizeLarge = 41406;
-constexpr UINT kContextListFontSizeSmall = 41551;
-constexpr UINT kContextListFontSizeMedium = 41552;
-constexpr UINT kContextListFontSizeLarge = 41553;
-constexpr UINT kContextFontWeightBold = 41427;
-constexpr UINT kContextFontWeightMedium = 41428;
-constexpr UINT kContextFontWeightFine = 41429;
+constexpr UINT kContextFontSizePresetFirst = 42400;
+constexpr UINT kContextListFontSizePresetFirst = 42500;
+constexpr UINT kContextFontWeightPresetFirst = 42600;
 constexpr UINT kContextPreviewCollectionWidget = 41430;
 constexpr UINT kContextPreviewFileCategoryWidget = 41431;
 constexpr UINT kContextPreviewFolderMappingWidget = 41432;
@@ -234,6 +227,9 @@ constexpr UINT kContextWidgetOpenComponentPanel = 41816;
 constexpr UINT kContextDockPinMoveToDock = 41817;
 constexpr UINT kContextDockCreateMapping = 41818;
 constexpr UINT kContextDockPinCurrentFolder = 41819;
+constexpr UINT kContextDockSingleClickLaunch = 41820;
+constexpr UINT kContextDockShowOnlyWhenSummoned = 41821;
+constexpr UINT kContextDockWindowPreviews = 41822;
 
 // ── 外壳变更通知 ──────────────────────────────
 constexpr UINT kShellChangeMessage = WM_APP + 2;
@@ -245,6 +241,7 @@ constexpr UINT kQuickNavigationAppsIndexedMessage = WM_APP + 4;
 constexpr UINT kCommitRenameMessage = WM_APP + 5;
 constexpr UINT kShellFileOperationCompletedMessage = WM_APP + 7;
 constexpr UINT kForegroundInteractionChangedMessage = WM_APP + 8;
+constexpr UINT kDockWindowListChangedMessage = WM_APP + 9;
 constexpr UINT kSteamWorkshopSubscriptionReadyMessage = WM_APP + 10;
 constexpr UINT kSteamWorkshopSubscriptionChangedMessage = WM_APP + 11;
 constexpr UINT kDemoIconDecodedMessage = WM_APP + 12;
@@ -315,6 +312,7 @@ constexpr int kQuickNavigationHotkeyId = 101;
 constexpr int kFloatingDockHotkeyId = 102;
 constexpr int kDesktopPassthroughHotkeyId = 103;
 constexpr int kSettingsHotkeyProbeId = 104;
+constexpr int kSoftwareDesktopHotkeyId = 105;
 // DoDragDrop owns a nested message loop, so the waitable animation timer in
 // the outer application pump needs a WM_TIMER bridge while a local drag is
 // visiting another process.

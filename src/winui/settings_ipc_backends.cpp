@@ -326,8 +326,16 @@ struct BackendServer::Impl
         channel.Bind<bool, std::wstring>("options.ensureWidget", [this](std::wstring id) {
             return options.ensureWidgetSettingsInstance && options.ensureWidgetSettingsInstance(id);
         });
-        channel.Bind<void>("options.refreshExternalState", [this] {
-            if (options.refreshExternalState) options.refreshExternalState();
+        channel.BindDeferredRaw("options.refreshExternalState", [this](auto arguments, Channel::Completion reply) {
+            Reader(arguments).Finish();
+            auto complete = [reply = std::move(reply)]() { reply({}, {}); };
+            if (options.refreshExternalStateAsync)
+                options.refreshExternalStateAsync(std::move(complete));
+            else
+            {
+                if (options.refreshExternalState) options.refreshExternalState();
+                complete();
+            }
         });
         channel.Bind<void>("options.registerAdvancedFeatures", [this] {
             if (options.registerAdvancedFeatures) options.registerAdvancedFeatures();

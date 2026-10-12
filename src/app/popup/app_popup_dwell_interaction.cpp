@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/menus/sort_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
 
@@ -512,7 +513,7 @@ void DesktopApp::UpdateCollectionGroupTabDwell(
         return;
     }
 
-    if (IsPointInsideOpenPopup(point))
+    if (IsPointInsideOpenPopup(point) && !GetGroupPopupView())
     {
         clearDwell();
         return;
@@ -617,7 +618,7 @@ bool DesktopApp::TryActivateCollectionGroupTab(
             kCollectionGroupTabDwellDelayMs)
         return false;
 
-    if (IsPointInsideOpenPopup(lastMousePoint_))
+    if (IsPointInsideOpenPopup(lastMousePoint_) && !GetGroupPopupView())
     {
         CancelCollectionGroupTabDwell();
         return false;
@@ -774,25 +775,22 @@ ShowDockFolderPopupContextMenu(
         selectedPaths.size() == 1;
     const bool hasSelection =
         !selectedPaths.empty();
-    bool administratorShortcutSelected = false;
+    bool administratorLaunchSelected = false;
     for (const auto& path : selectedPaths)
     {
         if (snowdesktop::ShellLaunchWorker::
-                ShortcutRequestsAdministrator(path))
+                PathRequestsAdministrator(path))
         {
-            administratorShortcutSelected = true;
+            administratorLaunchSelected = true;
             break;
         }
     }
     const bool canOpen =
-        hasSelection && !administratorShortcutSelected;
+        hasSelection && !administratorLaunchSelected;
 
     HMENU menu = CreatePopupMenu();
     if (!menu) return;
     HMENU sortMenu = nullptr;
-    HMENU nameMenu = nullptr;
-    HMENU typeMenu = nullptr;
-    HMENU dateMenu = nullptr;
 
     if (itemMenu)
     {
@@ -881,7 +879,7 @@ ShowDockFolderPopupContextMenu(
             0, nullptr);
         AppendMenuW(
             menu,
-            singleSelection
+            hasSelection
                 ? MF_STRING
                 : MF_STRING | MF_GRAYED,
             kContextMoreCommand,
@@ -917,122 +915,43 @@ ShowDockFolderPopupContextMenu(
             menu, MF_SEPARATOR,
             0, nullptr);
 
-        sortMenu = CreatePopupMenu();
-        nameMenu = CreatePopupMenu();
-        typeMenu = CreatePopupMenu();
-        dateMenu = CreatePopupMenu();
-        if (sortMenu && nameMenu &&
-            typeMenu && dateMenu)
-        {
-            auto addDirections = [](
-                HMENU parent,
-                HMENU child,
-                UINT ascendingCommand,
-                UINT descendingCommand,
-                const wchar_t* label) {
-                AppendMenuW(
-                    child, MF_STRING,
-                    ascendingCommand,
-                    _LW(
-                        "app.menu.sort_asc"));
-                AppendMenuW(
-                    child, MF_STRING,
-                    descendingCommand,
-                    _LW(
-                        "app.menu.sort_desc"));
-                AppendMenuW(
-                    parent, MF_POPUP,
-                    reinterpret_cast<
-                        UINT_PTR>(child),
-                    label);
-            };
-            addDirections(
-                sortMenu, nameMenu,
-                kContextWidgetSortByName,
-                kContextWidgetSortByNameDesc,
-                _LW("app.menu.sort_name"));
-            addDirections(
-                sortMenu, typeMenu,
-                kContextWidgetSortByType,
-                kContextWidgetSortByTypeDesc,
-                _LW("app.menu.sort_type"));
-            addDirections(
-                sortMenu, dateMenu,
-                kContextWidgetSortByDate,
-                kContextWidgetSortByDateDesc,
-                _LW(
-                    "app.interact.sort_date"));
-            AppendMenuW(
-                menu, MF_POPUP,
-                reinterpret_cast<UINT_PTR>(
-                    sortMenu),
-                _LW("app.menu.sort_by"));
-        }
-        else
-        {
-            if (sortMenu)
-                DestroyMenu(sortMenu);
-            if (nameMenu)
-                DestroyMenu(nameMenu);
-            if (typeMenu)
-                DestroyMenu(typeMenu);
-            if (dateMenu)
-                DestroyMenu(dateMenu);
-            sortMenu = nullptr;
-            nameMenu = nullptr;
-            typeMenu = nullptr;
-            dateMenu = nullptr;
-        }
+        sortMenu = snowdesktop::sort_menu::Create(
+            [](const char* key) { return _LW(key); });
+        if (sortMenu)
+            AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sortMenu), _LW("app.menu.sort_by"));
     }
 
-    SetMenuItemIcon(
-        menu, kContextOpenCommand,
-        L"");
-    SetMenuItemIcon(
-        menu,
-        kContextRevealLocationCommand,
-        L"");
-    SetMenuItemIcon(
-        menu, kContextCopyPathCommand,
+    SetMenuItemIcon(menu, kContextOpenCommand, L"\uF08E");
+    SetMenuItemIcon(menu, kContextRevealLocationCommand, L"\uF07C");
+    SetMenuItemIcon(menu, kContextCopyPathCommand,
         snowdesktop::menu_fluent_glyphs::kCopy,
         MenuIconFont::FluentRegular);
-    SetMenuItemIcon(
-        menu, kContextRunAsAdministratorCommand,
+    SetMenuItemIcon(menu, kContextRunAsAdministratorCommand,
         snowdesktop::menu_fluent_glyphs::kShield,
         MenuIconFont::FluentRegular);
-    SetMenuItemIcon(
-        menu, kContextPropertiesCommand,
+    SetMenuItemIcon(menu, kContextPropertiesCommand,
         snowdesktop::menu_fluent_glyphs::kInfo,
         MenuIconFont::FluentRegular);
-    SetMenuItemIcon(
-        menu, kContextRenameCommand,
-        L"");
-    SetMenuItemIcon(
-        menu, kContextCutCommand,
-        L"");
-    SetMenuItemIcon(
-        menu, kContextCopyCommand,
-        L"");
-    SetMenuItemIcon(
-        menu, kContextDeleteCommand,
-        L"");
-    SetMenuItemIcon(
-        menu, kContextPasteCommand,
-        L"");
-    SetMenuItemIcon(
-        menu, kContextNewMenu,
-        snowdesktop::menu_fluent_glyphs::kNewItem,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(
-        menu, kContextMoreCommand,
-        snowdesktop::menu_fluent_glyphs::kMoreOptions,
-        MenuIconFont::FluentRegular);
+    SetMenuItemIcon(menu, kContextRenameCommand, L"\uF044");
+    SetMenuItemIcon(menu, kContextCutCommand, L"\uF0C4");
+    SetMenuItemIcon(menu, kContextCopyCommand, L"\uF0C5");
+    SetMenuItemIcon(menu, kContextDeleteCommand, L"\uF2ED");
     SetMenuItemQuickAction(menu, kContextRenameCommand);
     SetMenuItemQuickAction(menu, kContextCutCommand);
     SetMenuItemQuickAction(menu, kContextCopyCommand);
     SetMenuItemQuickAction(menu, kContextDeleteCommand);
+    SetMenuItemIcon(menu, kContextPasteCommand, L"\uF0EA",
+        MenuIconFont::BuiltinFluentFromLegacy,
+        snowdesktop::menu_icon::BuiltinIcon::Paste);
+    SetMenuItemIcon(menu, kContextNewMenu,
+        snowdesktop::menu_fluent_glyphs::kNewItem,
+        MenuIconFont::FluentRegular,
+        snowdesktop::menu_icon::BuiltinIcon::NewItem);
     SetMenuItemQuickAction(menu, kContextPasteCommand);
     SetMenuItemQuickAction(menu, kContextNewMenu);
+    SetMenuItemIcon(menu, kContextMoreCommand,
+        snowdesktop::menu_fluent_glyphs::kMoreOptions,
+        MenuIconFont::FluentRegular);
     if (sortMenu)
     {
         SetMenuItemIcon(
@@ -1041,42 +960,27 @@ ShowDockFolderPopupContextMenu(
                 sortMenu),
             snowdesktop::menu_fluent_glyphs::kSort,
             MenuIconFont::FluentRegular);
-        SetMenuItemIcon(sortMenu,
-            reinterpret_cast<UINT_PTR>(nameMenu),
-            snowdesktop::menu_fluent_glyphs::kSortName,
-            MenuIconFont::FluentRegular);
-        SetMenuItemIcon(nameMenu, kContextWidgetSortByName,
-            snowdesktop::menu_fluent_glyphs::kSortNameAscending,
-            MenuIconFont::FluentRegular);
-        SetMenuItemIcon(nameMenu, kContextWidgetSortByNameDesc,
-            snowdesktop::menu_fluent_glyphs::kSortNameDescending,
-            MenuIconFont::FluentRegular);
-        SetMenuItemIcon(sortMenu,
-            reinterpret_cast<UINT_PTR>(typeMenu),
-            snowdesktop::menu_fluent_glyphs::kSortType,
-            MenuIconFont::FluentRegular);
-        SetMenuItemIcon(typeMenu, kContextWidgetSortByType,
-            snowdesktop::menu_fluent_glyphs::kSortTypeAscending,
-            MenuIconFont::FluentRegular);
-        SetMenuItemIcon(typeMenu, kContextWidgetSortByTypeDesc,
-            snowdesktop::menu_fluent_glyphs::kSortTypeDescending,
-            MenuIconFont::FluentRegular);
-        SetMenuItemIcon(sortMenu,
-            reinterpret_cast<UINT_PTR>(dateMenu),
-            snowdesktop::menu_fluent_glyphs::kSortDate,
-            MenuIconFont::FluentRegular);
-        SetMenuItemIcon(dateMenu, kContextWidgetSortByDate,
-            snowdesktop::menu_fluent_glyphs::kSortDateAscending,
-            MenuIconFont::FluentRegular);
-        SetMenuItemIcon(dateMenu, kContextWidgetSortByDateDesc,
-            snowdesktop::menu_fluent_glyphs::kSortDateDescending,
-            MenuIconFont::FluentRegular);
+        snowdesktop::sort_menu::SetIcons(sortMenu,
+            [this](HMENU target, UINT commandId, const wchar_t* glyph) {
+                SetMenuItemIcon(target, commandId, glyph, MenuIconFont::FluentRegular);
+            });
     }
 
     RestoreInteractionInputFocus();
-    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
+    snowdesktop::shell_extensions::Request shellRequest;
+    if (itemMenu)
+        shellRequest.paths = selectedPaths;
+    else if (dockFolderPopupAvailable_)
+        shellRequest.paths.push_back(dockFolderPopupWidget_.sourceFolderPath);
+    shellRequest.background = !itemMenu;
+    shellRequest.extended = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    const UINT command = ShowModernMenu(
+        menu, screenPoint, hwnd_, false, false, nullptr, {}, {}, {}, &shellRequest);
     DestroyMenu(menu);
     ClearMenuIcons();
+
+    if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
+        SortDockFolderPopupContents(sort->mode, sort->ascending);
 
     switch (command)
     {
@@ -1150,10 +1054,10 @@ ShowDockFolderPopupContextMenu(
         break;
     case kContextMoreCommand:
         if (itemMenu &&
-            selectedPaths.size() == 1)
+            hasSelection)
         {
-            ShowShellItemContextMenuForPath(
-                selectedPaths.front(),
+            ShowShellItemContextMenuForPaths(
+                selectedPaths,
                 screenPoint);
             break;
         }
@@ -1174,44 +1078,6 @@ ShowDockFolderPopupContextMenu(
             dockFolderPopupWidget_.
                 sourceFolderPath);
         RequestShellRefresh();
-        break;
-    case kContextWidgetSortByName:
-        SortDockFolderPopupContents(
-            snowdesktop::
-                folder_sort_rules::kName,
-            true);
-        break;
-    case kContextWidgetSortByNameDesc:
-        SortDockFolderPopupContents(
-            snowdesktop::
-                folder_sort_rules::kName,
-            false);
-        break;
-    case kContextWidgetSortByType:
-        SortDockFolderPopupContents(
-            snowdesktop::
-                folder_sort_rules::kType,
-            true);
-        break;
-    case kContextWidgetSortByTypeDesc:
-        SortDockFolderPopupContents(
-            snowdesktop::
-                folder_sort_rules::kType,
-            false);
-        break;
-    case kContextWidgetSortByDate:
-        SortDockFolderPopupContents(
-            snowdesktop::
-                folder_sort_rules::
-                    kModified,
-            true);
-        break;
-    case kContextWidgetSortByDateDesc:
-        SortDockFolderPopupContents(
-            snowdesktop::
-                folder_sort_rules::
-                    kModified,
-            false);
         break;
     default:
         break;

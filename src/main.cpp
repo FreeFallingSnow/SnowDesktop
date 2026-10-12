@@ -16,6 +16,7 @@
 #include "settings/settings_process.h"
 #include "shell/shell_launch_process.h"
 #include "shell/shell_extension_menu.h"
+#include "shell/shell_start_pin.h"
 #include "diagnostics/crashlog.h"
 #include "platform/application_crash_watchdog.h"
 #include "platform/application_restart_policy.h"
@@ -181,10 +182,15 @@ VersionConflictChoice ShowVersionConflictPrompt(
 ExistingInstanceResolution ResolveExistingInstance(
     const snowdesktop::single_instance::InstanceInfo& running,
     const snowdesktop::single_instance::InstanceInfo& requested,
+    snowdesktop::single_instance::LaunchIntent intent,
     snowdesktop::single_instance::InstanceInfo* switchTarget)
 {
-    if (snowdesktop::single_instance::
-            IsManagedSteamRuntimeReplacement(running, requested))
+    using snowdesktop::single_instance::ExistingLaunchAction;
+    const auto action = snowdesktop::single_instance::
+        HandleExistingInstanceLaunch(running, requested, intent);
+    if (action == ExistingLaunchAction::ExitNewInstance)
+        return ExistingInstanceResolution::ExitNewInstance;
+    if (action == ExistingLaunchAction::ReplaceManagedRuntime)
     {
         if (snowdesktop::single_instance::RequestExistingInstanceExit(
                 running, 30000))
@@ -201,21 +207,6 @@ ExistingInstanceResolution ResolveExistingInstance(
         MessageBoxW(nullptr, message.c_str(),
             _LW("app.run.other_version_title"),
             MB_OK | MB_ICONERROR);
-        return ExistingInstanceResolution::ExitNewInstance;
-    }
-
-    const bool versionsMatch =
-        running.version.empty() || requested.version.empty() ||
-        snowdesktop::single_instance::VersionsMatch(
-            running.version, requested.version);
-    const bool knownDataDirectoriesDiffer =
-        !running.dataDirectory.empty() &&
-        !requested.dataDirectory.empty() &&
-        !snowdesktop::single_instance::DataDirectoriesMatch(
-            running.dataDirectory, requested.dataDirectory);
-    if (versionsMatch && !knownDataDirectoriesDiffer)
-    {
-        snowdesktop::single_instance::NotifyExistingInstance(running);
         return ExistingInstanceResolution::ExitNewInstance;
     }
 
@@ -377,7 +368,11 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
     // Conservatively prohibit automatic downgrade from this boundary.
     snowdesktop::steam_runtime::startup::BeginDataAccess();
     if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
-    if (const auto result = snowdesktop::shell_extensions::TryRunHelper()) return *result;
+    if (const auto result = snowdesktop::shell_extensions::TryRunHelper({}, {},
+            [](snowdesktop::shell_start_pin::Action action, const std::wstring &path, HWND owner, POINT point) {
+                return snowdesktop::shell_start_pin::Invoke(
+                    snowdesktop::deployment::GetTaskbarHookPath(), action, path, owner, point);
+            })) return *result;
     if (const auto result = snowdesktop::shell_launch_process::TryRunCommand())
         return *result;
 
@@ -449,6 +444,8 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
         return ERROR_TIMEOUT;
     }
 
+    const auto launchIntent = snowdesktop::single_instance::
+        ParseLaunchIntent(GetCommandLineW());
     snowdesktop::single_instance::Guard singleInstance;
     const auto requestedInstance =
         snowdesktop::single_instance::DescribeCurrentInstance(
@@ -483,7 +480,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
             }
 
             const auto resolution = ResolveExistingInstance(
-                *running, requestedInstance, &switchTarget);
+                *running, requestedInstance, launchIntent, &switchTarget);
             if (resolution == ExistingInstanceResolution::ExitNewInstance)
             {
                 return 0;
@@ -572,8 +569,7 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
             L"SnowDesktop: failed to start crash watchdog.\n");
 
     /* 注册系统恢复作为补充；排除 HANG，避免无响应时系统反复拉起 */
-    RegisterApplicationRestart(
-        nullptr, snowdesktop::application_restart_policy::kFlags);
+    snowdesktop::application_restart_policy::RegisterForCurrentProcess();
 
     /* 创建主应用实例并进入消息循环 */
     int result = 0;

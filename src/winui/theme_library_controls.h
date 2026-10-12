@@ -295,7 +295,7 @@ public:
         }
         cancel_.Content(winrt::box_value(L("themeLibrary.cancelEdit")));
         editButton_.Content(winrt::box_value(L("themeLibrary.edit")));
-        if (!transfer_) nameRow_.SetText(L("themeLibrary.name"), L("themeLibrary.nameHint"));
+        if (!transfer_) nameRow_.SetText(L("themeLibrary.name"));
         if (saveTitle_) saveTitle_.Text(L("themeLibrary.save"));
         if (Global() && !transfer_)
         {

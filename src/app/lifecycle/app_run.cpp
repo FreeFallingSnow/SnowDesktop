@@ -1,13 +1,18 @@
 #include "settings/settings_search_catalog.h"
+#include "settings/bar_settings_rules.h"
 #include "app/app.h"
+#include "app/input/software_desktop_hotkey.h"
 #include "ui/menu/modern_menu.h"
 #include "system/controls/system_control_prompt.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "startup_animation.h"
 #include "startup_diagnostics.h"
+#include "settings_external_state_refresh.h"
 #include "data/data_paths.h"
 #include "platform/deployment_context.h"
+#include "platform/shell_overlay_window.h"
 #include "drag_drop/drag_input_rules.h"
+#include "desktop/desktop_hover_rules.h"
 #include "steam/steam_app_identity.h"
 #include "steam/steam_child_environment.h"
 #include "steam/steam_runtime_startup.h"
@@ -16,6 +21,7 @@
 #include "widget/data/widget_system_data_provider.h"
 
 #include "diagnostics/slow_call_limiter.h"
+#include "diagnostics/performance_trace.h"
 #include <commoncontrols.h>
 #include <imm.h>
 #include <new>
@@ -62,6 +68,7 @@ void LogDelayedInputMessage(const MSG& message) noexcept try
     const DWORD now = GetTickCount();
     // MSG::time and GetTickCount share the wrapping 32-bit millisecond clock.
     const DWORD age = now - message.time;
+    snowdesktop::performance::Value("desktop.input", "button.queue_age_ms", {}, age);
     if (age <= 250) return;
     static bool logged = false;
     static DWORD lastLog = 0;
@@ -532,6 +539,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktopSettings.itemIconSizeScale = itemIconSizeScale_;
         desktopSettings.itemFontSizeCu = itemFontSizeCu_;
         desktopSettings.listItemFontSizeCu = listItemFontSizeCu_;
+        desktopSettings.fanTitleFontSizeCu = fanTitleFontSizeCu_;
         desktopSettings.itemFontWeight = static_cast<int>(itemFontWeight_);
         desktopSettings.desktopTitleLines = desktopTitleLines_;
         desktopSettings.largeFolderTitleLines = largeFolderTitleLines_;
@@ -567,16 +575,6 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         input.hbrBackground = nullptr;
         input.lpszClassName = kInputWindowClassName;
         RegisterClassExW(&input);
-    }
-    {
-        WNDCLASSEXW hint{};
-        hint.cbSize = sizeof(hint);
-        hint.lpfnWndProc = DefWindowProcW;
-        hint.hInstance = instance;
-        hint.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        hint.hbrBackground = nullptr;
-        hint.lpszClassName = kHintWindowClassName;
-        RegisterClassExW(&hint);
     }
     {
         WNDCLASSEXW nav{};
@@ -623,7 +621,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         RegisterClassExW(&preview);
     }
 
-    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
+    hwnd_ = snowdesktop::CreateShellOverlayWindowEx(WS_EX_TOOLWINDOW | WS_EX_NOREDIRECTIONBITMAP | WS_EX_LAYERED,
         wc.lpszClassName, L"SnowDesktop",
         WS_POPUP, virtualLeft_, virtualTop_, virtualWidth_, virtualHeight_,
         nullptr, nullptr, instance, this);
@@ -736,6 +734,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     StartRecycleBinWatcher();
     RegisterOleDropTarget();
     LoadNavigationSettingsAndApply();
+    snowdesktop::SoftwareDesktopHotkey().Apply(controlHwnd_, generalSettings_);
     ApplyFloatingDockHotkey();
     ApplyDesktopPassthroughHotkey();
 
@@ -791,7 +790,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
         GeneralStartupConflict conflict;
         const snowdesktop::AutoStartQueryResult state =
-            QueryAutoStartState();
+            settingsAutoStartState_;
         const snowdesktop::AutoStartOwnershipNotice notice =
             snowdesktop::ClassifyAutoStartOwnershipNotice(
                 state.stateKnown, state.taskStatus,
@@ -859,13 +858,32 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         std::uint64_t expectedRevision) {
         return AddPageFromSettings(expectedRevision);
     };
-    settingsHostOptions.refreshExternalState = [this]() {
+    const auto settingsExternalRefresh = std::make_shared<snowdesktop::SettingsExternalStateRefresh>();
+    settingsHostOptions.refreshExternalStateAsync = [this, settingsExternalRefresh](std::function<void()> complete) {
         if (!settingsController_)
+        {
+            complete();
             return;
-        GeneralSettings general = generalSettings_;
-        general.autoStartEnabled = QueryAutoStartEnabled();
-        if (settingsController_->SynchronizeGeneral(general))
-            generalSettings_.autoStartEnabled = general.autoStartEnabled;
+        }
+        // Task Scheduler RPC and legacy registration reconciliation own only
+        // platform state. Never lend a worker the application or controller.
+        if (settingsExternalRefresh->Request(std::move(complete)))
+        {
+            const bool submitted = shellModelWork_.Submit(L"settings-auto-start",
+                [] { return QueryAutoStartState(); },
+                [this, settingsExternalRefresh](snowdesktop::AutoStartQueryResult state) {
+                    settingsAutoStartState_ = std::move(state);
+                    if (settingsController_ && settingsAutoStartState_.stateKnown)
+                    {
+                        GeneralSettings general = generalSettings_;
+                        general.autoStartEnabled = settingsAutoStartState_.enabled;
+                        if (settingsController_->SynchronizeGeneral(general))
+                            generalSettings_.autoStartEnabled = general.autoStartEnabled;
+                    }
+                    settingsExternalRefresh->Complete();
+                }, controlHwnd_ ? controlHwnd_ : hwnd_, kBackgroundShellReadyMessage);
+            if (!submitted) settingsExternalRefresh->Complete();
+        }
 
         snowdesktop::DesktopDisplaySettings desktop;
         desktop.dockEnabled = generalSettings_.dockEnabled;
@@ -873,6 +891,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktop.itemIconSizeScale = itemIconSizeScale_;
         desktop.itemFontSizeCu = itemFontSizeCu_;
         desktop.listItemFontSizeCu = listItemFontSizeCu_;
+        desktop.fanTitleFontSizeCu = fanTitleFontSizeCu_;
         desktop.itemFontWeight = static_cast<int>(itemFontWeight_);
         desktop.desktopTitleLines = desktopTitleLines_;
         desktop.largeFolderTitleLines = largeFolderTitleLines_;
@@ -997,7 +1016,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         }
         if (settingsWindow_)
         {
-            (void)settingsWindow_->Open(
+            ShowSettingsWindow(
                 snowdesktop::SettingsRoute::ForPage(
                     snowdesktop::SettingsPage::DeveloperTools));
         }
@@ -1683,7 +1702,13 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         // and again after every message lets a costly frame repeatedly jump
         // ahead of pointer feedback.
         unsigned processedMessages = 0;
-        while (!exitRequested_ && processedMessages < 64 &&
+        const double messageBatchStarted =
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+        while (!exitRequested_ &&
+            snowdesktop::drag_input_rules::ShouldDrainAnotherMessage(
+                processedMessages,
+                snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() -
+                    messageBatchStarted) &&
             PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
         {
             if (msg.message == WM_QUIT)
@@ -1717,27 +1742,48 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                         IsPersistentDockHostWindow(msg.hwnd),
                         floatingPopupHwnd_ != nullptr &&
                             msg.hwnd == floatingPopupHwnd_);
-            snowdesktop::drag_input_rules::
-                CoalesceQueuedMouseMoves(
-                    latencySensitivePointerActive,
-                    pointerMessageSurface,
-                    msg,
-                    [](MSG& next) {
-                        return PeekMessageW(
-                            &next, nullptr, 0, 0,
-                            PM_NOREMOVE) != FALSE;
-                    },
-                    [](MSG& next) {
-                        return PeekMessageW(
-                            &next, nullptr, 0, 0,
-                            PM_REMOVE) != FALSE;
-                    },
-                    [](const MSG& left, const MSG& right) {
-                        return left.hwnd == right.hwnd;
-                    },
-                    [](const MSG& message) {
-                        return message.message == WM_MOUSEMOVE;
-                    });
+            const bool passivePointerMove = snowdesktop::desktop_hover_rules::
+                CanCoalescePassiveMouseMoves(
+                    snowdesktop::desktop_hover_rules::ShouldResamplePassiveMouseMove(
+                        mouseDown_, dragSession_.IsActive(),
+                        widgetActionActive || middleButtonWidgetMove_ ||
+                            detailColumnResizeActive_ || luaWidgetPanelMouseDown_),
+                    (msg.wParam & (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON |
+                        MK_XBUTTON1 | MK_XBUTTON2)) != 0,
+                    dragDropController_.IsTransportActive(), GetCapture() != nullptr);
+            if (msg.message == WM_MOUSEMOVE)
+            {
+                snowdesktop::performance::Scope coalescingScope(
+                    "desktop.input", "mouse.coalesce");
+                const std::size_t coalesced = snowdesktop::drag_input_rules::
+                    CoalesceQueuedMouseMoves(
+                        snowdesktop::desktop_hover_rules::ShouldProbeMouseMoveQueue(
+                            latencySensitivePointerActive, passivePointerMove,
+                            (HIWORD(GetQueueStatus(QS_ALLPOSTMESSAGE)) & QS_ALLPOSTMESSAGE) != 0),
+                        pointerMessageSurface,
+                        msg,
+                        [](MSG& next) {
+                            return PeekMessageW(
+                                &next, nullptr, 0, 0,
+                                PM_NOREMOVE) != FALSE;
+                        },
+                        [](MSG& next) {
+                            return PeekMessageW(
+                                &next, nullptr, 0, 0,
+                                PM_REMOVE) != FALSE;
+                        },
+                        [passivePointerMove](const MSG& left, const MSG& right) {
+                            return left.hwnd == right.hwnd &&
+                                (!passivePointerMove || left.wParam == right.wParam);
+                        },
+                        [](const MSG& message) {
+                            return message.message == WM_MOUSEMOVE;
+                        });
+                if (coalesced != 0)
+                    snowdesktop::performance::Value(
+                        "desktop.input", "mouse.coalesced", {},
+                        static_cast<double>(coalesced));
+            }
             const bool settingsMessageHandled = settingsWindow_ &&
                 (settingsWindow_->PreTranslateMessage(&msg) ||
                     settingsWindow_->ProcessTabNavigation(&msg));
@@ -1822,7 +1868,8 @@ snowdesktop::SettingsSearchIndexInput DesktopApp::BuildSettingsSearchInput()
             steamEntitlementService_ && ToGeneralAdvancedFeatureStatus(steamEntitlementService_->Current(),
                 snowdesktop::deployment::GetRuntimeDeploymentContext().kind).cardVisible,
             snowdesktop::StatusBarSupportsSystemQuickSettings(),
-            CurrentPersonalization().contextMenuStyle);
+            CurrentPersonalization().contextMenuStyle,
+            snowdesktop::ResolveBarSettingsAvailability(generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).anyMerged);
         if (!widgetSettingsBackend_)
             return input;
         // Indexing must not replace live WidgetSettingsService sessions or

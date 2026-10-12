@@ -331,6 +331,8 @@ void DesktopApp::PresentPointerInteractionFrame(
             else
                 hoverKind = 6;
         }
+        const void* previousHoverOwner = floatingDockHoverTargetOwner_;
+        const bool hoverOwnerChanged = hoverOwner != previousHoverOwner;
         const bool hoverTargetChanged =
             hoverOwner != floatingDockHoverTargetOwner_ ||
             hoverIndex != floatingDockHoverTargetIndex_ ||
@@ -339,14 +341,20 @@ void DesktopApp::PresentPointerInteractionFrame(
         floatingDockHoverTargetIndex_ = hoverIndex;
         floatingDockHoverTargetKind_ = hoverKind;
 
+        const bool pointerMoved =
+            lastMousePoint_.x != floatingDockLastPointerPresentPoint_.x ||
+            lastMousePoint_.y != floatingDockLastPointerPresentPoint_.y;
+        const bool needsPointerFrame = immediateFloatingDockPresent ||
+            hoverTargetChanged ||
+            (hoverOwner && pointerMoved);
         const ULONGLONG now = GetTickCount64();
-        const bool presentNow =
+        const bool presentNow = needsPointerFrame &&
             snowdesktop::floating_dock_rules::
-                ShouldPresentPointerFrame(
+                ShouldPresentDockPointerFrame(
                     now,
                     floatingDockLastPointerPresentTick_,
-                    immediateFloatingDockPresent ||
-                        hoverTargetChanged);
+                    immediateFloatingDockPresent,
+                    hoverOwnerChanged);
         if (presentNow)
         {
             if (floatingDockHoverTailToken_)
@@ -356,9 +364,11 @@ void DesktopApp::PresentPointerInteractionFrame(
                 floatingDockHoverTailToken_ = 0;
             }
             floatingDockLastPointerPresentTick_ = now;
-            InvalidateFloatingDockWindow(true);
+            floatingDockLastPointerPresentPoint_ = lastMousePoint_;
+            PresentFloatingDockPointerHosts(
+                previousHoverOwner, immediateFloatingDockPresent);
         }
-        else if (!floatingDockHoverTailToken_)
+        else if (needsPointerFrame && !floatingDockHoverTailToken_)
         {
             const UINT delay = std::max<UINT>(
                 1,
@@ -373,13 +383,12 @@ void DesktopApp::PresentPointerInteractionFrame(
                         if (floatingDockHoverTailToken_ != token)
                             return;
                         floatingDockHoverTailToken_ = 0;
-                        if (!floatingDockHostActive_ ||
-                            !floatingDockHwnd_ ||
-                            !IsWindow(floatingDockHwnd_))
+                        if (!floatingDockHostActive_)
                             return;
                         floatingDockLastPointerPresentTick_ =
                             GetTickCount64();
-                        InvalidateFloatingDockWindow(true);
+                        floatingDockLastPointerPresentPoint_ = lastMousePoint_;
+                        PresentFloatingDockPointerHosts(nullptr, false);
                     });
         }
     }
@@ -389,6 +398,22 @@ void DesktopApp::PresentPointerInteractionFrame(
         (!widgetPreviewActive ||
          widgetDragFeedbackChanged))
         InvalidateFloatingPopupWindow(true);
+}
+
+void DesktopApp::PresentFloatingDockPointerHosts(
+    const void* previousHoverOwner, bool presentAll)
+{
+    for (const auto& host : persistentDockHosts_)
+    {
+        if (!host || !snowdesktop::floating_dock_rules::
+                ShouldPresentPointerHost(
+                    presentAll, host->container,
+                    previousHoverOwner, floatingDockHoverTargetOwner_))
+            continue;
+        // Geometry and pixels share the rate-limited endpoint. Invalidating
+        // bounds on every move would let WM_PAINT bypass the hover deadline.
+        UpdateFloatingDockWindowBounds(*host, true);
+    }
 }
 
 /**
@@ -445,6 +470,8 @@ void DesktopApp::ClearPopupDragTarget()
  */
 void DesktopApp::EndDragSession()
 {
+    HideDragHintWindow();
+    rightButtonItemDrag_ = false;
     widgetPairTargetIndex_ = static_cast<size_t>(-1);
     widgetPairAction_ = snowdesktop::widget_pair_drop::Action::None;
     if (hwnd_ && IsWindow(hwnd_))
@@ -454,6 +481,7 @@ void DesktopApp::EndDragSession()
     CancelCollectionPopupDwell();
     CancelCollectionGroupTabDwell();
     dragSession_.End();
+    ResetDockRunningDrag();
     dragIconsOnly_ = false;
     ClearPopupDragTarget();
     presentedDragFeedbackRevision_ = 0;
@@ -527,6 +555,7 @@ bool DesktopApp::CanCancelPointerPressAfterCaptureLoss() const
 
 void DesktopApp::CancelPointerPressWithoutCaptureRelease()
 {
+    rightButtonItemDrag_ = false;
     if (auto* view = GetCategorizedPopupView())
     {
         view->EndCategoryTabDrag(false);

@@ -25,7 +25,8 @@ public:
  *
  * The adapter owns COM identity and reference counting. It translates OLE
  * callbacks into application-level handlers without making DesktopApp itself
- * a COM object.
+ * a COM object. Drop handlers retain the initiating mouse button for Shell
+ * handoffs even after OLE reports its release, with the latest modifiers.
  */
 class OleDragDropAdapter final : public IDropTarget, public IDropSource
 {
@@ -56,4 +57,5 @@ private:
 
     LONG referenceCount_ = 1;
     OleDragDropHandler* handler_ = nullptr;
+    DWORD dragButtons_ = 0;
 };

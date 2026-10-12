@@ -3,6 +3,7 @@
 #include "status_bar_glyphs.h"
 #include "status_bar_battery.h"
 #include "status_bar_layout.h"
+#include "status_bar_tooltip.h"
 #include "status_bar_presentation.h"
 #include "widget/preview/widget_preview_stage.h"
 #include "system/tray/tray_presentation.h"
@@ -19,6 +20,139 @@ namespace snowdesktop
 using Microsoft::WRL::ComPtr;
 namespace
 {
+// Microsoft Fluent System Icons: Alert 24 Filled, MIT.
+// Copyright (c) Microsoft Corporation. All rights reserved.
+// Unmodified contours from microsoft/fluentui-system-icons@
+// 21d5d02f724be2aaf586564775fff73a18a76eb6:
+// assets/Alert/SVG/ic_fluent_alert_24_filled.svg
+// License: third_party/fluentui-system-icons/LICENSE.
+ComPtr<ID2D1PathGeometry> CreateNotificationBellGeometry(ID2D1Factory* factory)
+{
+    ComPtr<ID2D1PathGeometry> geometry;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (!factory || FAILED(factory->CreatePathGeometry(&geometry)) || FAILED(geometry->Open(&sink))) return {};
+    sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+    sink->BeginFigure(D2D1::Point2F(9.04173f, 19.003f), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddLine(D2D1::Point2F(14.9583f, 19.003f));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(14.7196f, 20.4211f), D2D1::Point2F(13.486f, 21.5015f), D2D1::Point2F(12.f, 21.5015f)));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(10.514f, 21.5015f), D2D1::Point2F(9.28037f, 20.4211f), D2D1::Point2F(9.04173f, 19.003f)));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    sink->BeginFigure(D2D1::Point2F(12.f, 2.00391f), D2D1_FIGURE_BEGIN_FILLED);
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(16.1421f, 2.00391f), D2D1::Point2F(19.5f, 5.36177f), D2D1::Point2F(19.5f, 9.50391f)));
+    sink->AddLine(D2D1::Point2F(19.5f, 13.5024f));
+    sink->AddLine(D2D1::Point2F(20.9183f, 16.6625f));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(20.9732f, 16.7848f), D2D1::Point2F(21.0016f, 16.9174f), D2D1::Point2F(21.0016f, 17.0515f)));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(21.0016f, 17.5762f), D2D1::Point2F(20.5763f, 18.0015f), D2D1::Point2F(20.0516f, 18.0015f)));
+    sink->AddLine(D2D1::Point2F(3.95219f, 18.0015f));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(3.8184f, 18.0015f), D2D1::Point2F(3.68613f, 17.9733f), D2D1::Point2F(3.56402f, 17.9186f)));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(3.08515f, 17.7042f), D2D1::Point2F(2.87073f, 17.1422f), D2D1::Point2F(3.08511f, 16.6633f)));
+    sink->AddLine(D2D1::Point2F(4.50001f, 13.5028f));
+    sink->AddLine(D2D1::Point2F(4.50011f, 9.49099f));
+    sink->AddLine(D2D1::Point2F(4.50453f, 9.24107f));
+    sink->AddBezier(D2D1::BezierSegment(D2D1::Point2F(4.6436f, 5.21035f), D2D1::Point2F(7.95588f, 2.00391f), D2D1::Point2F(12.f, 2.00391f)));
+    sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+    if (FAILED(sink->Close())) return {};
+    return geometry;
+}
+bool DrawNotificationBell(ID2D1RenderTarget* context, ID2D1SolidColorBrush* brush, D2D1_RECT_F bounds)
+{
+    ComPtr<ID2D1Factory> factory;
+    context->GetFactory(&factory);
+    const auto bell = CreateNotificationBellGeometry(factory.Get());
+    if (!bell) return false;
+    D2D1_MATRIX_3X2_F originalTransform{};
+    context->GetTransform(&originalTransform);
+    D2D1_RECT_F ink{};
+    if (FAILED(bell->GetBounds(nullptr, &ink))) return false;
+    const float sx = (bounds.right - bounds.left) / 24.f;
+    const float sy = (bounds.bottom - bounds.top) / 24.f;
+    context->SetTransform(D2D1::Matrix3x2F::Scale(sx,
+        sy) * D2D1::Matrix3x2F::Translation(
+            (bounds.left + bounds.right - (ink.left + ink.right) * sx) / 2,
+            (bounds.top + bounds.bottom - (ink.top + ink.bottom) * sy) / 2) * originalTransform);
+    context->FillGeometry(bell.Get(), brush);
+    context->SetTransform(originalTransform);
+    return true;
+}
+
+void DrawCenteredBarText(ID2D1RenderTarget* context, IDWriteFactory* factory, IDWriteTextFormat* format,
+    std::wstring_view value, D2D1_RECT_F bounds, ID2D1Brush* brush, bool fixedInformationBaseline = false,
+    bool rightAligned = false)
+{
+    ComPtr<IDWriteTextLayout> layout;
+    if (FAILED(factory->CreateTextLayout(value.data(), static_cast<UINT32>(value.size()), format,
+            bounds.right - bounds.left, bounds.bottom - bounds.top, &layout))) return;
+    if (rightAligned) layout->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+    auto origin = D2D1::Point2F(bounds.left, bounds.top);
+    if (fixedInformationBaseline)
+    {
+        // One line box and baseline for every readout, independent of the
+        // current digits. Keep labels and values together on that baseline.
+        const float size = format->GetFontSize();
+        if (FAILED(layout->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM, size * 4.f / 3.f, size))) return;
+        origin.y += size / 12.f;
+    }
+    else
+    {
+        DWRITE_OVERHANG_METRICS ink{};
+        if (SUCCEEDED(layout->GetOverhangMetrics(&ink)))
+        {
+            origin.x += (ink.left - ink.right) / 2;
+            origin.y += (ink.top - ink.bottom) / 2;
+        }
+    }
+    context->PushAxisAlignedClip(bounds, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    context->DrawTextLayout(origin, layout.Get(), brush);
+    context->PopAxisAlignedClip();
+}
+
+bool DrawCenteredBarGlyph(ID2D1RenderTarget* context, IDWriteFontFace* face, std::wstring_view value,
+    float size, D2D1_RECT_F bounds, ID2D1Brush* brush, std::wstring_view reference = {})
+{
+    if (!face || value.empty()) return false;
+    UINT32 code = static_cast<UINT32>(value.front());
+    if (value.size() == 2 && code >= 0xd800 && code <= 0xdbff && value[1] >= 0xdc00 && value[1] <= 0xdfff)
+        code = 0x10000 + ((code - 0xd800) << 10) + (static_cast<UINT32>(value[1]) - 0xdc00);
+    else if (value.size() != 1) return false;
+    UINT16 glyph = 0;
+    if (FAILED(face->GetGlyphIndices(&code, 1, &glyph)) || !glyph) return false;
+    ComPtr<ID2D1Factory> factory; context->GetFactory(&factory);
+    ComPtr<ID2D1PathGeometry> geometry;
+    ComPtr<ID2D1GeometrySink> sink;
+    if (!factory || FAILED(factory->CreatePathGeometry(&geometry)) || FAILED(geometry->Open(&sink)) ||
+        FAILED(face->GetGlyphRunOutline(size, &glyph, nullptr, nullptr, 1, FALSE, FALSE, sink.Get())) ||
+        FAILED(sink->Close())) return false;
+    D2D1_RECT_F ink{};
+    if (FAILED(geometry->GetBounds(nullptr, &ink)) || ink.right <= ink.left || ink.bottom <= ink.top) return false;
+    if (reference.size() == 1 && reference != value)
+    {
+        // All volume states retain the full-volume icon's origin. Centering
+        // a quieter state's shorter waves pushes the speaker body right.
+        const UINT32 referenceCode = static_cast<UINT32>(reference.front());
+        UINT16 referenceGlyph = 0;
+        ComPtr<ID2D1PathGeometry> referenceGeometry;
+        ComPtr<ID2D1GeometrySink> referenceSink;
+        D2D1_RECT_F referenceInk{};
+        if (SUCCEEDED(face->GetGlyphIndices(&referenceCode, 1, &referenceGlyph)) && referenceGlyph &&
+            SUCCEEDED(factory->CreatePathGeometry(&referenceGeometry)) &&
+            SUCCEEDED(referenceGeometry->Open(&referenceSink)) &&
+            SUCCEEDED(face->GetGlyphRunOutline(size, &referenceGlyph, nullptr, nullptr, 1, FALSE, FALSE, referenceSink.Get())) &&
+            SUCCEEDED(referenceSink->Close()) && SUCCEEDED(referenceGeometry->GetBounds(nullptr, &referenceInk)) &&
+            referenceInk.right > referenceInk.left && referenceInk.bottom > referenceInk.top)
+            ink = referenceInk;
+    }
+    // The icon font's conservative glyph metrics can differ from its actual
+    // paths. Draw those unchanged paths at their measured center, just like
+    // the SVG bell and battery, with no font-baseline or hinting displacement.
+    D2D1_MATRIX_3X2_F original{}; context->GetTransform(&original);
+    context->SetTransform(D2D1::Matrix3x2F::Translation(
+        (bounds.left + bounds.right - ink.left - ink.right) / 2,
+        (bounds.top + bounds.bottom - ink.top - ink.bottom) / 2) * original);
+    context->FillGeometry(geometry.Get(), brush);
+    context->SetTransform(original);
+    return true;
+}
+
 std::wstring Percent(double value)
 {
     return std::isfinite(value) && value >= 0 && value <= 100 ?
@@ -114,7 +248,7 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         const auto value = snapshot.memory;
         const auto usage = value && value->available && value->totalBytes ?
             Percent(100. * value->usedBytes / value->totalBytes) : L"—";
-        add("memory", _LW("statusBar.memory") + std::wstring(L" ") + usage, StatusBarAction::Memory, L"", true);
+        add("memory", L"RAM " + usage, StatusBarAction::Memory, L"", true);
         items.back().tip = std::wstring(_LW("statusBar.memory")) + L"  " + usage;
     }
     if (s.gpu)
@@ -153,13 +287,20 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         // back to its bar, independently for every monitor.
         items.back().flipGlyph = (s.position == DockPosition::Bottom) != snapshot.trayExpanded;
     }
-    if (s.inputMethod && !snapshot.inputMethod.label.empty())
+    if (s.inputMethod && (!snapshot.inputMethod.label.empty() || !snapshot.inputMethod.layoutLabel.empty()))
     {
         const auto& input = snapshot.inputMethod;
-        add("inputMethod", input.label, StatusBarAction::InputMethod);
-        items.back().tip = std::wstring(_LW("statusBar.inputMethod"));
+        const auto& layoutLabel = input.layoutLabel.empty() ? input.label : input.layoutLabel;
+        if (!input.label.empty() && input.label != layoutLabel)
+        {
+            add("inputMethod", input.label, StatusBarAction::InputMethod);
+            items.back().tip = std::wstring(_LW("statusBar.inputMethod"));
+            if (!input.description.empty()) items.back().tip += L"  " + input.description;
+            items.back().tip += L"\n" + std::wstring(_LW("statusBar.inputMethod.switch"));
+        }
+        add("inputMethodLayout", L"", StatusBarAction::InputMethodPanel, L"\uF4B8"); // keyboard
+        items.back().tip = std::wstring(_LW("statusBar.inputMethodPanel"));
         if (!input.description.empty()) items.back().tip += L"  " + input.description;
-        items.back().tip += L"\n" + std::wstring(_LW("statusBar.inputMethod.switch"));
     }
     const auto audio = snapshot.audio;
     const auto power = snapshot.power;
@@ -177,9 +318,9 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
     control.batteryTone = battery.tone;
     control.batteryPluggedIn = battery.pluggedIn;
     control.batteryLevel = power && power->available ? StatusBarBatteryLevel(power->batteryPercent) : -1;
-    control.controlTips[0] = networkTip;
-    control.controlTips[1] = std::wstring(_LW("statusBar.volume")) + L"  " +
-        (audio && audio->available ? (audio->muted ? std::wstring(_LW("statusBar.muted")) : Percent(audio->volume * 100.)) : L"—");
+    control.controlTips[0] = snapshot.network && snapshot.network->available ?
+        StatusBarNetworkTooltip(snapshot.network->connections, networkTip) : networkTip;
+    control.controlTips[1] = StatusBarVolumeTooltip(snapshot.audioDevice, audio);
     if (hasBattery)
         control.controlTips[2] = std::wstring(_LW(battery.label)) + L"  " + Percent(power->batteryPercent);
     return items;
@@ -195,15 +336,16 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
             a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels;
         return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs &&
             a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel && a.batteryPluggedIn == b.batteryPluggedIn &&
-            a.flipGlyph == b.flipGlyph;
+            a.flipGlyph == b.flipGlyph && a.inputIcon == b.inputIcon;
     });
 }
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
     UINT w, UINT h, float scale, const PersonalizationSettings& a, const StatusBarPalette& palette,
-    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock)
+    std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,
+    bool timeNotificationRightAligned)
 {
     if (!context || !text || !w || !h || !std::isfinite(scale) || scale <= 0) return E_INVALIDARG;
-    const bool twoLineClock = StatusBarUsesTwoLineClock(mergedDock, static_cast<float>(h), scale);
+    const bool twoLineClock = StatusBarUsesTwoLineClock(mergedDock);
     const bool hc = palette.highContrast;
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(hc ? palette.foreground :
@@ -217,6 +359,22 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
     ComPtr<IDWriteTextFormat> batteryFormat;
     batteryFormat.Attach(CreateFluentTextFormat(text, 20.f * scale));
     if (!format || !brush || !iconFormat || !batteryFormat) return E_FAIL;
+    ComPtr<IDWriteFontFace> iconFace;
+    ComPtr<IDWriteFontCollection> iconFonts;
+    UINT32 familyIndex = 0; BOOL familyExists = FALSE;
+    if (SUCCEEDED(iconFormat->GetFontCollection(&iconFonts)) && iconFonts &&
+        SUCCEEDED(iconFonts->FindFamilyName(L"FluentSystemIcons-Regular", &familyIndex, &familyExists)) && familyExists)
+    {
+        ComPtr<IDWriteFontFamily> family; ComPtr<IDWriteFont> font;
+        if (SUCCEEDED(iconFonts->GetFontFamily(familyIndex, &family)) &&
+            SUCCEEDED(family->GetFirstMatchingFont(DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STRETCH_NORMAL,
+                DWRITE_FONT_STYLE_NORMAL, &font))) font->CreateFontFace(&iconFace);
+    }
+    const auto drawGlyph = [&](std::wstring_view glyph, IDWriteTextFormat* glyphFormat, D2D1_RECT_F bounds,
+        std::wstring_view reference = {}) {
+        if (!DrawCenteredBarGlyph(context, iconFace.Get(), glyph, glyphFormat->GetFontSize(), bounds, brush.Get(), reference))
+            DrawCenteredBarText(context, text, glyphFormat, glyph, bounds, brush.Get());
+    };
     format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
     if (format && brush)
     {
@@ -224,19 +382,21 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         const float padding = 12.f * scale;
         const auto extentOf = [&](const StatusBarItem& item) {
-            if (item.key == "controlCenter" && item.controlGlyphs[2].empty()) return 64.f * scale;
+            if (item.key == "controlCenter" && item.controlGlyphs[2].empty()) return 56.f * scale;
             if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
-            if (item.icon || item.text.empty()) return 32.f * scale;
+            if (item.icon || item.inputIcon || item.text.empty()) return 28.f * scale;
             auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
-            if (item.key == "memory") reserved = std::wstring(_LW("statusBar.memory")) + L" 100%";
+            if (item.key == "memory") reserved = L"RAM 100%";
+            if (item.key == "cpu") reserved = L"CPU 100%";
+            if (item.key == "gpu") reserved = L"GPU 100%";
             // Reserve equal digit advances for the date/time too.
             if (item.key == "clock") for (auto& c : reserved) if (c >= L'0' && c <= L'9') c = L'8';
             ComPtr<IDWriteTextLayout> layout;
             DWRITE_TEXT_METRICS metrics{};
             if (SUCCEEDED(text->CreateTextLayout(reserved.c_str(), static_cast<UINT32>(reserved.size()),
                     format.Get(), 2000.f, static_cast<float>(h), &layout))) layout->GetMetrics(&metrics);
-            const float paddingDip = item.key == "memory" ? 12.f : item.glyph.empty() ? 16.f : 36.f;
-            return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 32.f * scale, 260.f * scale);
+            const float paddingDip = item.key == "clock" ? (mergedDock ? 8.f : 0.f) : item.glyph.empty() ? 8.f : 28.f;
+            return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 28.f * scale, 260.f * scale);
         };
         std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex;
         std::vector<std::size_t> leftIndices, rightIndices;
@@ -263,18 +423,28 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         const LONG edgePadding = static_cast<LONG>(padding);
         // Keep the date itself centered. The symmetric reservation protects
         // its trailing notification button without shifting the date left.
-        if (!mergedDock && clockWidth + 2 * notificationWidth + 2 * (edgePadding + controlWidth) > viewportWidth)
+        if (!mergedDock && !timeNotificationRightAligned &&
+            clockWidth + 2 * notificationWidth + 2 * (edgePadding + controlWidth) > viewportWidth)
             clockWidth = 0;
         LONG leftLimit = 0;
-        if (mergedDock)
+        if (mergedDock || timeNotificationRightAligned)
         {
-            const auto layout = LayoutMergedStatusBar(viewportWidth, viewportHeight, scale,
-                edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex);
+            const auto layout = LayoutRightStatusBar(viewportWidth, viewportHeight, scale,
+                edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex, mergedDock);
             if (clockIndex) items[*clockIndex].bounds = layout.clock;
             if (notificationIndex) items[*notificationIndex].bounds = layout.notifications;
             for (std::size_t i = 0; i < rightIndices.size(); ++i)
                 items[rightIndices[i]].bounds = layout.right[i];
-            leftLimit = layout.center.left - edgePadding;
+            if (mergedDock) leftLimit = layout.center.left - edgePadding;
+            else
+            {
+                leftLimit = viewportWidth - edgePadding;
+                const auto reserve = [&](RECT bounds) {
+                    if (!IsRectEmpty(&bounds)) leftLimit = std::min(leftLimit, bounds.left - edgePadding);
+                };
+                reserve(layout.clock); reserve(layout.notifications);
+                for (const auto& bounds : layout.right) reserve(bounds);
+            }
         }
         else
         {
@@ -321,17 +491,32 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             if (hover && item.action != StatusBarAction::None && hoverBrush) context->FillRoundedRectangle(inset, hoverBrush.Get());
             brush->SetColor(hc && hover ? palette.highlightText : hc ? palette.foreground :
                 D2D1::ColorF(a.contentTheme == 1 ? 0x202020 : 0xf4f4f4));
-            if (item.icon)
+            if (item.icon || item.inputIcon)
             {
-                const auto& icon = *item.icon;
+                const auto width = item.icon ? item.icon->width : item.inputIcon->width;
+                const auto height = item.icon ? item.icon->height : item.inputIcon->height;
+                const auto& pixels = item.icon ? item.icon->pixels : item.inputIcon->pixels;
                 ComPtr<ID2D1Bitmap> bitmap;
-                if (icon.width > 0 && icon.height > 0 && icon.width <= 64 && icon.height <= 64 && icon.pixels.size() == static_cast<std::size_t>(icon.width) * icon.height && SUCCEEDED(context->CreateBitmap(D2D1::SizeU(icon.width, icon.height),
-                        icon.pixels.data(), icon.width * 4,
+                if (width > 0 && height > 0 && width <= 64 && height <= 64 && pixels.size() == static_cast<std::size_t>(width) * height && SUCCEEDED(context->CreateBitmap(D2D1::SizeU(width, height),
+                        pixels.data(), width * 4,
                         D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)), &bitmap)))
                 {
-                    const float size = 18.f * scale;
-                    const float iconLeft = (rect.left + rect.right - size) / 2, iconTop = (rect.top + rect.bottom - size) / 2;
-                    context->DrawBitmap(bitmap.Get(), D2D1::RectF(iconLeft, iconTop, iconLeft + size, iconTop + size));
+                    const float pixelScale = (item.inputIcon ? 14.f : 18.f) * scale /
+                        static_cast<float>(std::max(width, height));
+                    LONG inkLeft = static_cast<LONG>(width), inkTop = static_cast<LONG>(height), inkRight = 0, inkBottom = 0;
+                    for (DWORD y = 0; y < height; ++y)
+                        for (DWORD x = 0; x < width; ++x)
+                            if ((pixels[static_cast<std::size_t>(y) * width + x] >> 24) >= 16)
+                            {
+                                inkLeft = std::min(inkLeft, static_cast<LONG>(x)); inkTop = std::min(inkTop, static_cast<LONG>(y));
+                                inkRight = std::max(inkRight, static_cast<LONG>(x + 1)); inkBottom = std::max(inkBottom, static_cast<LONG>(y + 1));
+                            }
+                    if (inkRight <= inkLeft || inkBottom <= inkTop)
+                    { inkLeft = inkTop = 0; inkRight = static_cast<LONG>(width); inkBottom = static_cast<LONG>(height); }
+                    const float iconLeft = (rect.left + rect.right - static_cast<float>(inkLeft + inkRight) * pixelScale) / 2;
+                    const float iconTop = (rect.top + rect.bottom - static_cast<float>(inkTop + inkBottom) * pixelScale) / 2;
+                    context->DrawBitmap(bitmap.Get(), D2D1::RectF(iconLeft, iconTop,
+                        iconLeft + static_cast<float>(width) * pixelScale, iconTop + static_cast<float>(height) * pixelScale));
                 }
 
             }
@@ -343,7 +528,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                     for (std::size_t part = 0; part < item.controlGlyphs.size(); ++part)
                     {
                         if (item.controlGlyphs[part].empty()) continue;
-                        const float left = rect.left + (4 + 28.f * static_cast<float>(part)) * scale;
+                        const float left = rect.left + 28.f * static_cast<float>(part) * scale;
                         const auto color = brush->GetColor();
                         if (part == 2 && !hc)
                         {
@@ -367,8 +552,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         else
                         {
                             const auto& glyph = item.controlGlyphs[part];
-                            context->DrawText(glyph.c_str(), static_cast<UINT32>(glyph.size()), part == 2 ? batteryFormat.Get() : iconFormat.Get(),
-                                D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                            drawGlyph(glyph, part == 2 ? batteryFormat.Get() : iconFormat.Get(),
+                                D2D1::RectF(left, rect.top, left + 28 * scale, rect.bottom),
+                                part == 1 ? std::wstring_view(status_bar_glyphs::kSpeaker) : std::wstring_view{});
                         }
                         brush->SetColor(color);
                     }
@@ -376,6 +562,11 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                 else if (!item.glyph.empty() && iconFormat)
                 {
                     auto iconRect = rect;
+                    // The filled dome makes a geometrically centered bell
+                    // look raised. Keep its click target and horizontal center
+                    // while moving all known bell states down one scaled DIP.
+                    if (item.action == StatusBarAction::Notifications && item.glyph != status_bar_glyphs::kUnknown)
+                    { iconRect.top += scale; iconRect.bottom += scale; }
                     if (!item.text.empty()) { iconRect.right = iconRect.left + 28.f * scale; textRect.left += 22.f * scale; }
                     D2D1_MATRIX_3X2_F originalTransform{};
                     if (item.flipGlyph)
@@ -385,13 +576,29 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                             D2D1::Point2F((iconRect.left + iconRect.right) / 2,
                                 (iconRect.top + iconRect.bottom) / 2)) * originalTransform);
                     }
-                    context->DrawText(item.glyph.c_str(), static_cast<UINT32>(item.glyph.size()), iconFormat.Get(), iconRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    const float iconSize = iconFormat->GetFontSize();
+                    const float iconLeft = (iconRect.left + iconRect.right - iconSize) / 2;
+                    const float iconTop = (iconRect.top + iconRect.bottom - iconSize) / 2;
+                    const bool bellDrawn = item.action == StatusBarAction::Notifications &&
+                        item.glyph == status_bar_glyphs::kNotificationsPending &&
+                        DrawNotificationBell(context, brush.Get(),
+                            D2D1::RectF(iconLeft, iconTop, iconLeft + iconSize, iconTop + iconSize));
+                    if (!bellDrawn)
+                        drawGlyph(item.glyph, iconFormat.Get(), iconRect);
                     if (item.flipGlyph) context->SetTransform(originalTransform);
                 }
                 if (!item.text.empty())
                 {
+                    const bool mergedClock = mergedDock && item.key == "clock";
+                    if (mergedClock)
+                    {
+                        textRect.left += 4.f * scale;
+                        textRect.right -= 4.f * scale;
+                    }
                     const auto displayed = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
-                    context->DrawText(displayed.c_str(), static_cast<UINT32>(displayed.size()), format.Get(), textRect, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+                    DrawCenteredBarText(context, text, format.Get(), displayed, textRect, brush.Get(),
+                        item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
+                        item.key == "gpu" || item.key == "traffic", mergedClock);
                 }
             }
             if (keyboardFocusVisible && &item == &items[std::min(focused, items.size() - 1)])
@@ -410,22 +617,25 @@ PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings& a
     return fill;
 }
 void DrawStatusBarEdge(ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance,
-    float scale, DockPosition position)
+    float scale, DockPosition position, RECT adjacentDock)
 {
     if (!context || IsRectEmpty(&frame)) return;
-    const auto clip = D2D1::RectF(static_cast<float>(frame.left), static_cast<float>(frame.top),
-        static_cast<float>(frame.right), static_cast<float>(frame.bottom));
+    const auto segments = StatusBarEdgeSegments(frame, position, adjacentDock);
     if (appearance.widgetEdgeHighlightEnabled && appearance.widgetEdgeHighlightStrength > .0005f)
     {
         using widget_preview::HighlightEdge;
         const auto edge = position == DockPosition::Bottom ? HighlightEdge::Top :
             position == DockPosition::Left ? HighlightEdge::Right :
             position == DockPosition::Right ? HighlightEdge::Left : HighlightEdge::Bottom;
-        context->PushAxisAlignedClip(clip, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-        (void)widget_preview::DrawEdgeHighlight(context, frame, 0,
-            D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
-            appearance.widgetEdgeHighlightWidth * scale, appearance.widgetEdgeHighlightStrength, appearance.edgeLight, edge);
-        context->PopAxisAlignedClip();
+        for (const auto& segment : segments)
+        {
+            context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(segment.left), static_cast<float>(segment.top),
+                static_cast<float>(segment.right), static_cast<float>(segment.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+            (void)widget_preview::DrawEdgeHighlight(context, frame, 0,
+                D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
+                appearance.widgetEdgeHighlightWidth * scale, appearance.widgetEdgeHighlightStrength, appearance.edgeLight, edge);
+            context->PopAxisAlignedClip();
+        }
     }
     if (appearance.widgetBorderWidth <= 0 || appearance.widgetBorderAlpha <= 0) return;
     ComPtr<ID2D1SolidColorBrush> border;
@@ -435,12 +645,14 @@ void DrawStatusBarEdge(ID2D1DeviceContext* context, RECT frame, const Personaliz
     if (position == DockPosition::Left || position == DockPosition::Right)
     {
         const float x = position == DockPosition::Right ? frame.left + width / 2 : frame.right - width / 2;
-        if (border) context->DrawLine(D2D1::Point2F(x, static_cast<float>(frame.top)),
-            D2D1::Point2F(x, static_cast<float>(frame.bottom)), border.Get(), width);
+        if (border) for (const auto& segment : segments)
+            context->DrawLine(D2D1::Point2F(x, static_cast<float>(segment.top)),
+                D2D1::Point2F(x, static_cast<float>(segment.bottom)), border.Get(), width);
         return;
     }
     const float y = position == DockPosition::Bottom ? frame.top + width / 2 : frame.bottom - width / 2;
-    if (border) context->DrawLine(D2D1::Point2F(static_cast<float>(frame.left), y),
-        D2D1::Point2F(static_cast<float>(frame.right), y), border.Get(), width);
+    if (border) for (const auto& segment : segments)
+        context->DrawLine(D2D1::Point2F(static_cast<float>(segment.left), y),
+            D2D1::Point2F(static_cast<float>(segment.right), y), border.Get(), width);
 }
 }

@@ -175,6 +175,9 @@ void DesktopApp::DrawCollectionPopup(
                 sortLabel =
                     _LW("app.interact.sort_date");
                 break;
+            case snowdesktop::folder_sort_rules::kSize:
+                sortLabel = _LW("app.menu.sort_size");
+                break;
             default:
                 break;
             }
@@ -200,6 +203,19 @@ void DesktopApp::DrawCollectionPopup(
     }
 
     RECT content = GetCollectionPopupContentRect(popupRect_);
+    if (auto* group = GetGroupPopupView())
+    {
+        const RECT frame = GetCategorizedPopupFrame(popupRect_);
+        group->SetPopupFrame(&frame);
+        ctx->PushAxisAlignedClip(ToD2DRect(frame), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+        group->DrawContent(ctx, frame);
+        group->DrawScrollbar(ctx, PtInRect(&frame, lastMousePoint_) != FALSE);
+        if (dragSession_.TargetContainer() == group)
+            group->DrawDropPreview(ctx, dragSession_.TargetSlot(), dragSession_.TargetRegion());
+        ctx->PopAxisAlignedClip();
+        if (animationApplied) ctx->SetTransform(previousTransform);
+        return;
+    }
     if (auto* view = GetCategorizedPopupView())
     {
         const RECT controls = GetCollectionPopupControlsRect(popupRect_);
@@ -341,7 +357,7 @@ void DesktopApp::DrawCollectionPopup(
         RECT textRect = pose.label;
         InflateRect(&textRect, -layout::ScaleDimension(8, popupMetrics.scale), 0);
         DrawD2DTextEllipsis(ctx, GetCollectionPopupFanLabel(index), textRect,
-            itemTextFormat_.Get(), selected ? D2D1::ColorF(D2D1::ColorF::White) : popupTextColor(1.0f),
+            fanTitleTextFormat_.Get(), selected ? D2D1::ColorF(D2D1::ColorF::White) : popupTextColor(1.0f),
             DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         ctx->SetTransform(transform);
     };

@@ -367,7 +367,14 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
             }
         }
         if (isSingleLine)
+        {
+            // Use the same exact centering band in both states. The expanded
+            // clipping height includes rounding and anti-aliasing clearance;
+            // centering there and compensating the origin moves short labels.
+            if (selected && metrics.lineCount == 1)
+                layout->SetMaxHeight(lineHeight * static_cast<float>(titleLines));
             layout->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        }
         layoutIt = itemTextLayoutCache_.emplace(std::move(layoutKey), std::move(layout)).first;
     }
 
@@ -410,9 +417,24 @@ void DesktopApp::DrawItemText(ID2D1RenderTarget* context, RECT bounds,
     }
     if (isSingleLine && selected)
     {
-        RECT cr = GetItemTextRect(bounds, false, componentTitleLines);
-        float collapsedH = static_cast<float>(cr.bottom - cr.top);
-        ty = cr.top + (collapsedH - th) * 0.5f;
+        if (metrics.lineCount == 1)
+        {
+            if (componentPanel && titleLines == 1)
+            {
+                const float collapsedClipHeight = static_cast<float>(
+                    snowdesktop::item_layout_rules::TextHeightForLineCount(lineHeight, titleLines));
+                ty += std::max(0.0f,
+                    (static_cast<float>(visualMetrics.titleHeight) - collapsedClipHeight) * 0.5f);
+            }
+        }
+        else
+        {
+            // Preserve the existing wide-measurement fallback for titles
+            // that contain explicit newlines or barely exceed one line.
+            RECT cr = GetItemTextRect(bounds, false, componentTitleLines);
+            float collapsedH = static_cast<float>(cr.bottom - cr.top);
+            ty = cr.top + (collapsedH - th) * 0.5f;
+        }
     }
 
     DrawStyledItemTextLayout(

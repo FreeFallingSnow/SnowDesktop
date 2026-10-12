@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "desktop/folder_mapping_visibility_rules.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "icons/large_icon_backup.h"
 #include "platform/operation_recovery_dialog.h"
@@ -46,6 +47,7 @@ void DesktopApp::ReloadLayoutStateFromDisk()
     LoadLayoutSlots();
     RecreateItemTextFormat();
     RecreateComponentListTextFormat();
+    RecreateFanTitleTextFormat();
     // Preserve the page dimensions just restored from disk rather than the
     // pre-reload runtime grid. Both asynchronous read paths use this boundary.
     UpdateLayoutWorkArea(false);
@@ -161,6 +163,9 @@ void DesktopApp::LoadLayoutSlots()
             document.listItemFontSizeCu, document.listItemFontSize);
     listItemFontSizeCu_ = savedListFontSizeCu.value_or(
         itemFontSizeCu_);
+
+    fanTitleFontSizeCu_ = snowdesktop::font_cu_rules::ResolveStoredSize(
+        document.fanTitleFontSizeCu, std::nullopt).value_or(itemFontSizeCu_);
 
     if (document.desktopTitleLines) desktopTitleLines_ = std::clamp(*document.desktopTitleLines, 1, 2);
     if (document.largeFolderTitleLines) largeFolderTitleLines_ = std::clamp(*document.largeFolderTitleLines, 1, 2);
@@ -345,6 +350,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.demoIconCategory = Utf8ToWide(
             saved.demoIconCategory);
         widget.sourceFolderPath = Utf8ToWide(saved.sourceFolderPath);
+        widget.sourceDesktopItemKey = Utf8ToWide(saved.sourceDesktopItemKey);
         widget.packageId = Utf8ToWide(saved.packageId);
         widget.packageSourceProvider = Utf8ToWide(
             saved.packageSourceProvider);
@@ -680,12 +686,13 @@ void DesktopApp::LoadLayoutSlots()
             entry.type = DockEntryType::DesktopItem;
         entry.reference = Utf8ToWide(saved.reference);
         // Preserve the existing on-disk "collection" reference token. The
-        // referenced widget supplies its precise runtime type, including desktop files.
+        // referenced widget supplies its precise runtime type, including groups.
         if (entry.type == DockEntryType::Collection)
         {
             const size_t index = FindWidgetIndexById(entry.reference);
-            if (index < widgets_.size() && widgets_[index].type == DesktopWidgetType::FileCategories)
-                entry.type = DockEntryType::DesktopFiles;
+            if (index < widgets_.size() &&
+                DockEntryTypeForWidget(widgets_[index].type) != DockEntryType::DesktopItem)
+                entry.type = DockEntryTypeForWidget(widgets_[index].type);
         }
         if (entry.type == DockEntryType::DesktopItem)
             entry.reference = ToUpperInvariant(entry.reference);
@@ -740,13 +747,13 @@ void DesktopApp::LoadLayoutSlots()
             FindWidgetIndexById(entry.reference);
         if (widgetIndex >= widgets_.size())
             return true;
-        if (entry.type == DockEntryType::FolderMapping ||
+        if (entry.type == DockEntryType::Collection || entry.type == DockEntryType::FolderMapping ||
             entry.type == DockEntryType::DesktopFiles)
         {
             for (auto& group : widgets_)
             {
-                if (group.type !=
-                        DesktopWidgetType::FileGroup)
+                if (group.type != (entry.type == DockEntryType::Collection
+                        ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup))
                     continue;
                 std::erase(
                     group.childWidgetIds,
@@ -919,7 +926,8 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     // changes membership and therefore never reaches this conversion.
     RefreshCollectedKeysCache();
     for (auto& item : items_)
-        if (item.largeIcon && (IsItemInAnyWidget(item) || item.gridCell.pageId == kDockPageId))
+        if (item.largeIcon && (snowdesktop::folder_mapping_visibility::HasExplicitOwner(
+                item, widgets_, dockEntries_) || item.gridCell.pageId == kDockPageId))
         {
             item.largeIcon.reset();
             item.gridSpan = {1, 1};
@@ -1025,6 +1033,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"dockLayout\": " << snowdesktop::layout_storage::SerializeDockLayout(dockSettings_)
          << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
+         << ",\n  \"fanTitleFontSizeCu\": " << fanTitleFontSizeCu_
          << ",\n  \"itemFontWeight\": " << static_cast<int>(itemFontWeight_)
          << ",\n  \"desktopTitleLines\": " << desktopTitleLines_
          << ",\n  \"largeFolderTitleLines\": " << largeFolderTitleLines_
@@ -1097,9 +1106,12 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     // to the desktop items array (they belong to their widget's items list)
     std::unordered_set<std::wstring> widgetOwnedKeys;
     for (auto& w : widgets_)
+    {
+        if (w.type == DesktopWidgetType::FolderMapping) continue;
         for (auto& k : w.itemKeys)
             if (!k.empty())
                 widgetOwnedKeys.insert(ToUpperInvariant(k));
+    }
 
     bool firstItem = true;
     for (size_t i = 0; i < sorted.size(); ++i)
@@ -1135,6 +1147,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
              << "\", \"demoIconCategory\": \""
              << JsonEscapeUtf8(w.demoIconCategory)
              << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
+             << "\", \"sourceDesktopItemKey\": \"" << JsonEscapeUtf8(w.sourceDesktopItemKey)
              << "\", \"packageId\": \"" << JsonEscapeUtf8(w.packageId)
              << "\", \"packageSourceProvider\": \""
              << JsonEscapeUtf8(w.packageSourceProvider)

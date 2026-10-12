@@ -5,6 +5,7 @@
 #include "shell_launch_process.h"
 #include "shell_launch_execution.h"
 #include "shell_open_command.h"
+#include "shell_launch_policy.h"
 
 #include <optional>
 
@@ -31,7 +32,11 @@ bool ExecutableManifestRequestsAdministrator(
     if (executablePath.empty())
         return false;
     const wchar_t* extension = PathFindExtensionW(executablePath.c_str());
-    if (!extension || _wcsicmp(extension, L".exe") != 0)
+    if (!extension ||
+        (_wcsicmp(extension, L".exe") != 0 &&
+         _wcsicmp(extension, L".com") != 0 &&
+         _wcsicmp(extension, L".scr") != 0 &&
+         _wcsicmp(extension, L".cpl") != 0))
         return false;
 
     ACTCTXW context{};
@@ -57,6 +62,83 @@ bool ExecutableManifestRequestsAdministrator(
     return queried &&
         (runLevel.RunLevel == ACTCTX_RUN_LEVEL_REQUIRE_ADMIN ||
          runLevel.RunLevel == ACTCTX_RUN_LEVEL_HIGHEST_AVAILABLE);
+}
+
+std::wstring NormalizeLaunchPath(const std::wstring& path)
+{
+    wchar_t expanded[32768]{};
+    const DWORD expandedLength = ExpandEnvironmentStringsW(
+        path.c_str(), expanded, static_cast<DWORD>(std::size(expanded)));
+    const wchar_t* source = expandedLength > 0 && expandedLength <= std::size(expanded)
+        ? expanded : path.c_str();
+    wchar_t absolute[32768]{};
+    const DWORD absoluteLength = GetFullPathNameW(
+        source, static_cast<DWORD>(std::size(absolute)), absolute, nullptr);
+    std::wstring normalized = absoluteLength > 0 && absoluteLength < std::size(absolute)
+        ? absolute : source;
+    // Compatibility properties use ordinary full paths, even when the launch
+    // request carries an extended-length path.
+    if (normalized.starts_with(L"\\\\?\\UNC\\"))
+        normalized = L"\\\\" + normalized.substr(8);
+    else if (normalized.starts_with(L"\\\\?\\"))
+        normalized.erase(0, 4);
+    // Shell links may expand 8.3 aliases while callers still carry them.
+    // Compatibility properties are keyed by the full executable path.
+    wchar_t longPath[32768]{};
+    const DWORD longLength = GetLongPathNameW(normalized.c_str(), longPath,
+        static_cast<DWORD>(std::size(longPath)));
+    if (longLength > 0 && longLength < std::size(longPath))
+        normalized.assign(longPath, longLength);
+    return normalized;
+}
+
+bool CompatibilityRequestsAdministrator(const std::wstring& path)
+{
+    constexpr wchar_t layersKey[] =
+        L"Software\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers";
+    for (const HKEY root : {HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE})
+    {
+        for (const DWORD view : {RRF_SUBKEY_WOW6464KEY, RRF_SUBKEY_WOW6432KEY})
+        {
+            const DWORD flags = RRF_RT_REG_SZ | view;
+            DWORD bytes = 0;
+            if (RegGetValueW(root, layersKey, path.c_str(), flags, nullptr,
+                    nullptr, &bytes) != ERROR_SUCCESS ||
+                bytes < sizeof(wchar_t) || bytes > 65536)
+                continue;
+            std::vector<wchar_t> value(bytes / sizeof(wchar_t) + 1, L'\0');
+            if (RegGetValueW(root, layersKey, path.c_str(), flags, nullptr,
+                    value.data(), &bytes) != ERROR_SUCCESS)
+                continue;
+            const std::wstring_view layers(value.data());
+            size_t position = 0;
+            while ((position = layers.find_first_not_of(L" \t\r\n", position)) !=
+                std::wstring_view::npos)
+            {
+                const size_t end = layers.find_first_of(L" \t\r\n", position);
+                const size_t length = (end == std::wstring_view::npos ? layers.size() : end) - position;
+                if (length == 10 && _wcsnicmp(layers.data() + position, L"RUNASADMIN", 10) == 0)
+                    return true;
+                if (end == std::wstring_view::npos)
+                    break;
+                position = end;
+            }
+        }
+    }
+    return false;
+}
+
+bool RunnablePathRequestsAdministrator(const std::wstring& normalized)
+{
+    std::wstring extension(PathFindExtensionW(normalized.c_str()));
+    CharLowerBuffW(extension.data(), static_cast<DWORD>(extension.size()));
+    if (!shell_launch_policy::IsAdministratorRunnableExtension(extension))
+        return false;
+    const DWORD attributes = GetFileAttributesW(normalized.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+        return false;
+    return CompatibilityRequestsAdministrator(normalized) ||
+        ExecutableManifestRequestsAdministrator(normalized);
 }
 
 bool SafeInvokeContextMenu(
@@ -299,7 +381,10 @@ bool DispatchShellOpen(HWND owner, const std::wstring& path,
 } // namespace
 
 ShellLaunchWorker::ShellLaunchWorker()
-    : ShellLaunchWorker(&ShellLaunchWorker::Execute)
+    : ShellLaunchWorker([](HWND owner, const std::wstring& path,
+          PCIDLIST_ABSOLUTE pidl, int showCommand) {
+          return ExecuteInteractive(owner, path, pidl, showCommand);
+      })
 {
 }
 
@@ -470,7 +555,7 @@ bool shell_launch_process::ExecuteRequestWithApi(
     }
     const bool runAs = request.action == Action::RunAs ||
         (request.action == Action::OpenWithShortcutPolicy &&
-            ShellLaunchWorker::ShortcutRequestsAdministrator(path));
+            ShellLaunchWorker::PathRequestsAdministrator(path));
     if (!runAs)
     {
         const auto pidl = request.absolutePidl.empty() ? nullptr :
@@ -480,12 +565,33 @@ bool shell_launch_process::ExecuteRequestWithApi(
         return open(validOwner, path, pidl, request.showCommand,
             SEE_MASK_NOASYNC | SEE_MASK_FLAG_LOG_USAGE);
     }
+    std::wstring executable = path;
+    std::wstring parameters;
+    if (_wcsicmp(PathFindExtensionW(path.c_str()), L".msi") == 0)
+    {
+        // MSI packages need the Installer executable's runas verb; the package
+        // association normally provides Open, not Run as administrator.
+        wchar_t systemDirectory[MAX_PATH]{};
+        const UINT length = GetSystemDirectoryW(systemDirectory,
+            static_cast<UINT>(std::size(systemDirectory)));
+        if (!length)
+            return false;
+        if (length >= std::size(systemDirectory))
+        {
+            SetLastError(ERROR_INSUFFICIENT_BUFFER);
+            return false;
+        }
+        executable.assign(systemDirectory, length);
+        executable += L"\\msiexec.exe";
+        parameters = L"/i \"" + path + L"\"";
+    }
     SHELLEXECUTEINFOW executeInfo{};
     executeInfo.cbSize = sizeof(executeInfo);
     executeInfo.fMask = SEE_MASK_FLAG_NO_UI | SEE_MASK_NOASYNC;
     executeInfo.hwnd = validOwner;
     executeInfo.lpVerb = L"runas";
-    executeInfo.lpFile = path.c_str();
+    executeInfo.lpFile = executable.c_str();
+    executeInfo.lpParameters = parameters.empty() ? nullptr : parameters.c_str();
     executeInfo.nShow = request.showCommand;
     // Shortcut/manifest inspection can take time. Refresh the handoff only
     // after it finishes, immediately before entering the consent broker.
@@ -505,12 +611,15 @@ bool shell_launch_process::ExecuteRequestWithApi(
     return api.execute(&executeInfo) != FALSE;
 }
 
-bool ShellLaunchWorker::ShortcutRequestsAdministrator(
+bool ShellLaunchWorker::PathRequestsAdministrator(
     const std::wstring& path)
 {
     if (path.empty())
         return false;
-    const wchar_t* extension = PathFindExtensionW(path.c_str());
+    const std::wstring normalized = NormalizeLaunchPath(path);
+    if (RunnablePathRequestsAdministrator(normalized))
+        return true;
+    const wchar_t* extension = PathFindExtensionW(normalized.c_str());
     if (!extension || _wcsicmp(extension, L".lnk") != 0)
         return false;
 
@@ -529,7 +638,7 @@ bool ShellLaunchWorker::ShortcutRequestsAdministrator(
 
     ComPtr<IPersistFile> persistFile;
     if (FAILED(shellLink.As(&persistFile)) || !persistFile ||
-        FAILED(persistFile->Load(path.c_str(), STGM_READ)))
+        FAILED(persistFile->Load(normalized.c_str(), STGM_READ)))
     {
         return false;
     }
@@ -554,16 +663,7 @@ bool ShellLaunchWorker::ShortcutRequestsAdministrator(
         return false;
     }
 
-    wchar_t expandedPath[32768]{};
-    const DWORD expandedLength = ExpandEnvironmentStringsW(
-        targetPath,
-        expandedPath,
-        static_cast<DWORD>(std::size(expandedPath)));
-    const std::wstring executablePath =
-        expandedLength > 0 && expandedLength <= std::size(expandedPath)
-        ? expandedPath
-        : targetPath;
-    return ExecutableManifestRequestsAdministrator(executablePath);
+    return RunnablePathRequestsAdministrator(NormalizeLaunchPath(targetPath));
 }
 
 void ShellLaunchWorker::Run(const std::shared_ptr<State>& state)

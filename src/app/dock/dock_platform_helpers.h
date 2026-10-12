@@ -6,6 +6,7 @@
 #include <numeric>
 #include <tlhelp32.h>
 #include "dock/dock_process_snapshot.h"
+#include "dock/dock_window_source_cloak.h"
 
 inline std::wstring NormalizeDockExecutablePath(std::wstring path)
 {
@@ -287,17 +288,8 @@ QueryDockProcessAncestorExecutablePaths(
     return paths;
 }
 
-inline std::wstring QueryDockWindowAppUserModelId(HWND window)
+inline std::wstring QueryDockProcessAppUserModelId(DWORD processId)
 {
-    ComPtr<IPropertyStore> propertyStore;
-    if (SUCCEEDED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&propertyStore))))
-    {
-        std::wstring appUserModelId = ReadDockAppUserModelId(propertyStore.Get());
-        if (!appUserModelId.empty()) return appUserModelId;
-    }
-
-    DWORD processId = 0;
-    GetWindowThreadProcessId(window, &processId);
     if (!processId) return {};
     HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
     if (!process) return {};
@@ -312,6 +304,19 @@ inline std::wstring QueryDockWindowAppUserModelId(HWND window)
     }
     CloseHandle(process);
     return appUserModelId;
+}
+
+inline std::wstring QueryDockWindowAppUserModelId(HWND window)
+{
+    ComPtr<IPropertyStore> propertyStore;
+    if (SUCCEEDED(SHGetPropertyStoreForWindow(window, IID_PPV_ARGS(&propertyStore))))
+    {
+        std::wstring appUserModelId = ReadDockAppUserModelId(propertyStore.Get());
+        if (!appUserModelId.empty()) return appUserModelId;
+    }
+    DWORD processId = 0;
+    GetWindowThreadProcessId(window, &processId);
+    return QueryDockProcessAppUserModelId(processId);
 }
 
 inline HBITMAP CreateDockShellIconBitmap(
@@ -468,6 +473,12 @@ inline HBITMAP CreateDockWindowIconBitmap(
         bitmapSize = executableBitmapSize;
         return executableBitmap;
     }
+    if (executablePath.empty())
+    {
+        // Protected windows can reject process and WM_GETICON queries.
+        const HICON icon = LoadIconW(nullptr, IDI_APPLICATION);
+        if (icon) return CreateAlphaBitmapFromIcon(icon, requestedSize, requestedSize, bitmapSize);
+    }
     return nullptr;
 }
 
@@ -554,7 +565,8 @@ inline bool IsDockTaskWindow(HWND window, bool includeCloaked = false)
     DWORD cloaked = 0;
     const bool isCloaked = !includeCloaked &&
         SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED,
-            &cloaked, sizeof(cloaked))) && cloaked != 0;
+            &cloaked, sizeof(cloaked))) &&
+        snowdesktop::dock_source_cloak::TaskWindowCloakFlags(window, cloaked) != 0;
     if (!snowdesktop::dock_window_rules::
             IsTaskWindowPresentationEligible(
                 IsWindowVisible(window) != FALSE,

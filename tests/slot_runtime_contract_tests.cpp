@@ -34,7 +34,10 @@
 #include "../src/app/tray/tray_notification_window.h"
 #include "common/constants.h"
 #include "drag_drop/drag_input_rules.h"
+#include "desktop/desktop_hover_rules.h"
 #include "layout/floating_popup_rules.h"
+#include "layout/desktop_item_sort_rules.h"
+#include "layout/popup_animation_rules.h"
 #include "drag_drop/ole_drag_rules.h"
 
 #include <propsys.h>
@@ -50,6 +53,7 @@
 #include <deque>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -73,6 +77,7 @@ void Check(bool condition, const std::string& message)
 #include "shell_icon_request_cases.h"
 #include "startup_icon_cases.h"
 #include "rename_click_cases.h"
+#include "app/rename_selection_cases.h"
 
 class ContractContainer final : public Container
 {
@@ -250,6 +255,7 @@ public:
         lastPoint = point;
         incomingDropEffect = effect ? *effect : DROPEFFECT_NONE;
         if (effect) *effect = dropEffect;
+        if (onDrop) onDrop();
         return dropResult;
     }
 
@@ -281,6 +287,7 @@ public:
     DWORD incomingDropEffect = DROPEFFECT_NONE;
     DWORD dropEffect = DROPEFFECT_COPY;
     HRESULT dropResult = S_OK;
+    std::function<void()> onDrop;
 };
 
 Item* NonOwningItemToken()
@@ -599,9 +606,16 @@ void TestDragSessionVisualVisibilityFollowsOleOwnership()
             session.HasContext() &&
             session.StaticSceneRevision() != activeRevision,
         "drop execution must cross an inactive revision barrier while preserving commit context");
+    Check(session.ResumeAfterDropDecision() && session.IsActive() &&
+            !session.IsVisualVisible() && session.Items().size() == 1 &&
+            session.CurrentPoint().x == 10 && session.CurrentPoint().y == 20,
+        "accepting a right-drag menu choice must retain the release context without reviving its ghost");
+    session.DeactivateForDrop();
     session.End();
     Check(!session.IsVisualVisible() && !session.HasContext(),
         "ending a drag must clear both visual and commit state");
+    Check(!session.ResumeAfterDropDecision() && !session.IsActive(),
+        "a cancelled or invalidated drop must never be resumed by a late menu choice");
 }
 
 void TestListDragCanAnchorVisualAndLandingToPointer()
@@ -927,6 +941,41 @@ void TestDesktopFilesDockPayload()
     Check(list.SlotPayloadKind() == contract::DragPayloadKind::OtherWidget &&
             !list.UsesFileGroupSourceInsertion(),
         "a mixed collection selection cannot enter a file group");
+}
+
+void TestDockGroupPayload()
+{
+    namespace contract = snowdesktop::slot_contract;
+    ContractContainer dock(BarStyle::VBar, contract::SlotSurfaceKind::Dock);
+    ContractContainer desktop(BarStyle::VBar, contract::SlotSurfaceKind::Desktop);
+    ContractContainer collections(BarStyle::VBar, contract::SlotSurfaceKind::CollectionGroup);
+    ContractContainer files(BarStyle::VBar, contract::SlotSurfaceKind::FileGroup);
+    for (auto type : {DockEntryType::CollectionGroup, DockEntryType::FileGroup})
+    {
+        DragSourceList source;
+        source.BindRuntimeOrigin(&dock);
+        source.hasWidgets = true;
+        DragSourceEntry entry;
+        entry.kind = DropSourceKind::Widget;
+        entry.fromDock = true;
+        entry.dockEntryType = type;
+        entry.dockReference = L"group";
+        source.entries.push_back(entry);
+        Check(source.SlotPayloadKind() == contract::DragPayloadKind::GroupWidget &&
+                !source.UsesFileGroupSourceInsertion(),
+            "a whole Dock group must remain distinct from child labels and file sources");
+        Check(DragTargetResolver::AcceptsInternal(dock, source) &&
+                DragTargetResolver::AcceptsInternal(desktop, source) &&
+                !DragTargetResolver::AcceptsInternal(collections, source) &&
+                !DragTargetResolver::AcceptsInternal(files, source),
+            "whole groups reorder in Dock or return to desktop, and cannot nest inside either group type");
+        entry.dockEntryType = DockEntryType::DesktopFiles;
+        source.entries.push_back(entry);
+        Check(source.SlotPayloadKind() == contract::DragPayloadKind::OtherWidget &&
+                !DragTargetResolver::AcceptsInternal(files, source) &&
+                !DragTargetResolver::AcceptsInternal(dock, source),
+            "a mixed group/source payload is rejected before any ownership transfer");
+    }
 }
 
 void TestDockPayloadSurvivesPageTurnWithoutSelection()
@@ -1956,7 +2005,7 @@ void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
                     current.hwnd == mainWindow,
                     current.hwnd == floatingDock,
                     current.hwnd == floatingPopup);
-        coalesced += snowdesktop::drag_input_rules::
+        const std::size_t removed = snowdesktop::drag_input_rules::
             CoalesceQueuedMouseMoves(
                 nativeDragActive,
                 pointerSurface,
@@ -1978,12 +2027,28 @@ void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
                 [](const MSG& message) {
                     return message.message == WM_MOUSEMOVE;
                 });
+        Check(removed <= 64,
+            "each native pointer dispatch must return after at most 64 queued moves");
+        coalesced += removed;
         dispatched.push_back(current);
     }
 
     Check(nativeDragActive && moveOrdinal == 10000 &&
-            coalesced == 9996 && dispatched.size() == 7,
-        "a long native drag queue must collapse 10000 moves to one move per ordered segment");
+            coalesced + dispatched.size() == 10003 && dispatched.size() < 200,
+        "a long native drag queue must remove redundant moves without losing ordering barriers");
+    // Intermediate dispatches yield to the pump. Compare each segment's final
+    // observable point and barriers independently of its number of dispatches.
+    std::vector<MSG> segments;
+    for (const auto& message : dispatched)
+    {
+        if (!segments.empty() && message.message == WM_MOUSEMOVE &&
+            segments.back().message == WM_MOUSEMOVE &&
+            message.hwnd == segments.back().hwnd)
+            segments.back() = message;
+        else
+            segments.push_back(message);
+    }
+    dispatched = std::move(segments);
     Check(dispatched.size() == 7 &&
             dispatched[0].message == WM_MOUSEMOVE &&
             dispatched[0].hwnd == mainWindow &&
@@ -2001,6 +2066,113 @@ void TestQueuedNativeDragMovesCoalesceAtOrderingBarriers()
             dispatched[5].lParam == 9999 &&
             dispatched[6].message == WM_LBUTTONUP,
         "move coalescing must preserve timer, Escape, cross-window, and button-up ordering barriers");
+}
+
+void TestQueuedPassiveHoverPreservesClicks()
+{
+    // Reproduce a hover backlog followed by real click input. Only queue
+    // access is replaced; production eligibility and coalescing run below.
+    const HWND window = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(1));
+    std::deque<MSG> queue;
+    const auto append = [&](UINT kind, LPARAM ordinal, WPARAM buttons = 0) {
+        MSG message{};
+        message.hwnd = window;
+        message.message = kind;
+        message.lParam = ordinal;
+        message.wParam = buttons;
+        queue.push_back(message);
+    };
+    for (int index = 0; index < 4000; ++index) append(WM_MOUSEMOVE, index);
+    append(WM_TIMER, -1);
+    for (int index = 4000; index < 8000; ++index) append(WM_MOUSEMOVE, index);
+    append(WM_LBUTTONDOWN, -2, MK_LBUTTON);
+    append(WM_MOUSEMOVE, 8000, MK_LBUTTON);
+    append(WM_MOUSEMOVE, 8001, MK_LBUTTON);
+    append(WM_LBUTTONUP, -3);
+    for (int index = 8002; index < 10002; ++index) append(WM_MOUSEMOVE, index);
+
+    std::vector<MSG> dispatched;
+    bool pressed = false;
+    while (!queue.empty())
+    {
+        MSG current = queue.front();
+        queue.pop_front();
+        const bool passive = snowdesktop::desktop_hover_rules::CanCoalescePassiveMouseMoves(
+            !pressed, (current.wParam & MK_LBUTTON) != 0, false, pressed);
+        const std::size_t removed = snowdesktop::drag_input_rules::CoalesceQueuedMouseMoves(
+            passive, true, current,
+            [&](MSG& next) { if (queue.empty()) return false; next = queue.front(); return true; },
+            [&](MSG& next) { if (queue.empty()) return false; next = queue.front(); queue.pop_front(); return true; },
+            [](const MSG& left, const MSG& right) {
+                return left.hwnd == right.hwnd && left.wParam == right.wParam;
+            },
+            [](const MSG& message) { return message.message == WM_MOUSEMOVE; });
+        Check(removed <= 64,
+            "passive hover coalescing must yield while a backlog remains");
+        dispatched.push_back(current);
+        if (current.message == WM_LBUTTONDOWN) pressed = true;
+        if (current.message == WM_LBUTTONUP) pressed = false;
+    }
+    Check(dispatched.size() < 200,
+        "passive hover must discard the redundant backlog before click dispatch");
+    std::vector<MSG> segments;
+    for (const auto& message : dispatched)
+    {
+        if (!segments.empty() && message.message == WM_MOUSEMOVE &&
+            message.wParam == 0 && segments.back().message == WM_MOUSEMOVE &&
+            segments.back().wParam == 0)
+            segments.back() = message;
+        else
+            segments.push_back(message);
+    }
+    dispatched = std::move(segments);
+    Check(dispatched.size() == 8 &&
+            dispatched[0].lParam == 3999 && dispatched[1].message == WM_TIMER &&
+            dispatched[2].lParam == 7999 && dispatched[3].message == WM_LBUTTONDOWN &&
+            dispatched[4].lParam == 8000 && dispatched[5].lParam == 8001 &&
+            dispatched[6].message == WM_LBUTTONUP && dispatched[7].lParam == 10001,
+        "10000 queued passive moves must reach timer and click barriers without discarding pressed input or the latest hover");
+}
+
+void TestContinuousPointerQueueYieldsToFrames()
+{
+    // Model User32/sent callbacks replenishing the queue during PeekMessage.
+    // The safety stop prevents a broken implementation hanging the test; it
+    // is far beyond the acceptable per-dispatch work budget.
+    MSG current{};
+    current.hwnd = reinterpret_cast<HWND>(static_cast<std::uintptr_t>(1));
+    current.message = WM_MOUSEMOVE;
+    int produced = 0;
+    double elapsedMs = 0;
+    std::size_t dispatched = 0;
+    while (dispatched < 8 && snowdesktop::drag_input_rules::
+        ShouldDrainAnotherMessage(dispatched, elapsedMs))
+    {
+        const std::size_t removed = snowdesktop::drag_input_rules::CoalesceQueuedMouseMoves(
+            true, true, current,
+            [&](MSG& next) {
+                if (produced >= 4096) return false;
+                next = current;
+                next.lParam = produced + 1;
+                return true;
+            },
+            [&](MSG& next) {
+                next.lParam = ++produced;
+                return true;
+            },
+            [](const MSG& left, const MSG& right) { return left.hwnd == right.hwnd; },
+            [](const MSG& message) { return message.message == WM_MOUSEMOVE; });
+        Check(removed <= 64 && current.lParam == produced,
+            "a replenished mouse queue must return a current sample without waiting for producer silence");
+        ++dispatched;
+        // Two moderately expensive input presentations exhaust one frame's
+        // budget; animation work must get a turn even though input remains.
+        elapsedMs += 4.0;
+    }
+    Check(dispatched == 2 && produced == 128,
+        "continuous hover must yield to animation after 8ms rather than 64 costly dispatches");
+    Check(!snowdesktop::drag_input_rules::ShouldDrainAnotherMessage(64, 0.0),
+        "cheap input still needs a count bound when it never exhausts the clock budget");
 }
 
 void TestSelfOleReturnCancelsTransportBeforeNativeResume()
@@ -2141,8 +2313,9 @@ void TestOleAdapterOwnsComBoundary()
 
 void TestOleDropCompletionBoundaryMatrix()
 {
-    // Exercise IDropTarget::Drop itself, including negative results. The handler
-    // is a fixture: this does not validate DesktopApp's file-operation dispatch.
+    // Exercise the production OLE boundary after the initiating button is
+    // released. A fixture observes dispatch; actual Shell UI remains a runtime
+    // check. Losing this button caused the unwanted Open with / Cancel menu.
     struct Completion { HRESULT result; DWORD effect; };
     const std::array outcomes{
         Completion{S_OK, DROPEFFECT_COPY}, Completion{S_OK, DROPEFFECT_MOVE},
@@ -2150,6 +2323,7 @@ void TestOleDropCompletionBoundaryMatrix()
         Completion{S_FALSE, DROPEFFECT_NONE}, Completion{E_ABORT, DROPEFFECT_NONE},
         Completion{E_FAIL, DROPEFFECT_NONE},
     };
+    for (const DWORD button : {DWORD{MK_LBUTTON}, DWORD{MK_RBUTTON}})
     for (const auto& outcome : outcomes)
     {
         for (const DWORD allowed : {DWORD{DROPEFFECT_NONE}, DWORD{DROPEFFECT_COPY},
@@ -2163,16 +2337,17 @@ void TestOleDropCompletionBoundaryMatrix()
             auto* dataObject = reinterpret_cast<IDataObject*>(
                 static_cast<std::uintptr_t>(1));
             DWORD effect = allowed;
-            adapter->DragEnter(dataObject, MK_LBUTTON, {-2560, -240}, &effect);
+            adapter->DragEnter(dataObject, button | MK_ALT, {-2560, -240}, &effect);
+            adapter->DragOver(button | MK_SHIFT, {-2501, 432}, &effect);
             effect = allowed;
             const auto result = adapter->Drop(dataObject, MK_CONTROL | MK_SHIFT,
                 {-2501, 432}, &effect);
             Check(result == outcome.result && effect == outcome.effect &&
                     handler.dropCount == 1 && handler.incomingDropEffect == allowed &&
                     handler.lastDataObject == dataObject &&
-                    handler.lastKeyState == (MK_CONTROL | MK_SHIFT) &&
+                    handler.lastKeyState == (button | MK_CONTROL | MK_SHIFT) &&
                     handler.lastPoint.x == -2501 && handler.lastPoint.y == 432,
-                "Drop must forward allowed effects, release coordinates and final outcome exactly once");
+                "Drop must retain the initiating button and latest modifiers while forwarding effects and outcome once");
             adapter->Detach();
             Check(adapter->Drop(dataObject, 0, {}, &effect) == E_UNEXPECTED &&
                     adapter->DragLeave() == E_UNEXPECTED && handler.dropCount == 1,
@@ -2190,21 +2365,98 @@ void TestOleDropCompletionBoundaryMatrix()
     adapter->Release();
 }
 
+void TestOleDropButtonStateEndsWithEachGesture()
+{
+    FakeOleDragDropHandler handler;
+    auto* adapter = new OleDragDropAdapter(&handler);
+    DWORD effect = DROPEFFECT_COPY;
+
+    adapter->DragEnter(nullptr, MK_RBUTTON, {}, &effect);
+    adapter->DragLeave();
+    adapter->DragEnter(nullptr, MK_LBUTTON, {}, &effect);
+    adapter->Drop(nullptr, 0, {}, &effect);
+    Check(handler.lastKeyState == MK_LBUTTON,
+        "a cancelled right drag must not turn the next left drop into an action menu");
+    adapter->Drop(nullptr, MK_SHIFT, {}, &effect);
+    Check(handler.lastKeyState == MK_SHIFT,
+        "a completed drop must consume its button state even when the adapter is reused");
+
+    adapter->DragEnter(nullptr, MK_RBUTTON, {}, &effect);
+    adapter->DragEnter(nullptr, MK_LBUTTON, {}, &effect);
+    adapter->Drop(nullptr, MK_CONTROL, {}, &effect);
+    Check(handler.lastKeyState == (MK_LBUTTON | MK_CONTROL),
+        "a new enter on a shared desktop/Dock adapter must replace the prior gesture's button");
+
+    adapter->DragEnter(nullptr, 0, {}, &effect);
+    adapter->DragOver(MK_RBUTTON | MK_ALT, {}, &effect);
+    adapter->DragOver(0, {}, &effect);
+    adapter->Drop(nullptr, MK_SHIFT, {}, &effect);
+    Check(handler.lastKeyState == (MK_RBUTTON | MK_SHIFT),
+        "the first observed drag button must survive a button-free over and retain release modifiers");
+
+    for (const DWORD button : {DWORD{MK_LBUTTON}, DWORD{MK_RBUTTON}})
+    {
+        const DWORD otherButtons =
+            (MK_LBUTTON | MK_RBUTTON | MK_MBUTTON) & ~button;
+        adapter->DragEnter(nullptr, button | MK_ALT, {}, &effect);
+        adapter->DragOver(otherButtons | MK_CONTROL, {}, &effect);
+        adapter->Drop(nullptr, otherButtons | MK_SHIFT, {}, &effect);
+        Check(handler.lastKeyState == (button | MK_SHIFT),
+            "buttons pressed later must not change left/right drop semantics or retain stale modifiers");
+    }
+    adapter->DragEnter(nullptr, 0, {}, &effect);
+    adapter->Drop(nullptr, MK_LBUTTON | MK_CONTROL, {}, &effect);
+    Check(handler.lastKeyState == (MK_LBUTTON | MK_CONTROL),
+        "a drop with no earlier observed button must preserve its callback button and modifiers");
+
+    handler.onDrop = [adapter] {
+        DWORD nestedEffect = DROPEFFECT_COPY;
+        adapter->DragEnter(nullptr, MK_RBUTTON, {}, &nestedEffect);
+    };
+    adapter->DragEnter(nullptr, MK_LBUTTON, {}, &effect);
+    adapter->Drop(nullptr, 0, {}, &effect);
+    handler.onDrop = {};
+    adapter->Drop(nullptr, MK_CONTROL, {}, &effect);
+    Check(handler.lastKeyState == (MK_RBUTTON | MK_CONTROL),
+        "a drag started by a reentrant Shell callback must survive the outer drop's return");
+
+    adapter->Release();
+}
+
 void TestTrayCallbackClassification()
 {
     Check(TrayIconController::ClassifyCallback(
-            MAKELPARAM(WM_CONTEXTMENU, 0)) ==
-            TrayCallbackAction::ShowContextMenu &&
-            TrayIconController::ClassifyCallback(
-                MAKELPARAM(WM_RBUTTONUP, 0)) ==
+            MAKELPARAM(WM_CONTEXTMENU, kTrayIconId), NOTIFYICON_VERSION_4) ==
             TrayCallbackAction::ShowContextMenu,
-        "tray context-menu callbacks must share one application action");
+        "v4 tray semantic context-menu requests must open the application menu");
+    // The status-bar sender emits raw mouse compatibility callbacks before
+    // the semantic request. Opening twice replaces the first visible popup.
+    unsigned contextRequests = 0;
+    for (const UINT action : {WM_RBUTTONDOWN, WM_RBUTTONUP, WM_CONTEXTMENU})
+    {
+        if (TrayIconController::ClassifyCallback(
+                MAKELPARAM(action, kTrayIconId), NOTIFYICON_VERSION_4) ==
+            TrayCallbackAction::ShowContextMenu)
+            ++contextRequests;
+    }
+    Check(contextRequests == 1,
+        "one v4 tray right-click gesture must open only one application menu");
+    for (const UINT version : {UINT{0}, UINT{NOTIFYICON_VERSION}})
+    {
+        Check(TrayIconController::ClassifyCallback(WM_RBUTTONUP, version) ==
+                TrayCallbackAction::ShowContextMenu,
+            "legacy tray versions must retain raw right-button menu activation");
+    }
+    TrayIconController unregistered;
+    Check(unregistered.ClassifyCallback(WM_RBUTTONUP) ==
+            TrayCallbackAction::ShowContextMenu,
+        "a controller without a negotiated v4 version must use legacy callbacks");
     Check(TrayIconController::ClassifyCallback(
-            MAKELPARAM(WM_LBUTTONDBLCLK, 0)) ==
+            MAKELPARAM(WM_LBUTTONDBLCLK, kTrayIconId), NOTIFYICON_VERSION_4) ==
             TrayCallbackAction::ReloadItems,
         "tray double-click must map to the reload action");
     Check(TrayIconController::ClassifyCallback(
-            MAKELPARAM(WM_MOUSEMOVE, 0)) ==
+            MAKELPARAM(WM_MOUSEMOVE, kTrayIconId), NOTIFYICON_VERSION_4) ==
             TrayCallbackAction::None,
         "unhandled tray notifications must not leak into application behavior");
 }
@@ -3225,8 +3477,52 @@ void TestNewItemsRetainTheirDesktopFilesOwner()
     }
 }
 
+// The host uses this comparator for free-desktop icons and collection contents.
+// Unknown metadata must remain last, and zero bytes must remain a known value.
+void TestDesktopMetadataSorting(bool negativeControl = false)
+{
+    using namespace snowdesktop::folder_sort_rules;
+    std::vector<DesktopItem> input(5);
+    input[0].name = L"A"; input[0].fileSize = 9; input[0].modifiedTime = FILETIME{100, 0};
+    input[1].name = L"Z"; input[1].fileSize = 1; input[1].modifiedTime = FILETIME{300, 0};
+    input[2].name = L"B"; input[2].fileSize = 0; input[2].modifiedTime = FILETIME{200, 0};
+    input[3].name = L"D"; input[3].fileSize = 9; input[3].modifiedTime = FILETIME{100, 0};
+    input[4].name = L"C";
+    for (auto& item : input) item.typeName = L"Text";
+    input[1].typeName = L"Image";
+    input[4].typeName.clear();
+    const auto names = [&](int mode, bool ascending) {
+        std::vector<const DesktopItem*> items;
+        for (const auto& item : input) items.push_back(&item);
+        std::stable_sort(items.begin(), items.end(), [&](const auto* a, const auto* b) {
+            return snowdesktop::desktop_item_sort_rules::LessOnDesktop(
+                *a, *b, negativeControl ? kName : mode, ascending);
+        });
+        std::wstring result;
+        for (const auto* item : items) result += item->name;
+        return result;
+    };
+    Check(names(kSize, true) == L"BZADC", "size ascending includes zero bytes and keeps unknown metadata last");
+    Check(names(kSize, false) == L"ADZBC", "size descending reverses values, with name ties and unknown metadata last");
+    Check(names(kModified, true) == L"ADBZC", "modified ascending follows timestamps, with deterministic ties");
+    Check(names(kModified, false) == L"ZBADC", "modified descending puts the newest first and unavailable times last");
+    Check(names(kName, true) == L"ABCDZ" && names(kName, false) == L"ZDCBA",
+        "name sorting retains both directions");
+    Check(names(kType, true) == L"CZABD" && names(kType, false) == L"DBAZC",
+        "desktop type sorting preserves empty types and direction-sensitive name ties");
+    // Negative control: the former name-only behavior cannot satisfy metadata expectations.
+    Check(names(kName, true) != L"BZADC" && names(kName, false) != L"ZBADC",
+        "metadata fixtures distinguish unsupported size/date sorting from a correct result");
+}
+
+int RunDropStagingTests();
 int wmain(int argc, wchar_t** argv)
 {
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--desktop-sort-negative-control")
+    {
+        TestDesktopMetadataSorting(true);
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 4 && std::wstring(argv[1]) == L"--register-notification-shortcut")
     {
         const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -3244,6 +3540,7 @@ int wmain(int argc, wchar_t** argv)
     }
     if (argc == 2 && std::wstring(argv[1]) == L"--notification-identity-probe")
         return RunTrayNotificationIdentityProbe();
+    TestDesktopMetadataSorting();
     TestIndependentDropCompletions();
     TestNewItemsRetainTheirDesktopFilesOwner();
     TestSlotCacheAndIdentity();
@@ -3260,18 +3557,23 @@ int wmain(int argc, wchar_t** argv)
     TestPrimaryGhostSurvivesLabelDragAndPageTurn();
     TestDockPayloadSurvivesPageTurnWithoutSelection();
     TestDesktopFilesDockPayload();
+    TestDockGroupPayload();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestRuntimeSourceTargetMatrix();
     TestExternalDropContentRegressions();
+    failures += RunDropStagingTests();
     TestExternalContentSelectionMatrix();
     TestExternalResolutionAndSessionMatrix();
     TestDragDropControllerOwnsTransportTransitions();
     TestModelReloadDeferralCoversRetainedDragLifecycle();
     TestOwnedTransientDragTargetBoundsMemberWrappers();
     TestQueuedNativeDragMovesCoalesceAtOrderingBarriers();
+    TestQueuedPassiveHoverPreservesClicks();
+    TestContinuousPointerQueueYieldsToFrames();
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
     TestOleDropCompletionBoundaryMatrix();
+    TestOleDropButtonStateEndsWithEachGesture();
     TestTrayCallbackClassification();
     TestTrayNotificationSourceAndRouting();
     TestTrayNotificationRegistrationPreservesPreferences();
@@ -3279,6 +3581,7 @@ int wmain(int argc, wchar_t** argv)
     TestSelectionControllerCoversEveryRegisteredRange();
     TestPointerSelectionRangesAndScopedSelectAll();
     TestRenameControllerKeepsTargetsExclusive();
+    TestRenameSelectionUsesVisibleFileExtension();
     TestSlowRenameClicks();
     TestRenameControllerRejectsStaleFocusCommits();
     TestShellRefreshRejectsStaleSnapshots();
@@ -3304,6 +3607,8 @@ int wmain(int argc, wchar_t** argv)
     TestIncrementalDesktopPreservesUnobservedItems();
     TestShellMetadataCacheRejectsChangedFiles();
     TestShellRefreshPreservesCurrentItemState();
+    TestDesktopContentRefreshKeepsLiveItems();
+    TestShortcutBadgeSurvivesSourceRefresh();
     TestLayoutReloadReplacesLargeIconState();
     TestRenameNotificationsPreserveUnrelatedChanges();
     TestRenameUpdatesOnlyMatchingModels();

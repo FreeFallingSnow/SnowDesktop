@@ -217,38 +217,67 @@ bool DesktopApp::RenderDesktopForegroundComposition(
         IntersectRect(&clippedUpdate, updateRect, &client) &&
         !IsRectEmpty(&clippedUpdate))
     {
+        clippedUpdate = desktopForegroundTooltipDamage_.IncludePrevious(clippedUpdate, client);
         dcompUpdate = &clippedUpdate;
     }
 
-    ID2D1DeviceContext* rawContext = nullptr;
-    POINT updateOffset{};
-    HRESULT hr = desktopForegroundCompositionSurface_->BeginDraw(
-        dcompUpdate, __uuidof(ID2D1DeviceContext),
-        reinterpret_cast<void**>(&rawContext), &updateOffset);
-    if (FAILED(hr) || !rawContext)
-        return false;
+    // A popup close may reveal a tooltip outside the requested Dock/popup
+    // area. Discover that content in the normal draw, then repair the surface
+    // before the caller commits content and native glass. Existing tooltips
+    // are included up front, so ordinary pointer paints remain one pass.
+    for (int pass = 0; pass < 3; ++pass)
+    {
+        ID2D1DeviceContext* rawContext = nullptr;
+        POINT updateOffset{};
+        HRESULT hr = desktopForegroundCompositionSurface_->BeginDraw(
+            dcompUpdate, __uuidof(ID2D1DeviceContext),
+            reinterpret_cast<void**>(&rawContext), &updateOffset);
+        if (FAILED(hr) || !rawContext) return false;
 
-    ComPtr<ID2D1DeviceContext> context;
-    context.Attach(rawContext);
-    context->SetDpi(96.0f, 96.0f);
-    context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
-    const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
-    const LONG updateTop = dcompUpdate ? dcompUpdate->top : 0;
-    context->SetTransform(D2D1::Matrix3x2F::Translation(
-        static_cast<float>(updateOffset.x - updateLeft),
-        static_cast<float>(updateOffset.y - updateTop)));
-    context->Clear(D2D1::ColorF(0, 0, 0, 0));
+        ComPtr<ID2D1DeviceContext> context;
+        context.Attach(rawContext);
+        context->SetDpi(96.0f, 96.0f);
+        context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
+        const LONG updateLeft = dcompUpdate ? dcompUpdate->left : 0;
+        const LONG updateTop = dcompUpdate ? dcompUpdate->top : 0;
+        context->SetTransform(D2D1::Matrix3x2F::Translation(
+            static_cast<float>(updateOffset.x - updateLeft),
+            static_cast<float>(updateOffset.y - updateTop)));
+        context->Clear(D2D1::ColorF(0, 0, 0, 0));
 
-    brushCache_.clear();
-    brushCacheContext_ = context.Get();
-    DrawDesktopForeground(context.Get(), hiddenMode);
-    context->SetTransform(D2D1::Matrix3x2F::Identity());
-    context.Reset();
-    brushCache_.clear();
-    brushCacheContext_ = nullptr;
+        brushCache_.clear();
+        brushCacheContext_ = context.Get();
+        struct TooltipDrawScope
+        {
+            snowdesktop::InlineTooltipPaintDamage& damage;
+            explicit TooltipDrawScope(snowdesktop::InlineTooltipPaintDamage& value) : damage(value) { damage.BeginDraw(); }
+            ~TooltipDrawScope() { damage.EndDraw(); }
+        };
+        { TooltipDrawScope tooltipDraw(desktopForegroundTooltipDamage_);
+          DrawDesktopForeground(context.Get(), hiddenMode); }
+        context->SetTransform(D2D1::Matrix3x2F::Identity());
+        context.Reset();
+        brushCache_.clear();
+        brushCacheContext_ = nullptr;
 
-    hr = desktopForegroundCompositionSurface_->EndDraw();
-    return SUCCEEDED(hr);
+        hr = desktopForegroundCompositionSurface_->EndDraw();
+        if (FAILED(hr)) return false;
+        if (dcompUpdate)
+        {
+            const RECT required = desktopForegroundTooltipDamage_.IncludeCurrent(clippedUpdate, client);
+            if (!EqualRect(&required, &clippedUpdate))
+            {
+                clippedUpdate = required;
+                // If geometry changes again during repair, finish with one
+                // bounded full draw rather than exposing glass without text.
+                if (pass > 0) dcompUpdate = nullptr;
+                continue;
+            }
+        }
+        desktopForegroundTooltipDamage_.AcceptDraw();
+        return true;
+    }
+    return false;
 }
 
 bool DesktopApp::PresentDesktopForegroundComposition(

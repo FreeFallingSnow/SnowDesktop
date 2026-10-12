@@ -81,7 +81,7 @@ RECT CollectionGroupContentRect(CollectionGroup* widget)
     RECT tabs = CollectionGroupTabsRect(widget);
     if (!IsRectEmptyRect(tabs))
         body.top = std::min<LONG>(
-            body.bottom, tabs.bottom + widget->Cu(8.0f));
+            body.bottom, std::max(body.top, tabs.bottom + widget->Cu(8.0f)));
     return widget->ApplyDetailsHeaderToViewport(body);
 }
 
@@ -236,7 +236,10 @@ snowdesktop::widget_item_layout::Layout CollectionGroupLocalLayout(
             std::max(widget->GetListRowHeight(),
                 metrics.minimumListHeight), spacing);
     return snowdesktop::widget_item_layout::ResolveGrid(
-        content, std::max(1, data->gridSpan.columns), 0,
+        content, widget->IsPopupHosted()
+            ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
+                content.right - content.left, metrics.minimumGridWidth, spacing)
+            : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
 }
@@ -954,8 +957,9 @@ std::wstring CollectionGroup::GetDragHint(
     const bool allCollections = std::all_of(
         sourceItems.begin(), sourceItems.end(),
         [](Item* item) {
-            return dynamic_cast<
-                CollectionGroupEntryItem*>(item) != nullptr;
+            if (dynamic_cast<CollectionGroupEntryItem*>(item)) return true;
+            const auto* dock = dynamic_cast<DockEntryItem*>(item);
+            return dock && dock->GetEntryType() == DockEntryType::Collection;
         });
     if (allCollections)
         return origin == this
@@ -971,6 +975,14 @@ void CollectionGroup::OnItemsDropped(
     HitRegion region, int mods)
 {
     if (!app_ || !data_) return;
+    const auto sourceListForMembership = app_->BuildDragSourceList(sourceItems, origin);
+    if (sourceListForMembership.SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget)
+    {
+        const size_t insertion = CategoryIdAtPoint(app_->dragSession_.CurrentPoint()).empty()
+            ? data_->childWidgetIds.size() : GetDropInsertIndex(targetSlot, region);
+        app_->MoveWidgetSourcesToGroup(sourceItems, app_->FindWidgetIndexById(data_->id), insertion);
+        return;
+    }
     const bool allCollections = std::all_of(
         sourceItems.begin(), sourceItems.end(),
         [](Item* item) {
@@ -1007,13 +1019,14 @@ void CollectionGroup::DrawContent(
     ID2D1DeviceContext* context, RECT)
 {
     if (!data_ || !app_ || !context) return;
-    const bool light = app_->IsLightContentTheme();
+    const bool light = UsesLightContentTheme();
+    const RECT frame = GetFrameRect();
     const bool privacyActive =
         data_->privacyMode &&
         !app_->dragSession_.IsActive() &&
         !app_->dragDropController_.IsExternalDragActive() &&
         !PtInRect(
-            &data_->bounds, app_->lastMousePoint_);
+            &frame, app_->lastMousePoint_);
     DrawSearchBox(context);
 
     const auto& children = GetVisibleCollectionIds();

@@ -1,6 +1,7 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "ui/menu/modern_menu.h"
+#include "dock/floating_dock_rules.h"
 
 // Transient page, privacy and widget-positioning overlays.
 
@@ -518,137 +519,93 @@ void DesktopApp::DrawPageNotify(
             pageNotifyTextLayout_.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
+void DesktopApp::ClearInlineTooltipBackdrop(std::uintptr_t ownerKey)
+{
+    (void)desktopBackdropCompositor_.RemovePanel({}, ownerKey);
+    for (const auto& host : persistentDockHosts_)
+        if (host) (void)host->backdrop.RemovePanel({}, ownerKey);
+}
+
+bool DesktopApp::DrawInlineTooltip(ID2D1DeviceContext* ctx, RECT bounds,
+    const snowdesktop::NativeTooltipTextLayout& measured, float scale,
+    snowdesktop::InlineTooltipBackdrop& backdrop)
+{
+    if (!ctx || !measured.layout || IsRectEmptyRect(bounds)) return false;
+    if (!desktopWidgetCompositionDrawInProgress_ && !renderingFloatingPopup_)
+    {
+        if (renderingFloatingDock_ && renderingPersistentDockHost_)
+            renderingPersistentDockHost_->tooltipPaintDamage.Record(bounds);
+        else if (!renderingFloatingDock_)
+            desktopForegroundTooltipDamage_.Record(bounds);
+    }
+    const auto appearance = collectionPopupAppearance_;
+    if (snowdesktop::NativeTooltipHighContrast())
+    {
+        snowdesktop::DrawNativeTooltip(ctx, ToD2DRect(bounds), measured, appearance, scale);
+        return false;
+    }
+    const float radius = snowdesktop::NativeTooltipCornerRadius(appearance,
+        static_cast<float>(bounds.right - bounds.left), static_cast<float>(bounds.bottom - bounds.top), scale);
+    bool registered = false;
+    // Cached widget surfaces and independent popups inherit their enclosing
+    // material. Their local tooltip must not register glass on the desktop.
+    if (appearance.glassEnabled && !desktopWidgetCompositionDrawInProgress_ && !renderingFloatingPopup_)
+    {
+        auto* compositor = &desktopBackdropCompositor_;
+        RECT backdropBounds = bounds;
+        if (renderingFloatingDock_)
+        {
+            if (!renderingPersistentDockHost_) return false;
+            compositor = &renderingPersistentDockHost_->backdrop;
+            backdropBounds = snowdesktop::floating_dock_rules::DesktopRectToWindowRect(
+                bounds, renderingPersistentDockHost_->sourceRect);
+        }
+        registered = backdrop.Update(*compositor, backdropBounds, radius,
+            appearance.glassBlurRadius, [this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
+    }
+    DrawWidgetPanelBackground(ctx, bounds, radius,
+        D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
+        D2D1::ColorF(appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha),
+        false, appearance.widgetBorderWidth * scale, &appearance, false, 0, scale);
+    snowdesktop::DrawNativeTooltipText(ctx, ToD2DRect(bounds), measured, appearance);
+    return registered;
+}
+
+bool DesktopApp::DrawDesktopHintOverlay(ID2D1DeviceContext* ctx, const wchar_t* message,
+    snowdesktop::InlineTooltipBackdrop& backdrop)
+{
+    if (!ctx || !dwriteFactory_ || !message || !*message) return false;
+    POINT cursor{};
+    const GridPage* page = GetCursorPos(&cursor) ? GridPageFromScreenPoint(cursor) : nullptr;
+    if (!page) page = GetFirstPageGridPage();
+    const RECT work = page ? page->workArea : RECT{0, 0, GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)};
+    const float scale = page ? static_cast<float>(page->dpiX) / 96.f : 1.f;
+    ComPtr<IDWriteTextFormat> format;
+    if (FAILED(snowdesktop::CreateNativeTooltipTextFormat(dwriteFactory_.Get(), &format, scale))) return false;
+    snowdesktop::NativeTooltipTextLayout measured;
+    snowdesktop::NativeTooltipLayoutOptions options;
+    options.scale = scale; options.centered = true;
+    if (FAILED(snowdesktop::MeasureNativeTooltip(dwriteFactory_.Get(), format.Get(), {}, message,
+        std::max(1.f, std::min(720.f * scale, static_cast<float>(work.right - work.left) - 8.f * scale)),
+        std::max(1.f, std::min(192.f * scale, static_cast<float>(work.bottom - work.top) - 8.f * scale)),
+        measured, options))) return false;
+    const LONG width = static_cast<LONG>(std::ceil(measured.width));
+    const LONG height = static_cast<LONG>(std::ceil(measured.height));
+    const LONG x = work.left + (work.right - work.left - width) / 2;
+    const LONG y = std::min(work.top + static_cast<LONG>(60.f * scale), work.bottom - height);
+    return DrawInlineTooltip(ctx, {x, y, x + width, y + height}, measured, scale, backdrop);
+}
+
 void DesktopApp::DrawHiddenHintOverlay(ID2D1DeviceContext* ctx)
 {
-    if (!ctx || !showHiddenHint_) return;
-
-    auto* dwrite = GetDWriteFactory();
-    if (!dwrite) return;
-
-    RECT workArea{};
-    POINT cursor{};
-    if (GetCursorPos(&cursor))
-    {
-        const GridPage* page = GridPageFromScreenPoint(cursor);
-        if (page) workArea = page->workArea;
-    }
-    if (IsRectEmptyRect(workArea))
-    {
-        if (const GridPage* firstPage = GetFirstPageGridPage())
-            workArea = firstPage->workArea;
-        if (IsRectEmptyRect(workArea))
-        {
-            workArea.left = 0;
-            workArea.top = 0;
-            workArea.right = GetSystemMetrics(SM_CXSCREEN);
-            workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
-        }
-    }
-
-    const std::wstring hintText = _LW("app.overlay.hide_hint");
-
-    ComPtr<IDWriteTextFormat> fmt;
-    if (FAILED(snowdesktop::app_fonts::CreateTextFormat(dwrite, L"Segoe UI",
-        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"", &fmt)) || !fmt)
-        return;
-    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-
-    // Measure text width using a temporary layout
-    ComPtr<IDWriteTextLayout> measureLayout;
-    if (SUCCEEDED(dwrite->CreateTextLayout(hintText.c_str(),
-        static_cast<UINT32>(hintText.size()), fmt.Get(), 2000.0f, 40.0f, &measureLayout)) && measureLayout)
-    {
-        DWRITE_TEXT_METRICS metrics{};
-        measureLayout->GetMetrics(&metrics);
-
-        constexpr float hintPadding = 24.0f;
-        constexpr float hintHeight = 36.0f;
-        constexpr float marginTop = 60.0f;
-
-        const float textW = metrics.width + hintPadding * 2.0f;
-        const int areaW = workArea.right - workArea.left;
-
-        RECT hintRect = MakeRect(
-            static_cast<int>(workArea.left + (areaW - textW) / 2.0f),
-            static_cast<int>(workArea.top + marginTop),
-            static_cast<int>(workArea.left + (areaW + textW) / 2.0f),
-            static_cast<int>(workArea.top + marginTop + hintHeight));
-
-        DrawD2DRoundedRectangle(ctx, hintRect, 10.0f,
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.65f),
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), 0.0f);
-
-        DrawD2DText(ctx, hintText, hintRect, fmt.Get(),
-            D2D1::ColorF(0.95f, 0.96f, 1.0f, 0.90f));
-    }
+    auto tooltipPaint = hiddenHintBackdrop_.BeginPaint([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
+    if (desktopIconsHidden_ && showHiddenHint_)
+        tooltipPaint.Keep(DrawDesktopHintOverlay(ctx, _LW("app.overlay.hide_hint"), hiddenHintBackdrop_));
 }
 
 void DesktopApp::DrawWidgetAddedHintOverlay(ID2D1DeviceContext* ctx)
 {
-    if (!ctx || !showWidgetAddedHint_) return;
-
-    auto* dwrite = GetDWriteFactory();
-    if (!dwrite) return;
-
-    RECT workArea{};
-    POINT cursor{};
-    if (GetCursorPos(&cursor))
-    {
-        const GridPage* page = GridPageFromScreenPoint(cursor);
-        if (page) workArea = page->workArea;
-    }
-    if (IsRectEmptyRect(workArea))
-    {
-        if (const GridPage* firstPage = GetFirstPageGridPage())
-            workArea = firstPage->workArea;
-        if (IsRectEmptyRect(workArea))
-        {
-            workArea.left = 0;
-            workArea.top = 0;
-            workArea.right = GetSystemMetrics(SM_CXSCREEN);
-            workArea.bottom = GetSystemMetrics(SM_CYSCREEN);
-        }
-    }
-
-    const std::wstring hintText = _LW("app.overlay.widget_move_hint");
-
-    ComPtr<IDWriteTextFormat> fmt;
-    if (FAILED(snowdesktop::app_fonts::CreateTextFormat(dwrite, L"Segoe UI",
-        DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
-        DWRITE_FONT_STRETCH_NORMAL, 14.0f, L"", &fmt)) || !fmt)
-        return;
-    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    fmt->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
-
-    ComPtr<IDWriteTextLayout> measureLayout;
-    if (SUCCEEDED(dwrite->CreateTextLayout(hintText.c_str(),
-        static_cast<UINT32>(hintText.size()), fmt.Get(), 2000.0f, 40.0f, &measureLayout)) && measureLayout)
-    {
-        DWRITE_TEXT_METRICS metrics{};
-        measureLayout->GetMetrics(&metrics);
-
-        constexpr float hintPadding = 24.0f;
-        constexpr float hintHeight = 36.0f;
-        constexpr float marginTop = 60.0f;
-
-        const float textW = metrics.width + hintPadding * 2.0f;
-        const int areaW = workArea.right - workArea.left;
-
-        RECT hintRect = MakeRect(
-            static_cast<int>(workArea.left + (areaW - textW) / 2.0f),
-            static_cast<int>(workArea.top + marginTop),
-            static_cast<int>(workArea.left + (areaW + textW) / 2.0f),
-            static_cast<int>(workArea.top + marginTop + hintHeight));
-
-        DrawD2DRoundedRectangle(ctx, hintRect, 10.0f,
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.65f),
-            D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.0f), 0.0f);
-
-        DrawD2DText(ctx, hintText, hintRect, fmt.Get(),
-            D2D1::ColorF(0.95f, 0.96f, 1.0f, 0.90f));
-    }
+    auto tooltipPaint = widgetAddedHintBackdrop_.BeginPaint([this](std::uintptr_t key) { ClearInlineTooltipBackdrop(key); });
+    if (showWidgetAddedHint_ && !IsUsageGuideVisible())
+        tooltipPaint.Keep(DrawDesktopHintOverlay(ctx, _LW("app.overlay.widget_move_hint"), widgetAddedHintBackdrop_));
 }

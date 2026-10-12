@@ -479,6 +479,9 @@ struct DesktopWidget
     // Empty means Demo Mode infers a category from the collection contents.
     std::wstring demoIconCategory;
     std::wstring sourceFolderPath;
+    // Original icon replaced by an explicit folder/shortcut conversion. This
+    // is separate from itemKeys, which orders the mapped directory contents.
+    std::wstring sourceDesktopItemKey;
     GridCell gridCell;
     GridSpan gridSpan;
     GridSpan minGridSpan{ 1, 1 };
@@ -540,22 +543,38 @@ enum class DockEntryType
     Collection,
     FolderMapping,
     DesktopFiles,
+    CollectionGroup,
+    FileGroup,
 };
+
+constexpr bool IsGroupWidgetType(DesktopWidgetType type)
+{
+    return type == DesktopWidgetType::CollectionGroup || type == DesktopWidgetType::FileGroup;
+}
+
+constexpr bool IsGroupDockEntryType(DockEntryType type)
+{
+    return type == DockEntryType::CollectionGroup || type == DockEntryType::FileGroup;
+}
 
 constexpr bool IsWidgetDockEntryType(DockEntryType type)
 {
     return type == DockEntryType::Collection ||
-        type == DockEntryType::FolderMapping || type == DockEntryType::DesktopFiles;
+        type == DockEntryType::FolderMapping || type == DockEntryType::DesktopFiles ||
+        IsGroupDockEntryType(type);
 }
 
 constexpr bool IsLogicalDockEntryType(DockEntryType type)
 {
-    return type == DockEntryType::Collection || type == DockEntryType::DesktopFiles;
+    return type == DockEntryType::Collection || type == DockEntryType::DesktopFiles ||
+        IsGroupDockEntryType(type);
 }
 
 constexpr DockEntryType DockEntryTypeForWidget(DesktopWidgetType type)
 {
     return type == DesktopWidgetType::Collection ? DockEntryType::Collection
+        : type == DesktopWidgetType::CollectionGroup ? DockEntryType::CollectionGroup
+        : type == DesktopWidgetType::FileGroup ? DockEntryType::FileGroup
         : type == DesktopWidgetType::FolderMapping ? DockEntryType::FolderMapping
         : type == DesktopWidgetType::FileCategories ? DockEntryType::DesktopFiles
         : DockEntryType::DesktopItem;

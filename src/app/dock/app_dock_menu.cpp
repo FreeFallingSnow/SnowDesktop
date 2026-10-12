@@ -1,11 +1,15 @@
 #include "app/app.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "settings/bar_settings_rules.h"
+#include "dock/dock_settings_rules.h"
 #include "dock_platform_helpers.h"
 #include "dock_running_app_pin_rules.h"
 #include "dock_explorer_pin.h"
 #include "app/shell/shell_icon_request.h"
 #include "desktop/desktop_source.h"
+#include "desktop/desktop_style_presets.h"
 #include "layout/logical_slot_picker_rules.h"
+#include <commctrl.h>
 
 // Dock and running-application context menus.
 
@@ -13,6 +17,65 @@ namespace
 {
 constexpr UINT kDockStatusBarSettingsCommand = 1;
 constexpr UINT kDockTaskManagerCommand = 2;
+constexpr UINT kDockMonitorScopeFirst = 41830;
+constexpr UINT kDockScaleFirst = 41840;
+constexpr int kDockScalePercent[]{50, 75, 100, 125, 150, 175, 200};
+constexpr UINT kMergedDockScaleFirst = 41850;
+constexpr UINT kMergedBarHeightFirst = 41860;
+constexpr UINT kMergedBarDetailedSettings = 41869;
+constexpr int kMergedBarHeights[]{32, 40, 48, 56, 64, 72, 80, 96};
+constexpr UINT kDockRevealGestureFirst = 41870;
+constexpr UINT kDockReserveDesktop = 41872;
+constexpr UINT kDockReserveMaximized = 41873;
+constexpr UINT kDockStartButton = 41874;
+constexpr UINT kDesktopStyleFirst = 41880;
+constexpr wchar_t const* kDesktopStyles[]{L"native", L"taskbar-dock", L"island", L"merged", L"side"};
+constexpr char const* kDesktopStyleLabels[]{"settings.desktopStyle.native.title", "settings.desktopStyle.taskbar-dock.title",
+    "settings.desktopStyle.island.title", "settings.desktopStyle.merged.title", "settings.desktopStyle.side.title"};
+constexpr char const* kDesktopStyleAnimations[]{nullptr, nullptr, "settings.desktopStyle.island.animations",
+    "settings.desktopStyle.merged.animations", "settings.desktopStyle.side.animations"};
+static_assert(std::size(kDesktopStyles) == std::size(kDesktopStyleLabels) &&
+    std::size(kDesktopStyles) == std::size(kDesktopStyleAnimations));
+
+bool ConfirmBarMenuAction(HWND owner, const wchar_t* title, const wchar_t* message,
+    const wchar_t* accept, const wchar_t* cancel)
+{
+    const TASKDIALOG_BUTTON buttons[]{{IDYES, accept}, {IDCANCEL, cancel}};
+    POINT anchor{};
+    GetCursorPos(&anchor);
+    TASKDIALOGCONFIG dialog{};
+    dialog.cbSize = sizeof(dialog);
+    dialog.hwndParent = owner;
+    dialog.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_SIZE_TO_CONTENT;
+    dialog.pszWindowTitle = L"SnowDesktop";
+    dialog.pszMainInstruction = title;
+    dialog.pszContent = message;
+    dialog.cButtons = static_cast<UINT>(std::size(buttons));
+    dialog.pButtons = buttons;
+    dialog.nDefaultButton = IDCANCEL;
+    dialog.lpCallbackData = reinterpret_cast<LONG_PTR>(&anchor);
+    dialog.pfCallback = +[](HWND window, UINT notification, WPARAM, LPARAM, LONG_PTR data) -> HRESULT {
+        if (notification == TDN_CREATED)
+        {
+            const auto point = *reinterpret_cast<const POINT*>(data);
+            MONITORINFO monitor{sizeof(monitor)};
+            RECT bounds{};
+            UINT flags = SWP_NOSIZE | SWP_SHOWWINDOW;
+            int x = 0, y = 0;
+            if (GetMonitorInfoW(MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST), &monitor) && GetWindowRect(window, &bounds))
+            {
+                x = monitor.rcWork.left + (monitor.rcWork.right - monitor.rcWork.left - bounds.right + bounds.left) / 2;
+                y = monitor.rcWork.top + (monitor.rcWork.bottom - monitor.rcWork.top - bounds.bottom + bounds.top) / 2;
+            }
+            else flags |= SWP_NOMOVE;
+            SetWindowPos(window, HWND_TOPMOST, x, y, 0, 0, flags);
+            SetForegroundWindow(window);
+        }
+        return S_OK;
+    };
+    int selected = IDCANCEL;
+    return SUCCEEDED(TaskDialogIndirect(&dialog, &selected, nullptr, nullptr)) && selected == IDYES;
+}
 }
 
 HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
@@ -20,32 +83,77 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     HMENU menu = CreatePopupMenu();
     HMENU positionMenu = CreatePopupMenu();
     HMENU layoutMenu = CreatePopupMenu();
-    if (!menu || !positionMenu || !layoutMenu)
+    HMENU monitorMenu = CreatePopupMenu();
+    HMENU scaleMenu = CreatePopupMenu();
+    HMENU revealMenu = CreatePopupMenu();
+    HMENU independentMenu = includeStatusBar ? CreatePopupMenu() : menu;
+    if (!menu || !positionMenu || !layoutMenu || !monitorMenu || !scaleMenu || !revealMenu || !independentMenu)
     {
         if (positionMenu) DestroyMenu(positionMenu);
         if (layoutMenu) DestroyMenu(layoutMenu);
+        if (monitorMenu) DestroyMenu(monitorMenu);
+        if (scaleMenu) DestroyMenu(scaleMenu);
+        if (revealMenu) DestroyMenu(revealMenu);
+        if (includeStatusBar && independentMenu) DestroyMenu(independentMenu);
         if (menu) DestroyMenu(menu);
         return nullptr;
     }
 
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionBottom, _LW("app.dock.bottom"));
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionTop, _LW("app.dock.top"));
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionLeft, _LW("app.dock.left"));
-    AppendMenuW(positionMenu, MF_STRING, kContextDockPositionRight, _LW("app.dock.right"));
-    CheckMenuRadioItem(positionMenu,
-        kContextDockPositionBottom, kContextDockPositionRight,
-        kContextDockPositionBottom + static_cast<UINT>(dockSettings_.position),
-        MF_BYCOMMAND);
+    const auto addChoice = [&](HMENU target, UINT command, const wchar_t* title,
+                              bool selected, const wchar_t* glyph) {
+        std::wstring label = title;
+        if (selected) { label += L"\t"; label += _LW("statusBar.menu.current"); }
+        const bool inactive = includeStatusBar &&
+            (target == positionMenu || target == layoutMenu || target == monitorMenu || target == scaleMenu);
+        AppendMenuW(target, MF_STRING | (inactive ? MF_GRAYED : 0), command, label.c_str());
+        SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
+    };
+    const auto addDesktopStyles = [&](HMENU parent) {
+        const HMENU styles = CreatePopupMenu();
+        if (!styles) return;
+        if (!AppendMenuW(parent, MF_POPUP, reinterpret_cast<UINT_PTR>(styles), _LW("settings.desktopStyle.title")))
+        { DestroyMenu(styles); return; }
+        SetMenuItemIcon(parent, reinterpret_cast<UINT_PTR>(styles), L"\uF359", MenuIconFont::FluentRegular);
+        for (UINT index = 0; index < std::size(kDesktopStyles); ++index)
+        {
+            AppendMenuW(styles, MF_STRING, kDesktopStyleFirst + index, _LW(kDesktopStyleLabels[index]));
+        }
+    };
+    addChoice(positionMenu, kContextDockPositionBottom, _LW("app.dock.bottom"), dockSettings_.position == DockPosition::Bottom, L"\uF148");
+    addChoice(positionMenu, kContextDockPositionTop, _LW("app.dock.top"), dockSettings_.position == DockPosition::Top, L"\uF19B");
+    addChoice(positionMenu, kContextDockPositionLeft, _LW("app.dock.left"), dockSettings_.position == DockPosition::Left, L"\uF15B");
+    addChoice(positionMenu, kContextDockPositionRight, _LW("app.dock.right"), dockSettings_.position == DockPosition::Right, L"\uF181");
+    addChoice(layoutMenu, kContextDockLayoutIsland, _LW("app.dock.island"), !dockSettings_.edgeAttached, L"\uF8B5");
+    addChoice(layoutMenu, kContextDockLayoutEdge, _LW("app.dock.edge"), dockSettings_.edgeAttached, L"\uF359");
 
-    AppendMenuW(layoutMenu, MF_STRING, kContextDockLayoutIsland, _LW("app.dock.island"));
-    AppendMenuW(layoutMenu, MF_STRING, kContextDockLayoutEdge, _LW("app.dock.edge"));
-    CheckMenuRadioItem(layoutMenu,
-        kContextDockLayoutIsland, kContextDockLayoutEdge,
-        dockSettings_.edgeAttached ? kContextDockLayoutEdge : kContextDockLayoutIsland,
-        MF_BYCOMMAND);
-
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(positionMenu), _LW("app.dock.position"));
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
+    AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(positionMenu), _LW("app.dock.position"));
+    AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
+    AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(monitorMenu), _LW("settings.dock.monitor"));
+    AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(scaleMenu), _LW("app.settings.dock_thickness"));
+    const auto availability = snowdesktop::ResolveBarSettingsAvailability(
+        generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS));
+    const bool edgeRevealEnabled = snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
+        dockSettings_.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled);
+    const HMENU revealParent = includeStatusBar && !edgeRevealEnabled ? independentMenu : menu;
+    AppendMenuW(revealParent, MF_POPUP | (edgeRevealEnabled ? 0 : MF_GRAYED),
+        reinterpret_cast<UINT_PTR>(revealMenu), _LW("settings.dock.edgeRevealGesture"));
+    addChoice(revealMenu, kDockRevealGestureFirst, _LW("settings.dock.gestureSwipe"),
+        dockSettings_.edgeRevealGesture == 0, L"\uF8E5");
+    addChoice(revealMenu, kDockRevealGestureFirst + 1, _LW("settings.dock.gestureHover"),
+        dockSettings_.edgeRevealGesture == 1, L"\uE5F2");
+    const char* monitorLabels[]{"app.dock.first_screen", "app.dock.last_screen", "app.dock.all_screens"};
+    for (UINT index = 0; index < std::size(monitorLabels); ++index)
+    {
+        addChoice(monitorMenu, kDockMonitorScopeFirst + index, _LW(monitorLabels[index]),
+            static_cast<UINT>(dockSettings_.monitorScope) == index,
+            index == 2 ? L"\uEB96" : L"\uF359");
+    }
+    for (UINT index = 0; index < std::size(kDockScalePercent); ++index)
+    {
+        const auto label = std::to_wstring(kDockScalePercent[index]) + L"%";
+        addChoice(scaleMenu, kDockScaleFirst + index, label.c_str(),
+            std::abs(dockSettings_.thicknessScale * 100 - kDockScalePercent[index]) < .5f, L"\uF8C4");
+    }
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     auto toggleLabel = [](const wchar_t* title, bool enabled) {
         std::wstring label = title;
@@ -58,6 +166,28 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     const std::wstring frequentLabel = toggleLabel(
         _LW("app.dock.show_frequent"),
         dockSettings_.showFrequentItems);
+    const auto addToggle = [&](HMENU target, UINT command, const wchar_t* title, bool enabled,
+                               const wchar_t* glyph, bool available = true, bool visibility = false) {
+        const auto label = visibility ? std::wstring(title) + L"\t" +
+            _LW(enabled ? "app.interact.shown" : "app.interact.hidden") : toggleLabel(title, enabled);
+        AppendMenuW(target, MF_STRING | (available ? 0 : MF_GRAYED), command, label.c_str());
+        SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
+    };
+    addToggle(menu, kDockStartButton, _LW("app.dock.start_button"), dockSettings_.showWindowsButton,
+        L"\uF133", true, true);
+    addToggle(menu, kContextDockSingleClickLaunch, _LW("app.dock.single_click_launch"),
+        dockSettings_.singleClickLaunchItems, L"\uE445"); // cursor_click_20
+    addToggle(menu, kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
+        dockSettings_.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
+    addToggle(menu, kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
+        dockSettings_.showWindowPreviews, L"\uF8B5"); // window_20
+    const bool spaceOptionsEnabled = !dockSettings_.showOnlyWhenSummoned && !availability.allDockMerged && !includeStatusBar;
+    addToggle(independentMenu, kDockReserveDesktop, _LW("settings.dock.allowDesktopContentOverlap"),
+        includeStatusBar ? !dockSettings_.allowDesktopContentOverlap : snowdesktop::dock_settings_rules::ShouldReserveDesktopWorkArea(
+            dockSettings_.showOnlyWhenSummoned, dockSettings_.allowDesktopContentOverlap), L"\uF359", spaceOptionsEnabled);
+    addToggle(independentMenu, kDockReserveMaximized, _LW("settings.dock.reserveScreenSpace"),
+        dockSettings_.reserveScreenSpace, L"\uF8B5", spaceOptionsEnabled);
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING,
         kContextDockShowFrequentItems, frequentLabel.c_str());
 
@@ -71,16 +201,18 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     AppendMenuW(menu, MF_STRING,
         keepToggleCommand, keepLabel.c_str());
 
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, _LW("app.dock.detailed"));
-    if (includeStatusBar)
+    if (!includeStatusBar)
     {
-        AppendMenuW(menu, MF_STRING, kDockStatusBarSettingsCommand, _LW("statusBar.menu.settings"));
-        AppendMenuW(menu, MF_STRING, kDockTaskManagerCommand, _LW("statusBar.taskManager"));
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        addDesktopStyles(menu);
+        AppendMenuW(menu, MF_STRING, kContextDockDetailedSettings, _LW("app.dock.detailed"));
+        SetMenuItemIcon(menu, kContextDockDetailedSettings, L"\uF6A9", MenuIconFont::FluentRegular);
     }
-
-    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(positionMenu), L"");
-    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(layoutMenu), L"");
+    SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(positionMenu), L"\uF8E5", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(layoutMenu), L"\uF587", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(monitorMenu), L"\uF359", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(scaleMenu), L"\uF8C4", MenuIconFont::FluentRegular);
+    SetMenuItemIcon(revealParent, reinterpret_cast<UINT_PTR>(revealMenu), L"\uE445", MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextDockShowFrequentItems,
         dockSettings_.showFrequentItems
             ? snowdesktop::menu_fluent_glyphs::kShowFrequent
@@ -89,11 +221,62 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     SetMenuItemIcon(menu, keepToggleCommand,
         snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden,
         MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, kContextDockDetailedSettings, L"");
     if (includeStatusBar)
     {
-        SetMenuItemIcon(menu, kDockStatusBarSettingsCommand, L"\uF6A9", MenuIconFont::FluentRegular);
-        SetMenuItemIcon(menu, kDockTaskManagerCommand, L"\uE49D", MenuIconFont::FluentRegular);
+        const HMENU root = CreatePopupMenu();
+        if (!root) { DestroyMenu(menu); DestroyMenu(independentMenu); return nullptr; }
+        AppendMenuW(root, MF_STRING, kDockTaskManagerCommand, _LW("statusBar.taskManager"));
+        AppendMenuW(root, MF_SEPARATOR, 0, nullptr);
+        const HMENU mergedMenu = CreatePopupMenu();
+        const HMENU appearanceMenu = CreatePopupMenu();
+        if (!mergedMenu || !appearanceMenu)
+        {
+            if (mergedMenu) DestroyMenu(mergedMenu);
+            if (appearanceMenu) DestroyMenu(appearanceMenu);
+            DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr;
+        }
+        if (!AppendMenuW(root, MF_POPUP, reinterpret_cast<UINT_PTR>(mergedMenu), _LW("settings.bars.mergedBar")))
+        { DestroyMenu(mergedMenu); DestroyMenu(appearanceMenu); DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        SetMenuItemIcon(root, kDockTaskManagerCommand, L"\uE49D", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(root, reinterpret_cast<UINT_PTR>(mergedMenu), L"\uF587", MenuIconFont::FluentRegular);
+        if (!AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(appearanceMenu), _LW("settings.bars.positionAndAppearance")))
+        { DestroyMenu(appearanceMenu); DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        if (!AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(menu), _LW("settings.bars.dockActions")))
+        { DestroyMenu(menu); DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(appearanceMenu), L"\uF592", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(menu), L"\uE445", MenuIconFont::FluentRegular);
+        addDesktopStyles(root);
+        const HMENU heightMenu = CreatePopupMenu();
+        const HMENU iconMenu = CreatePopupMenu();
+        if (!heightMenu || !iconMenu)
+        {
+            if (heightMenu) DestroyMenu(heightMenu);
+            if (iconMenu) DestroyMenu(iconMenu);
+            DestroyMenu(independentMenu);
+            DestroyMenu(root);
+            return nullptr;
+        }
+        AppendMenuW(appearanceMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(heightMenu), _LW("settings.bars.height"));
+        AppendMenuW(appearanceMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("settings.bars.iconSize"));
+        for (UINT index = 0; index < std::size(kMergedBarHeights); ++index)
+        {
+            const auto label = std::to_wstring(kMergedBarHeights[index]);
+            addChoice(heightMenu, kMergedBarHeightFirst + index, label.c_str(),
+                dockSettings_.mergedBarHeight == kMergedBarHeights[index], L"\uF8C4");
+        }
+        for (UINT index = 0; index < 3; ++index)
+        {
+            const auto label = std::to_wstring(kDockScalePercent[index]) + L"%";
+            addChoice(iconMenu, kMergedDockScaleFirst + index, label.c_str(),
+                std::abs(dockSettings_.mergedIconScale * 100 - kDockScalePercent[index]) < .5f, L"\uF8C4");
+        }
+        AppendMenuW(mergedMenu, MF_SEPARATOR, 0, nullptr);
+        if (!AppendMenuW(mergedMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(independentMenu), _LW("app.settings.dock_bar")))
+        { DestroyMenu(independentMenu); DestroyMenu(root); return nullptr; }
+        SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(independentMenu), L"\uF133", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(appearanceMenu, reinterpret_cast<UINT_PTR>(heightMenu), L"\uF8C4", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(appearanceMenu, reinterpret_cast<UINT_PTR>(iconMenu), L"\uF133", MenuIconFont::FluentRegular);
+        return root;
     }
     return menu;
 }
@@ -132,6 +315,42 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
 
 void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
 {
+    if (command >= kDesktopStyleFirst && command < kDesktopStyleFirst + std::size(kDesktopStyles))
+    {
+        if (!settingsController_) return;
+        const auto index = command - kDesktopStyleFirst;
+        const std::wstring preset = kDesktopStyles[index];
+        // The status-bar interaction window can disappear when the layout is
+        // switched. Keep dialogs owned by the stable desktop host instead.
+        const HWND dialogOwner = hwnd_;
+        snowdesktop::SettingsHostActions::Request request;
+        request.action = snowdesktop::SettingsHostActions::Action::ApplyDesktopStylePreset;
+        request.value = preset;
+        if (preset == L"native" && settingsController_->Snapshot()->values.general.dockEnabled)
+        {
+            if (!ConfirmBarMenuAction(dialogOwner, _LW("settings.dock.disableConfirm.title"),
+                _LW("settings.dock.disableConfirm.description"), _LW("settings.desktopStyle.applyLayout"),
+                _LW("settings.dialog.cancel"))) return;
+            request.boolValue = true;
+        }
+        auto result = settingsController_->InvokeHostAction(request);
+        if (result.Succeeded()) result = settingsController_->FlushPending();
+        if (!result.Succeeded())
+        { MessageBoxW(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR); return; }
+        if (snowdesktop::NeedsDesktopStyleAnimations(preset, settingsController_->Snapshot()->values.dock))
+        {
+            const auto description = std::wstring(_LW("settings.desktopStyle.animationPrompt.description")) + L"\n\n" + _LW(kDesktopStyleAnimations[index]);
+            if (ConfirmBarMenuAction(dialogOwner, _LW("settings.desktopStyle.animationPrompt.title"), description.c_str(),
+                _LW("settings.desktopStyle.applyAnimations"), _LW("settings.desktopStyle.animationPrompt.keep")))
+            {
+                request.action = snowdesktop::SettingsHostActions::Action::ApplyDesktopStyleAnimations;
+                result = settingsController_->InvokeHostAction(request);
+                if (result.Succeeded()) result = settingsController_->FlushPending();
+                if (!result.Succeeded()) MessageBoxW(dialogOwner, result.message.c_str(), L"SnowDesktop", MB_OK | MB_ICONERROR);
+            }
+        }
+        return;
+    }
     DockSettings updated = dockSettings_;
     bool layoutChanged = false;
     switch (command)
@@ -156,6 +375,31 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         updated.showFrequentItems = !updated.showFrequentItems;
         layoutChanged = true;
         break;
+    case kContextDockSingleClickLaunch:
+        updated.singleClickLaunchItems = !updated.singleClickLaunchItems;
+        break;
+    case kDockStartButton:
+        updated.showWindowsButton = !updated.showWindowsButton;
+        layoutChanged = true;
+        break;
+    case kDockReserveDesktop:
+    case kDockReserveMaximized:
+        if (updated.showOnlyWhenSummoned || snowdesktop::ResolveBarSettingsAvailability(
+            generalSettings_.dockEnabled, updated, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).allDockMerged) return;
+        if (command == kDockReserveDesktop)
+            updated.allowDesktopContentOverlap = !updated.allowDesktopContentOverlap;
+        else updated.reserveScreenSpace = !updated.reserveScreenSpace;
+        layoutChanged = true;
+        break;
+    case kContextDockShowOnlyWhenSummoned:
+        updated.showOnlyWhenSummoned = !updated.showOnlyWhenSummoned;
+        layoutChanged = true;
+        break;
+    case kContextDockWindowPreviews:
+        updated.showWindowPreviews = !updated.showWindowPreviews;
+        if (!updated.showWindowPreviews)
+            HideDockWindowPreview();
+        break;
     case kContextDockKeepWhenHiddenOn:
         updated.keepWhenDesktopHidden = true;
         break;
@@ -163,13 +407,14 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         updated.keepWhenDesktopHidden = false;
         break;
     case kContextDockDetailedSettings:
+    case kMergedBarDetailedSettings:
         if (settingsController_)
         {
             (void)settingsController_->SynchronizeGeneral(generalSettings_);
             (void)settingsController_->SynchronizeDock(dockSettings_);
         }
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
-            snowdesktop::SettingsPage::DockAndTaskbar));
+            snowdesktop::SettingsPage::Dock, command == kMergedBarDetailedSettings ? "dock.mergedBarHeight" : ""));
         return;
     case kDockStatusBarSettingsCommand:
         ShowSettingsWindow(snowdesktop::SettingsRoute::ForPage(
@@ -181,7 +426,35 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
             MessageBeep(MB_ICONWARNING);
         return;
     default:
-        return;
+        if (command >= kDockRevealGestureFirst && command < kDockRevealGestureFirst + 2)
+        {
+            if (!snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
+                updated.showOnlyWhenSummoned, updated.floatingEdgeSwipeEnabled)) return;
+            updated.edgeRevealGesture = static_cast<int>(command - kDockRevealGestureFirst);
+            layoutChanged = updated.edgeRevealGesture != dockSettings_.edgeRevealGesture;
+        }
+        else if (command >= kDockMonitorScopeFirst && command < kDockMonitorScopeFirst + 3)
+        {
+            updated.monitorScope = static_cast<DockMonitorScope>(command - kDockMonitorScopeFirst);
+            layoutChanged = updated.monitorScope != dockSettings_.monitorScope;
+        }
+        else if (command >= kDockScaleFirst && command < kDockScaleFirst + std::size(kDockScalePercent))
+        {
+            updated.thicknessScale = ClampDockScale(kDockScalePercent[command - kDockScaleFirst] / 100.f);
+            layoutChanged = updated.thicknessScale != dockSettings_.thicknessScale;
+        }
+        else if (command >= kMergedDockScaleFirst && command < kMergedDockScaleFirst + 3)
+        {
+            updated.mergedIconScale = ClampMergedDockIconScale(kDockScalePercent[command - kMergedDockScaleFirst] / 100.f);
+            layoutChanged = updated.mergedIconScale != dockSettings_.mergedIconScale;
+        }
+        else if (command >= kMergedBarHeightFirst && command < kMergedBarHeightFirst + std::size(kMergedBarHeights))
+        {
+            updated.mergedBarHeight = kMergedBarHeights[command - kMergedBarHeightFirst];
+            layoutChanged = updated.mergedBarHeight != dockSettings_.mergedBarHeight;
+        }
+        else return;
+        break;
     }
 
     dockSettings_ = updated;
@@ -190,6 +463,7 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         (void)settingsController_->SynchronizeDock(dockSettings_);
     if (layoutChanged)
     {
+        ApplyFloatingDockHotkey();
         UpdateLayoutWorkArea();
         LayoutItems();
         InvalidateDragStaticScene();
@@ -210,6 +484,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
 
     const DockRunningAppInfo running =
         dockUnpinnedRunningApps_[runningIndex];
+    if (!running.presence.Interactive()) return;
     const bool explorer = snowdesktop::shortcut_application_rules::
         IsExplorerExecutable(running.executablePath) &&
         snowdesktop::dock_explorer_pin::IsFolderWindow(running.window);
@@ -268,7 +543,7 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             (explorer && !snowdesktop::dock_explorer_pin::IsFolderWindow(running.window)) ||
             std::none_of(dockUnpinnedRunningApps_.begin(),
                 dockUnpinnedRunningApps_.end(), [&](const auto& current) {
-                    return current.identityKey == running.identityKey;
+                    return current.presence.Interactive() && current.identityKey == running.identityKey;
                 }) || dragSession_.HasContext() ||
             dragDropController_.IsTransportActive())
             return;
@@ -362,18 +637,8 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             return;
 
         auto adoptRunning = [this, runningKey = running.identityKey](size_t itemIndex) {
-            auto& item = items_[itemIndex];
-            const auto key = DockItemWindowKey(item);
-            snowdesktop::dock_running_app_pin::AdoptRunningPresentation(
-                item, dockRunningWindows_[key], dockUnpinnedRunningApps_,
-                runningKey, [this](HBITMAP bitmap) {
-                    EraseD2DIconCacheForBitmap(bitmap);
-                    DeleteObject(bitmap);
-                });
-            InvalidateDockContainers();
-            InvalidateDragStaticScene();
+            AdoptDockRunningPresentation(runningKey, itemIndex);
         };
-
         // The native menu pumps messages. Prefer a desktop source that appeared
         // while it was open, rather than creating a second shortcut for that app.
         if (command == kContextDockPinMoveToDock && !explorer)
@@ -418,80 +683,21 @@ void DesktopApp::ShowDockRunningAppContextMenu(
             return;
         }
 
-        auto pinApplication = [this, screenPoint, adoptRunning](
+        auto pinApplication = [this, screenPoint, runningKey = running.identityKey](
             const std::shared_ptr<CatalogApplication>& target) {
-            if (!hwnd_ || !IsWindow(hwnd_) || exitRequested_ || dragSession_.HasContext() ||
-                dragDropController_.IsTransportActive()) return;
             POINT clientPoint = screenPoint;
-            if (!ScreenToClient(hwnd_, &clientPoint)) return;
+            if (!hwnd_ || !ScreenToClient(hwnd_, &clientPoint)) return;
             DockContainer* dock = GetDockContainerAtPoint(clientPoint);
             if (!dock) return;
-            const size_t insertIndex = dock->GetInsertIndexAtPoint(clientPoint);
-            const bool pinned = snowdesktop::dock_running_app_pin::CreateAndPin(
-                [dock] { return dock->HasCapacity(1); },
-                [&] {
-                    return snowdesktop::dock_running_app_pin::CreateShortcut(
-                        snowdesktop::desktop_source::Directory(),
-                        SanitizeShortcutFileStem(target->entry.name),
-                        target->entry.absolutePidl.get());
-                },
-                [&](const std::wstring& path) {
-                    auto item = snowdesktop::dock_running_app_pin::ReadShortcutItem(
-                        path, target->entry.name, target->folderPath.empty());
-                    if (!item) return false;
-                    item->layoutKey = ToUpperInvariant(path);
-                    item->gridCell = { kDockPageId, 0, 0 };
-                    if (!AddMaterializedItemsToDock({ path }, insertIndex, false))
-                        return false;
-                    items_.push_back(std::move(*item));
-                    RefreshDesktopItemIndexCache();
-                    const size_t itemIndex = items_.size() - 1;
-                    const auto key = DockItemWindowKey(items_[itemIndex]);
-                    const auto stamp = snowdesktop::shell_icon_request::Stamp(items_[itemIndex]);
-                    if (!target->folderPath.empty())
-                    {
-                        const auto folderKey = L"I:" + ToUpperInvariant(
-                            snowdesktop::dock_refresh_cache::SourceKey(items_[itemIndex].layoutKey, path));
-                        const auto cached = dockFolderTargetCache_.Read(folderKey, stamp);
-                        dockFolderTargetCache_.Publish(folderKey, cached.ticket,
-                            snowdesktop::item_location::FolderTarget{target->folderPath,
-                                snowdesktop::item_location::FolderTargetKind::Shortcut, true});
-                        // A folder pin belongs to the file area and must leave
-                        // Explorer's running group and all its windows intact.
-                        NormalizeDockRecycleBinPosition();
-                    }
-                    else
-                    {
-                        const auto cacheKey = snowdesktop::dock_refresh_cache::SourceKey(key, path);
-                        const auto cached = dockAppIdentityCache_.Read(cacheKey, stamp);
-                        DockAppIdentity pinnedIdentity;
-                        pinnedIdentity.sourceParsingName = path;
-                        pinnedIdentity.executablePath = target->identity.executablePath;
-                        pinnedIdentity.appUserModelId = target->identity.appUserModelId;
-                        pinnedIdentity.kind = !pinnedIdentity.executablePath.empty()
-                            ? DockAppIdentityKind::Executable : DockAppIdentityKind::Applications;
-                        dockAppIdentityCache_.Publish(cacheKey, cached.ticket, std::move(pinnedIdentity));
-                        adoptRunning(itemIndex);
-                    }
-                    // Appending can relocate every DesktopItem. Rebind all
-                    // wrappers before any layout, persistence or repaint.
-                    RebuildContainersAndItems();
-                    ApplyPageMapping();
-                    LayoutItems();
-                    return true;
-                },
-                [](const std::wstring& path) { DeleteFileW(path.c_str()); },
-                [this] { SaveLayoutSlots(); });
-            if (!pinned)
-            {
+            DockRunningPinTarget pinTarget;
+            pinTarget.entry.name = target->entry.name;
+            pinTarget.entry.parsingName = target->entry.parsingName;
+            pinTarget.entry.absolutePidl.reset(ILCloneFull(target->entry.absolutePidl.get()));
+            pinTarget.identity.executablePath = target->identity.executablePath;
+            pinTarget.identity.appUserModelId = target->identity.appUserModelId;
+            pinTarget.folderPath = target->folderPath;
+            if (!PinDockRunningTarget(runningKey, pinTarget, dock->GetInsertIndexAtPoint(clientPoint)))
                 MessageBeep(MB_ICONWARNING);
-                return;
-            }
-            // Reconcile metadata later while retaining the committed icon and
-            // identity; a full reload would reset every desktop icon first.
-            RequestShellRefresh();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-            return;
         };
         if (command == kContextDockPinCurrentFolder)
         {

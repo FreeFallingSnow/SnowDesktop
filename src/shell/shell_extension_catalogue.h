@@ -1,6 +1,7 @@
 #pragma once
 #include "shell_extension_menu.h"
 #include <filesystem>
+#include <array>
 
 namespace snowdesktop::shell_extensions
 {
@@ -21,6 +22,9 @@ struct Registration
     unsigned contexts = 0;
     bool systemEnabled = true, linked = false;
     std::uint64_t revision = 0;
+    // Live command and asset proof excludes decoded icon pixels. Persisted
+    // catalogues store this separately; the settings IPC contract is unchanged.
+    std::uint64_t menuRevision = 0;
     // Exact execution identity for grouping equivalent static registrations in
     // settings. Original IDs remain the persisted visibility/command authority.
     std::string commandIdentity;
@@ -36,10 +40,20 @@ struct Catalogue
     std::vector<Registration> rows;
     std::vector<Association> associations;
     std::uint64_t revision = 0;
+    // Transient proof from this process; persisted/IPC catalogues omit it and
+    // use full verification until a live scan establishes the baseline.
+    std::uint64_t folderRevision = 0;
+    std::array<std::uint64_t, 2> backgroundRevisions{};
 };
 constexpr unsigned ContextBit(Context context) { return 1u << static_cast<unsigned>(context); }
 // Read-only, intended for the metadata worker. No Shell extension is activated.
 Catalogue ReadCatalogue(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
+// Same complete folder registration inputs as the full scan, without
+// enumerating unrelated file classes. Metadata only; no handler activation.
+std::uint64_t ReadFolderCatalogueRevision(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
+// Background scope includes shared Directory\Background registrations and,
+// for Desktop, DesktopBackground. Uses the same live inputs as ReadCatalogue.
+std::uint64_t ReadBackgroundCatalogueRevision(Context scope, HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
 // Internal menu compatibility path uses the same Blocked/Approved policy as
 // discovery. Alternate roots are for isolated registry policy tests only.
 bool HandlerEnabled(const std::wstring &clsid, HKEY user = HKEY_CURRENT_USER, HKEY machine = HKEY_LOCAL_MACHINE);

@@ -32,7 +32,11 @@ public:
         bool immediate = false, std::wstring title = {});
     void Hide();
     void Close();
+    void Invalidate();
     bool Visible() const;
+    HWND Window() const;
+    // Drag feedback must remain visible during capture/OLE; hover tips hide.
+    void SetDragFeedback(bool enabled);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

@@ -2,13 +2,25 @@
 #include <windows.h>
 #include <imm.h>
 #include <msctf.h>
+#include "ui/render/ui_animation_scheduler.h"
+#include <algorithm>
+#include <cwctype>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
+#include <utility>
 
 namespace snowdesktop::status_bar_input_method
 {
+struct ProfileIcon
+{
+    DWORD width = 0, height = 0;
+    std::vector<std::uint32_t> pixels;
+    friend bool operator==(const ProfileIcon&, const ProfileIcon&) = default;
+};
 struct Snapshot
 {
     HWND foreground = nullptr;
@@ -16,7 +28,9 @@ struct Snapshot
     DWORD thread = 0;
     HKL layout = nullptr;
     bool menuActive = false;
-    std::wstring label, description;
+    bool profileKnown = false;
+    std::wstring label, description, layoutLabel;
+    std::optional<ProfileIcon> layoutIcon;
     friend bool operator==(const Snapshot&, const Snapshot&) = default;
 };
 
@@ -33,9 +47,98 @@ struct Selection
     Snapshot target;
     std::vector<Choice> choices;
 };
-Selection CaptureSelection();
-bool RestoreTarget(const Snapshot& target);
+Selection CaptureSelection(const Snapshot& target);
 HRESULT Select(const Selection&, const Choice&);
+
+// A live target is separate from the last successful display sample. No cached
+// application becomes a command target when Windows temporarily has no foreground.
+inline bool SameTarget(const Snapshot& expected, const Snapshot& current)
+{
+    return expected.foreground && expected.thread && current.thread && current.layout && !current.menuActive &&
+        expected.foreground == current.foreground &&
+        (!expected.focus || (expected.thread == current.thread && expected.focus == current.focus));
+}
+struct TargetCallbacks
+{
+    std::function<Snapshot()> sample, desktop;
+    std::function<bool(const Snapshot&)> valid;
+    std::function<HRESULT(const Snapshot&)> activate;
+    std::function<bool(UiScheduleToken)> current;
+    std::function<void(UiScheduleToken, HRESULT, Snapshot)> finished;
+    std::function<void(const wchar_t*, const Snapshot&, const Snapshot&, HRESULT, unsigned, double)> trace;
+    std::function<double()> nowMilliseconds = UiAnimationScheduler::MonotonicMilliseconds;
+};
+TargetCallbacks WindowsTargetCallbacks();
+
+// nullopt acquires a target before showing the panel; a supplied snapshot
+// restores that target after closing it. Keep Windows message processing alive
+// while cross-queue activation restores focus. Native calls are the test seam;
+// cancellation, scheduling, deadlines and completion run through this same path.
+inline UiScheduleToken ScheduleTarget(UiAnimationScheduler& scheduler,
+    std::optional<Snapshot> target, TargetCallbacks callbacks)
+{
+    struct Progress { bool requested = false; HWND initial = nullptr; unsigned polls = 0; };
+    const auto progress = std::make_shared<Progress>();
+    const double started = callbacks.nowMilliseconds();
+    const double deadline = started + (target ? 750 : 250);
+    return scheduler.ScheduleInterval(16,
+        [&scheduler, target = std::move(target), callbacks = std::move(callbacks), progress, started, deadline](auto token) {
+            Snapshot observed;
+            const auto trace = [&](const wchar_t* stage, HRESULT result) {
+                if (callbacks.trace) callbacks.trace(stage, target.value_or(Snapshot{}), observed,
+                    result, progress->polls, callbacks.nowMilliseconds() - started);
+            };
+            const auto finish = [&](const wchar_t* stage, HRESULT result, Snapshot resolved = {}) {
+                scheduler.Cancel(token);
+                trace(stage, result);
+                callbacks.finished(token, result, std::move(resolved));
+            };
+            if (!callbacks.current(token))
+            { finish(L"target-cancelled", HRESULT_FROM_WIN32(ERROR_CANCELLED)); return; }
+            observed = callbacks.sample();
+            if (++progress->polls == 1) trace(target ? L"restore-start" : L"capture-start", S_OK);
+            if (!target)
+            {
+                if (callbacks.valid(observed) && !observed.menuActive)
+                { finish(L"capture-ready", S_OK, observed); return; }
+                if (callbacks.nowMilliseconds() < deadline) return;
+                // Persistent absence of a foreground window is a valid desktop
+                // scenario. Never substitute the desktop for a known app/menu.
+                if (!observed.foreground)
+                {
+                    const auto desktop = callbacks.desktop();
+                    if (callbacks.valid(desktop))
+                    { observed = desktop; finish(L"capture-desktop", S_OK, desktop); return; }
+                }
+                finish(L"capture-unavailable", HRESULT_FROM_WIN32(ERROR_NOT_FOUND));
+                return;
+            }
+            if (!callbacks.valid(*target))
+            { finish(L"restore-invalid", HRESULT_FROM_WIN32(ERROR_INVALID_WINDOW_HANDLE)); return; }
+            if (SameTarget(*target, observed))
+            { finish(L"restore-ready", S_OK, observed); return; }
+            if (callbacks.nowMilliseconds() >= deadline)
+            { finish(L"restore-timeout", HRESULT_FROM_WIN32(ERROR_TIMEOUT)); return; }
+            if (!progress->requested)
+            {
+                progress->requested = true;
+                progress->initial = observed.foreground;
+                // A different child focus in the same app may still be settling.
+                // Request activation only once, and do not repeatedly steal focus.
+                if (observed.foreground != target->foreground)
+                {
+                    const HRESULT result = callbacks.activate(*target);
+                    trace(L"restore-activation", result);
+                    if (FAILED(result)) { finish(L"restore-denied", result); return; }
+                    if (!callbacks.current(token))
+                    { finish(L"target-cancelled", HRESULT_FROM_WIN32(ERROR_CANCELLED)); return; }
+                }
+            }
+            else if (observed.foreground && observed.foreground != target->foreground &&
+                observed.foreground != progress->initial)
+                finish(L"restore-focus-moved", HRESULT_FROM_WIN32(ERROR_CANCELLED));
+        });
+}
 
 inline bool SameProfile(const TF_INPUTPROCESSORPROFILE& a, const TF_INPUTPROCESSORPROFILE& b)
 {
@@ -45,6 +148,16 @@ inline bool SameProfile(const TF_INPUTPROCESSORPROFILE& a, const TF_INPUTPROCESS
 
 namespace detail
 {
+inline std::wstring LayoutLabel(std::wstring description, std::wstring abbreviation)
+{
+    std::transform(description.begin(), description.end(), description.begin(),
+        [](wchar_t ch) { return static_cast<wchar_t>(towlower(ch)); });
+    if (description.find(L"pinyin") != std::wstring::npos ||
+        description.find(L"拼音") != std::wstring::npos) // l10n-allow: registered input-method name matcher, not UI text
+        return L"拼"; // l10n-allow: intrinsic Pinyin input-method symbol, independent of UI language
+    return abbreviation;
+}
+
 // A language is not a conversion mode. A failed IME query is not a successful
 // mode sample; retain the last successful presentation instead of showing ZH.
 inline std::wstring Label(LANGID language, std::wstring abbreviation,
@@ -73,14 +186,52 @@ inline bool Matches(const Snapshot& value, HWND foreground, DWORD thread, HKL la
 class DisplayCache
 {
 public:
-    Snapshot Get(const Snapshot& sample, const Snapshot& target, bool menu)
+    Snapshot Get(const Snapshot& sample, const Snapshot& target, bool menu, ULONGLONG now = GetTickCount64())
     {
-        if (!menu && !sample.label.empty() &&
-            Matches(sample, target.foreground, target.thread, target.layout, target.focus)) shown_ = sample;
+        if (!menu && (!sample.label.empty() || !sample.layoutLabel.empty()) &&
+            Matches(sample, target.foreground, target.thread, target.layout, target.focus))
+        {
+            auto next = sample;
+            const auto hasMode = [](const Snapshot& value) {
+                return !value.label.empty() && value.label != value.layoutLabel;
+            };
+            // Missing conversion data is not evidence that the button should
+            // disappear. Focus changes and non-editable controls can keep it
+            // unavailable indefinitely. Only the presentation is retained;
+            // commands still capture the current typing target independently.
+            if (sample.label.empty() && hasMode(shown_))
+            {
+                pendingModeRemoval_ = false;
+                if (PRIMARYLANGID(LOWORD(reinterpret_cast<ULONG_PTR>(sample.layout))) !=
+                    PRIMARYLANGID(LOWORD(reinterpret_cast<ULONG_PTR>(shown_.layout))))
+                    return shown_;
+                next.label = shown_.label;
+            }
+            if (!sample.profileKnown && shown_.layoutIcon && Matches(shown_, target.foreground,
+                    target.thread, target.layout, target.focus))
+            {
+                next.layoutIcon = shown_.layoutIcon;
+                next.layoutLabel = shown_.layoutLabel;
+                next.description = shown_.description;
+            }
+            // Debounce confirmed removal only. A successfully read conversion
+            // mode is shown immediately, including a Chinese/English toggle.
+            if (hasMode(shown_) && !hasMode(next))
+            {
+                if (!pendingModeRemoval_)
+                { pendingModeRemoval_ = true; pendingSince_ = now; }
+                if (now - pendingSince_ < 600) return shown_;
+            }
+            pendingModeRemoval_ = false;
+            shown_ = std::move(next);
+        }
+        else pendingModeRemoval_ = false; // Unknown/menu samples break continuous confirmation.
         return shown_;
     }
 private:
     Snapshot shown_;
+    bool pendingModeRemoval_ = false;
+    ULONGLONG pendingSince_ = 0;
 };
 }
 
@@ -95,7 +246,7 @@ public:
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
     Snapshot Current() const;
-    HRESULT Show(RECT anchor, bool context);
+    HRESULT Show(RECT anchor, bool context, bool layoutPanel = false);
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

@@ -26,6 +26,7 @@ struct StatusBarItem
     int batteryLevel = -1;
     bool flipGlyph = false;
     bool batteryPluggedIn = false;
+    std::optional<status_bar_input_method::ProfileIcon> inputIcon;
 };
 
 // Data boundary only: no HWND, sampling, Explorer or device operations.
@@ -40,6 +41,7 @@ struct StatusBarSnapshot
     std::optional<system_control::Snapshot> wifi;
     status_bar_notification::Snapshot notifications;
     std::optional<widget_runtime::WidgetAudioOutputVolumeDataSnapshot> audio;
+    std::optional<widget_runtime::WidgetAudioOutputDefaultDataSnapshot> audioDevice;
     std::optional<widget_runtime::WidgetPowerDataSnapshot> power;
     std::vector<tray::Icon> tray;
     bool trayExpanded = false;
@@ -53,7 +55,7 @@ struct StatusBarPalette
 std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings&, const StatusBarSnapshot&);
 bool SameStatusBarContent(const std::vector<StatusBarItem>&, const std::vector<StatusBarItem>&);
 inline std::size_t StatusBarControlPart(float localDip, bool hasBattery = true)
-{ return localDip < 32 ? 0 : (localDip < 60 || !hasBattery) ? 1 : 2; }
+{ return localDip < 28 ? 0 : (localDip < 56 || !hasBattery) ? 1 : 2; }
 inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<StatusBarItem>& items, POINT point)
 {
     for (std::size_t index = 0; index < items.size(); ++index)
@@ -63,8 +65,8 @@ inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<Status
 HRESULT DrawStatusBarContent(ID2D1DeviceContext*, IDWriteFactory*, std::vector<StatusBarItem>&,
     UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
     std::optional<std::size_t> hovered = {}, bool keyboardFocusVisible = false, std::size_t focused = 0,
-    bool mergedDock = false);
+    bool mergedDock = false, bool timeNotificationRightAligned = false);
 PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings&);
 // The desktop-facing halo occupies space within the existing AppBar allocation.
-void DrawStatusBarEdge(ID2D1DeviceContext*, RECT, const PersonalizationSettings&, float scale, DockPosition);
+void DrawStatusBarEdge(ID2D1DeviceContext*, RECT, const PersonalizationSettings&, float scale, DockPosition, RECT adjacentDock = {});
 }

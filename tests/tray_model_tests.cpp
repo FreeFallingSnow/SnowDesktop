@@ -16,7 +16,92 @@ int RunTrayModelTests()
         if (!value) { ++failures; std::cerr << "FAIL tray: " << message << '\n'; }
     };
     {
+        // Real Weixin trace: MODIFY/NIF_ICON alternates null and a normal
+        // handle every ~500 ms. Do not confuse its blank frame with a failed
+        // CopyIcon/GetIconInfo of a nonnull handle.
+        ShellTrayData packet{};
+        packet.operation = NIM_MODIFY;
+        packet.icon.size = sizeof(NotifyIcon32);
+        packet.icon.window = 42; packet.icon.id = 7;
+        packet.icon.flags = NIF_MESSAGE | NIF_ICON;
+        packet.icon.callback = WM_USER + 9;
+        Notification notification;
+        HICON handle = nullptr;
+        check(Decode(&packet, sizeof(packet), notification, handle) && !handle && (notification.flags & kClearIcon),
+            "an explicit null Shell icon becomes a clear-image event");
+        Event blank; static_cast<Notification&>(blank) = notification;
+        blank.identity.process = 99;
+        std::vector<Icon> blinking;
+        check(!Apply(blinking, blank) && blinking.empty(), "a blank partial MODIFY cannot manufacture an icon");
+        Event bright = blank;
+        bright.operation = NIM_ADD; bright.flags &= ~kClearIcon;
+        bright.width = bright.height = 2;
+        std::fill_n(bright.pixels.begin(), 4, 0xff00ff00u);
+        check(Apply(blinking, bright), "the blinking icon registers through the real model");
+        blinking.front().version = 4; blinking.front().persistentKey = "saved-pin";
+        const auto initial = blinking.front();
+        for (unsigned frame = 0; frame < 3; ++frame)
+        {
+            check(Apply(blinking, blank) && blinking.size() == 1 && blinking.front().width == 1 &&
+                blinking.front().height == 1 && blinking.front().pixels == std::vector<std::uint32_t>{0} &&
+                SameFocusIdentity(blinking.front().identity, initial.identity) && blinking.front().callback == initial.callback &&
+                blinking.front().version == 4 && blinking.front().persistentKey == "saved-pin" && !(blinking.front().state & NIS_HIDDEN),
+                "a blink-off frame paints transparent pixels without losing its pin, slot or callback");
+            bright.operation = NIM_MODIFY;
+            check(Apply(blinking, bright) && blinking.front().pixels == initial.pixels,
+                "the following bright frame restores the original image");
+        }
+        packet.icon.icon = 1; packet.icon.flags |= kClearIcon;
+        check(Decode(&packet, sizeof(packet), notification, handle) && handle && !(notification.flags & kClearIcon),
+            "a sender cannot forge the collector's private clear flag for a nonnull icon");
+        Event failed; static_cast<Notification&>(failed) = notification;
+        failed.identity.process = 99;
+        check(Apply(blinking, failed) && blinking.front().pixels == initial.pixels,
+            "failed nonnull icon conversion preserves the last successful image");
+        packet.icon.flags = NIF_TIP | kClearIcon; packet.icon.icon = 0;
+        check(Decode(&packet, sizeof(packet), notification, handle) && !(notification.flags & kClearIcon),
+            "a tooltip-only update never clears the image");
+        Event initialBlank = blank; initialBlank.operation = NIM_ADD;
+        blinking.clear();
+        check(Apply(blinking, initialBlank) && blinking.size() == 1 && blinking.front().pixels == std::vector<std::uint32_t>{0},
+            "an initially blank ADD keeps a transparent actionable registration");
+    }
+    {
+        // Coalescing preserves independent monitors and rejects stale queued
+        // messages after the overflow HWND closes/reopens.
+        std::vector<std::pair<HWND, std::uint64_t>> posted;
+        bool allowPost = true;
+        ChangeNotifications changes([&](HWND window, std::uint64_t token) {
+            if (!allowPost) return false;
+            posted.emplace_back(window, token); return true;
+        });
+        const auto first = reinterpret_cast<HWND>(1), second = reinterpret_cast<HWND>(2);
+        changes.Subscribe(first); changes.Subscribe(second);
+        changes.Publish(); changes.Publish();
+        check(posted.size() == 2, "a burst queues at most one update per tray presenter");
+        const auto firstToken = posted[0].second, secondToken = posted[1].second;
+        check(changes.Acknowledge(first, firstToken) && !changes.Acknowledge(first, firstToken),
+            "each change ticket can be acknowledged only once");
+        changes.Publish();
+        check(posted.size() == 3 && posted.back().first == first,
+            "one monitor's paint cannot consume another monitor's pending update");
+        changes.Unsubscribe(second); changes.Subscribe(second); changes.Publish();
+        check(posted.size() == 4 && !changes.Acknowledge(second, secondToken) &&
+            changes.Acknowledge(second, posted.back().second), "reopened overflow ignores its old queued notification");
+        changes.Unsubscribe(first); changes.Unsubscribe(second); changes.Publish();
+        check(posted.size() == 4, "closed presenters stop receiving updates");
+        changes.Subscribe(first); allowPost = false; changes.Publish();
+        allowPost = true; changes.Publish();
+        check(posted.size() == 5 && changes.Acknowledge(first, posted.back().second),
+            "failed posting does not permanently suppress later image changes");
+    }
+    {
         namespace input = snowdesktop::status_bar_input_method;
+        check(input::detail::LayoutLabel(L"Microsoft Pinyin", L"ZH") == L"拼" &&
+            input::detail::LayoutLabel(L"微软拼音", L"ZH") == L"拼" &&
+            input::detail::LayoutLabel(L"US keyboard", L"EN") == L"EN" &&
+            input::detail::LayoutLabel(L"Other Chinese input program", L"ZH") == L"ZH",
+            "the layout symbol identifies Pinyin without inventing that profile for other keyboards");
         TF_INPUTPROCESSORPROFILE first{}, second{};
         first.dwProfileType=second.dwProfileType=TF_PROFILETYPE_INPUTPROCESSOR;
         first.langid=second.langid=0x0804;
@@ -54,6 +139,45 @@ int RunTrayModelTests()
         input::detail::DisplayCache display;
         check(display.Get({}, {}, false).label.empty(), "startup has no fabricated input mode");
         old.label = L"A";
+        input::detail::DisplayCache layoutDisplay;
+        auto layoutOnly = old; layoutOnly.label.clear(); layoutOnly.layoutLabel = L"拼";
+        check(layoutDisplay.Get(layoutOnly, layoutOnly, false).layoutLabel == L"拼" &&
+            layoutDisplay.Get(layoutOnly, layoutOnly, false).label.empty(),
+            "an available keyboard layout is shown without inventing an unavailable conversion mode");
+        auto withMode = layoutOnly; withMode.label = L"中";
+        layoutDisplay.Get(withMode, withMode, false, 100);
+        layoutDisplay.Get(withMode, withMode, false, 700);
+        check(layoutDisplay.Get(layoutOnly, layoutOnly, false).label == L"中",
+            "an unavailable conversion query retains the same target's last successful mode");
+        auto newLayoutTarget = layoutOnly; newLayoutTarget.foreground = reinterpret_cast<HWND>(2);
+        check(layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 1000).label == L"中" &&
+            layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 1599).label == L"中",
+            "a transient unavailable mode does not flash the language button off");
+        check(layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 2600).label == L"中" &&
+            layoutDisplay.Get(newLayoutTarget, newLayoutTarget, false, 10000).label == L"中",
+            "unavailable conversion reads after changing foreground never confirm removal of the mode button");
+        auto childTarget = newLayoutTarget; childTarget.focus = reinterpret_cast<HWND>(3);
+        check(layoutDisplay.Get(childTarget, childTarget, false, 11000).label == L"中",
+            "non-editable child focus retains the last successful presentation without hiding the button");
+        childTarget.label = L"英";
+        check(layoutDisplay.Get(childTarget, childTarget, false, 11001).label == L"英",
+            "a successfully sampled mode replaces the retained presentation immediately");
+        auto englishLayout = childTarget;
+        englishLayout.layout = reinterpret_cast<HKL>(0x0409);
+        englishLayout.label = englishLayout.layoutLabel = L"EN";
+        check(layoutDisplay.Get(englishLayout, englishLayout, false, 12000).label == L"英" &&
+            layoutDisplay.Get(englishLayout, englishLayout, false, 12599).label == L"英",
+            "a confirmed plain keyboard must settle before removing the conversion-mode button");
+        layoutDisplay.Get({}, {}, false, 12600);
+        check(layoutDisplay.Get(englishLayout, englishLayout, false, 13000).label == L"英",
+            "an unavailable foreground sample interrupts rather than completes pending removal");
+        layoutDisplay.Get(englishLayout, englishLayout, true, 13600);
+        check(layoutDisplay.Get(englishLayout, englishLayout, false, 14000).label == L"英" &&
+            layoutDisplay.Get(englishLayout, englishLayout, false, 14599).label == L"英" &&
+            layoutDisplay.Get(englishLayout, englishLayout, false, 14600).label == L"EN",
+            "menu focus interrupts removal and a continuous confirmed keyboard change eventually hides the mode button");
+        check(layoutDisplay.Get(childTarget, childTarget, false, 14601).label == L"英",
+            "switching back to a confirmed IME displays its mode without a reveal delay");
         check(display.Get(old, old, false).label == L"A", "first valid input mode is presented immediately");
         auto other = old; other.foreground = reinterpret_cast<HWND>(2); other.label = L"B";
         check(display.Get(old, other, false).label == L"A" &&

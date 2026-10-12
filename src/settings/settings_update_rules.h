@@ -14,6 +14,9 @@ inline bool IsGeneralShortcutOnlyCommit(
     const GeneralSettings& after) noexcept
 {
     const bool shortcutChanged =
+        before.softwareDesktopHotkeyEnabled != after.softwareDesktopHotkeyEnabled ||
+        before.softwareDesktopHotkeyModifiers != after.softwareDesktopHotkeyModifiers ||
+        before.softwareDesktopHotkeyVirtualKey != after.softwareDesktopHotkeyVirtualKey ||
         before.desktopPassthroughHotkeyEnabled !=
             after.desktopPassthroughHotkeyEnabled ||
         before.desktopPassthroughHotkeyModifiers !=
@@ -44,6 +47,7 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.globalQuickNavigationAppearance == after.globalQuickNavigationAppearance &&
         before.globalCollectionPopupAppearance == after.globalCollectionPopupAppearance &&
         before.font == after.font &&
+        before.tooltipFontSize == after.tooltipFontSize &&
         before.dockEnabled == after.dockEnabled &&
         before.statusBar == after.statusBar &&
         before.animationMode == after.animationMode &&

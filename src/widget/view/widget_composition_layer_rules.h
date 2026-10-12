@@ -141,10 +141,22 @@ constexpr bool NeedsForegroundPaint(PointerVisualLayer layer)
 constexpr bool ShouldDeferWidgetSurfaceDraw(
     bool desktopPaintInProgress,
     bool floatingDockPaintInProgress,
-    bool floatingPopupPaintInProgress)
+    bool floatingPopupPaintInProgress,
+    bool pointerBatchActive = false)
 {
     return desktopPaintInProgress || floatingDockPaintInProgress ||
-        floatingPopupPaintInProgress;
+        floatingPopupPaintInProgress || pointerBatchActive;
+}
+
+constexpr std::uint32_t PassivePointerFrameDelay(
+    std::uint64_t now, std::uint64_t lastPresent)
+{
+    // Keep passive hover within one 8 ms presentation budget. Input callbacks
+    // still run immediately; only superseded child-surface drawings are merged.
+    constexpr std::uint32_t intervalMs = 8;
+    if (lastPresent == 0 || now < lastPresent || now - lastPresent >= intervalMs)
+        return 0;
+    return intervalMs - static_cast<std::uint32_t>(now - lastPresent);
 }
 
 constexpr bool SurfaceIncludesDesktop(std::string_view surface)

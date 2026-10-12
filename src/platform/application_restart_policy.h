@@ -9,8 +9,15 @@
 namespace snowdesktop::application_restart_policy
 {
 inline constexpr DWORD kFlags = RESTART_NO_HANG;
+inline constexpr wchar_t kRecoveryArgument[] =
+    L"--snowdesktop-application-recovery";
 inline constexpr std::wstring_view kWatchProcessHandlePrefix =
     L"--watch-process-handle=";
+
+inline HRESULT RegisterForCurrentProcess()
+{
+    return RegisterApplicationRestart(kRecoveryArgument, kFlags);
+}
 
 constexpr bool AllowsCrashRestart(DWORD flags)
 {

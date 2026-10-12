@@ -761,6 +761,17 @@ void TestNetworkStatusDebounce()
     const auto afterReset = debouncer.Push(sample("local", 600));
     Check(afterReset.connectivity == "local",
         "reset must let the next network state publish immediately");
+    auto adapters = sample("local", 700);
+    adapters.connections.push_back({1, "Ethernet", "local"});
+    debouncer.Reset();
+    (void)debouncer.Push(adapters);
+    adapters.connections.front().name = "VPN";
+    adapters.connections.front().connectivity = "internet";
+    (void)debouncer.Push(adapters);
+    const auto refreshedAdapters = debouncer.Push(adapters);
+    Check(refreshedAdapters.connections.front().name == "VPN" &&
+            refreshedAdapters.connections.front().connectivity == "internet",
+        "adapter identity and connectivity refresh even when aggregate network status stays unchanged");
 }
 
 void TestSampledDataEnvelopeDebounce()
