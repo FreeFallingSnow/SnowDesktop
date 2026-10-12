@@ -265,11 +265,21 @@ int RunLifetimeChild(const std::filesystem::path& root,
     for (unsigned connection = 0; connection < 32; ++connection)
     {
         for (HWND target : windows) RemovePropW(target, kHookHostProcessProperty);
-        if (ResumeTaskbarThreads(windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId,
-                nullptr) != ERROR_SUCCESS || fallbackCount != 1 ||
+        const DWORD resumed = ResumeTaskbarThreads(windows, GetCurrentProcessId(),
+            restartedOwner.value.dwProcessId, nullptr);
+        const bool activation = observeActivation(true);
+        if (resumed != ERROR_SUCCESS || fallbackCount != 1 ||
             GetPropW(window, kHookOwnerProperty) != recovery ||
-            GetPropW(secondary, kHookOwnerProperty) != recovery || !observeActivation(true))
+            GetPropW(secondary, kHookOwnerProperty) != recovery || !activation)
+        {
+            report << "RESUME cycle=" << connection << " error=" << resumed << " activation=" << activation
+                << " primaryHost=" << reinterpret_cast<std::uintptr_t>(GetPropW(window, kHookHostProcessProperty))
+                << " secondaryHost=" << reinterpret_cast<std::uintptr_t>(GetPropW(secondary, kHookHostProcessProperty))
+                << " expectedHost=" << restartedOwner.value.dwProcessId
+                << " primaryProtocol=" << reinterpret_cast<std::uintptr_t>(GetPropW(window, kHookResumeProtocolProperty))
+                << " secondaryProtocol=" << reinterpret_cast<std::uintptr_t>(GetPropW(secondary, kHookResumeProtocolProperty)) << '\n';
             return fail("resident reconnect must reuse the same active DLL and freshly acknowledge every taskbar");
+        }
     }
     SetPropW(window, kHookResumeProtocolProperty,
         reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(kSharedStateVersion + 1)));
