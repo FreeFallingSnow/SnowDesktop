@@ -163,12 +163,14 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     const std::wstring frequentLabel = toggleLabel(
         _LW("app.dock.show_frequent"),
         dockSettings_.showFrequentItems);
+    std::vector<std::pair<UINT_PTR, const wchar_t*>> dockActionIcons;
     const auto addToggle = [&](HMENU target, UINT command, const wchar_t* title, bool enabled,
                                const wchar_t* glyph, bool available = true, bool visibility = false) {
         const auto label = visibility ? std::wstring(title) + L"\t" +
             _LW(enabled ? "app.interact.shown" : "app.interact.hidden") : toggleLabel(title, enabled);
         AppendMenuW(target, MF_STRING | (available ? 0 : MF_GRAYED), command, label.c_str());
-        SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
+        if (target == menu) dockActionIcons.emplace_back(command, glyph);
+        else SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
     };
     addToggle(menu, kDockStartButton, _LW("app.dock.start_button"), dockSettings_.showWindowsButton,
         L"\uF133", true, true);
@@ -210,14 +212,20 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(monitorMenu), L"\uF359", MenuIconFont::FluentRegular);
     SetMenuItemIcon(independentMenu, reinterpret_cast<UINT_PTR>(scaleMenu), L"\uF8C4", MenuIconFont::FluentRegular);
     SetMenuItemIcon(revealParent, reinterpret_cast<UINT_PTR>(revealMenu), L"\uE445", MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, kContextDockShowFrequentItems,
+    dockActionIcons.emplace_back(kContextDockShowFrequentItems,
         dockSettings_.showFrequentItems
             ? snowdesktop::menu_fluent_glyphs::kShowFrequent
-            : snowdesktop::menu_fluent_glyphs::kHideFrequent,
-        MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, keepToggleCommand,
-        snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden,
-        MenuIconFont::FluentRegular);
+            : snowdesktop::menu_fluent_glyphs::kHideFrequent);
+    dockActionIcons.emplace_back(keepToggleCommand,
+        snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden);
+    const auto bindFinalDockIcons = [&] {
+        // Icon metadata is indexed by HMENU row. Leading insertions below
+        // shift those rows, so bind Dock actions after the final structure.
+        for (const auto& [command, glyph] : dockActionIcons)
+            SetMenuItemIcon(menu, command, glyph, MenuIconFont::FluentRegular);
+        if (revealParent == menu)
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(revealMenu), L"\uE445", MenuIconFont::FluentRegular);
+    };
     if (includeStatusBar)
     {
         const HMENU root = CreatePopupMenu();
@@ -272,8 +280,10 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         SetMenuItemIcon(mergedMenu, reinterpret_cast<UINT_PTR>(independentMenu), L"\uF133", MenuIconFont::FluentRegular);
         SetMenuItemIcon(appearanceMenu, reinterpret_cast<UINT_PTR>(heightMenu), L"\uF8C4", MenuIconFont::FluentRegular);
         SetMenuItemIcon(appearanceMenu, reinterpret_cast<UINT_PTR>(iconMenu), L"\uF133", MenuIconFont::FluentRegular);
+        bindFinalDockIcons();
         return root;
     }
+    bindFinalDockIcons();
     return menu;
 }
 

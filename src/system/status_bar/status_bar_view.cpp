@@ -342,7 +342,7 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
     UINT w, UINT h, float scale, const PersonalizationSettings& a, const StatusBarPalette& palette,
     std::optional<std::size_t> hovered, bool keyboardFocusVisible, std::size_t focused, bool mergedDock,
-    bool timeNotificationRightAligned, StatusBarTrayScroll* trayScroll)
+    bool timeNotificationRightAligned, StatusBarTrayScroll* trayScroll, bool dockQuickSearch)
 {
     if (!context || !text || !w || !h || !std::isfinite(scale) || scale <= 0) return E_INVALIDARG;
     const bool twoLineClock = StatusBarUsesTwoLineClock(mergedDock);
@@ -405,6 +405,9 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         for (std::size_t i = 0; i < items.size(); ++i)
         {
             auto& item = items[i]; item.bounds = {}; item.contentBounds = {};
+            // Keep the stored standalone preference. Suppress only the duplicate
+            // merged entry, including its spacing, pointer and keyboard target.
+            if (mergedDock && dockQuickSearch && item.key == "quickSearch") continue;
             widths[i] = static_cast<LONG>(std::ceil(extentOf(item)));
             if (item.action == StatusBarAction::Calendar) { clockIndex = i; clockWidth = widths[i]; }
             else if (item.action == StatusBarAction::Notifications) { notificationIndex = i; notificationWidth = widths[i]; }

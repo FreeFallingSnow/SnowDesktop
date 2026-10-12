@@ -104,7 +104,7 @@ const StatusBarItem& Item(const std::vector<StatusBarItem>& items, std::string_v
     return *found;
 }
 void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, int width, int height, float scale, bool merged,
-    bool expectNotification = true, bool rightAligned = false) try
+    bool expectNotification = true, bool rightAligned = false, bool dockQuickSearch = true) try
 {
     const auto clock = std::find_if(items.begin(), items.end(), [](const auto& item) { return item.key == "clock"; });
     const bool dateVisible = clock != items.end() && !IsRectEmpty(&clock->bounds);
@@ -115,7 +115,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         const auto& item = items[i];
         if (item.key == "menu" || item.key == "quickSearch" || item.key == "taskView")
             launchEnd = std::max(launchEnd, item.bounds.right);
-        if (merged && item.key == "quickSearch")
+        if (merged && dockQuickSearch && item.key == "quickSearch")
             Require(IsRectEmpty(&item.bounds) && !ResolveStatusBarInvocation(items, i, false),
                 "merged status bar must not expose a duplicate Dock search action");
     }
@@ -522,7 +522,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 // CLI presets or altering the exported normal frame.
                 const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale,
                     bool search = true, bool taskView = true, int mergedHeight = 64,
-                    bool rightAligned = false, bool seconds = false) {
+                    bool rightAligned = false, bool seconds = false, bool dockQuickSearch = true) {
                     auto compactSettings = settings; compactSettings.clock = date;
                     compactSettings.timeNotificationRightAligned = rightAligned;
                     compactSettings.clockShowSeconds = seconds;
@@ -544,16 +544,23 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     context->SetTarget(scratch.Get()); context->SetTransform(D2D1::Matrix3x2F::Identity());
                     context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
                     const auto content = DrawStatusBarContent(context.Get(), text, compact, testWidth, testHeight,
-                        testScale, appearance, palette, {}, false, 0, merged, compactSettings.timeNotificationRightAligned);
+                        testScale, appearance, palette, {}, false, 0, merged, compactSettings.timeNotificationRightAligned,
+                        nullptr, dockQuickSearch);
                     const auto end = context->EndDraw(); context->SetTarget(nullptr); Require(content); Require(end);
                     const auto dockCenter = MergedStatusBarCenter(static_cast<LONG>(testWidth), static_cast<LONG>(testHeight), testScale);
                     const bool notificationFits = !merged || static_cast<LONG>(testWidth) - dockCenter.right >=
                         static_cast<LONG>(std::ceil(28.f * testScale) + std::ceil(84.f * testScale));
                     CheckLayout(text, compact, static_cast<int>(testWidth), static_cast<int>(testHeight), testScale, merged,
-                        notificationFits, rightAligned);
-                    if (!merged && search && logicalWidth >= 640)
-                        Require(!IsRectEmpty(&Item(compact, "quickSearch").bounds),
-                            "standalone status bar lost its enabled search entry");
+                        notificationFits, rightAligned, dockQuickSearch);
+                    if (search && (!merged || !dockQuickSearch) && logicalWidth >= 640)
+                    {
+                        const auto& entry = Item(compact, "quickSearch");
+                        const auto invocation = ResolveStatusBarInvocation(compact,
+                            static_cast<std::size_t>(&entry - compact.data()), false);
+                        Require(!IsRectEmpty(&entry.bounds) && invocation &&
+                            invocation->action == StatusBarAction::QuickSearch,
+                            "status bar must retain its search target when Dock does not provide one");
+                    }
                     if (taskView && logicalWidth >= 640)
                     {
                         const auto& entry = Item(compact, "taskView");
@@ -575,6 +582,8 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     compactLayout(false, false, 640, rightScale, true, true, 64, true);
                     compactLayout(true, true, 1920, rightScale, true, true, 64, false, true);
                     compactLayout(true, true, 1920, rightScale, true, true, 64, true, true);
+                    compactLayout(true, true, 1920, rightScale, true, true, 64, false, true, false);
+                    compactLayout(true, true, 1920, rightScale, false, true, 64, false, true, false);
                 }
                 compactLayout(false, false, 640, scale);
                 compactLayout(false, false, 640, scale, false);

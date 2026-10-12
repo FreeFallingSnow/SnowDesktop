@@ -951,6 +951,7 @@ void DesktopApp::SyncStatusBar()
         statusBar_->SetDockStateProvider([this](HMONITOR monitor) {
             snowdesktop::StatusBarDockState state;
             state.interacting = statusBar_->HasInteractionSession(monitor);
+            state.quickSearch = generalSettings_.dockEnabled && dockSettings_.showQuickSearchButton;
             for (const auto& host : persistentDockHosts_)
             {
                 if (!host || !host->active || host->monitor != monitor || !host->container ||

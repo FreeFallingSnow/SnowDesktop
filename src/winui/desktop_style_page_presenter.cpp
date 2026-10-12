@@ -647,6 +647,8 @@ struct DesktopStylePagePresenter::Impl
             append(PreviewStartIcon(nativeTaskbar ? 24 : iconExtent * .7, highContrast));
             if (!nativeTaskbar) divider();
         }
+        if (!nativeTaskbar && settings.showQuickSearchButton)
+            append(PreviewFluentGlyph(L"\uF68F")); // search_20
         app(L"browser", L"\xE774", true);
         app(nativeTaskbar ? L"mail" : L"terminal", nativeTaskbar ? L"\xE715" : L"\xE756", true);
         if (!nativeTaskbar) { append(PreviewCollection(highContrast, static_cast<int>(iconExtent))); divider(); }
@@ -670,7 +672,7 @@ struct DesktopStylePagePresenter::Impl
         return status;
     }
     muxc::Grid PreviewStatusBar(const StatusBarSettings& settings, bool merged,
-        const mux::UIElement& dockContent = nullptr, int mergedHeightDip = 48)
+        const mux::UIElement& dockContent = nullptr, int mergedHeightDip = 48, bool dockQuickSearch = true)
     {
         // Demonstrate the controls using the real item builder. Performance
         // metrics clutter the miniature; suppress them only in this local copy.
@@ -693,7 +695,7 @@ struct DesktopStylePagePresenter::Impl
         mux::UIElement clock = nullptr, notification = nullptr;
         for (const auto& item : items)
         {
-            if (merged && item.key == "quickSearch") continue;
+            if (merged && dockQuickSearch && item.key == "quickSearch") continue;
             muxc::Grid cell;
             const bool twoLineClock = StatusBarUsesTwoLineClock(merged);
             cell.Height(merged && item.key == "clock" ? (std::min)(40, mergedHeightDip) : 32);
@@ -795,7 +797,8 @@ struct DesktopStylePagePresenter::Impl
                 if (vertical) { bar.Height(apps.DesiredSize().Height + 20); bar.VerticalAlignment(mux::VerticalAlignment::Center); }
                 else { bar.Width(apps.DesiredSize().Width + 20); bar.HorizontalAlignment(mux::HorizontalAlignment::Center); }
             }
-            bar.Child(merged ? PreviewStatusBar(values.statusBar, true, apps, settings.mergedBarHeight).as<mux::UIElement>() :
+            bar.Child(merged ? PreviewStatusBar(values.statusBar, true, apps, settings.mergedBarHeight,
+                settings.showQuickSearchButton).as<mux::UIElement>() :
                 FitPreviewContent(apps, mux::HorizontalAlignment::Center).as<mux::UIElement>());
         }
         else bar.Child(PreviewStatusBar(values.statusBar, false));

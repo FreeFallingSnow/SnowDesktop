@@ -172,6 +172,7 @@ struct StatusBar::Impl
         bool appearanceDirty = true, paintDirty = true, painting = false;
         bool backgroundDirty = true;
         RECT adjacentDockBounds{};
+        bool dockQuickSearch = false;
         PersonalizationSettings appearance;
         HRESULT lastPaintError = S_OK;
         status_bar_input_method::Snapshot lastInputMethod;
@@ -592,7 +593,10 @@ struct StatusBar::Impl
         {
             if (closing || painting || failed || (!prepareHidden && (fullscreen || !IsWindowVisible(hwnd))) ||
                 !owner.composition || !owner.text) return;
-            const RECT adjacent = owner.dockStateProvider ? owner.dockStateProvider(monitor).adjacentDockBounds : RECT{};
+            const auto dockState = owner.dockStateProvider ? owner.dockStateProvider(monitor) : StatusBarDockState{};
+            const bool nextDockSearch = mergedDockHeight > 0 && dockState.quickSearch;
+            if (dockQuickSearch != nextDockSearch) { dockQuickSearch = nextDockSearch; paintDirty = true; }
+            const RECT adjacent = dockState.adjacentDockBounds;
             if (!EqualRect(&adjacent, &adjacentDockBounds))
             {
                 adjacentDockBounds = adjacent;
@@ -690,7 +694,8 @@ struct StatusBar::Impl
             const auto contentResult = DrawStatusBarContent(context.Get(), owner.text.Get(), items, w, h,
                 dpi / 96.f * (mergedDockHeight ? 1.f : owner.settings.scale), a, palette, interaction.hovered,
                 keyboardFocusVisible && interaction.focused.has_value() && GetFocus() == hwnd,
-                interaction.focused.value_or(0), mergedDockHeight > 0, owner.settings.timeNotificationRightAligned, &trayScroll);
+                interaction.focused.value_or(0), mergedDockHeight > 0, owner.settings.timeNotificationRightAligned, &trayScroll,
+                dockQuickSearch);
             if (dropIndicator)
             {
                 ComPtr<ID2D1SolidColorBrush> brush;

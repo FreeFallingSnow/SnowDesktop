@@ -41,6 +41,7 @@ struct StatusBarMonitor
 struct StatusBarDockState
 {
     bool promoted = false;
+    bool quickSearch = false; // Dock's own search entry, independent of the bar setting.
     HWND window = nullptr; // Visible merged content window, never owned by bar.
     RECT inputBounds{}; // Screen pixels, only for a visible merged Dock.
     bool interacting = false; // This monitor's bar-owned activation/menu/panel.

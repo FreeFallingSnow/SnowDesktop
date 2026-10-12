@@ -67,7 +67,8 @@ inline std::optional<std::size_t> HitTestStatusBarItems(const std::vector<Status
 HRESULT DrawStatusBarContent(ID2D1DeviceContext*, IDWriteFactory*, std::vector<StatusBarItem>&,
     UINT width, UINT height, float scale, const PersonalizationSettings&, const StatusBarPalette&,
     std::optional<std::size_t> hovered = {}, bool keyboardFocusVisible = false, std::size_t focused = 0,
-    bool mergedDock = false, bool timeNotificationRightAligned = false, StatusBarTrayScroll* trayScroll = nullptr);
+    bool mergedDock = false, bool timeNotificationRightAligned = false, StatusBarTrayScroll* trayScroll = nullptr,
+    bool dockQuickSearch = true);
 PersonalizationSettings StatusBarFillAppearance(const PersonalizationSettings&);
 // The desktop-facing halo occupies space within the existing AppBar allocation.
 void DrawStatusBarEdge(ID2D1DeviceContext*, RECT, const PersonalizationSettings&, float scale, DockPosition, RECT adjacentDock = {});
