@@ -265,7 +265,7 @@ struct StatusBarPagePresenter::Impl
         if (systemQuickSettings) controlCenter.Children().Append(controlBehaviorHint);
         const auto positionSelection = timeNotificationPosition.SelectionChanged([this](const auto&, const auto&) {
             const auto selected = timeNotificationPosition.SelectedIndex();
-            if (availability.allStatusMerged || selected < 0 || selected > 1) return;
+            if (selected < 0 || selected > 1) return;
             Emit([selected](auto& settings) { settings.timeNotificationRightAligned = selected == 1; });
         });
         revoke.push_back([control = timeNotificationPosition, positionSelection] { control.SelectionChanged(positionSelection); });
@@ -370,7 +370,7 @@ struct StatusBarPagePresenter::Impl
         clockPanel.SelectedIndex(value.clockSystemPanel ? 1 : 0);
         controlPanel.SelectedIndex(systemQuickSettings && value.controlCenterSystemPanel ? 1 : 0);
         inputPanel.SelectedIndex(value.inputMethodSystemPanel ? 1 : 0);
-        timeNotificationPosition.SelectedIndex(availability.allStatusMerged || value.timeNotificationRightAligned ? 1 : 0);
+        timeNotificationPosition.SelectedIndex(value.timeNotificationRightAligned ? 1 : 0);
         SyncBehaviorHint();
         if (!scaleDirty)
         {
@@ -386,15 +386,15 @@ struct StatusBarPagePresenter::Impl
             SyncTheme(rule->theme, current.theme, force);
         }
         edgeRow.SetEnabled(value.enabled); monitorsRow.SetEnabled(value.enabled);
-        scaleRow.SetEnabled(value.enabled && !availability.allStatusMerged);
+        scaleRow.SetEnabled(value.enabled);
         clockPanelRow.SetEnabled(value.enabled); controlPanelRow.SetEnabled(value.enabled);
         inputPanelRow.SetEnabled(value.enabled && value.inputMethod);
-        timeNotificationPositionRow.SetEnabled(value.enabled && !availability.allStatusMerged);
+        timeNotificationPositionRow.SetEnabled(value.enabled);
         for (auto& toggle : toggles)
             toggle->row.SetEnabled(toggle->member == &StatusBarSettings::enabled ||
-                (value.enabled && !(toggle->member == &StatusBarSettings::quickSearch && availability.allStatusMerged)));
-        independentHost.IsEnabled(value.enabled && !availability.allStatusMerged);
-        independentHost.Opacity(value.enabled && !availability.allStatusMerged ? 1.0 : .62);
+                value.enabled);
+        independentHost.IsEnabled(value.enabled);
+        independentHost.Opacity(value.enabled ? 1.0 : .62);
         mergedNotice.Visibility(availability.anyMerged ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         dockAppearanceLink.Visibility(availability.anyMerged ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         mergedNotice.Text(L(availability.allStatusMerged ? "settings.bars.inheritedAppearance" : "settings.bars.partialAppearance"));

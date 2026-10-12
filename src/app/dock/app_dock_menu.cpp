@@ -104,9 +104,7 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
                               bool selected, const wchar_t* glyph) {
         std::wstring label = title;
         if (selected) { label += L"\t"; label += _LW("statusBar.menu.current"); }
-        const bool inactive = includeStatusBar &&
-            (target == positionMenu || target == layoutMenu || target == monitorMenu || target == scaleMenu);
-        AppendMenuW(target, MF_STRING | (inactive ? MF_GRAYED : 0), command, label.c_str());
+        AppendMenuW(target, MF_STRING, command, label.c_str());
         SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
     };
     const auto addDesktopStyles = [&](HMENU parent) {
@@ -131,12 +129,10 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(layoutMenu), _LW("app.dock.layout"));
     AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(monitorMenu), _LW("settings.dock.monitor"));
     AppendMenuW(independentMenu, MF_POPUP, reinterpret_cast<UINT_PTR>(scaleMenu), _LW("app.settings.dock_thickness"));
-    const auto availability = snowdesktop::ResolveBarSettingsAvailability(
-        generalSettings_.dockEnabled, dockSettings_, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS));
     const bool edgeRevealEnabled = snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
         dockSettings_.showOnlyWhenSummoned, dockSettings_.floatingEdgeSwipeEnabled);
     const HMENU revealParent = includeStatusBar && !edgeRevealEnabled ? independentMenu : menu;
-    AppendMenuW(revealParent, MF_POPUP | (edgeRevealEnabled ? 0 : MF_GRAYED),
+    AppendMenuW(revealParent, MF_POPUP,
         reinterpret_cast<UINT_PTR>(revealMenu), _LW("settings.dock.edgeRevealGesture"));
     addChoice(revealMenu, kDockRevealGestureFirst, _LW("settings.dock.gestureSwipe"),
         dockSettings_.edgeRevealGesture == 0, L"\uF8E5");
@@ -184,12 +180,10 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         dockSettings_.showOnlyWhenSummoned, L"\uE5F2"); // eye_20
     addToggle(menu, kContextDockWindowPreviews, _LW("settings.dock.windowPreviews"),
         dockSettings_.showWindowPreviews, L"\uF8B5"); // window_20
-    const bool spaceOptionsEnabled = !dockSettings_.showOnlyWhenSummoned && !availability.allDockMerged && !includeStatusBar;
     addToggle(independentMenu, kDockReserveDesktop, _LW("settings.dock.allowDesktopContentOverlap"),
-        includeStatusBar ? !dockSettings_.allowDesktopContentOverlap : snowdesktop::dock_settings_rules::ShouldReserveDesktopWorkArea(
-            dockSettings_.showOnlyWhenSummoned, dockSettings_.allowDesktopContentOverlap), L"\uF359", spaceOptionsEnabled);
+        !dockSettings_.allowDesktopContentOverlap, L"\uF359");
     addToggle(independentMenu, kDockReserveMaximized, _LW("settings.dock.reserveScreenSpace"),
-        dockSettings_.reserveScreenSpace, L"\uF8B5", spaceOptionsEnabled);
+        dockSettings_.reserveScreenSpace, L"\uF8B5");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING,
         kContextDockShowFrequentItems, frequentLabel.c_str());
@@ -391,8 +385,6 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
         break;
     case kDockReserveDesktop:
     case kDockReserveMaximized:
-        if (updated.showOnlyWhenSummoned || snowdesktop::ResolveBarSettingsAvailability(
-            generalSettings_.dockEnabled, updated, generalSettings_.statusBar, GetSystemMetrics(SM_CMONITORS)).allDockMerged) return;
         if (command == kDockReserveDesktop)
             updated.allowDesktopContentOverlap = !updated.allowDesktopContentOverlap;
         else updated.reserveScreenSpace = !updated.reserveScreenSpace;
@@ -435,8 +427,6 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
     default:
         if (command >= kDockRevealGestureFirst && command < kDockRevealGestureFirst + 2)
         {
-            if (!snowdesktop::dock_settings_rules::IsFloatingEdgeSwipeEnabled(
-                updated.showOnlyWhenSummoned, updated.floatingEdgeSwipeEnabled)) return;
             updated.edgeRevealGesture = static_cast<int>(command - kDockRevealGestureFirst);
             layoutChanged = updated.edgeRevealGesture != dockSettings_.edgeRevealGesture;
         }

@@ -405,9 +405,6 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         for (std::size_t i = 0; i < items.size(); ++i)
         {
             auto& item = items[i]; item.bounds = {}; item.contentBounds = {};
-            // The fused surface already has the Dock's search button. Keep the
-            // user's standalone search setting and item identity unchanged.
-            if (mergedDock && item.action == StatusBarAction::QuickSearch) continue;
             widths[i] = static_cast<LONG>(std::ceil(extentOf(item)));
             if (item.action == StatusBarAction::Calendar) { clockIndex = i; clockWidth = widths[i]; }
             else if (item.action == StatusBarAction::Notifications) { notificationIndex = i; notificationWidth = widths[i]; }
