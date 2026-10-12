@@ -1555,7 +1555,7 @@ struct PersonalizationPagePresenter::Impl
         SetCardText(layoutCard,
             "app.settings.widget_layout", L"Widget Layout");
         SetCardText(behaviorCard,
-            "settings.widgetBehavior.title", L"Widget behavior");
+            "settings.widgetBehavior.title", L"Collections & folders");
 
         presetRow.SetText(L("app.settings.theme", L"Theme"));
         ReplaceComboItems(presetCombo, {
@@ -1664,7 +1664,7 @@ struct PersonalizationPagePresenter::Impl
         muxa::AutomationProperties::SetName(
             showGroupTabCounts, showGroupTabCountsRow.label.Text());
         popupHoverOpenRow.SetText(
-            L("app.settings.popup_hover_open", L"Open popups on hover"),
+            L("app.settings.popup_hover_open", L"Open collections and folders on hover"),
             L("app.settings.popup_hover_open_hint",
                 L"Applies to Dock folders, collections and desktop collection expand buttons."));
         muxa::AutomationProperties::SetName(

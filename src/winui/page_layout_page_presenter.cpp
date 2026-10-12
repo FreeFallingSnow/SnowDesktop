@@ -214,57 +214,26 @@ struct PageLayoutPagePresenter::Impl
         dimensions.Orientation(muxc::Orientation::Vertical);
         dimensions.Spacing(8.0);
 
-        muxc::Grid columnsRow;
-        columnsRow.ColumnSpacing(12.0);
-        muxc::ColumnDefinition columnsLabelDefinition;
-        columnsLabelDefinition.Width(mux::GridLengthHelper::FromValueAndType(
-            1.0, mux::GridUnitType::Star));
-        muxc::ColumnDefinition columnsInputDefinition;
-        columnsInputDefinition.Width(mux::GridLengthHelper::Auto());
-        columnsRow.ColumnDefinitions().Append(columnsLabelDefinition);
-        columnsRow.ColumnDefinitions().Append(columnsInputDefinition);
-        columnsLabel = muxc::TextBlock{};
-        columnsLabel.TextWrapping(mux::TextWrapping::Wrap);
-        columnsLabel.VerticalAlignment(mux::VerticalAlignment::Center);
-        columnsRow.Children().Append(columnsLabel);
-        columnsBox = muxc::NumberBox{};
-        columnsBox.MinWidth(180.0);
-        columnsBox.Minimum(1.0);
-        columnsBox.Maximum(50.0);
-        columnsBox.SmallChange(1.0);
-        columnsBox.SpinButtonPlacementMode(
-            muxc::NumberBoxSpinButtonPlacementMode::Inline);
-        columnsBox.ValidationMode(
-            muxc::NumberBoxValidationMode::InvalidInputOverwritten);
-        muxc::Grid::SetColumn(columnsBox, 1);
-        columnsRow.Children().Append(columnsBox);
-        dimensions.Children().Append(columnsRow);
-
-        muxc::Grid rowsRow;
-        rowsRow.ColumnSpacing(12.0);
-        muxc::ColumnDefinition rowsLabelDefinition;
-        rowsLabelDefinition.Width(mux::GridLengthHelper::FromValueAndType(
-            1.0, mux::GridUnitType::Star));
-        muxc::ColumnDefinition rowsInputDefinition;
-        rowsInputDefinition.Width(mux::GridLengthHelper::Auto());
-        rowsRow.ColumnDefinitions().Append(rowsLabelDefinition);
-        rowsRow.ColumnDefinitions().Append(rowsInputDefinition);
-        rowsLabel = muxc::TextBlock{};
-        rowsLabel.TextWrapping(mux::TextWrapping::Wrap);
-        rowsLabel.VerticalAlignment(mux::VerticalAlignment::Center);
-        rowsRow.Children().Append(rowsLabel);
-        rowsBox = muxc::NumberBox{};
-        rowsBox.MinWidth(180.0);
-        rowsBox.Minimum(1.0);
-        rowsBox.Maximum(50.0);
-        rowsBox.SmallChange(1.0);
-        rowsBox.SpinButtonPlacementMode(
-            muxc::NumberBoxSpinButtonPlacementMode::Inline);
-        rowsBox.ValidationMode(
-            muxc::NumberBoxValidationMode::InvalidInputOverwritten);
-        muxc::Grid::SetColumn(rowsBox, 1);
-        rowsRow.Children().Append(rowsBox);
-        dimensions.Children().Append(rowsRow);
+        // Reuse the shared responsive setting row so translated labels and
+        // number editors stack at the same width as the rest of settings.
+        const auto addDimension = [&](muxc::NumberBox& number,
+                                      muxc::TextBlock& label) {
+            number = muxc::NumberBox{};
+            number.MinWidth(180.0);
+            number.Minimum(1.0);
+            number.Maximum(50.0);
+            number.SmallChange(1.0);
+            number.SpinButtonPlacementMode(
+                muxc::NumberBoxSpinButtonPlacementMode::Inline);
+            number.ValidationMode(
+                muxc::NumberBoxValidationMode::InvalidInputOverwritten);
+            presenter_controls::SettingRow row;
+            row.Initialize(number, 180.0);
+            label = row.label;
+            dimensions.Children().Append(row.root);
+        };
+        addDimension(columnsBox, columnsLabel);
+        addDimension(rowsBox, rowsLabel);
         gridCard.content.Children().Append(dimensions);
     }
 

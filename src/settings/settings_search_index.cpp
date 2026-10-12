@@ -13,6 +13,9 @@ namespace
 
 char32_t FoldCase(char32_t value) noexcept
 {
+    // IMEs can produce full-width Latin letters and digits in otherwise
+    // ordinary queries. Normalize these before applying case folding.
+    if (value >= 0xff01 && value <= 0xff5e) value -= 0xfee0;
     if (value >= U'A' && value <= U'Z') return value + 0x20;
     if ((value >= 0x00c0 && value <= 0x00d6) ||
         (value >= 0x00d8 && value <= 0x00de))
