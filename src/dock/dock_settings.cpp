@@ -800,13 +800,39 @@ private:
     bool Inject(HWND taskbar, DWORD expectedExplorerProcessId,
         const std::vector<HWND>& taskbars)
     {
+        const DWORD resumed = snowdesktop::taskbar_hook::ResumeTaskbarThreads(
+            taskbars, expectedExplorerProcessId, GetCurrentProcessId(), injectionCancelEvent_);
+        if (resumed == ERROR_SUCCESS)
+        {
+            if (!residentRuntimeLogged_)
+            {
+                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] compatible resident instance resumed without Hook registration; DLL updates take effect after Explorer exits naturally");
+                residentRuntimeLogged_ = true;
+            }
+            std::lock_guard lock(mutex_);
+            if (!state_ || state_->explorerProcessId != expectedExplorerProcessId) return false;
+            injectedExplorerProcessId_ = expectedExplorerProcessId;
+            return true;
+        }
+        if (resumed == ERROR_CANCELLED || resumed == ERROR_TIMEOUT)
+            return Fail(expectedExplorerProcessId, resumed);
         if (selectedHookPath_.empty())
         {
             selectedHookPath_ = snowdesktop::deployment::GetTaskbarHookPath();
             if (selectedHookPath_.empty())
             {
                 const DWORD error = GetLastError();
-                return Fail(expectedExplorerProcessId, error ? error : ERROR_FILE_NOT_FOUND);
+                // Migrate pre-resume DLLs without adding a fifth path. Loading
+                // their exact resident image is safe; Connect requires a fresh
+                // host acknowledgement, so incompatible/retired code fails.
+                if (error == ERROR_BUSY)
+                    selectedHookPath_ = snowdesktop::deployment::GetResidentTaskbarHookPath(
+                        expectedExplorerProcessId,
+                        reinterpret_cast<std::uintptr_t>(GetPropW(taskbar,
+                            snowdesktop::taskbar_hook::kHookOwnerProperty)));
+                if (selectedHookPath_.empty())
+                    return Fail(expectedExplorerProcessId, error ? error : ERROR_FILE_NOT_FOUND);
+                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] bounded pool full; reconnecting active resident DLL; new DLL code deferred until Explorer exits naturally");
             }
         }
         if (!std::filesystem::is_regular_file(selectedHookPath_))
@@ -839,6 +865,13 @@ private:
 
         if (error == ERROR_CANCELLED) return false;
         if (error != ERROR_SUCCESS) return Fail(expectedExplorerProcessId, error);
+        if (!residentRuntimeLogged_)
+        {
+            const std::wstring message = L"[TaskbarHookConnection] fresh native host acknowledgement; explorerPid=" +
+                std::to_wstring(expectedExplorerProcessId) + L" runtime=" + selectedHookPath_;
+            WriteDiagnosticLogEntry(message.c_str());
+            residentRuntimeLogged_ = true;
+        }
 
         std::lock_guard lock(mutex_);
         const bool connected = state_ &&
@@ -871,6 +904,7 @@ private:
     DWORD symbolAttemptProcessId_ = 0;
     DWORD injectedExplorerProcessId_ = 0;
     std::wstring selectedHookPath_;
+    bool residentRuntimeLogged_ = false;
     ULONGLONG lastSymbolAttemptTick_ = 0;
 };
 

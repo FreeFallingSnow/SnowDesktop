@@ -128,6 +128,9 @@ DWORD AttachHookOwner(HWND window)
         RemovePropW(window, kHookHostProcessProperty);
         return error ? error : ERROR_INVALID_FUNCTION;
     }
+    if (!SetPropW(window, kHookResumeProtocolProperty,
+            reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(kSharedStateVersion))))
+        return GetLastError();
     return ERROR_SUCCESS;
 }
 
@@ -1584,6 +1587,41 @@ private:
 LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
     LPARAM lParam, UINT_PTR, DWORD_PTR)
 {
+    if (message == RegisterWindowMessageW(kResumeHookMessageName))
+    {
+        try
+        {
+            if (!IsCurrentHookInstance() || !OpenSharedState() || !g_sharedState->enabled ||
+                g_sharedState->ownerProcessId != static_cast<DWORD>(wParam) || !lParam)
+                return 0;
+            // Keep the existing TAP and trampolines. A new host only adopts IPC and
+            // native state; a retired instance is never brought back to life.
+            if (AttachHookOwner(window) != ERROR_SUCCESS ||
+                !SetPropW(window, kHookConnectionProperty, reinterpret_cast<HANDLE>(lParam)))
+                return 0;
+            ApplyTaskbarActivationProtection(window);
+            const bool classic = native::IsClassicTaskbarPlatform();
+            if (classic || g_sharedState->suppressTaskbar)
+                native::Attach(window, g_sharedState, classic);
+            try
+            {
+                if (g_visualTreeWatcher) g_visualTreeWatcher->ApplyTaskbar(window);
+            }
+            catch (...)
+            {
+                // Appearance failure does not invalidate the native connection.
+                SetHookStatus(kStatusFailed, static_cast<DWORD>(winrt::to_hresult()));
+            }
+            ReplayHookStatus();
+            return lParam;
+        }
+        catch (...)
+        {
+            SetHookStatus(kStatusFailed, static_cast<DWORD>(winrt::to_hresult()));
+            SignalReady();
+            return 0;
+        }
+    }
     if (message == RegisterWindowMessageW(kRetireHookMessageName) &&
         reinterpret_cast<HMODULE>(wParam) == g_module)
     {
@@ -1607,6 +1645,7 @@ LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
                 RemovePropW(window, autohide_observer::kActivationProtectionProperty);
                 RemovePropW(window, kHookHostProcessProperty);
                 RemovePropW(window, kHookConnectionProperty);
+                RemovePropW(window, kHookResumeProtocolProperty);
                 RemovePropW(window, kHookOwnerProperty);
             }
             return 1;
@@ -1623,6 +1662,7 @@ LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
             RemovePropW(window, autohide_observer::kActivationProtectionProperty);
             RemovePropW(window, kHookHostProcessProperty);
             RemovePropW(window, kHookConnectionProperty);
+            RemovePropW(window, kHookResumeProtocolProperty);
             RemovePropW(window, kHookOwnerProperty);
         }
         if (g_primaryTaskbar.load() == window) g_primaryTaskbar.store(nullptr);

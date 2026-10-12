@@ -143,6 +143,44 @@ int main()
         check(released.Deploy(imageSource) == mapped,
             "the same registered path becomes reusable only after the image unloads");
     }
+    {
+        wchar_t system[MAX_PATH]{};
+        GetSystemDirectoryW(system, static_cast<UINT>(std::size(system)));
+        const auto imageSource = source.parent_path() / L"Resident.dll";
+        const auto pool = root / L"resident-pool";
+        std::vector<HMODULE> images;
+        std::vector<std::filesystem::path> paths;
+        for (unsigned version = 0; version < InjectableRuntimeCache::kSlotCount; ++version)
+        {
+            check(CopyFileW((std::filesystem::path(system) / L"version.dll").c_str(),
+                imageSource.c_str(), FALSE), "stage real images for full mapped pool regression");
+            { std::ofstream overlay(imageSource, std::ios::binary | std::ios::app); overlay.put(static_cast<char>(version)); }
+            InjectableRuntimeCache host(pool);
+            paths.push_back(host.Deploy(imageSource));
+            const HMODULE image = paths.back().empty() ? nullptr :
+                LoadLibraryExW(paths.back().c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
+            check(image != nullptr, "each bounded slot retains a real mapped image after its host exits");
+            images.push_back(image);
+        }
+        { std::ofstream overlay(imageSource, std::ios::binary | std::ios::app); overlay.put('x'); }
+        InjectableRuntimeCache next(pool);
+        check(next.Deploy(imageSource).empty() && next.LastError() == ERROR_BUSY,
+            "a fifth image reproduces full mapped-pool exhaustion without touching Explorer");
+        const auto resident = InjectableRuntimeCache::ResidentModulePath(pool, L"Resident.dll",
+            GetCurrentProcessId(), reinterpret_cast<std::uintptr_t>(images.back()));
+        check(!resident.empty() && resident == paths.back() &&
+            InjectableRuntimeCache::Digest(resident) != InjectableRuntimeCache::Digest(imageSource),
+            "full pool resolves only the explicitly selected resident image and does not pretend it is the new build");
+        check(InjectableRuntimeCache::ResidentModulePath(root / L"foreign-pool", L"Resident.dll",
+            GetCurrentProcessId(), reinterpret_cast<std::uintptr_t>(images.back())).empty(),
+            "resident lookup cannot adopt modules outside this deployment's bounded pool");
+        check(InjectableRuntimeCache::ResidentModulePath(pool, L"Other.dll",
+            GetCurrentProcessId(), reinterpret_cast<std::uintptr_t>(images.back())).empty(),
+            "resident lookup rejects a different DLL identity");
+        for (HMODULE image : images) if (image) FreeLibrary(image);
+        check(next.Deploy(imageSource) == paths.front(),
+            "release of mapped images allows a later build to reuse the original path");
+    }
     std::error_code error;
     std::filesystem::remove_all(root, error);
     check(!error, "isolated runtime cache fixture cleans up after all leases close");

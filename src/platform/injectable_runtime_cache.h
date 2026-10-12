@@ -2,7 +2,9 @@
 
 #include <windows.h>
 #include <bcrypt.h>
+#include <tlhelp32.h>
 #include <array>
+#include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <map>
@@ -27,6 +29,32 @@ public:
     explicit InjectableRuntimeCache(std::filesystem::path root) : root_(std::move(root)) {}
     InjectableRuntimeCache(const InjectableRuntimeCache&) = delete;
     InjectableRuntimeCache& operator=(const InjectableRuntimeCache&) = delete;
+
+    static std::filesystem::path ResidentModulePath(const std::filesystem::path& root,
+        const wchar_t* filename, DWORD process, std::uintptr_t module)
+    {
+        if (root.empty() || !filename || !process || !module) return {};
+        const auto directory = root / L"slots-v1" / filename;
+        const HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, process);
+        if (snapshot == INVALID_HANDLE_VALUE) return {};
+        std::filesystem::path path;
+        MODULEENTRY32W entry{sizeof(entry)};
+        if (Module32FirstW(snapshot, &entry))
+        {
+            do
+            {
+                if (reinterpret_cast<std::uintptr_t>(entry.hModule) != module) continue;
+                for (unsigned slot = 0; slot < kSlotCount; ++slot)
+                {
+                    const auto candidate = directory / (L"slot-" + std::to_wstring(slot)) / filename;
+                    if (_wcsicmp(entry.szExePath, candidate.c_str()) == 0) path = entry.szExePath;
+                }
+                break;
+            } while (Module32NextW(snapshot, &entry));
+        }
+        CloseHandle(snapshot);
+        return path;
+    }
 
     static std::wstring Digest(const std::filesystem::path& file)
     {

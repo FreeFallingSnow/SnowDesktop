@@ -259,13 +259,37 @@ int RunLifetimeChild(const std::filesystem::path& root,
     if (ConnectTaskbarRuntime(window, windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId,
             selectedPath, nullptr, nullptr, resolve) != ERROR_SUCCESS || fallbackCount != 1)
         return fail("subsequent connections must reuse the selected isolated instance");
+    // Exercise the real resident subclass, including fresh nonce/host checks.
+    // No WH_CALLWNDPROC registration, new runtime path or TAP installation is
+    // involved in these 32 subsequent connections.
+    for (unsigned connection = 0; connection < 32; ++connection)
+    {
+        for (HWND target : windows) RemovePropW(target, kHookHostProcessProperty);
+        if (ResumeTaskbarThreads(windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId,
+                nullptr) != ERROR_SUCCESS || fallbackCount != 1 ||
+            GetPropW(window, kHookOwnerProperty) != recovery ||
+            GetPropW(secondary, kHookOwnerProperty) != recovery || !observeActivation(true))
+            return fail("resident reconnect must reuse the same active DLL and freshly acknowledge every taskbar");
+    }
+    SetPropW(window, kHookResumeProtocolProperty,
+        reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(kSharedStateVersion + 1)));
+    if (ResumeTaskbarThreads(windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId,
+            nullptr) != ERROR_NOT_SUPPORTED || GetPropW(window, kHookOwnerProperty) != recovery)
+        return fail("incompatible resident protocol must not be adopted or change the active owner");
+    SetPropW(window, kHookResumeProtocolProperty,
+        reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(kSharedStateVersion)));
+    if (ResumeTaskbarThreads(windows, GetCurrentProcessId(), owner.value.dwProcessId,
+            nullptr) != ERROR_DLL_INIT_FAILED)
+        return fail("resident reconnect must reject a caller that does not own the live shared state");
     const HANDLE cancelled = CreateEventW(nullptr, TRUE, TRUE, nullptr);
     if (!cancelled) return fail("create cancelled recovery request");
     std::wstring cancelledPath = (root / L"SnowDesktopTaskbarHook.dll").wstring();
     const DWORD cancelledResult = ConnectTaskbarRuntime(window, windows, GetCurrentProcessId(),
         restartedOwner.value.dwProcessId, cancelledPath, nullptr, cancelled, resolve);
+    const DWORD cancelledResume = ResumeTaskbarThreads(windows, GetCurrentProcessId(),
+        restartedOwner.value.dwProcessId, cancelled);
     CloseHandle(cancelled);
-    if (cancelledResult != ERROR_CANCELLED || fallbackCount != 1 ||
+    if (cancelledResult != ERROR_CANCELLED || cancelledResume != ERROR_CANCELLED || fallbackCount != 1 ||
         GetPropW(window, kHookOwnerProperty) != recovery)
         return fail("cancellation must not mint another runtime or change the active owner");
     shared->enabled = FALSE;
@@ -289,6 +313,9 @@ int RunLifetimeChild(const std::filesystem::path& root,
             GetPropW(target, kHookOwnerProperty) || GetPropW(target, kHookHostProcessProperty) ||
             GetPropW(target, kHookConnectionProperty))
             return fail("retirement must remove native owner acknowledgement from every taskbar");
+    if (ResumeTaskbarThreads(windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId,
+            nullptr) != ERROR_NOT_SUPPORTED)
+        return fail("retired resident callbacks must never be resumed");
     if (!query() || !observeActivation(false))
         return fail("retirement must stop observation and preserve the original window procedure");
     DestroyWindow(secondary);

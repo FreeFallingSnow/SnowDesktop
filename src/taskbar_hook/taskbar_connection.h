@@ -41,6 +41,45 @@ inline bool AreTaskbarThreadsConnected(std::span<const HWND> taskbars,
     return true;
 }
 
+// Rebind a compatible resident owner on its window threads. No DLL load or
+// SetWindowsHookEx registration is needed; retired owners cannot acknowledge.
+inline DWORD ResumeTaskbarThreads(std::span<const HWND> taskbars, DWORD processId,
+    DWORD hostProcessId, HANDLE cancel)
+{
+    if (taskbars.empty() || !processId || !hostProcessId) return ERROR_INVALID_PARAMETER;
+    if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return ERROR_CANCELLED;
+    const UINT message = RegisterWindowMessageW(kResumeHookMessageName);
+    if (!message) return GetLastError();
+    static std::atomic<std::uintptr_t> sequence{0};
+    const std::uintptr_t nonce = sequence.fetch_add(1) + 1;
+    HANDLE instance = nullptr;
+    for (HWND window : taskbars)
+    {
+        DWORD owner = 0;
+        if (!GetWindowThreadProcessId(window, &owner) || owner != processId)
+            return ERROR_INVALID_WINDOW_HANDLE;
+        const HANDLE module = GetPropW(window, kHookOwnerProperty);
+        if (!module || (instance && instance != module) ||
+            reinterpret_cast<std::uintptr_t>(GetPropW(window, kHookResumeProtocolProperty)) != kSharedStateVersion)
+            return ERROR_NOT_SUPPORTED;
+        instance = module;
+    }
+    for (HWND window : taskbars)
+    {
+        if (cancel && WaitForSingleObject(cancel, 0) == WAIT_OBJECT_0) return ERROR_CANCELLED;
+        RemovePropW(window, kHookConnectionProperty);
+        DWORD_PTR result = 0;
+        if (!SendMessageTimeoutW(window, message, hostProcessId, nonce,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &result))
+            return GetLastError() ? GetLastError() : ERROR_TIMEOUT;
+        if (result != nonce || GetPropW(window, kHookOwnerProperty) != instance ||
+            reinterpret_cast<std::uintptr_t>(GetPropW(window, kHookConnectionProperty)) != nonce)
+            return ERROR_DLL_INIT_FAILED;
+    }
+    return AreTaskbarThreadsConnected(taskbars, processId, hostProcessId)
+        ? ERROR_SUCCESS : ERROR_DLL_INIT_FAILED;
+}
+
 // WH_CALLWNDPROC installs the native owner synchronously on each taskbar
 // thread. XAML may fail or never become ready; it does not own this connection.
 inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,

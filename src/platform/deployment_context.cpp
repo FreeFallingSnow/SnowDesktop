@@ -8,6 +8,7 @@
 #include "data/data_paths.h"
 #include "diagnostics/diagnostic_log.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
+#include "taskbar_hook/taskbar_hook_lifecycle.h"
 
 #include <windows.h>
 #include <appmodel.h>
@@ -999,6 +1000,21 @@ std::wstring GetTaskbarHookPath()
     static std::wstring deployedPath;
     // A busy pool is recoverable once its owners close. Do not cache failure.
     if (deployedPath.empty()) deployedPath = GetInjectableRuntimeFilePath(kTaskbarHookFilename);
+    if (deployedPath.empty() && GetLastError() == ERROR_BUSY)
+    {
+        const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
+        DWORD process = 0;
+        if (taskbar && GetWindowThreadProcessId(taskbar, &process))
+            deployedPath = GetResidentTaskbarHookPath(process,
+                reinterpret_cast<std::uintptr_t>(GetPropW(taskbar,
+                    snowdesktop::taskbar_hook::kHookOwnerProperty)));
+        if (!deployedPath.empty())
+        {
+            WriteDiagnosticLogEntry(L"[HookRuntimeDeployment] bounded pool full; using active resident DLL; new DLL code deferred until Explorer exits naturally");
+            SetLastError(ERROR_SUCCESS);
+        }
+        else SetLastError(ERROR_BUSY);
+    }
     return deployedPath;
 }
 
@@ -1015,6 +1031,17 @@ std::wstring GetIsolatedTaskbarHookPath()
         deployedPath = DeployInjectableRuntimeCopy(kTaskbarHookFilename, previous);
     }
     return deployedPath;
+}
+
+std::wstring GetResidentTaskbarHookPath(std::uint32_t explorerProcessId,
+    std::uintptr_t module)
+{
+    if (!explorerProcessId || !module) return {};
+    const auto data = GetDataDirectoryPath();
+    if (data.empty()) return {};
+    return InjectableRuntimeCache::ResidentModulePath(
+        std::filesystem::path(data) / L"ShellHook" / L"shared",
+        kTaskbarHookFilename, explorerProcessId, module).wstring();
 }
 
 UnvirtualizedRegistryValue QueryUnvirtualizedCurrentUserValue(

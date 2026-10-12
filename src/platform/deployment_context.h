@@ -51,13 +51,19 @@ std::wstring GetInjectableRuntimeFilePath(const wchar_t* filename);
 
 /**
  * @brief 获取可供 Explorer 加载的任务栏 Hook DLL 路径。
- * @details 兼容现有调用；内部复用通用的可注入运行时副本。
+ * @details 优先使用通用可注入副本；固定槽满时仅返回当前 Explorer 中仍在服务的
+ * 实例路径。调用方必须确认协议与新宿主应答，复用旧实例不表示新版 DLL 已加载。
  */
 std::wstring GetTaskbarHookPath();
 
 // Used only when the shared Explorer instance cannot acknowledge attachment.
 // Another bounded slot avoids reviving retired TAP callbacks; no per-host path.
 std::wstring GetIsolatedTaskbarHookPath();
+
+// Resolve only the active module already mapped from our bounded pool. The
+// caller must still require a fresh host/IPC acknowledgement before use.
+std::wstring GetResidentTaskbarHookPath(std::uint32_t explorerProcessId,
+    std::uintptr_t module);
 
 struct UnvirtualizedRegistryValue
 {
