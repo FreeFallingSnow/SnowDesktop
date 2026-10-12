@@ -1,24 +1,21 @@
-# Fluent System Icons Regular
+# Fluent System Icons
 
-SnowDesktop embeds only `FluentSystemIcons-Regular.ttf` from Microsoft Fluent
-System Icons. The file is pinned to upstream commit
-`21d5d02f724be2aaf586564775fff73a18a76eb6`.
+Microsoft 的图标资源，用于 SnowDesktop 的菜单、状态栏和控制中心。
 
-- Upstream: <https://github.com/microsoft/fluentui-system-icons>
-- Font SHA-256: `53204be5637d3872892e64aa7012f79f1e7480f03b534ae1d29a66e62a96d7fc`
-- License: MIT; see `LICENSE` in this directory.
+## 来源
 
-The Filled font is not redistributed.
+- 上游：[microsoft/fluentui-system-icons](https://github.com/microsoft/fluentui-system-icons)。
+- 固定提交：`21d5d02f724be2aaf586564775fff73a18a76eb6`。
+- 许可证：MIT，完整声明见 [LICENSE](LICENSE)。
 
-The status bar and control center also use the unmodified **Battery Charge 20
-Filled** SVG geometry from the same commit. `src/status_bar_battery.h` retains
-the original path for WinUI and an equivalent sequence of Direct2D path commands
-for native rendering. Only its fill color changes to indicate charging. This
-geometry remains covered by the Microsoft copyright and MIT license above.
+## 本地资源与使用方式
 
-The status bar uses the unmodified **Alert 24 Filled** SVG contours from the
-same commit in `src/system/status_bar/status_bar_view.cpp` when notifications
-are present. The bell uses the bar foreground color, including system colors
-in high contrast mode. The embedded Alert 24 Regular glyph provides a fallback
-if geometry creation fails. The geometry remains covered by the Microsoft
-copyright and MIT license above.
+| 资源 | 本地位置与用途 |
+| --- | --- |
+| Regular 图标字体 | [FluentSystemIcons-Regular.ttf](../../assets/fonts/FluentSystemIcons-Regular.ttf)，嵌入应用，提供菜单等界面的图标 |
+| Battery Charge 20 Filled | [status_bar_battery.h](../../src/system/status_bar/status_bar_battery.h)，保留上游 SVG 路径并转换为等价 Direct2D 路径，用于充电指示 |
+| Alert 24 Filled | [status_bar_view.cpp](../../src/system/status_bar/status_bar_view.cpp)，使用上游轮廓显示通知图标，创建几何失败时回退到 Regular 字形 |
+
+Regular 字体 SHA-256：`53204be5637d3872892e64aa7012f79f1e7480f03b534ae1d29a66e62a96d7fc`。
+
+上述图标轮廓保持上游形状，颜色由 SnowDesktop 的界面状态和主题决定。发行包包含 Regular 字体和 `licenses/FluentSystemIcons-LICENSE.txt`，不包含 Filled 字体。

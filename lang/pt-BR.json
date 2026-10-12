@@ -634,8 +634,8 @@
   "app.settings.personal_homepages": "Perfis Pessoais",
   "app.settings.project_url": "URL do projeto",
   "app.settings.version": "Versão",
-  "app.settings.third_party_libs": "Bibliotecas de terceiros",
-  "app.settings.reference_programs": "Atribuição de código upstream",
+  "app.settings.third_party_libs": "Bibliotecas e SDKs",
+  "app.settings.reference_programs": "Projetos de referência e adaptados",
   "app.settings.community": "Comunidade",
   "app.settings.douyin": "Douyin",
   "app.settings.xiaohongshu": "Xiaohongshu",
@@ -2612,5 +2612,7 @@
   "statusBar.inputMethodPanel": "Painel de layouts de teclado",
   "statusBar.panelSystemInput": "Painel do sistema de layouts de teclado",
   "settings.contextMenu.hideMoreManagement": "Ocultar a linha Mostrar mais opções / Gerenciar",
-  "app.dock.show_quick_search_button": "Mostrar botão de pesquisa rápida"
+  "app.dock.show_quick_search_button": "Mostrar botão de pesquisa rápida",
+  "app.settings.third_party_data": "Dados",
+  "app.settings.third_party_fonts": "Fontes da interface"
 }

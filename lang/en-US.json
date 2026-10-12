@@ -634,8 +634,8 @@
     "app.settings.personal_homepages": "Personal Profiles",
     "app.settings.project_url": "Project URL",
     "app.settings.version": "Version",
-    "app.settings.third_party_libs": "Third-Party Libraries",
-    "app.settings.reference_programs": "Upstream Code Attribution",
+    "app.settings.third_party_libs": "Libraries and SDKs",
+    "app.settings.reference_programs": "Referenced and Adapted Projects",
     "app.settings.community": "Community",
     "app.settings.douyin": "Douyin",
     "app.settings.xiaohongshu": "Xiaohongshu",
@@ -2612,5 +2612,7 @@
   "statusBar.inputMethodPanel": "Keyboard layout panel",
   "statusBar.panelSystemInput": "System keyboard layout panel",
   "settings.contextMenu.hideMoreManagement": "Hide the Show more options / Manage row",
-  "app.dock.show_quick_search_button": "Show quick search button"
+  "app.dock.show_quick_search_button": "Show quick search button",
+  "app.settings.third_party_data": "Data",
+  "app.settings.third_party_fonts": "Interface Fonts"
 }

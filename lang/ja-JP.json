@@ -634,8 +634,8 @@
   "app.settings.personal_homepages": "個人プロフィール",
   "app.settings.project_url": "プロジェクト URL",
   "app.settings.version": "バージョン",
-  "app.settings.third_party_libs": "サードパーティ ライブラリ",
-  "app.settings.reference_programs": "アップストリーム コードの帰属",
+  "app.settings.third_party_libs": "ライブラリと SDK",
+  "app.settings.reference_programs": "参考・改変元のプロジェクト",
   "app.settings.community": "コミュニティ",
   "app.settings.douyin": "ドゥイン",
   "app.settings.xiaohongshu": "小紅書",
@@ -2612,5 +2612,7 @@
   "statusBar.inputMethodPanel": "キーボードレイアウトパネル",
   "statusBar.panelSystemInput": "システムのキーボードレイアウトパネル",
   "settings.contextMenu.hideMoreManagement": "その他のオプションを表示 / 管理の行を非表示にする",
-  "app.dock.show_quick_search_button": "クイック検索ボタンを表示"
+  "app.dock.show_quick_search_button": "クイック検索ボタンを表示",
+  "app.settings.third_party_data": "データ",
+  "app.settings.third_party_fonts": "インターフェイスのフォント"
 }

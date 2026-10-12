@@ -634,8 +634,8 @@
   "app.settings.personal_homepages": "개인 프로필",
   "app.settings.project_url": "프로젝트 URL",
   "app.settings.version": "버전",
-  "app.settings.third_party_libs": "타사 라이브러리",
-  "app.settings.reference_programs": "업스트림 코드 출처 표기",
+  "app.settings.third_party_libs": "라이브러리 및 SDK",
+  "app.settings.reference_programs": "참고 및 수정한 프로젝트",
   "app.settings.community": "커뮤니티",
   "app.settings.douyin": "두인",
   "app.settings.xiaohongshu": "샤오홍슈",
@@ -2612,5 +2612,7 @@
   "statusBar.inputMethodPanel": "키보드 레이아웃 패널",
   "statusBar.panelSystemInput": "시스템 키보드 레이아웃 패널",
   "settings.contextMenu.hideMoreManagement": "더 많은 옵션 표시 / 관리 행 숨기기",
-  "app.dock.show_quick_search_button": "빠른 검색 버튼 표시"
+  "app.dock.show_quick_search_button": "빠른 검색 버튼 표시",
+  "app.settings.third_party_data": "데이터",
+  "app.settings.third_party_fonts": "인터페이스 글꼴"
 }

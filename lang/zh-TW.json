@@ -634,8 +634,8 @@
   "app.settings.personal_homepages": "個人首頁",
   "app.settings.project_url": "專案網址",
   "app.settings.version": "版本",
-  "app.settings.third_party_libs": "第三方開源函式庫",
-  "app.settings.reference_programs": "上游程式碼署名",
+  "app.settings.third_party_libs": "程式庫與 SDK",
+  "app.settings.reference_programs": "參考與改編專案",
   "app.settings.community": "使用者交流",
   "app.settings.douyin": "抖音",
   "app.settings.xiaohongshu": "小紅書",
@@ -2612,5 +2612,7 @@
   "statusBar.inputMethodPanel": "鍵盤配置面板",
   "statusBar.panelSystemInput": "系統鍵盤配置面板",
   "settings.contextMenu.hideMoreManagement": "隱藏展開更多選項與管理列",
-  "app.dock.show_quick_search_button": "顯示快捷搜尋按鈕"
+  "app.dock.show_quick_search_button": "顯示快捷搜尋按鈕",
+  "app.settings.third_party_data": "資料",
+  "app.settings.third_party_fonts": "介面字型"
 }

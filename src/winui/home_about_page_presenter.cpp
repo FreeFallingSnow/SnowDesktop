@@ -103,6 +103,8 @@ struct HomeAboutPagePresenter::Impl
     Section communitySection;
     Section versionSection;
     Section thirdPartySection;
+    Section dataSection;
+    Section fontSection;
     Section referenceSection;
     muxc::TextBlock introductionText{nullptr};
     muxc::TextBlock authorText{nullptr};
@@ -208,6 +210,7 @@ struct HomeAboutPagePresenter::Impl
     }
 
     void AddAttribution(
+        const Section& section,
         HomeAboutLink target,
         std::wstring label,
         std::wstring license,
@@ -237,10 +240,7 @@ struct HomeAboutPagePresenter::Impl
                 mux::Thickness{12.0, 0.0, 0.0, 0.0});
             group.Children().Append(modificationBlock);
         }
-        const muxc::StackPanel& parent =
-            target == HomeAboutLink::TranslucentTb
-                ? referenceSection.content : thirdPartySection.content;
-        parent.Children().Append(group);
+        section.content.Children().Append(group);
     }
 
     void BuildControls()
@@ -310,22 +310,24 @@ struct HomeAboutPagePresenter::Impl
         versionSection.content.Children().Append(versionRow.root);
 
         InitializeSection(thirdPartySection, cardStyle, aboutRoot);
+        InitializeSection(dataSection, cardStyle, aboutRoot);
+        InitializeSection(fontSection, cardStyle, aboutRoot);
         InitializeSection(referenceSection, cardStyle, aboutRoot);
-        AddAttribution(HomeAboutLink::EverythingSdk, L"Everything SDK",
+        AddAttribution(thirdPartySection, HomeAboutLink::EverythingSdk, L"Everything SDK",
             L"(MIT)", L"Copyright (C) 2016 David Carpenter");
-        AddAttribution(HomeAboutLink::DearImGui, L"Dear ImGui", L"(MIT)",
+        AddAttribution(thirdPartySection, HomeAboutLink::DearImGui, L"Dear ImGui", L"(MIT)",
             L"Copyright (c) 2014-2025 Omar Cornut");
-        AddAttribution(HomeAboutLink::Lua, L"Lua", L"(MIT)",
+        AddAttribution(thirdPartySection, HomeAboutLink::Lua, L"Lua", L"(MIT)",
             L"Copyright (C) 1994-2024 Lua.org, PUC-Rio");
-        AddAttribution(HomeAboutLink::PinyinData, L"pinyin-data", L"(MIT)",
+        AddAttribution(dataSection, HomeAboutLink::PinyinData, L"pinyin-data", L"(MIT)",
             L"Copyright (c) 2016 mozillazg");
-        AddAttribution(HomeAboutLink::MiSans, L"MiSans Regular · 4.009", L"(MiSans font license)",
+        AddAttribution(fontSection, HomeAboutLink::MiSans, L"MiSans Regular · 4.009", L"(MiSans font license)",
             L"Copyright © 2020-2025 Beijing Xiaomi Mobile Software Co., Ltd.", L"SnowDesktop uses MiSans as an optional interface font; original font file unchanged.");
-        AddAttribution(HomeAboutLink::HarmonyOsSans, L"HarmonyOS Sans SC · 1.0", L"(HarmonyOS Sans Fonts License Agreement)",
+        AddAttribution(fontSection, HomeAboutLink::HarmonyOsSans, L"HarmonyOS Sans SC · 1.0", L"(HarmonyOS Sans Fonts License Agreement)",
             L"Copyright 2021 Huawei Device Co., Ltd.", L"SnowDesktop uses HarmonyOS Sans as an optional interface font; original font files unchanged.");
-        AddAttribution(HomeAboutLink::Yasb, L"YASB · d6d1e6d553b0", L"(MIT)",
+        AddAttribution(referenceSection, HomeAboutLink::Yasb, L"YASB · d6d1e6d553b0", L"(MIT)",
             L"Copyright (c) 2024 amnweb · Copyright (c) 2021 denBot");
-        AddAttribution(HomeAboutLink::TranslucentTb,
+        AddAttribution(referenceSection, HomeAboutLink::TranslucentTb,
             L"TranslucentTB (modified portions)", L"(GPL-3.0-only)",
             L"Copyright (c) TranslucentTB contributors",
             L"Modified for SnowDesktop from upstream commit 322e2b7");
@@ -604,10 +606,14 @@ struct HomeAboutPagePresenter::Impl
             "app.settings.version", L"Version");
         versionRow.SetText(L("app.settings.version", L"Version"));
         SetSectionTitle(thirdPartySection,
-            "app.settings.third_party_libs", L"Third-Party Libraries");
+            "app.settings.third_party_libs", L"Libraries and SDKs");
+        SetSectionTitle(dataSection,
+            "app.settings.third_party_data", L"Data");
+        SetSectionTitle(fontSection,
+            "app.settings.third_party_fonts", L"Interface Fonts");
         SetSectionTitle(referenceSection,
             "app.settings.reference_programs",
-            L"Upstream Code Attribution");
+            L"Referenced and Adapted Projects");
         for (LinkEntry& link : links)
         {
             const std::wstring text = L(link.labelKey, link.fallback);

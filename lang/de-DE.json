@@ -634,8 +634,8 @@
   "app.settings.personal_homepages": "Persönliche Profile",
   "app.settings.project_url": "Projekt-URL",
   "app.settings.version": "Version",
-  "app.settings.third_party_libs": "Bibliotheken von Drittanbietern",
-  "app.settings.reference_programs": "Upstream-Code-Zuordnung",
+  "app.settings.third_party_libs": "Bibliotheken und SDKs",
+  "app.settings.reference_programs": "Referenzprojekte und Anpassungen",
   "app.settings.community": "Community",
   "app.settings.douyin": "Douyin",
   "app.settings.xiaohongshu": "Xiaohongshu",
@@ -2612,5 +2612,7 @@
   "statusBar.inputMethodPanel": "Tastaturlayout-Auswahl",
   "statusBar.panelSystemInput": "Systemauswahl für Tastaturlayouts",
   "settings.contextMenu.hideMoreManagement": "Zeile Weitere Optionen anzeigen / Verwalten ausblenden",
-  "app.dock.show_quick_search_button": "Schnellsuche-Schaltfläche anzeigen"
+  "app.dock.show_quick_search_button": "Schnellsuche-Schaltfläche anzeigen",
+  "app.settings.third_party_data": "Daten",
+  "app.settings.third_party_fonts": "Schriftarten der Benutzeroberfläche"
 }
