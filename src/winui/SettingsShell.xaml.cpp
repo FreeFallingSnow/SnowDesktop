@@ -383,12 +383,11 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.nav.personalization", L"Personalization"},
     LocalizedFallback{"settings.nav.desktop", L"Desktop"},
     LocalizedFallback{"settings.nav.pages", L"Pages & grid"},
-    LocalizedFallback{"settings.nav.group.desktopBars", L"Desktop & layout"},
-    LocalizedFallback{"settings.nav.group.desktopShell", L"Launching & system bars"},
+    LocalizedFallback{"settings.nav.group.desktopShell", L"Desktop & shell"},
     LocalizedFallback{"settings.nav.group.data", L"Data"},
-    LocalizedFallback{"settings.nav.group.other", L"Data"},
-    LocalizedFallback{"settings.nav.group.widgetsAndCategories", L"Widgets"},
-    LocalizedFallback{"settings.widgetBehavior.title", L"Collections & folders"},
+    LocalizedFallback{"settings.nav.group.other", L"Other"},
+    LocalizedFallback{"settings.nav.group.widgetsAndCategories", L"Widgets & categories"},
+    LocalizedFallback{"settings.widgetBehavior.title", L"Widget behavior"},
     LocalizedFallback{"settings.widgetBehavior.description", L"Choose how widgets open, where collection title bars appear, and whether group tabs show file counts."},
     LocalizedFallback{"settings.nav.categories", L"Categories & rules"},
     LocalizedFallback{"settings.nav.dock", L"Dock"},
@@ -3041,7 +3040,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(homeAboutPage_->AboutContent());
             for (const std::string_view focusId : {
                      "about.version", "about.profile", "about.project",
-                     "about.website", "about.community", "about.thirdparty"})
+                     "about.community", "about.thirdparty"})
             {
                 RegisterFocusTarget(std::string(focusId),
                     homeAboutPage_->FocusTarget(

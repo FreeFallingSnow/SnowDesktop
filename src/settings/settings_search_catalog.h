@@ -10,12 +10,10 @@ struct StaticSearchDefinition
     const char* focusId;
     const char* labelKey;
     const char* descriptionKey;
-    // Optional localized aliases and task phrases, kept beside the route.
-    const char* keywordsKey = nullptr;
 };
 
 constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
-    {SettingsPage::QuickNavigation,"quickNav.defaultEngine","quickNav.defaultEngine","quickNav.description", "settings.search.keywords.navigation"},
+    {SettingsPage::QuickNavigation,"quickNav.defaultEngine","quickNav.defaultEngine","quickNav.description"},
     {SettingsPage::AppearanceTheme,"quickNav.layout.expandedWidth","quickNav.layout.expandedWidth","quickNav.description"},
     {SettingsPage::AppearanceTheme,"quickNav.layout.collapsedWidth","quickNav.layout.collapsedWidth","quickNav.description"},
     {SettingsPage::AppearanceTheme,"quickNav.layout.maximumHeight","quickNav.layout.maximumHeight","quickNav.description"},
@@ -74,7 +72,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceTheme,"quickNav.color.emptyText","quickNav.color.emptyText","quickNav.description"},
 
     {SettingsPage::AppearanceTheme, "quickNav.layout", "quickNav.layout", "quickNav.description"},
-    {SettingsPage::QuickNavigation, "quickNav.prefixes", "quickNav.prefixes", "quickNav.prefixes.hint", "settings.search.keywords.navigation"},
+    {SettingsPage::QuickNavigation, "quickNav.prefixes", "quickNav.prefixes", "quickNav.prefixes.hint"},
     {SettingsPage::QuickNavigation, "quickNav.engines", "quickNav.engines", "quickNav.engines.hint"},
 
     {SettingsPage::StatusBar, "statusBar.taskView", "statusBar.taskView", "statusBar.leftItems"},
@@ -124,13 +122,13 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::General, "start.taskbar", "start.taskbar.title", "start.taskbar.description"},
     {SettingsPage::General, "start.statusBarEnable", "start.statusBarEnable.title", "start.statusBarEnable.description"},
     {SettingsPage::General, "start.statusBarContents", "start.statusBarContents.title", "start.statusBarContents.description"},
-    {SettingsPage::General, "start.collection", "start.collection.title", "start.collection.description", "settings.search.keywords.collectionView"},
+    {SettingsPage::General, "start.collection", "start.collection.title", "start.collection.description"},
     {SettingsPage::General, "start.move", "start.move.title", "start.move.description"},
-    {SettingsPage::General, "start.collectionGroup", "start.collectionGroup.title", "start.collectionGroup.description", "settings.search.keywords.collectionView"},
+    {SettingsPage::General, "start.collectionGroup", "start.collectionGroup.title", "start.collectionGroup.description"},
     {SettingsPage::General, "start.files", "start.files.title", "start.files.description"},
     {SettingsPage::StatusBar, "statusBar.enable", "statusBar.enabled", "settings.page.statusBar.description"},
     {SettingsPage::StatusBar, "statusBar.position", "statusBar.position", "settings.nav.statusBar"},
-    {SettingsPage::StatusBar, "statusBar.monitor", "settings.dock.monitor", "settings.nav.statusBar", "settings.search.keywords.monitors"},
+    {SettingsPage::StatusBar, "statusBar.monitor", "settings.dock.monitor", "settings.nav.statusBar"},
     {SettingsPage::StatusBar, "statusBar.scale", "statusBar.scale", "settings.nav.statusBar"},
     {SettingsPage::StatusBar, "statusBar.theme", "statusBar.defaultAppearance", "settings.nav.statusBar"},
     {SettingsPage::StatusBar, "statusBar.noWindow", "statusBar.noWindow", "settings.nav.statusBar"},
@@ -145,8 +143,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::StatusBar, "statusBar.memory", "statusBar.memory", "statusBar.information"},
     {SettingsPage::StatusBar, "statusBar.gpu", "statusBar.gpu", "statusBar.information"},
     {SettingsPage::StatusBar, "statusBar.traffic", "statusBar.traffic", "statusBar.information"},
-    {SettingsPage::General, "start.folderMapping", "start.folderMapping.title", "start.folderMapping.description", "settings.search.keywords.collectionView"},
-    {SettingsPage::General, "start.fileGroup", "start.fileGroup.title", "start.fileGroup.description", "settings.search.keywords.collectionView"},
+    {SettingsPage::General, "start.folderMapping", "start.folderMapping.title", "start.folderMapping.description"},
+    {SettingsPage::General, "start.fileGroup", "start.fileGroup.title", "start.fileGroup.description"},
     {SettingsPage::General, "start.dockPin", "start.dockPin.title", "start.dockPin.description"},
     {SettingsPage::General, "start.dockMapping", "start.dockMapping.title", "start.dockMapping.description"},
     {SettingsPage::General, "start.dockCollection", "start.dockCollection.title", "start.dockCollection.description"},
@@ -154,35 +152,37 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::General, "start.luaWidget", "start.luaWidget.title", "start.luaWidget.description"},
     {SettingsPage::General, "general.autoStart",
         "settings.general.startup",
-        "settings.general.startup.description", "settings.search.keywords.startup"},
+        "settings.general.startup.description"},
     {SettingsPage::General, "general.advancedFeatures",
         "settings.general.advancedFeatures",
         "settings.general.advancedFeatures.description"},
     {SettingsPage::Desktop, "desktop.softwareDesktop",
         "settings.general.softwareDesktop",
-        "settings.general.softwareDesktop.description", "settings.search.keywords.desktopSwitch"},
-    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.extensions", "settings.contextMenu.description", "settings.search.keywords.contextMenu"},
+        "settings.general.softwareDesktop.description"},
+    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.extensions", "settings.contextMenu.description"},
     {SettingsPage::ContextMenu, "contextMenu.expandQuickActions", "settings.contextMenu.expandQuickActions", "settings.contextMenu.expandQuickActions.description"},
     {SettingsPage::ContextMenu, "contextMenu.hidePageManagement", "settings.contextMenu.hidePageManagement", "settings.contextMenu.hidePageManagement.description"},
     {SettingsPage::ContextMenu, "contextMenu.hideMoreManagement", "settings.contextMenu.hideMoreManagement", ""},
+    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.objects", "settings.contextMenu.locations"},
+    {SettingsPage::ContextMenu, "contextMenu.extensions", "settings.contextMenu.background", "settings.contextMenu.locations"},
     {SettingsPage::ContextMenu, "contextMenu.items", "settings.contextMenu.inspect", "settings.contextMenu.hint"},
     {SettingsPage::ContextMenu, "contextMenu.application", "settings.contextMenu.viewApplications", "settings.contextMenu.extensions"},
     {SettingsPage::ContextMenu, "contextMenu.extension", "settings.contextMenu.viewExtensions", "settings.contextMenu.extensions"},
     {SettingsPage::ContextMenu, "contextMenu.batch", "settings.contextMenu.groupToggle", "settings.contextMenu.groupHint"},
     {SettingsPage::Calendar, "calendar.secondary", "settings.calendar.showSecondary", "settings.calendar.pageDescription"},
-    {SettingsPage::Calendar, "calendar.events", "settings.calendar.events", "settings.calendar.pageDescription", "settings.search.keywords.calendar"},
+    {SettingsPage::Calendar, "calendar.events", "settings.calendar.events", "settings.calendar.pageDescription"},
     {SettingsPage::General, "general.language",
         "settings.general.language",
         "settings.general.language.description"},
     {SettingsPage::Desktop, "desktop.doubleClickHide",
         "settings.general.doubleClickHide",
-        "settings.general.doubleClickHide.description", "settings.search.keywords.desktopVisibility"},
+        "settings.general.doubleClickHide.description"},
     {SettingsPage::General, "general.quickNavigation",
         "settings.general.quickNavigation",
-        "settings.general.quickNavigation.description", "settings.search.keywords.navigation"},
+        "settings.general.quickNavigation.description"},
     {SettingsPage::General, "general.quickNavigation.hotkey",
         "app.settings.hotkey",
-        "settings.general.quickNavigation.description", "settings.search.keywords.navigation"},
+        "settings.general.quickNavigation.description"},
     {SettingsPage::DesktopPages, "general.pageNavigation",
         "settings.general.pageNavigation",
         "settings.general.pageNavigation.description"},
@@ -194,29 +194,29 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.general.pageNavigation.description"},
     {SettingsPage::DesktopPages, "pages.order",
         "settings.pages.manage",
-        "settings.pages.manage.description", "settings.search.keywords.monitors"},
+        "settings.pages.manage.description"},
     {SettingsPage::DesktopPages, "pages.add",
         "app.menu.add_page",
         "settings.pages.manage.description"},
     {SettingsPage::DesktopPages, "pages.grid",
-        "settings.pages.columns",
-        "settings.pages.grid.description", "settings.search.keywords.grid"},
+        "settings.pages.grid",
+        "settings.pages.grid.description"},
     {SettingsPage::DesktopPages, "pages.name",
         "settings.pages.name", "settings.pages.nameHint"},
     {SettingsPage::DesktopPages, "pages.delete",
         "settings.pages.delete", "settings.pages.deleteUnavailable"},
     {SettingsPage::Desktop, "desktop.passthrough",
         "settings.general.desktopPassthrough",
-        "settings.general.desktopPassthrough.description", "settings.search.keywords.desktopPassthrough"},
+        "settings.general.desktopPassthrough.description"},
     {SettingsPage::Desktop, "desktop.softwareDesktopHotkey",
-        "app.settings.software_desktop_hotkey", "app.settings.software_desktop_hotkey", "settings.search.keywords.desktopSwitch"},
+        "app.settings.software_desktop_hotkey", "app.settings.software_desktop_hotkey"},
     {SettingsPage::Desktop, "desktop.softwareDesktopHotkey.hotkey",
         "app.settings.hotkey", "app.settings.software_desktop_hotkey"},
     {SettingsPage::Desktop, "desktop.passthrough.hotkey",
         "app.settings.hotkey",
         "settings.general.desktopPassthrough.description"},
     {SettingsPage::Dock, "dock.floatingShortcutMode",
-        "app.dock.floating_shortcut_mode",
+        "settings.general.floatingDock",
         "settings.general.floatingDock.description"},
     {SettingsPage::Dock, "dock.floatingShortcutMode.hotkey",
         "app.settings.hotkey",
@@ -225,14 +225,14 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "guide.setting.dockAppearance.title", "guide.setting.dockAppearance"},
     {SettingsPage::AppearanceWidgets, "personalization.luaWidgetRowHeight",
         "app.settings.lua_widget_row_height", "settings.personalization.widgets.description"},
-    {SettingsPage::DesktopPages, "pages.rows", "settings.pages.rows", "settings.pages.grid.description", "settings.search.keywords.grid"},
+    {SettingsPage::DesktopPages, "pages.rows", "settings.pages.rows", "settings.pages.grid.description"},
     {SettingsPage::AppearanceTheme, "personalization.theme",
         "settings.personalization.theme",
         "settings.personalization.theme.description"},
     {SettingsPage::AppearanceWidgets, "personalization.tooltipFontSize",
         "font.tooltipSize", "font.tooltipSizeHint"},
     {SettingsPage::ThemeManager, "personalization.savedThemes",
-        "themeLibrary.manager", "themeLibrary.transferHint", "settings.search.keywords.themes"},
+        "themeLibrary.manager", "themeLibrary.transferHint"},
     {SettingsPage::AppearanceTheme, "personalization.backgroundColor",
         "settings.personalization.colors",
         "settings.personalization.colors.description"},
@@ -289,7 +289,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.personalization.contextMenu",
         "settings.personalization.contextMenu.description"},
     {SettingsPage::AppearanceWidgets, "personalization.cornerRadius",
-        "app.settings.corner_radius",
+        "settings.personalization.widgets",
         "settings.personalization.widgets.description"},
     {SettingsPage::AppearanceWidgets, "personalization.barHeight",
         "app.settings.bar_height",
@@ -306,11 +306,11 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::WidgetBehavior, "personalization.showGroupTabCounts",
         "app.settings.group_show_count", "app.settings.group_show_count_hint"},
     {SettingsPage::WidgetBehavior, "personalization.popupHoverOpen",
-        "app.settings.popup_hover_open", "app.settings.popup_hover_open_hint", "settings.search.keywords.popup"},
+        "app.settings.popup_hover_open", "app.settings.popup_hover_open_hint"},
     {SettingsPage::WidgetBehavior, "personalization.popupHoverDelayMs",
-        "app.settings.popup_hover_delay", "app.settings.popup_hover_open_hint", "settings.search.keywords.popup"},
+        "app.settings.popup_hover_delay", "app.settings.popup_hover_open_hint"},
     {SettingsPage::WidgetBehavior, "personalization.popupCloseOnMouseLeave",
-        "app.settings.popup_close_on_mouse_leave", "app.settings.popup_close_on_mouse_leave_hint", "settings.search.keywords.popup"},
+        "app.settings.popup_close_on_mouse_leave", "app.settings.popup_close_on_mouse_leave_hint"},
     {SettingsPage::DesktopCategories,
         "desktop.categoryCounts",
         "app.settings.category_show_count",
@@ -320,7 +320,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceDesktopIcons, "desktop.iconSize",
         "settings.desktop.iconSize", "settings.desktop.iconSize.description"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.itemFontSize",
-        "app.settings.title_font_size",
+        "settings.desktop.typography",
         "settings.desktop.typography.description"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.listFontSize",
         "app.settings.list_font_size",
@@ -328,7 +328,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceDesktopIcons, "desktop.fanTitleFontSize",
         "app.settings.fan_title_font_size",
         "settings.desktop.typography.description"},
-    {SettingsPage::AppearanceWidgets, "personalization.font", "font.title", "font.hint", "settings.search.keywords.font"},
+    {SettingsPage::AppearanceWidgets, "personalization.font", "font.title", "font.hint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.titleLines", "titleLines.desktop", "titleLines.hint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.largeFolderTitleLines", "titleLines.largeFolder", "titleLines.hint"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.scrollingTitleLines", "titleLines.scrolling", "titleLines.hint"},
@@ -437,13 +437,13 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.desktop.iconBeautify.description"},
     {SettingsPage::DesktopCategories, "desktop.categoryRules",
         "app.settings.category_rules",
-        "settings.desktop.categories.description", "settings.search.keywords.categories"},
+        "settings.desktop.categories.description"},
     {SettingsPage::DesktopCategories, "desktop.categories",
         "settings.desktop.categories",
         "settings.desktop.categories.description"},
     {SettingsPage::DesktopCategories, "desktop.collectPrograms",
         "app.settings.collect_programs",
-        "settings.desktop.categories.description", "settings.search.keywords.categories"},
+        "settings.desktop.categories.description"},
     {SettingsPage::DesktopCategories, "desktop.category.add",
         "app.settings.add_category",
         "settings.desktop.categories.description"},
@@ -454,7 +454,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.layout", "settings.dock.layout",
         "settings.dock.layout.description"},
     {SettingsPage::Dock, "dock.monitor", "settings.dock.monitor",
-        "settings.dock.monitor.description", "settings.search.keywords.monitors"},
+        "settings.dock.monitor.description"},
     {SettingsPage::Dock, "dock.thickness",
         "settings.dock.thickness", "settings.dock.thickness.description"},
     {SettingsPage::Dock, "dock.allowDesktopContentOverlap",
@@ -462,7 +462,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.dock.allowDesktopContentOverlap.description"},
     {SettingsPage::Dock, "dock.showOnlyWhenSummoned",
         "settings.dock.showOnlyWhenSummoned",
-        "settings.dock.showOnlyWhenSummoned.description", "settings.search.keywords.dockReveal"},
+        "settings.dock.showOnlyWhenSummoned.description"},
     {SettingsPage::Dock, "dock.showFrequentItems",
         "settings.dock.frequentItems",
         "settings.dock.frequentItems.description"},
@@ -481,7 +481,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::Dock, "dock.fullscreenExceptions",
         "settings.dock.fullscreenExceptions", "settings.dock.fullscreenExceptions.description"},
     {SettingsPage::Taskbar, "taskbar.displayMode",
-        "settings.bars.taskbarMode", "settings.dock.suppressTaskbar.description", "settings.search.keywords.taskbar"},
+        "settings.bars.taskbarMode", "settings.dock.suppressTaskbar.description"},
     {SettingsPage::Dock, "dock.showWindowsButton",
         "app.dock.show_windows_button",
         "settings.dock.items.description"},
@@ -552,12 +552,12 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.widgets.permissions",
         "settings.widgets.permissions.description"},
     {SettingsPage::BackupAndData, "backup.layout", "settings.backup.layout",
-        "settings.backup.layout.description", "settings.search.keywords.backup"},
+        "settings.backup.layout.description"},
     {SettingsPage::BackupAndData, "backup.full", "settings.backup.full",
-        "settings.backup.full.description", "settings.search.keywords.backup"},
+        "settings.backup.full.description"},
     {SettingsPage::BackupAndData, "backup.directory",
         "settings.backup.directory",
-        "settings.backup.directory.description", "settings.search.keywords.backup"},
+        "settings.backup.directory.description"},
     {SettingsPage::BackupAndData, "backup.migration",
         "app.settings.migrate_all_data",
         "settings.backup.full.description"},
@@ -624,10 +624,6 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
                 {
                 case SettingsPage::QuickNavigation:
                     return L("quickNav.title");
-                case SettingsPage::ContextMenu:
-                    return L("settings.contextMenu.page");
-                case SettingsPage::Calendar:
-                    return L("settings.calendar.page");
                 case SettingsPage::General:
                     return L("app.settings.general");
                 case SettingsPage::AnimationPerformance:
@@ -674,39 +670,6 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
                     return std::wstring{};
                 }
             };
-            const auto groupContext = [&L](SettingsPage page) {
-                switch (page)
-                {
-                case SettingsPage::DesktopStyle:
-                case SettingsPage::Desktop:
-                case SettingsPage::DesktopPages:
-                case SettingsPage::DesktopCategories:
-                case SettingsPage::WidgetBehavior:
-                    return L("settings.nav.group.desktopBars");
-                case SettingsPage::QuickNavigation:
-                case SettingsPage::Dock:
-                case SettingsPage::DockAndTaskbar:
-                case SettingsPage::Taskbar:
-                case SettingsPage::StatusBar:
-                case SettingsPage::Calendar:
-                    return L("settings.nav.group.desktopShell");
-                case SettingsPage::Personalization:
-                case SettingsPage::AppearanceTheme:
-                case SettingsPage::AppearanceWidgets:
-                case SettingsPage::AppearanceDesktopIcons:
-                case SettingsPage::AppearanceIconBeautification:
-                case SettingsPage::ThemeManager:
-                case SettingsPage::AnimationPerformance:
-                case SettingsPage::ContextMenu:
-                    return L("settings.nav.group.appearance");
-                case SettingsPage::Widgets:
-                    return L("settings.nav.group.widgetsAndCategories");
-                case SettingsPage::BackupAndData:
-                    return L("settings.nav.group.other");
-                default:
-                    return std::wstring{};
-                }
-            };
             input.staticSettings.reserve(std::size(kStaticSearchDefinitions));
             for (const auto& definition : kStaticSearchDefinitions)
             {
@@ -723,11 +686,6 @@ inline void PopulateSettingsSearchCatalog(SettingsSearchIndexInput& input,
                 descriptor.label = L(definition.labelKey);
                 descriptor.description = L(definition.descriptionKey);
                 descriptor.context = pageContext(descriptor.page);
-                if (const auto group = groupContext(descriptor.page);
-                    !group.empty() && group != descriptor.context)
-                    descriptor.context = group + L" \u203a " + descriptor.context;
-                if (definition.keywordsKey)
-                    descriptor.keywords.push_back(L(definition.keywordsKey));
                 descriptor.visible =
                     definition.page != SettingsPage::DeveloperTools &&
                         definition.page != SettingsPage::Debug

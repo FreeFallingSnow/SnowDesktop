@@ -1,16 +1,9 @@
 #include "settings/settings_search_index.h"
 #include "settings/settings_search_catalog.h"
-#include "common/json_value.h"
-
-#include <windows.h>
 
 #include <cstdlib>
 #include <algorithm>
 #include <iostream>
-#include <filesystem>
-#include <fstream>
-#include <set>
-#include <sstream>
 #include <string>
 
 namespace
@@ -197,98 +190,10 @@ void TestStableRankingAndLimit()
         "result limits preserve the ranked stable prefix");
 }
 
-std::wstring WideUtf8(const std::string& text)
-{
-    if (text.empty()) return {};
-    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-        text.data(), static_cast<int>(text.size()), nullptr, 0);
-    if (length <= 0) return {};
-    std::wstring result(static_cast<std::size_t>(length), L'\0');
-    MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(),
-        static_cast<int>(text.size()), result.data(), length);
-    return result;
-}
-
-void TestCatalogUserTasks(const std::filesystem::path& repository)
-{
-    // Exercise the shipping metadata and translations. Queries describe user
-    // tasks rather than internal IDs; UI/desktop interaction is a separate test.
-    JsonValue chinese;
-    for (const auto& file : std::filesystem::directory_iterator(repository / "lang"))
-    {
-        if (file.path().extension() != ".json") continue;
-        std::ifstream stream(file.path(), std::ios::binary);
-        std::ostringstream buffer;
-        buffer << stream.rdbuf();
-        JsonValue language;
-        Check(ParseJson(buffer.str(), language), "shipping search language is valid JSON");
-        SettingsSearchIndexInput input;
-        input.languageTag = file.path().stem().string();
-        const auto localize = [&language](std::string_view key) {
-            const auto* value = language.Find(key);
-            return value && value->IsString() ? WideUtf8(value->string) : std::wstring{};
-        };
-        for (const auto& definition : kStaticSearchDefinitions)
-            if (definition.keywordsKey)
-                Check(!localize(definition.keywordsKey).empty(),
-                    "each shipping language supplies actual task keywords");
-        PopulateSettingsSearchCatalog(input, localize, false, false);
-        const SettingsSearchIndex index(input);
-        std::set<std::pair<SettingsPage, std::string>> destinations;
-        for (const auto& descriptor : input.staticSettings)
-            Check(destinations.emplace(descriptor.page, descriptor.focusId).second,
-                "aliases share a destination instead of defining duplicate controls");
-        Check(index.Search(localize("settings.search.keywords.startup")).size() == 1,
-            "localized startup aliases resolve in every shipping language");
-        if (input.languageTag == "zh-CN") chinese = language;
-    }
-    Check(chinese.IsObject(), "the Chinese user-task language was loaded");
-    SettingsSearchIndexInput input;
-    input.languageTag = "zh-CN";
-    PopulateSettingsSearchCatalog(input, [&chinese](std::string_view key) {
-        const auto* value = chinese.Find(key);
-        return value && value->IsString() ? WideUtf8(value->string) : std::wstring{};
-    }, false, false);
-    SettingsSearchIndex index(input);
-    const auto has = [&index](std::wstring_view query, SettingsPage page, std::string_view id) {
-        const auto results = index.Search(query);
-        return std::any_of(results.begin(), results.end(), [&](const auto& result) {
-            return result.route.page == page && result.focusId == id;
-        });
-    };
-    Check(has(L"Dock 自动隐藏", SettingsPage::Dock, "dock.showOnlyWhenSummoned"),
-        "Dock hiding task resolves to the actual summon-only visibility control");
-    Check(has(L"多显示器布局", SettingsPage::Dock, "dock.monitor"),
-        "multi-monitor layout task discovers the Dock display selector");
-    Check(has(L"集合显示方式", SettingsPage::General, "start.collection"),
-        "object display tasks discover their contextual guide, not a fake global setting");
-    Check(has(L"圆角半径", SettingsPage::AppearanceWidgets, "personalization.cornerRadius") &&
-        has(L"标题字号", SettingsPage::AppearanceDesktopIcons, "desktop.itemFontSize"),
-        "numeric search titles name the same controls that users see");
-    Check(has(L"文件和文件夹", SettingsPage::ContextMenu, "contextMenu.extensions"),
-        "former duplicate extension labels remain discoverable as aliases");
-    Check(has(L"Ｄｏｃｋ 自动隐藏", SettingsPage::Dock, "dock.showOnlyWhenSummoned"),
-        "IME full-width Latin input matches ordinary task queries");
-    const auto calendar = index.Search(L"日程");
-    Check(std::any_of(calendar.begin(), calendar.end(), [](const auto& result) {
-        return result.route.page == SettingsPage::Calendar &&
-            result.context.find(L"启动与系统栏") != std::wstring::npos;
-    }), "calendar hits display their owning navigation group");
-
-    // Causal negative control: the old metadata omitted keywords. Removing
-    // just those phrases must lose the query that cannot be inferred from labels.
-    for (auto& descriptor : input.staticSettings) descriptor.keywords.clear();
-    index.Rebuild(input);
-    Check(index.Search(L"集合显示方式").empty(),
-        "user-task discovery depends on populated aliases, not incidental IDs");
-}
-
 } // namespace
 
-int main(int argc, char** argv)
+int main()
 {
-    if (argc != 2) return EXIT_FAILURE;
-    TestCatalogUserTasks(std::filesystem::path(argv[1]));
     SettingsSearchIndexInput catalog;
     PopulateSettingsSearchCatalog(catalog,[](std::string_view key) {return std::wstring(key.begin(),key.end());},false,false);
     const auto find = [&](std::string_view id) {return std::find_if(catalog.staticSettings.begin(),catalog.staticSettings.end(),[&](const auto& descriptor) {return descriptor.focusId == id;});};

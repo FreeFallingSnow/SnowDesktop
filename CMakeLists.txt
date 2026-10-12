@@ -1757,7 +1757,6 @@ if (BUILD_TESTING)
             src/settings/settings_search_index.cpp
             src/settings/settings_route.cpp
         INCLUDE_DIRECTORIES src
-        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract l10n navigation settings)
 
     snowdesktop_add_test(
