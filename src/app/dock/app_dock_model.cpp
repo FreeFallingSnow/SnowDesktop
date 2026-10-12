@@ -280,7 +280,7 @@ bool DesktopApp::IsRecycleBinDockEntry(const DockEntry& entry) const
 
 void DesktopApp::NormalizeDockRecycleBinPosition()
 {
-    snowdesktop::dock_folder_rules::StableNormalize(
+    snowdesktop::dock_folder_rules::NormalizeKeepingUserOrder(
         dockEntries_,
         [this](const DockEntry& entry) {
             if (IsRecycleBinDockEntry(entry))

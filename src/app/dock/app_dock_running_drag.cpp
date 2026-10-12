@@ -365,6 +365,7 @@ bool DesktopApp::PinDockRunningTarget(const std::wstring& runningKey,
                     const size_t end = begin + DockFolderEntryCount();
                     const size_t index = std::clamp(insertIndex, begin, end);
                     dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(index), std::move(entry));
+                    snowdesktop::dock_folder_rules::CaptureUserOrder(dockEntries_);
                     InvalidateDockContainers();
                 }
             }

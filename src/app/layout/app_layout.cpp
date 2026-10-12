@@ -1232,9 +1232,11 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
         file << (i + 1 == widgets_.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"dockEntries\": [\n";
-    for (size_t i = 0; i < dockEntries_.size(); ++i)
+    const auto orderedDockEntries =
+        snowdesktop::dock_folder_rules::EntriesInUserOrder(dockEntries_);
+    for (size_t i = 0; i < orderedDockEntries.size(); ++i)
     {
-        const DockEntry& entry = dockEntries_[i];
+        const DockEntry& entry = *orderedDockEntries[i];
         file << "    { \"type\": \""
              << (IsLogicalDockEntryType(entry.type)
                     ? "collection"
@@ -1285,7 +1287,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
                 file << ", ";
         }
         file << "] }"
-             << (i + 1 == dockEntries_.size()
+             << (i + 1 == orderedDockEntries.size()
                     ? "\n" : ",\n");
     }
     file << "  ],\n  \"navTabOrder\": [";

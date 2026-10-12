@@ -55,6 +55,7 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
             : std::min(insertIndex, mainEnd);
         dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(insertIndex),
             moving.begin(), moving.end());
+        snowdesktop::dock_folder_rules::CaptureUserOrder(dockEntries_);
         NormalizeDockRecycleBinPosition();
         InvalidateDockContainers();
         return;

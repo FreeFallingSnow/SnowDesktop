@@ -13,6 +13,7 @@
 #include <fstream>
 #include "dock/dock_folder_rules.h"
 #include "dock/dock_refresh_cache.h"
+#include "dock/dock_folder_order_cases.h"
 #include "dock/dock_process_snapshot.h"
 #include "common/bounded_lru_cache.h"
 #include "diagnostics/slow_call_limiter.h"
@@ -1849,6 +1850,12 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string_view(argv[1]) == "--dock-folder-order-negative-control")
+    {
+        snowdesktop::tests::dock_folder_order::Run(Check, true);
+        return failures == 0 ? 0 : 1;
+    }
+    snowdesktop::tests::dock_folder_order::Run(Check);
     {
         SYSTEMTIME time{};
         time.wYear = 2026; time.wMonth = 10; time.wDay = 11;
@@ -7876,6 +7883,10 @@ int main(int argc, char** argv)
             // turns native foreground activation into an unbounded wait. The
             // injected request tests above do not exercise that Win32 hazard.
             {"src/app/dock/app_dock_window_tracking.cpp", "", "", {"AttachThreadInput("}},
+            // The permutation tests exercise the rule; this boundary keeps
+            // asynchronous production grouping wired to that rule.
+            {"src/app/dock/app_dock_model.cpp", "void DesktopApp::NormalizeDockRecycleBinPosition()",
+             "void DesktopApp::LoadDockUsageStats()", {"StableNormalize("}},
             // A source's transition policy is setter-only. The overlay may
             // disable its own policy, but must never overwrite the app's one.
             {"src/dock/dock_window_transition.cpp", "bool DockWindowTransition::Start(",

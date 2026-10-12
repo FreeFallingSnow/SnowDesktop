@@ -9,6 +9,7 @@
 #include "widget/packages/widget_removal.h"
 #include "data/portable_data_migration.h"
 #include "platform/single_instance.h"
+#include "dock/dock_folder_order_cases.h"
 
 #include <windows.h>
 #include <objbase.h>
@@ -737,6 +738,73 @@ void TestWidgetRemoval(const std::filesystem::path& root)
         "catalog publication and reload preserve the removal declaration");
 }
 
+// Exercise the real atomic layout store between partial classification and a
+// fresh process cache. The runtime rank is reconstructed from array order;
+// no new layout field or migration is required.
+void TestDockFolderOrderPersistence(const std::filesystem::path& root)
+{
+    namespace order = snowdesktop::tests::dock_folder_order;
+    using namespace snowdesktop::layout_storage;
+    const auto path = root / L"dock-folder-order.json";
+    std::string error;
+    const auto saveAndLoad = [&](const std::vector<DockEntry>& entries) {
+        std::string json = "{\"dockEntries\":[";
+        bool first = true;
+        for (const auto* entry : snowdesktop::dock_folder_rules::EntriesInUserOrder(entries))
+        {
+            if (!first) json += ',';
+            first = false;
+            json += "{\"type\":\"";
+            json += entry->type == DockEntryType::FolderMapping ? "folderMapping" : "item";
+            json += "\",\"ref\":\"";
+            for (const wchar_t name : entry->reference) json += static_cast<char>(name);
+            json += "\"}";
+        }
+        json += "]}";
+        Expect(SaveDocument(path, json, &error), "Dock order must save through the validated atomic layout store");
+        Document loaded;
+        Expect(LoadDocument(path, loaded).status == LoadStatus::LoadedPrimary,
+            "Dock order must reload from the actual primary layout document");
+        std::vector<DockEntry> restored;
+        for (const auto& record : loaded.dockEntries)
+        {
+            DockEntry entry;
+            entry.reference.assign(record.reference.begin(), record.reference.end());
+            entry.type = record.type == "folderMapping" ? DockEntryType::FolderMapping : DockEntryType::DesktopItem;
+            restored.push_back(std::move(entry));
+        }
+        return restored;
+    };
+
+    std::array<wchar_t, 3> sequence{L'A', L'B', L'C'};
+    do
+    {
+        auto entries = order::Entries(L"PAMBCR");
+        order::Cache cache;
+        order::Normalize(entries, cache);
+        for (std::size_t completed = 0; completed <= sequence.size(); ++completed)
+        {
+            auto restored = saveAndLoad(entries);
+            Expect(order::Order(restored) == L"PAMBCR",
+                "partial classification must not replace the saved array with temporary section order");
+            order::Cache restarted;
+            order::Normalize(restored, restarted);
+            for (auto name = sequence.rbegin(); name != sequence.rend(); ++name)
+            {
+                Expect(order::Complete(restarted, *name), "restart fixture must accept each fresh folder result");
+                order::Normalize(restored, restarted);
+            }
+            Expect(order::Order(restored) == L"PAMBCR",
+                "real save/load followed by cold classification must preserve ordinary/mapped folder order");
+            if (completed < sequence.size())
+            {
+                Expect(order::Complete(cache, sequence[completed]), "partial fixture must publish its next result");
+                order::Normalize(entries, cache);
+            }
+        }
+    } while (std::next_permutation(sequence.begin(), sequence.end()));
+}
+
 int RunDataCleanupTests();
 int main()
 {
@@ -762,6 +830,7 @@ int main()
     }
 
     const auto hashInput = root / L"sha256-input.bin";
+    TestDockFolderOrderPersistence(root);
     TestWidgetCatalogRediscovery(root);
     TestDebugProfile(root);
     TestWidgetRemoval(root);
