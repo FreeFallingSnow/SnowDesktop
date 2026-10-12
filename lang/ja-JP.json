@@ -2610,5 +2610,6 @@
   "settings.bars.positionAndAppearance": "位置と外観",
   "settings.bars.dockActions": "Dock の操作",
   "statusBar.inputMethodPanel": "キーボードレイアウトパネル",
-  "statusBar.panelSystemInput": "システムのキーボードレイアウトパネル"
+  "statusBar.panelSystemInput": "システムのキーボードレイアウトパネル",
+  "settings.contextMenu.hideMoreManagement": "その他のオプションを表示 / 管理の行を非表示にする"
 }

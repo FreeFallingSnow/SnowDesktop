@@ -80,6 +80,10 @@ int main()
         Check(!IsGeneralShortcutOnlyCommit(general, menuAndHotkey),
             "menu options combined with a hotkey edit retain the full settings commit");
     }
+    auto hiddenMoreAndHotkey = generalHotkey;
+    hiddenMoreAndHotkey.contextMenuHideMoreManagement = true;
+    Check(!IsGeneralShortcutOnlyCommit(general, hiddenMoreAndHotkey),
+        "hiding the More/Manage row with a hotkey edit still applies menu presentation");
     generalHotkey.demoModeEnabled = !general.demoModeEnabled;
     Check(!IsGeneralShortcutOnlyCommit(general, generalHotkey),
         "a visual General change still uses the full commit pipeline");

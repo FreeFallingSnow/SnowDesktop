@@ -2610,5 +2610,6 @@
   "settings.bars.positionAndAppearance": "Position et apparence",
   "settings.bars.dockActions": "Actions du Dock",
   "statusBar.inputMethodPanel": "Panneau des dispositions du clavier",
-  "statusBar.panelSystemInput": "Panneau système des dispositions du clavier"
+  "statusBar.panelSystemInput": "Panneau système des dispositions du clavier",
+  "settings.contextMenu.hideMoreManagement": "Masquer la ligne Afficher plus d’options / Gérer"
 }

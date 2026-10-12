@@ -2610,5 +2610,6 @@
   "settings.bars.positionAndAppearance": "Position and appearance",
   "settings.bars.dockActions": "Dock actions",
   "statusBar.inputMethodPanel": "Keyboard layout panel",
-  "statusBar.panelSystemInput": "System keyboard layout panel"
+  "statusBar.panelSystemInput": "System keyboard layout panel",
+  "settings.contextMenu.hideMoreManagement": "Hide the Show more options / Manage row"
 }

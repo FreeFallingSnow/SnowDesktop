@@ -64,6 +64,7 @@ struct GeneralSettings
     snowdesktop::shell_extensions::Preferences shellExtensions;
     bool contextMenuExpandQuickActions = false;
     bool contextMenuHidePageManagement = false;
+    bool contextMenuHideMoreManagement = false;
     snowdesktop::app_fonts::Selection font;
     int tooltipFontSize = snowdesktop::kDefaultTooltipFontSize;
     char language[85] = "system";

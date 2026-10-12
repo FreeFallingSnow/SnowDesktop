@@ -40,6 +40,7 @@ inline bool IsGeneralShortcutOnlyCommit(
         before.doubleClickHideDesktop == after.doubleClickHideDesktop &&
         before.contextMenuExpandQuickActions == after.contextMenuExpandQuickActions &&
         before.contextMenuHidePageManagement == after.contextMenuHidePageManagement &&
+        before.contextMenuHideMoreManagement == after.contextMenuHideMoreManagement &&
         before.quickNavTheme == after.quickNavTheme &&
         before.collectionPopupTheme == after.collectionPopupTheme &&
         before.quickNavigationAppearance == after.quickNavigationAppearance &&

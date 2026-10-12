@@ -97,6 +97,8 @@ bool LoadGeneralSettings(const wchar_t* path, GeneralSettings& settings)
         settings.contextMenuExpandQuickActions = val;
     if (ReadBoolField(text, "contextMenuHidePageManagement", val))
         settings.contextMenuHidePageManagement = val;
+    if (ReadBoolField(text, "contextMenuHideMoreManagement", val))
+        settings.contextMenuHideMoreManagement = val;
     int hotkeyValue = 0;
     if (ReadIntField(text, "softwareDesktopHotkeyModifiers", hotkeyValue))
         settings.softwareDesktopHotkeyModifiers = static_cast<UINT>(hotkeyValue) &
@@ -231,6 +233,8 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << (settings.contextMenuExpandQuickActions ? "true" : "false") << ",\n";
     file << "  \"contextMenuHidePageManagement\": "
          << (settings.contextMenuHidePageManagement ? "true" : "false") << ",\n";
+    file << "  \"contextMenuHideMoreManagement\": "
+         << (settings.contextMenuHideMoreManagement ? "true" : "false") << ",\n";
     file << "  \"calendarEnabled\": " << (calendar.enabled ? "true" : "false") << ",\n";
     file << "  \"calendarType\": \"" << calendar.calendar << "\",\n";
     file << "  \"quickNavigationAppearance\": " << quickAppearance << ",\n";

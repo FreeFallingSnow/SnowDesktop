@@ -2610,5 +2610,6 @@
   "settings.bars.positionAndAppearance": "Posición y apariencia",
   "settings.bars.dockActions": "Acciones del Dock",
   "statusBar.inputMethodPanel": "Panel de distribuciones del teclado",
-  "statusBar.panelSystemInput": "Panel del sistema de distribuciones del teclado"
+  "statusBar.panelSystemInput": "Panel del sistema de distribuciones del teclado",
+  "settings.contextMenu.hideMoreManagement": "Ocultar la fila Mostrar más opciones / Administrar"
 }

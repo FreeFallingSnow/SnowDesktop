@@ -2610,5 +2610,6 @@
   "settings.bars.positionAndAppearance": "Posição e aparência",
   "settings.bars.dockActions": "Ações do Dock",
   "statusBar.inputMethodPanel": "Painel de layouts de teclado",
-  "statusBar.panelSystemInput": "Painel do sistema de layouts de teclado"
+  "statusBar.panelSystemInput": "Painel do sistema de layouts de teclado",
+  "settings.contextMenu.hideMoreManagement": "Ocultar a linha Mostrar mais opções / Gerenciar"
 }

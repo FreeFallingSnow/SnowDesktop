@@ -54,6 +54,28 @@ inline void MoveMoreToBottom(std::vector<modern_menu::Item> &items, UINT moreCom
                    std::make_move_iterator(footer.end()));
     items = std::move(ordered);
 }
+inline void ConfigureMoreManagementRow(std::vector<modern_menu::Item> &items, UINT moreCommand,
+                                       UINT manageCommand, std::wstring label, bool hidden)
+{
+    if (!hidden)
+    {
+        AddMoreManagementAction(items, moreCommand, manageCommand, std::move(label));
+        MoveMoreToBottom(items, moreCommand);
+        return;
+    }
+    std::erase_if(items, [=](const auto &item) {
+        return (moreCommand && item.command == moreCommand) ||
+            (manageCommand && item.command == manageCommand);
+    });
+    // Keep separators between surviving groups, without leaving an empty footer.
+    std::vector<modern_menu::Item> visible;
+    for (auto &item : items)
+        if (!item.separator || (!visible.empty() && !visible.back().separator))
+            visible.push_back(std::move(item));
+    while (!visible.empty() && visible.back().separator)
+        visible.pop_back();
+    items = std::move(visible);
+}
 inline void InsertBeforeMore(std::vector<modern_menu::Item> &items,
                              const std::vector<modern_menu::Item> &additions, UINT moreCommand,
                              bool separateFallback = true)

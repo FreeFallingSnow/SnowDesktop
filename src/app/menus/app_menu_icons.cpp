@@ -787,9 +787,9 @@ UINT DesktopApp::ShowModernMenu(
              << L" pid=" << GetCurrentProcessId();
         WriteDiagnosticLogEntry(line.str().c_str(), DiagnosticLogLevel::Debug);
     }
-    snowdesktop::shell_extensions::AddMoreManagementAction(
-        items, kContextMoreCommand, kContextManageMenuCommand, _LW("app.menu.manage_context_menu"));
-    snowdesktop::shell_extensions::MoveMoreToBottom(items, kContextMoreCommand);
+    snowdesktop::shell_extensions::ConfigureMoreManagementRow(
+        items, kContextMoreCommand, kContextManageMenuCommand, _LW("app.menu.manage_context_menu"),
+        generalSettings_.contextMenuHideMoreManagement);
     std::unique_ptr<snowdesktop::shell_extensions::Presentation> extensions;
     if (shellRequest)
     {

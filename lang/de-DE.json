@@ -2610,5 +2610,6 @@
   "settings.bars.positionAndAppearance": "Position und Erscheinungsbild",
   "settings.bars.dockActions": "Dock-Aktionen",
   "statusBar.inputMethodPanel": "Tastaturlayout-Auswahl",
-  "statusBar.panelSystemInput": "Systemauswahl für Tastaturlayouts"
+  "statusBar.panelSystemInput": "Systemauswahl für Tastaturlayouts",
+  "settings.contextMenu.hideMoreManagement": "Zeile Weitere Optionen anzeigen / Verwalten ausblenden"
 }

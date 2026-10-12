@@ -241,7 +241,7 @@ int main()
                 [&](const auto& descriptor) { return descriptor.focusId == id; });
         };
         Check(contains("contextMenu.expandQuickActions") == (style < 5) &&
-            contains("contextMenu.hidePageManagement"),
+            contains("contextMenu.hidePageManagement") && contains("contextMenu.hideMoreManagement"),
             "menu search exposes expansion only outside Win10 styles and always exposes page hiding");
     }
     TestNavigationAndFocus();

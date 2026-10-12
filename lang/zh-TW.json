@@ -2610,5 +2610,6 @@
   "settings.bars.positionAndAppearance": "位置與外觀",
   "settings.bars.dockActions": "Dock 操作",
   "statusBar.inputMethodPanel": "鍵盤配置面板",
-  "statusBar.panelSystemInput": "系統鍵盤配置面板"
+  "statusBar.panelSystemInput": "系統鍵盤配置面板",
+  "settings.contextMenu.hideMoreManagement": "隱藏展開更多選項與管理列"
 }

@@ -1116,12 +1116,25 @@ int wmain(int argc, wchar_t** argv)
                    items[4].children.front().command == 4 && items[5].command == 2,
                "Shell entries and More form the bottom group after every host action");
         items = {open, separator, more, separator, after};
-        snowdesktop::shell_extensions::AddMoreManagementAction(items, 2, 5, L"管理");
-        snowdesktop::shell_extensions::MoveMoreToBottom(items, 2);
+        snowdesktop::shell_extensions::ConfigureMoreManagementRow(items, 2, 5, L"管理", false);
         snowdesktop::shell_extensions::InsertBeforeMore(items, {archive}, 2);
         Expect(items.size() == 7 && items[4].label == L"7-Zip" && items[5].command == 2 &&
                    items[6].command == 5 && items[5].inlineGroup == items[6].inlineGroup,
                "management stays beside More after the real attachment and insertion sequence");
+        snowdesktop::shell_extensions::ConfigureMoreManagementRow(items, 2, 5, L"管理", true);
+        Expect(items.size() == 5 && items.back().label == L"7-Zip" &&
+                   items.back().children.front().command == 4,
+               "hiding the footer removes both actions and preserves Shell commands");
+        items = {separator, open, separator, more, separator};
+        snowdesktop::shell_extensions::ConfigureMoreManagementRow(items, 2, 5, L"管理", true);
+        Expect(items.size() == 1 && items.front().command == 1,
+               "a hidden footer leaves no leading, duplicate or trailing divider");
+        snowdesktop::shell_extensions::InsertBeforeMore(items, {archive}, 2);
+        Expect(items.size() == 3 && items[1].separator && items.back().children.front().command == 4 &&
+                   std::none_of(items.begin(), items.end(), [](const Item &item) {
+                       return item.command == 2 || item.command == 5;
+                   }),
+               "late Shell entries remain available without recreating the hidden footer");
     }
     // Do not switch the user's input desktop. Test windows need real activation
     // and Z-order, but unrelated applications must not cancel their menu loops.

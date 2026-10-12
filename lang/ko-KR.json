@@ -2610,5 +2610,6 @@
   "settings.bars.positionAndAppearance": "위치 및 모양",
   "settings.bars.dockActions": "Dock 동작",
   "statusBar.inputMethodPanel": "키보드 레이아웃 패널",
-  "statusBar.panelSystemInput": "시스템 키보드 레이아웃 패널"
+  "statusBar.panelSystemInput": "시스템 키보드 레이아웃 패널",
+  "settings.contextMenu.hideMoreManagement": "더 많은 옵션 표시 / 관리 행 숨기기"
 }
