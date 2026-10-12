@@ -298,7 +298,9 @@ struct DesktopItem
  */
 struct FolderEntry
 {
+    // Keep the filesystem name for classification, search and public callers.
     std::wstring name;
+    std::wstring displayName;
     std::wstring fullPath;
     std::wstring typeName;
     bool isDirectory = false;
@@ -318,8 +320,14 @@ struct FolderEntry
 
     FolderEntry() = default;
 
+    const std::wstring& DisplayName() const
+    {
+        return displayName.empty() ? name : displayName;
+    }
+
     FolderEntry(const FolderEntry& other)
         : name(other.name),
+          displayName(other.displayName),
           fullPath(other.fullPath),
           typeName(other.typeName),
           isDirectory(other.isDirectory),
@@ -354,6 +362,7 @@ struct FolderEntry
                 iconBitmapSize = {};
             }
             name = other.name;
+            displayName = other.displayName;
             fullPath = other.fullPath;
             typeName = other.typeName;
             isDirectory = other.isDirectory;
@@ -411,6 +420,7 @@ public:
 
     FolderEntry(FolderEntry&& other) noexcept
         : name(std::move(other.name)),
+          displayName(std::move(other.displayName)),
           fullPath(std::move(other.fullPath)),
           typeName(std::move(other.typeName)),
           isDirectory(other.isDirectory),
@@ -441,6 +451,7 @@ public:
                 DeleteObject(iconBitmap);
             }
             name = std::move(other.name);
+            displayName = std::move(other.displayName);
             fullPath = std::move(other.fullPath);
             typeName = std::move(other.typeName);
             isDirectory = other.isDirectory;
@@ -615,6 +626,9 @@ struct DockEntry
         snowdesktop::list_detail_rules::kDefaultTypePosition;
     float detailSizePosition =
         snowdesktop::list_detail_rules::kDefaultSizePosition;
+    // Runtime rank from the saved array or an explicit Dock edit. Shell
+    // classification may regroup entries but must not overwrite this order.
+    std::optional<size_t> userOrder;
 };
 
 struct DockUsageRecord

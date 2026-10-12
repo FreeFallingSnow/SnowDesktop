@@ -130,7 +130,10 @@ inline void StableSort(
                 return ascending
                     ? comparison < 0
                     : comparison > 0;
-            comparison = CompareInsensitive(a.name, b.name);
+            if constexpr (requires { a.DisplayName(); b.DisplayName(); })
+                comparison = CompareInsensitive(a.DisplayName(), b.DisplayName());
+            else
+                comparison = CompareInsensitive(a.name, b.name);
             if (comparison == 0)
                 comparison = CompareInsensitive(
                     a.fullPath, b.fullPath);

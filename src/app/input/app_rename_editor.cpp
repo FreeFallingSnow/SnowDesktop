@@ -33,7 +33,7 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
     const bool listMode = owner < widgets_.size() && widgets_[owner].listMode;
     const DWORD style = snowdesktop::rename_edit_layout::EditStyle(listMode, !listMode);
     renameInputWindow_ = CreateWindowExW( WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
-        snowdesktop::text_input::WindowClass(), widgets_[widgetIndex].folderEntries[memberIndex].name.c_str(), style,
+        snowdesktop::text_input::WindowClass(), widgets_[widgetIndex].folderEntries[memberIndex].DisplayName().c_str(), style,
         screenRect.left, screenRect.top,
         screenRect.right - screenRect.left, screenRect.bottom - screenRect.top,
         hwnd_, nullptr, instance_, nullptr);
@@ -64,7 +64,7 @@ void DesktopApp::BeginRenameFolderEntry(size_t widgetIndex, size_t memberIndex)
         SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
     SendMessageW(renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
-            widgets_[widgetIndex].folderEntries[memberIndex].name,
+            widgets_[widgetIndex].folderEntries[memberIndex].DisplayName(),
             widgets_[widgetIndex].folderEntries[memberIndex].fullPath,
             widgets_[widgetIndex].folderEntries[memberIndex].isDirectory));
     SetFocus(renameInputWindow_);
@@ -230,7 +230,7 @@ BeginRenameDockFolderPopupEntry(
     renameInputWindow_ = CreateWindowExW(
             WS_EX_TOOLWINDOW |
             WS_EX_TOPMOST,
-        snowdesktop::text_input::WindowClass(), entry.name.c_str(),
+        snowdesktop::text_input::WindowClass(), entry.DisplayName().c_str(),
         style,
         screenRect.left,
         screenRect.top,
@@ -292,7 +292,7 @@ BeginRenameDockFolderPopupEntry(
     SendMessageW(
         renameInputWindow_, EM_SETSEL, 0,
         RenameInitialSelectionEnd(
-            entry.name,
+            entry.DisplayName(),
             entry.fullPath,
             entry.isDirectory));
     SetFocus(renameInputWindow_);

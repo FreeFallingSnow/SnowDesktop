@@ -46,6 +46,12 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
             snowdesktop::folder_mapping_rules::ChildPath(
                 path, fd.cFileName);
         entry.isDirectory = (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+        entry.displayName = ReadFolderDisplayName(entry.fullPath, entry.name,
+            [](const std::wstring& itemPath, SHFILEINFOW& info) {
+                // No icon/image-list query and no Shell work on the UI thread.
+                return SHGetFileInfoW(itemPath.c_str(), 0, &info, sizeof(info),
+                    SHGFI_DISPLAYNAME) != 0;
+            });
         entry.lastWriteTime = fd.ftLastWriteTime;
         if (!entry.isDirectory)
         {
@@ -133,7 +139,7 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
     std::sort(widget.folderEntries.begin(), widget.folderEntries.end(),
         [](const FolderEntry& a, const FolderEntry& b) {
             if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
-            return _wcsicmp(a.name.c_str(), b.name.c_str()) < 0;
+            return _wcsicmp(a.DisplayName().c_str(), b.DisplayName().c_str()) < 0;
         });
     if (snowdesktop::folder_sort_rules::
             NormalizeMode(widget.folderSortMode) !=

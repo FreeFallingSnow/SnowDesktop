@@ -103,6 +103,7 @@ inline Changes Apply(const ShellRenameResult& result, const std::wstring& newLay
                 continue;
             entry.fullPath = result.path;
             entry.name = fileName;
+            entry.displayName = result.displayName;
             entry.typeName = result.typeName;
             entry.sysIconIndex = result.sysIconIndex;
             entry.isDirectory = directory;

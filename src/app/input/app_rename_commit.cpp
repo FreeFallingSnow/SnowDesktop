@@ -198,7 +198,7 @@ void DesktopApp::CommitFolderEntryRename(const std::wstring& newName, bool cance
         widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping &&
         memberIndex < widgets_[widgetIndex].folderEntries.size())
         entry = &widgets_[widgetIndex].folderEntries[memberIndex];
-    if (cancel || !entry || newName.empty() || newName == entry->name)
+    if (cancel || !entry || newName.empty() || newName == entry->DisplayName())
         return;
     if (!QueueRename({ entry->fullPath, newName, {} }))
         MessageBeep(MB_ICONWARNING);

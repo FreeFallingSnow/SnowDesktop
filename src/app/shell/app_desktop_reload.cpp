@@ -612,7 +612,17 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
         const bool immersiveColor = settingArea &&
             _wcsicmp(settingArea, L"ImmersiveColorSet") == 0;
         if (!traySettings && !immersiveColor)
+        {
+            // The embedded desktop is a child of Explorer; the top-level
+            // control window receives broadcasts for its view options.
+            // Display names can change without a file timestamp change.
+            if (wp != SPI_SETWORKAREA)
+            {
+                shellMetadataCache_ = {};
+                RequestShellRefresh();
+            }
             break;
+        }
 
         if (traySettings || immersiveColor)
             SyncSystemTaskbarSettingsFromWindows();

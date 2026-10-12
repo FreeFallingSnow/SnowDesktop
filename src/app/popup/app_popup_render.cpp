@@ -396,7 +396,7 @@ void DesktopApp::DrawCollectionPopup(
                     ctx, itemRect,
                     entry.iconBitmap,
                     entry.sysIconIndex,
-                    entry.name,
+                    entry.DisplayName(),
                     entry.selected,
                     entry.iconIsMediaThumbnail,
                     {}, nullptr,

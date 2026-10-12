@@ -819,7 +819,7 @@ FileGroup::GetGroupSearchResults() const
             {
                 const FolderEntry& entry = app_->widgets_[sourceIndex].
                     folderEntries[result.folderEntryIndex];
-                value.name = entry.name;
+                value.name = entry.DisplayName();
                 value.type = entry.typeName;
                 value.modified = entry.lastWriteTime;
                 value.size = entry.fileSize;

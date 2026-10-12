@@ -280,8 +280,8 @@ const std::vector<size_t>& FolderMapping::GetVisibleEntryIndices() const
             std::stable_sort(visibleEntryIndices_.begin(),
                 visibleEntryIndices_.end(), [this](size_t lhs, size_t rhs) {
                     return _wcsicmp(
-                        data_->folderEntries[lhs].name.c_str(),
-                        data_->folderEntries[rhs].name.c_str()) < 0;
+                        data_->folderEntries[lhs].DisplayName().c_str(),
+                        data_->folderEntries[rhs].DisplayName().c_str()) < 0;
                 });
         }
         const bool reverseGroups =
@@ -1104,7 +1104,7 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         if (!listMode)
         {
             if (privacyActive)
-                DrawPrivacyPlaceholder(context, cell, entry.name, entry.isDirectory);
+                DrawPrivacyPlaceholder(context, cell, entry.DisplayName(), entry.isDirectory);
             else
             {
                 RECT bodyRect = GetBodyRect();
@@ -1121,10 +1121,10 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
         }
 
         if (privacyActive)
-            DrawPrivacyPlaceholder(context, cell, entry.name, entry.isDirectory);
+            DrawPrivacyPlaceholder(context, cell, entry.DisplayName(), entry.isDirectory);
         else
             DrawListItem(context, cell, entry.iconBitmap, entry.sysIconIndex,
-                entry.name, entry.selected, entry.iconIsMediaThumbnail,
+                entry.DisplayName(), entry.selected, entry.iconIsMediaThumbnail,
                 {}, nullptr,
                 { entry.typeName, entry.lastWriteTime,
                   entry.fileSize, entry.isDirectory }, std::nullopt, !app_->IsRenamingItem(&entry));

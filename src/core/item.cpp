@@ -269,9 +269,9 @@ FolderEntryIcon::FolderEntryIcon(FolderEntry* entry, Container* container, Deskt
 
 /**
  * @brief  获取文件夹条目的标题
- * @return entry_ 的 name 字段；entry_ 为空时返回空字符串
+ * @return entry_ 的显示名称；entry_ 为空时返回空字符串
  */
-std::wstring FolderEntryIcon::GetTitle() const { return entry_ ? entry_->name : L""; }
+std::wstring FolderEntryIcon::GetTitle() const { return entry_ ? entry_->DisplayName() : L""; }
 
 /**
  * @brief  获取文件夹条目的完整路径
@@ -408,7 +408,7 @@ void FolderEntryIcon::DrawTitle(ID2D1RenderTarget* context,
 {
     if (!app_ || !entry_ || !context || app_->IsRenamingItem(entry_)) return;
     app_->DrawItemText(
-        context, rect, entry_->name,
+        context, rect, entry_->DisplayName(),
         selected, opacity, lightTheme,
         dynamic_cast<WidgetContainer*>(container_) != nullptr,
         app_->ResolveItemTitleLines(dynamic_cast<WidgetContainer*>(container_) ? dynamic_cast<WidgetContainer*>(container_)->GetWidgetData() : nullptr));

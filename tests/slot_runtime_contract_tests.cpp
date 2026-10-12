@@ -3179,7 +3179,7 @@ void TestRenameUpdatesOnlyMatchingModels()
     result.status = S_OK;
     result.sourcePath = L"C:\\Desktop\\before.txt";
     result.path = L"C:\\Desktop\\after.txt";
-    result.displayName = L"after.txt";
+    result.displayName = L"after";
     result.typeName = L"Text document";
     result.metadataComplete = true;
     result.attributes.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
@@ -3241,8 +3241,11 @@ void TestRenameUpdatesOnlyMatchingModels()
             items[0].name == L"unrelated.txt" &&
             widgets[0].itemKeys[0] == result.path && dock[0].reference == result.path &&
             widgets[1].folderEntries[1].fullPath == result.path &&
+            widgets[1].folderEntries[1].name == L"after.txt" &&
+            widgets[1].folderEntries[1].DisplayName() == L"after" &&
             widgets[1].folderEntries[1].selected &&
-            popup.folderEntries[1].fullPath == result.path,
+            popup.folderEntries[1].fullPath == result.path &&
+            popup.folderEntries[1].DisplayName() == L"after",
         "rename must migrate every matching reference without reordering manual lists");
 
     result.status = E_ACCESSDENIED;

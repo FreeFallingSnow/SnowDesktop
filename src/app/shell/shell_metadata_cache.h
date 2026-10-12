@@ -21,6 +21,19 @@ inline std::wstring LocalDesktopDisplayName(std::wstring_view path, bool directo
     return std::wstring(name);
 }
 
+// Display names depend on Explorer view options, not file timestamps. Read
+// them on every background folder snapshot, even when icon metadata is cached.
+// The raw filename remains available for classification, search and file I/O.
+template<class Query>
+std::wstring ReadFolderDisplayName(const std::wstring& path,
+    const std::wstring& fileName, Query query)
+{
+    SHFILEINFOW info{};
+    if (query(path, info) && info.szDisplayName[0])
+        return info.szDisplayName;
+    return fileName;
+}
+
 // Access time is deliberately excluded: reading metadata can change it.
 struct FileStamp
 {

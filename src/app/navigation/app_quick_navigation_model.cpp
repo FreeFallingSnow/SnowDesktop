@@ -739,7 +739,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
                     entry.kind = QuickNavigationEntry::Kind::FolderEntry;
                     entry.widgetIndex = wi;
                     entry.folderEntryIndex = ei;
-                    entry.name = entryData.name;
+                    entry.name = entryData.DisplayName();
                     entry.path = entryData.fullPath;
                     entry.source = source;
                     if (CanPickLuaLogicalSlotEntry(entry))
@@ -762,7 +762,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
                 entry.kind = QuickNavigationEntry::Kind::FolderEntry;
                 entry.widgetIndex = quickNavigationActiveWidgetIndex_;
                 entry.folderEntryIndex = ei;
-                entry.name = entryData.name;
+                entry.name = entryData.DisplayName();
                 entry.path = entryData.fullPath;
                 entry.source = source;
                 if (CanPickLuaLogicalSlotEntry(entry))
@@ -817,7 +817,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
             entry.kind = QuickNavigationEntry::Kind::FolderEntry;
             entry.widgetIndex = wi;
             entry.folderEntryIndex = ei;
-            entry.name = entryData.name;
+            entry.name = entryData.DisplayName();
             entry.path = entryData.fullPath;
             entry.source = source;
             if (CanPickLuaLogicalSlotEntry(entry))

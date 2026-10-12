@@ -257,7 +257,7 @@ std::wstring DesktopApp::GetCollectionPopupFanLabel(size_t index) const
     if (!widget || index >= GetPopupItemCount(*widget))
         return _LW("app.interact.popup_show_all");
     if (widget->type == DesktopWidgetType::FolderMapping)
-        return widget->folderEntries[GetPopupFolderEntryIndex(*widget, index)].name;
+        return widget->folderEntries[GetPopupFolderEntryIndex(*widget, index)].DisplayName();
     const auto keys = GetPopupItemKeys(*widget);
     const auto itemIndex = FindItemIndexByKey(keys[index]);
     if (itemIndex >= items_.size()) return {};

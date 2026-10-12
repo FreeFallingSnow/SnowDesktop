@@ -151,7 +151,7 @@ BeginQuickNavigationFolderEntryRename(
     renameController_.BeginFolderEntry(
         widgetIndex, entryIndex);
     BeginQuickNavigationItemRename(
-        entry.name, entry.fullPath, entry.isDirectory);
+        entry.DisplayName(), entry.fullPath, entry.isDirectory);
     if (!renameController_.
             IsQuickNavigationPresentation())
     {
