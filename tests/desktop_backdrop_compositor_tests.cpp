@@ -8,6 +8,8 @@
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/native_tooltip_preferences.h"
 #include "ui/render/native_tooltip_content.h"
+#include "system/panel/system_panel_backdrop_placement.h"
+#include <commctrl.h>
 
 #include <roapi.h>
 #include <d2d1_1helper.h>
@@ -436,6 +438,43 @@ int CheckHiddenPopupKeyboardFocus()
         check(GetPropW(helper, L"NonRudeHWND") == reinterpret_cast<HANDLE>(TRUE) &&
                 !IsWindowVisible(helper),
             "a real popup backdrop receives its Shell exclusion before first show");
+
+        // Negative control: a later content-only promotion leaves another
+        // topmost window between the visible content and its retained glass.
+        // Substitute only the host WndProc dispatch, retaining real User32
+        // ordering and the production backdrop-placement handler.
+        struct PlacementContext { DesktopBackdropCompositor* glass; bool enabled; } placement{&glass,false};
+        const auto followPlacement=[](HWND window,UINT message,WPARAM wparam,LPARAM lparam,
+            UINT_PTR,DWORD_PTR data)->LRESULT {
+            const auto& state=*reinterpret_cast<PlacementContext*>(data);
+            if(message==WM_WINDOWPOSCHANGED&&lparam)
+                snowdesktop::MaintainSystemPanelBackdropPlacement(*state.glass,window,
+                    *reinterpret_cast<WINDOWPOS*>(lparam),state.enabled);
+            return DefSubclassProc(window,message,wparam,lparam);
+        };
+        if(!check(SetWindowSubclass(content.handle,followPlacement,1,
+                reinterpret_cast<DWORD_PTR>(&placement))!=FALSE,
+                "attach only the panel placement dispatch to a private test window"))return;
+        glass.SetPopupWindowPairZOrder(content.handle,HWND_TOPMOST,true);
+        glass.ShowPopupWindowPair(content.handle);
+        for(const bool enabled:{false,true})
+        {
+            placement.enabled=false;
+            SetWindowPos(outside.handle,content.handle,80,80,320,240,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+            check(GetWindow(helper,GW_HWNDPREV)==outside.handle,
+                "the negative control actually separates the content and glass HWNDs");
+            placement.enabled=enabled;
+            SetWindowPos(content.handle,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+            check((GetWindow(helper,GW_HWNDPREV)==content.handle)==enabled,
+                enabled?"content placement restores its retained glass immediately":
+                    "the old content-only promotion leaves the glass behind another window");
+            check(IsWindowVisible(content.handle)&&IsWindowVisible(helper),
+                "placement repair keeps both popup surfaces visible");
+        }
+        RemoveWindowSubclass(content.handle,followPlacement,1);
+        glass.HidePopupWindowPair(content.handle);
+        glass.SetPopupTopmost(false);
+        ShowWindow(outside.handle,SW_HIDE);
 
         enum class Case { Content, Child, DestroyedChild, Outside };
         for (const auto scenario : {Case::Content, Case::Child,

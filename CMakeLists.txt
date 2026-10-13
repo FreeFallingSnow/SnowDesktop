@@ -411,6 +411,7 @@ set(SNOWDESKTOP_SOURCES
     src/system/panel/system_panel.cpp
     src/system/controls/system_control_prompt.cpp
     src/system/panel/system_panel.h
+    src/system/panel/system_panel_backdrop_placement.h
     src/system/panel/system_panel_model.cpp
     src/system/panel/system_panel_model.h
     src/system/calendar/system_calendar_editor.cpp

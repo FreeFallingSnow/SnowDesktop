@@ -1054,7 +1054,26 @@ void SystemPanelModel::Finish(float bodyEnd,bool withMedia,float minimumBodyHeig
     for(auto& n:scene_.nodes)if(n.bounds.top>=bodyStart_&&n.bounds.left>=bodyLeft_){n.clip=clip;n.bounds.top-=scroll_;n.bounds.bottom-=scroll_;for(auto& path:n.paths)for(auto& p:path)p.y-=scroll_;}
     scene_.cards.push_back(Rect(0,0,scene_.width,end));scene_.height=end;
     if(maxScroll_>0){const auto axis=ScrollbarGeometry();Add("scrollbar",ui::Role::Scrollbar,Rect(scene_.width-4,static_cast<float>(axis.thumbStart),2,static_cast<float>(axis.ThumbExtent())));}
-    if(mediaHeight){float y=end+16;Media(y);scene_.cards.push_back(Rect(0,end+8,scene_.width,mediaHeight));scene_.height=end+8+mediaHeight;}
+    if(mediaHeight)
+    {
+        const bool mediaAbove=settings_.position==DockPosition::Bottom;
+        if(mediaAbove)
+        {
+            const float shift=mediaHeight+8;
+            for(auto& node:scene_.nodes)
+            {
+                node.bounds.top+=shift;node.bounds.bottom+=shift;
+                if(node.clip.bottom>node.clip.top){node.clip.top+=shift;node.clip.bottom+=shift;}
+                for(auto& path:node.paths)for(auto& point:path)point.y+=shift;
+            }
+            scrollViewport_.top+=shift;scrollViewport_.bottom+=shift;bodyStart_+=shift;
+            scene_.cards.front().top+=shift;scene_.cards.front().bottom+=shift;
+        }
+        float y=mediaAbove?8:end+16;Media(y);
+        const auto card=Rect(0,mediaAbove?0:end+8,scene_.width,mediaHeight);
+        if(mediaAbove)scene_.cards.insert(scene_.cards.begin(),card);else scene_.cards.push_back(card);
+        scene_.height=end+8+mediaHeight;
+    }
 }
 void SystemPanelModel::Refresh(float availableHeight,float availableWidth)
 {

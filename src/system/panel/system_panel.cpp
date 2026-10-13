@@ -3,6 +3,7 @@
 #include "system/calendar/system_calendar_editor.h"
 #include "system_panel_placement.h"
 #include "system_panel_transition.h"
+#include "system_panel_backdrop_placement.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "layout/popup_round_geometry.h"
 #include "theme/flat_glass_rim.h"
@@ -71,6 +72,8 @@ struct SystemPanel::Impl
     std::shared_ptr<SystemPanelModel> model;ui::Input input;std::string hovered;std::function<void()> afterClose;HWND afterCloseOwner=nullptr;
     std::shared_ptr<PanelLifetime> lifetime=std::make_shared<PanelLifetime>();
     bool paintDirty=true;
+    bool backdropDirty=true;
+    std::wstring lastBackdropError;
     bool controlInputRefreshPending=false;
     bool pointerRefreshPending=false;
     NativePointerHoverState pointerHover;
@@ -108,6 +111,15 @@ struct SystemPanel::Impl
     D2D1_POINT_2F ModelPoint(LONG x,LONG y) const
     {return {static_cast<float>(x-kSurfacePadding)/scale,static_cast<float>(y-kSurfacePadding)/scale};}
     bool Glass()const{return current&&current->appearance.glassEnabled&&!HighContrast();}
+    void ReportBackdropFailure(const wchar_t* stage)
+    {
+        const auto error=backdrop.LastError();
+        const std::wstring detail=std::wstring(stage)+L": "+error;
+        if(detail==lastBackdropError)return;
+        lastBackdropError=detail;
+        const auto message=L"Native system panel backdrop failed at "+detail;
+        WriteDiagnosticLogEntry(message.c_str(),DiagnosticLogLevel::Warning);
+    }
     float SlideOffset()const
     {return current?(current->settings.position==DockPosition::Bottom?1.f:-1.f)*(1-quick_navigation_animation_rules::EaseInOutSmooth(slide.GetVisual().progress))*height:0;}
     bool ContainsClientPoint(POINT point)const
@@ -256,7 +268,7 @@ struct SystemPanel::Impl
         if(nativeControls)source.nativeControls=[this] {if(current&&nativeControls){const auto fn=nativeControls;fn(current->owner,current->anchor);}};
         source.powerMenu=[this]{if(window)PostMessageW(window,kPowerMenu,0,0);};
         source.trayChanged=[this](const auto& value){if(current)current->settings=value;if(changed)changed(value);};
-        tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};pointerHover={};scrollbarDragging=false;paintDirty=true;
+        tooltip.Configure(window,composition.Get(),text.Get(),r.appearance,background);input={};pointerHover={};scrollbarDragging=false;paintDirty=true;backdropDirty=true;
         model=std::make_shared<SystemPanelModel>(std::move(source),r.settings,r.action,r.clockAtRight);if(!r.confirmPower.empty())model->BeginPowerConfirmation(r.confirmPower,true);showing=true;closing=false;if(!Arrange()){if(showing&&!closing)HideNow();return;}
         // HideNow clears these rectangles. Reopening the same layout need not
         // move or reshape the HWND, so Arrange alone may not publish them.
@@ -298,12 +310,20 @@ struct SystemPanel::Impl
         const bool shape=cards.size()!=next.size()||!std::equal(cards.begin(),cards.end(),next.begin(),[](const auto& x,const auto& y){return EqualRect(&x,&y);});cards=std::move(next);
         if(w!=width||h!=height){width=w;height=h;surface.Reset();paintDirty=true;}RECT previous{};GetWindowRect(window,&previous);const bool moved=previous.left!=left||previous.top!=top||previous.right!=left+w||previous.bottom!=top+h;
         if(moved){auto moving=transition.BeginPlacement();SetWindowPos(window,nullptr,left,top,w,h,SWP_NOACTIVATE|SWP_NOZORDER);}
-        if(Glass()&&(moved||shape||!backdrop.IsAvailable()))
+        if(Glass()&&(moved||shape||backdropDirty||!backdrop.IsAvailable()))
         {
-            if(!backdrop.IsAvailable())backdrop.InitializePopup(window,true,false);
-            backdrop.Reattach(window);backdrop.BeginFrame(true);
-            for(std::size_t i=0;i<cards.size();++i)backdrop.AddPanel(cards[i],current->appearance.cornerRadius*scale,current->appearance.glassBlurRadius*scale,reinterpret_cast<std::uintptr_t>(this)+i);
-            backdrop.EndFrame(false);Pose();
+            bool prepared=backdrop.IsAvailable()||backdrop.InitializePopup(window,true,false);
+            if(!prepared)ReportBackdropFailure(L"initialize");
+            if(prepared)
+            {
+                backdrop.Reattach(window);backdrop.BeginFrame(true);
+                for(std::size_t i=0;i<cards.size();++i)prepared=backdrop.AddPanel(cards[i],current->appearance.cornerRadius*scale,current->appearance.glassBlurRadius*scale,reinterpret_cast<std::uintptr_t>(this)+i)&&prepared;
+                backdrop.EndFrame(false);Pose();
+                prepared=prepared&&backdrop.IsAvailable();
+                if(!prepared)ReportBackdropFailure(L"update");
+                else lastBackdropError.clear();
+            }
+            backdropDirty=!prepared;
             // A rebuilt helper starts hidden even when the content HWND is
             // already shown. Restore the pair without changing keyboard focus.
             if(showing)SyncTrayMenuLayer(true);
@@ -600,6 +620,8 @@ struct SystemPanel::Impl
         const auto life=self->lifetime;
         try
         {
+            if(m==WM_WINDOWPOSCHANGED&&lp)
+                MaintainSystemPanelBackdropPlacement(self->backdrop,w,*reinterpret_cast<WINDOWPOS*>(lp),self->showing&&self->Glass());
             if(m==kPointerChanged){self->pointerRefreshPending=false;self->RefreshPointer();return 0;}
             if(m==kPowerMenu){self->PowerMenu();return 0;}
             if(m==kFormInputChanged)
