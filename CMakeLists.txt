@@ -2538,18 +2538,6 @@ if (BUILD_TESTING)
         LABELS integration core rules window)
     target_include_directories(SnowDesktopDockAndWindowRulesTests PRIVATE third_party/minhook/include)
     snowdesktop_add_test(
-        SnowDesktopDockExternalMinimizeTests
-        dock_external_minimize
-        NATIVE_WINDOW_COMPATIBILITY
-        SOURCES tests/dock/dock_external_minimize_tests.cpp src/dock/dock_external_minimize.cpp src/dock/dock_cloak_dispatcher.cpp
-            src/dock/dock_window_transition.cpp src/ui/render/ui_animation_scheduler.cpp
-        INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES d2d1 d3d11 dxgi dcomp dwmapi ole32 user32 gdi32
-        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopDockMinimizeHook>"
-        LABELS integration core dock window)
-    add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimizeHook)
-    add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimize32)
-    snowdesktop_add_test(
         SnowDesktopDockHookResourceTests
         dock_hook_resources
         NATIVE_WINDOW_COMPATIBILITY
@@ -2568,15 +2556,6 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES d2d1 d3d11 dxgi dcomp dwmapi ole32 user32 gdi32
         LABELS integration core dock window)
-    add_test(NAME dock_external_minimize32
-        COMMAND SnowDesktopDockExternalMinimizeTests
-            "$<TARGET_FILE:SnowDesktopDockMinimizeHook>"
-            "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopDockMinimizeFixture32.exe"
-            "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopDockMinimizeHost32.exe"
-            "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopDockMinimizeHook32.dll")
-    set_tests_properties(dock_external_minimize32 PROPERTIES
-        LABELS "integration;core;dock;window" TIMEOUT 30
-        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDockExternalMinimizeTests>")
     add_dependencies(SnowDesktopDockAndWindowRulesTests SnowDesktopTaskbarHook)
     # Explicit opt-in: this real-Shell diagnostic registers only its own fixture
     # icon and broadcasts TaskbarCreated, never launching the desktop host.

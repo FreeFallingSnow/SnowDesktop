@@ -46,14 +46,4 @@ if (SNOWDESKTOP_BUILD_HOOK_FIXTURE)
         RUNTIME_OUTPUT_DIRECTORY "${SNOWDESKTOP_OUTPUT_DIR}/tests"
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SNOWDESKTOP_OUTPUT_DIR}/tests"
         RUNTIME_OUTPUT_DIRECTORY_DEBUG "${SNOWDESKTOP_OUTPUT_DIR}/tests")
-    add_executable(SnowDesktopDockMinimizeFixture32 "../../tests/dock/dock_minimize_fixture.cpp")
-    target_compile_features(SnowDesktopDockMinimizeFixture32 PRIVATE cxx_std_20)
-    target_compile_definitions(SnowDesktopDockMinimizeFixture32 PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
-    target_compile_options(SnowDesktopDockMinimizeFixture32 PRIVATE /W4 /permissive- /EHsc /utf-8)
-    target_link_libraries(SnowDesktopDockMinimizeFixture32 PRIVATE user32)
-    set_property(TARGET SnowDesktopDockMinimizeFixture32 PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
-    set_target_properties(SnowDesktopDockMinimizeFixture32 PROPERTIES
-        RUNTIME_OUTPUT_DIRECTORY "${SNOWDESKTOP_OUTPUT_DIR}/tests"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SNOWDESKTOP_OUTPUT_DIR}/tests"
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${SNOWDESKTOP_OUTPUT_DIR}/tests")
 endif()

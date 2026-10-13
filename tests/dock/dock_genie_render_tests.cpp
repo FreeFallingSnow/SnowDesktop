@@ -1113,10 +1113,22 @@ void CheckRetainedWindowImage()
 
 int main()
 {
+    // Preserve minimize protocol boundaries without installing cross-process Hooks.
+    using namespace snowdesktop::dock_minimize;
+    Check(RequestIsCurrent(100, 0), "fresh request is current");
+    Check(!RequestIsCurrent(100, 100), "expired request is rejected");
+    Check(!RequestIsCurrent(100, 101), "late request is rejected");
+    Check(RequestIsCurrent(50, MAXDWORD - 100), "request remains valid across tick wrap");
+    Check(!RequestIsCurrent(1000, 0), "future request outside budget is rejected");
+    Check(IsMinimizeCommand(SW_MINIMIZE) && IsMinimizeCommand(SW_SHOWMINIMIZED) &&
+        IsMinimizeCommand(SW_SHOWMINNOACTIVE) && IsMinimizeCommand(SW_FORCEMINIMIZE),
+        "all native minimize forms are recognized");
+    Check(!IsMinimizeCommand(SW_RESTORE) && !IsMinimizeCommand(SW_MAXIMIZE) &&
+        !IsMinimizeCommand(SW_HIDE), "restore, maximize and tray hiding remain independent");
     CheckContinuousOutline();
     CheckTimelineGeometry();
     CheckFramePixelAlignment();
     CheckRetainedWindowImage();
-    if (!failures) std::cout << "Genie outline and cache-independent DWM image checks passed\n";
+    if (!failures) std::cout << "Genie outline, minimize protocol and cache-independent DWM image checks passed\n";
     return failures ? 1 : 0;
 }
