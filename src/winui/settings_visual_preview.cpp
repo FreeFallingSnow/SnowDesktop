@@ -76,15 +76,15 @@ public:
     explicit PreviewWidgetService(bool english)
     {
         value.widgetId = L"settings-visual-example"; value.packageId = "offline.example";
-        value.widgetName = english ? "Example component" : "示例组件";
+        value.widgetName = english ? "Example component" : "示例组件"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
         value.generation = value.revision = 1;
-        value.groups.push_back({"content", english ? "Content" : "内容", {}, false, true});
-        value.groups.push_back({"details", english ? "More options" : "更多选项", {}, true, false});
+        value.groups.push_back({"content", english ? "Content" : "内容", {}, false, true}); // l10n-allow: isolated bilingual preview fixture, not production UI text.
+        value.groups.push_back({"details", english ? "More options" : "更多选项", {}, true, false}); // l10n-allow: isolated bilingual preview fixture, not production UI text.
         const auto add = [&](const char* key, const char* type, const char* zh, const char* en, wr::InteractionValue current) {
             wr::WidgetSettingFieldState field;
             field.schema.key = key; field.schema.rawType = type; field.schema.label = english ? en : zh;
             field.schema.group = "content"; field.currentValue = current; field.defaultValue = current;
-            if (std::string_view(type) == "select") field.schema.options = {{"a", english ? "Automatic" : "自动"}, {"b", english ? "Custom" : "自定义"}};
+            if (std::string_view(type) == "select") field.schema.options = {{"a", english ? "Automatic" : "自动"}, {"b", english ? "Custom" : "自定义"}}; // l10n-allow: isolated bilingual preview fixture, not production UI text.
             value.fields.push_back(std::move(field));
         };
         wr::InteractionValue title; title.type = wr::InteractionValue::Type::String; title.string = "SnowDesktop";
@@ -92,11 +92,11 @@ public:
         wr::InteractionValue size; size.type = wr::InteractionValue::Type::Number; size.number = 50.;
         wr::InteractionValue mode; mode.type = wr::InteractionValue::Type::String; mode.string = "a";
         wr::InteractionValue count; count.type = wr::InteractionValue::Type::Integer; count.integer = 5;
-        add("title", "text", "标题", "Title", title);
-        add("enabled", "boolean", "显示详细内容", "Show detailed content", enabled);
-        add("size", "range", "内容大小", "Content size", size);
-        add("mode", "select", "显示方式", "Display mode", mode);
-        add("count", "integer", "显示数量", "Item count", count);
+        add("title", "text", "标题", "Title", title); // l10n-allow: isolated bilingual preview fixture, not production UI text.
+        add("enabled", "bool", "显示详细内容", "Show detailed content", enabled); // l10n-allow: isolated bilingual preview fixture, not production UI text.
+        add("size", "range", "内容大小", "Content size", size); // l10n-allow: isolated bilingual preview fixture, not production UI text.
+        add("mode", "select", "显示方式", "Display mode", mode); // l10n-allow: isolated bilingual preview fixture, not production UI text.
+        add("count", "int", "显示数量", "Item count", count); // l10n-allow: isolated bilingual preview fixture, not production UI text.
         value.fields.back().schema.group = "details";
     }
     void SetEventCallbacks(SnapshotChangedCallback, SearchCompletedCallback) override {}
@@ -135,7 +135,7 @@ constexpr SettingsPage pages[] = {
     SettingsPage::DeveloperTools, SettingsPage::Debug, SettingsPage::WidgetSettings, SettingsPage::LargeIcon};
 
 void Export(const std::filesystem::path& output, std::string_view selected, bool dark,
-    const std::string& locale, int width, int height, bool expanded)
+    const std::string& locale, int width, int height, bool expanded, bool custom, bool disabled)
 {
     Locale::Instance().Init((std::filesystem::path(GetExecutableDirectoryPath()) / L"lang").c_str());
     if (!Locale::Instance().HasLanguage(locale)) throw std::runtime_error("preview locale is not installed");
@@ -161,16 +161,20 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     shell->SetConditionalPagesVisible(true, true);
     shell->SetWidgetSettingsService(&widgets);
     GeneralPageActions general;
-    general.languageCatalog = [] { return std::vector<SettingsLanguageOption>{{"zh-CN", L"简体中文"}, {"en-US", L"English"}}; };
+    general.languageCatalog = [] { return std::vector<SettingsLanguageOption>{{"zh-CN", L"简体中文"}, {"en-US", L"English"}}; }; // l10n-allow: isolated bilingual preview fixture, not production UI text.
     general.queryAdvancedFeatureStatus = [] { GeneralAdvancedFeatureStatus status; status.state = GeneralAdvancedFeatureState::Registered;
         status.bridgeAvailable = status.registered = status.cardVisible = true; return status; };
     shell->SetGeneralPageActions(std::move(general));
+    PersonalizationPageActions appearance;
+    appearance.listFonts = [] { return std::vector<app_fonts::Choice>{{{}, L"Segoe UI", L"Segoe UI"}}; };
+    appearance.appliedFont = [] { return app_fonts::Selection{}; };
+    shell->SetPersonalizationPageActions(std::move(appearance));
     PageLayoutPageActions layout;
     layout.capture = [] { PageLayoutSnapshot snapshot; snapshot.revision = 1; snapshot.editable = true; snapshot.monitorCount = 2;
-        snapshot.pages = {{L"example-1", L"Work / 工作", 12, 8, 10, 2}, {L"example-2", L"Projects / 项目", 10, 7, 5, 1}}; return snapshot; };
+        snapshot.pages = {{L"example-1", L"Work / 工作", 12, 8, 10, 2}, {L"example-2", L"Projects / 项目", 10, 7, 5, 1}}; return snapshot; }; // l10n-allow: isolated bilingual preview fixture, not production UI text.
     shell->SetPageLayoutPageActions(std::move(layout));
     shell->SetLargeIconSettingsAction([](LargeIconSettingsRequest request) {
-        LargeIconSettingsSnapshot snapshot; snapshot.key = request.key; snapshot.name = L"Example / 示例";
+        LargeIconSettingsSnapshot snapshot; snapshot.key = request.key; snapshot.name = L"Example / 示例"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
         snapshot.available = snapshot.editable = snapshot.succeeded = true; snapshot.session = snapshot.revision = 1;
         snapshot.maxColumns = snapshot.maxRows = 4; return snapshot;
     });
@@ -180,6 +184,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     host.runtime.ResizeToClient(); PumpUntil([&] { return loaded; }); shell->Loaded(token);
     std::ofstream manifest(output / L"render.tsv");
     manifest << "page\timage\twidthDip\theightDip\tscrollY\tscrollMax\n";
+    std::ofstream rows(output / L"rows.tsv");
+    rows << "page\tlabel\tx\ty\twidth\theight\tpaddingLeft\tpaddingTop\tpaddingRight\tpaddingBottom\teditorX\teditorY\teditorWidth\teditorHeight\n";
     std::uint64_t revision = 0;
     bool rendered = false;
     for (const auto page : pages)
@@ -189,6 +195,21 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         rendered = true;
         SettingsSnapshot snapshot; snapshot.revision = ++revision; snapshot.generation = 1;
         snapshot.initialized = snapshot.sessionActive = true;
+        snapshot.values.general.dockEnabled = !disabled;
+        snapshot.values.general.statusBar.enabled = !disabled;
+        snapshot.values.general.widgetDeveloperToolsEnabled = true;
+        if (custom)
+        {
+            snapshot.values.personalization.backgroundPreset = kAppearancePresetCustom;
+            snapshot.values.dock.followComponentAppearance = false;
+            snapshot.values.dock.appearancePreset = kAppearancePresetCustom;
+            snapshot.values.dock.systemTaskbarBackdropEnabled = true;
+            snapshot.values.dock.systemTaskbarFollowPersonalization = false;
+            snapshot.values.dock.systemTaskbarAppearance.backgroundPreset = kAppearancePresetCustom;
+            for (auto* theme : {&snapshot.values.general.quickNavigationAppearance,
+                &snapshot.values.general.collectionPopupAppearance, &snapshot.values.general.statusBar.theme})
+            { theme->mode = 4; theme->customized = true; theme->appearance.backgroundPreset = kAppearancePresetCustom; }
+        }
         snapshot.domainRevisions = {revision, revision, revision, revision, revision, revision, revision};
         snapshot.route = SettingsRoute::ForPage(page);
         if (page == SettingsPage::WidgetSettings) snapshot.route = SettingsRoute::ForWidget(widgets.value.widgetId);
@@ -208,6 +229,24 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             }
         }
         const auto scroll = shell->FindName(L"PageScrollViewer").as<c::ScrollViewer>();
+        Walk(cards, [&](const x::DependencyObject& node) {
+            const auto row = node.try_as<c::Grid>();
+            if (!row || row.ActualHeight() <= 0 || row.Visibility() != x::Visibility::Visible ||
+                !row.Resources().HasKey(winrt::box_value(L"SnowDesktopSettingRow")) || row.Children().Size() < 2) return;
+            const auto text = row.Children().GetAt(0).try_as<c::StackPanel>();
+            const auto editor = row.Children().GetAt(1).try_as<x::FrameworkElement>();
+            if (!text || text.Children().Size() == 0 || !editor) return;
+            const auto label = text.Children().GetAt(0).try_as<c::TextBlock>();
+            if (!label) return;
+            auto title = winrt::to_string(label.Text());
+            std::replace(title.begin(), title.end(), '\t', ' '); std::replace(title.begin(), title.end(), '\n', ' ');
+            const auto bounds = row.TransformToVisual(cards).TransformBounds({0, 0, static_cast<float>(row.ActualWidth()), static_cast<float>(row.ActualHeight())});
+            const auto controls = editor.TransformToVisual(row).TransformBounds({0, 0, static_cast<float>(editor.ActualWidth()), static_cast<float>(editor.ActualHeight())});
+            const auto padding = row.Padding();
+            rows << key << '\t' << title << '\t' << bounds.X << '\t' << bounds.Y << '\t' << bounds.Width << '\t' << bounds.Height
+                << '\t' << padding.Left << '\t' << padding.Top << '\t' << padding.Right << '\t' << padding.Bottom
+                << '\t' << controls.X << '\t' << controls.Y << '\t' << controls.Width << '\t' << controls.Height << '\n';
+        });
         const double maximum = scroll.ScrollableHeight();
         const double step = std::max(100., scroll.ViewportHeight() - 48.);
         for (unsigned tile = 0; tile < 64; ++tile)
@@ -258,8 +297,9 @@ std::optional<int> TryRunSettingsVisualPreview()
         if (width < 840 || width > 2400 || height < 520 || height > 1800) throw std::runtime_error("unsupported preview size");
         const std::wstring_view theme(args[4]), state(args[8]);
         if (theme != L"light" && theme != L"dark") throw std::runtime_error("preview supports light or dark XAML surfaces");
-        if (state != L"expanded" && state != L"collapsed") throw std::runtime_error("invalid disclosure state");
-        Export(output, winrt::to_string(args[3]), theme == L"dark", winrt::to_string(args[5]), width, height, state == L"expanded");
+        if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled") throw std::runtime_error("invalid disclosure state");
+        Export(output, winrt::to_string(args[3]), theme == L"dark", winrt::to_string(args[5]), width, height,
+            state == L"expanded" || state == L"custom", state == L"custom", state == L"disabled");
         std::ofstream(output / L"result.txt") << "passed\nIsolated production XAML, example data; no desktop material or interaction acceptance.\n";
         return 0;
     }
