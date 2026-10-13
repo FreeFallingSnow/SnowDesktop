@@ -319,7 +319,9 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         if (quickNavTabDragIndex_ != static_cast<size_t>(-1))
         {
             int dx = appPoint.x - quickNavTabDragStartPoint_.x;
-            if (!quickNavTabDragging_ && std::abs(dx) > 4)
+            if (!quickNavTabDragging_ &&
+                snowdesktop::quick_navigation_rules::TabDragExceededThreshold(
+                    dx, quickNavTabDragDeltaX_, 4))
                 quickNavTabDragging_ = true;
             if (quickNavTabDragging_)
                 quickNavTabDragDeltaX_ = dx;

@@ -468,6 +468,20 @@ void TestTabDragWhileScrolling()
     Check(startPoint.x == 470 && dragDelta == 10 && scrollOffset == 80,
         "scrolling without an active tab drag must leave the drag origin and delta alone");
 
+    scrollOffset = 40;
+    startPoint = {430, 100};
+    dragDelta = 0;
+    rules::SetTabScrollOffset(100, scrollOffset, true, startPoint, dragDelta);
+    Check(!rules::TabDragExceededThreshold(430 - startPoint.x, dragDelta, 4) &&
+        !rules::TabDragExceededThreshold(434 - startPoint.x, dragDelta, 4),
+        "scrolling a pressed tab before dragging must not count towards the pointer threshold");
+    Check(rules::TabDragExceededThreshold(440 - startPoint.x, dragDelta, 4) &&
+        rules::TabDragExceededThreshold(420 - startPoint.x, dragDelta, 4),
+        "real pointer movement must start a drag after scrolling in either direction");
+    dragDelta = 440 - startPoint.x;
+    Check(draggedLeft() == 390,
+        "starting the drag after scrolling must retain the original grabbed pixel");
+
     const std::vector<int> centers{0, 0, 240, 360, 500, 680};
     Check(rules::TabDragTarget(3, 360, centers) == 3,
         "a dragged tab must stay in place until it crosses a neighboring midpoint");

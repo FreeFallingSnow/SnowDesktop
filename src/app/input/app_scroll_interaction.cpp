@@ -89,7 +89,8 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                                 delta / 2,
                             0, maxTabScroll),
                         quickNavigationTabScrollOffset_,
-                        quickNavTabDragging_, quickNavTabDragStartPoint_,
+                        quickNavTabDragIndex_ != static_cast<size_t>(-1),
+                        quickNavTabDragStartPoint_,
                         quickNavTabDragDeltaX_);
                 }
             }

@@ -401,9 +401,9 @@ inline int TabStripMaxScrollOffset(
 
 inline void SetTabScrollOffset(
     int nextOffset, int& scrollOffset,
-    bool dragging, POINT& dragStartPoint, int& dragDeltaX)
+    bool trackingDrag, POINT& dragStartPoint, int& dragDeltaX)
 {
-    if (dragging)
+    if (trackingDrag)
     {
         // The tab's base position moves left when the strip scrolls right.
         // Compensate both this frame and the origin used by later mouse moves.
@@ -412,6 +412,13 @@ inline void SetTabScrollOffset(
         dragDeltaX += scrollDelta;
     }
     scrollOffset = nextOffset;
+}
+
+constexpr bool TabDragExceededThreshold(
+    int deltaWithScroll, int scrollCompensation, int threshold)
+{
+    const int pointerDelta = deltaWithScroll - scrollCompensation;
+    return pointerDelta > threshold || pointerDelta < -threshold;
 }
 
 inline int TabDragTarget(

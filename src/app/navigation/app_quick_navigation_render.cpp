@@ -605,7 +605,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
         std::clamp(quickNavigationTabScrollOffset_, 0,
             GetQuickNavigationMaxTabScrollOffset(overlay)),
         quickNavigationTabScrollOffset_,
-        quickNavTabDragging_, quickNavTabDragStartPoint_,
+        quickNavTabDragIndex_ != static_cast<size_t>(-1),
+        quickNavTabDragStartPoint_,
         quickNavTabDragDeltaX_);
     quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
         GetQuickNavigationMaxScrollOffset(overlay, contentModel));
