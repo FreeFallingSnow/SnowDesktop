@@ -62,6 +62,7 @@ int wmain(int argc, wchar_t** argv)
     DWORD owner = 0;
     GetWindowThreadProcessId(fixture->window, &owner);
     passed = passed && owner == child.dwProcessId;
+    std::cout << "fixture ready=" << passed << " windowOwner=" << owner << " expected=" << child.dwProcessId << '\n';
     HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(SharedState), ObjectName(host, L"State").c_str());
     auto state = mapping ? static_cast<SharedState*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState))) : nullptr;
     HANDLE signal = CreateEventW(nullptr, FALSE, FALSE, ObjectName(host, L"Signal").c_str());
@@ -78,7 +79,7 @@ int wmain(int argc, wchar_t** argv)
         const wchar_t* stage = L"start";
         const DWORD cold = AttachCollector(fixture->window, *state, module, stage, [&] { return std::wstring(argv[1]); });
         passed = passed && cold == 0 && WaitFor([&] { return Read(state->ready) != 0; });
-        std::cout << "cold error=" << cold << " ready=" << Read(state->ready) << '\n';
+        std::cout << "cold error=" << cold << " ready=" << Read(state->ready) << " valid=" << passed << '\n';
         for (unsigned cycle = 0; cycle < 8 && passed; ++cycle)
         {
             // A collector generation can end independently of its process.
@@ -86,9 +87,11 @@ int wmain(int argc, wchar_t** argv)
             // same name; late worker messages retain the old epoch.
             InterlockedExchange(&state->stop, 1);
             DWORD_PTR ignored = 0;
-            SendMessageTimeoutW(fixture->window, RegisterWindowMessageW(kDetachMessage), host,
+            const bool detached = SendMessageTimeoutW(fixture->window, RegisterWindowMessageW(kDetachMessage), host,
                 static_cast<LPARAM>(Read(state->epoch)), SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &ignored);
+            std::cout << "detach delivered=" << detached << " error=" << GetLastError() << '\n';
             passed = WaitFor([&] { return !Read(state->ready); });
+            std::cout << "worker retired=" << passed << '\n';
             UnmapViewOfFile(state); state = nullptr;
             CloseHandle(mapping); mapping = nullptr;
             passed = passed && WaitFor([&] {
@@ -99,6 +102,7 @@ int wmain(int argc, wchar_t** argv)
                 mapping = candidate;
                 return true;
             });
+            std::cout << "mapping retired=" << passed << '\n';
             if (!passed) break;
             state = static_cast<SharedState*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
             if (!state) { passed = false; break; }
