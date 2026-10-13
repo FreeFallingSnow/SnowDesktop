@@ -88,14 +88,19 @@ public:
             if (Global())
             {
                 c::StackPanel scopes; scopes.Spacing(8);
+                scopes.HorizontalAlignment(x::HorizontalAlignment::Right);
                 for (auto check : scopeChecks_)
                 {
+                    check.MinWidth(0);
                     check.IsChecked(true); scopes.Children().Append(check);
                     const auto checked = check.Checked([this](const auto&, const auto&) { PatchBindings(); });
                     const auto unchecked = check.Unchecked([this](const auto&, const auto&) { PatchBindings(); });
                     revoke_.push_back([check, checked, unchecked] { check.Checked(checked); check.Unchecked(unchecked); });
                 }
-                scopeRow_.Initialize(scopes); saveBody_.Children().Append(scopeRow_.root);
+                scopeRow_.Initialize(scopes);
+                scopeRow_.SetCompactEditor();
+                scopeRow_.SetControlAlignment(x::HorizontalAlignment::Right);
+                saveBody_.Children().Append(scopeRow_.root);
                 quickRow_.Initialize(quick_); popupRow_.Initialize(popup_);
                 saveBody_.Children().Append(quickRow_.root); saveBody_.Children().Append(popupRow_.root);
                 for (auto [combo, kind] : {std::pair{quick_, themes::Kind::QuickPanel}, {popup_, themes::Kind::Popup}})

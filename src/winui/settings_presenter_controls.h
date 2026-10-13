@@ -398,9 +398,11 @@ struct SettingRow
         layout = std::make_shared<LayoutOptions>();
         layout->controlWidth = controlWidth;
         layout->compact = static_cast<bool>(control.try_as<muxc::ToggleSwitch>()) ||
+            static_cast<bool>(control.try_as<muxc::CheckBox>()) ||
             static_cast<bool>(control.try_as<muxc::Button>());
         if (layout->compact) layout->alignment = mux::HorizontalAlignment::Right;
         if (const auto toggle = control.try_as<muxc::ToggleSwitch>()) toggle.MinWidth(0.0);
+        if (const auto check = control.try_as<muxc::CheckBox>()) check.MinWidth(0.0);
 
         muxc::ColumnDefinition labelColumn{};
         labelColumn.Width(mux::GridLengthHelper::FromValueAndType(
@@ -493,6 +495,8 @@ struct SettingRow
             {
                 toggle.MinWidth(0.0);
             }
+            if (const auto check = controlHost.Content().try_as<muxc::CheckBox>())
+                check.MinWidth(0.0);
         }
     }
 
