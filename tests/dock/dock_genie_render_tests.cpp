@@ -406,15 +406,29 @@ void CheckFramePixelAlignment()
                 } while (GetTickCount64() < deadline);
                 Check(moved, "Genie window pixels deform while the UI animation scheduler is not dispatched");
                 int requests = 0;
-                Check(transition.StartRestore(source, dock, [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                const bool reversed = transition.StartRestore(source, dock, [&](HWND window, DockWindowRestoreTransitionPhase phase) {
                     if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
                     {
                         ++requests;
                         ShowWindow(window, SW_SHOWNOACTIVATE);
                     }
-                }) && DockWindowTransitionTestAccess::TimelineActive(transition) &&
+                });
+                Check(reversed && requests == 1,
+                    "reversing a running compositor Genie requests native restore exactly once");
+                const ULONGLONG preparationDeadline = GetTickCount64() + 1000;
+                while (reversed && transition.IsActive() &&
+                    !DockWindowTransitionTestAccess::TimelineActive(transition) && GetTickCount64() < preparationDeadline)
+                {
+                    scheduler.DispatchDue();
+                    MSG message{};
+                    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                    { TranslateMessage(&message); DispatchMessageW(&message); }
+                    const HANDLE wake = scheduler.WaitHandle();
+                    MsgWaitForMultipleObjects(1, &wake, FALSE, 10, QS_ALLINPUT);
+                }
+                Check(DockWindowTransitionTestAccess::TimelineActive(transition) &&
                     scheduler.Metrics().activeAnimations == 0 && requests == 1,
-                    "reversing a running compositor Genie preserves independent playback and requests restore once");
+                    "reversed Genie returns to compositor playback after native restore preparation");
                 transition.Cancel();
                 DWORD flags = 0;
                 Check(!transition.IsActive() && scheduler.Metrics().activeAnimations == 0 &&
