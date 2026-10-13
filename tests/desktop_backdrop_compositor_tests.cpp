@@ -449,7 +449,7 @@ int CheckHiddenPopupKeyboardFocus()
             const auto& state=*reinterpret_cast<PlacementContext*>(data);
             if(message==WM_WINDOWPOSCHANGED&&lparam)
                 snowdesktop::MaintainSystemPanelBackdropPlacement(*state.glass,window,
-                    *reinterpret_cast<WINDOWPOS*>(lparam),state.enabled);
+                    state.enabled);
             return DefSubclassProc(window,message,wparam,lparam);
         };
         if(!check(SetWindowSubclass(content.handle,followPlacement,1,

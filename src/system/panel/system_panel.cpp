@@ -330,6 +330,9 @@ struct SystemPanel::Impl
             backdrop.SetVisible(showing);
         }
         else if(!Glass())backdrop.Reset();if(moved||shape)Pose();if(moved||shape||contentChanged)PublishGeometry();
+        // A later overlay can split the pair without notifying our content.
+        // The ordinary refresh repairs only the helper; intact pairs are no-ops.
+        MaintainSystemPanelBackdropPlacement(backdrop,window,showing&&Glass());
         if(calendarInputs){const bool hadInputFocus=calendarInputs->Contains(GetFocus());calendarInputs->Sync(InputFields(),current->appearance,static_cast<UINT>(std::lround(scale*96)));calendarInputs->Pose(SlideOffset(),showing&&!closing&&!modal&&!slide.IsAnimating());if(hadInputFocus&&!GetFocus()&&showing&&!closing&&!modal)SetFocus(window);}
         // Layout/scrolling can put a different node under a stationary mouse.
         // Resolve it now, without painting recursively from inside Arrange.
@@ -621,7 +624,7 @@ struct SystemPanel::Impl
         try
         {
             if(m==WM_WINDOWPOSCHANGED&&lp)
-                MaintainSystemPanelBackdropPlacement(self->backdrop,w,*reinterpret_cast<WINDOWPOS*>(lp),self->showing&&self->Glass());
+                MaintainSystemPanelBackdropPlacement(self->backdrop,w,self->showing&&self->Glass());
             if(m==kPointerChanged){self->pointerRefreshPending=false;self->RefreshPointer();return 0;}
             if(m==kPowerMenu){self->PowerMenu();return 0;}
             if(m==kFormInputChanged)
