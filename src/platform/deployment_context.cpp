@@ -5,6 +5,7 @@
 
 #include "deployment_context.h"
 #include "injectable_runtime_cache.h"
+#include "hook_entry_deployment.h"
 #include "data/data_paths.h"
 #include "diagnostics/diagnostic_log.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
@@ -726,7 +727,14 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename,
             CleanupLegacyRuntimeRootsOnce(data);
             return data / L"ShellHook" / L"shared";
         }());
-        const auto shared = cache.Deploy(source, excluded);
+        const bool taskbar = _wcsicmp(filename, kTaskbarHookFilename) == 0;
+        const bool dock64 = _wcsicmp(filename, L"SnowDesktopDockMinimizeHook.dll") == 0;
+        const bool dock32 = _wcsicmp(filename, L"SnowDesktopDockMinimizeHook32.dll") == 0;
+        const auto payload = taskbar ? snowdesktop::hook_entry::Payload::Taskbar
+            : dock32 ? snowdesktop::hook_entry::Payload::Dock32 : snowdesktop::hook_entry::Payload::Dock64;
+        const auto excludeImplementation = !excluded.empty() && (taskbar || dock64 || dock32)
+            ? snowdesktop::hook_entry::CurrentImplementation(payload) : excluded;
+        const auto shared = cache.Deploy(source, excludeImplementation);
         if (!shared.empty() && cache.Expanded())
         {
             const std::wstring message = L"[HookRuntimeDeployment] pool-expanded candidateSlots=" +
@@ -741,6 +749,13 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename,
                 L" source=" + source.wstring();
             WriteDiagnosticLogEntry(message.c_str());
             SetLastError(code);
+        }
+        if (!shared.empty() && (taskbar || dock64 || dock32))
+        {
+            const auto entry = snowdesktop::deployment::GetRuntimeFilePath(dock32
+                ? L"SnowDesktopHookEntry32.dll" : L"SnowDesktopHookEntry.dll");
+            const auto root = std::filesystem::path(GetDataDirectoryPath()) / L"ShellHook" / L"shared";
+            return snowdesktop::hook_entry::Prepare(root, entry, payload, shared);
         }
         return shared.wstring();
     }

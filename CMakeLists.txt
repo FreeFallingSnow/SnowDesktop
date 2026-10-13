@@ -372,6 +372,10 @@ set(SNOWDESKTOP_SOURCES
     src/platform/single_instance.cpp
     src/diagnostics/debug_profile.cpp
     src/platform/deployment_context.cpp
+    src/platform/hook_entry_deployment.cpp
+    src/platform/hook_entry_deployment.h
+    src/platform/hook_entry_protocol.h
+    src/platform/hook_registration_retry.h
     src/platform/shell_overlay_window.h
     src/icons/shortcut_icon_resource.cpp
     src/icons/shortcut_icon_resource.h
@@ -937,6 +941,14 @@ if (TARGET SnowDesktopWallpaperHook)
         SNOWDESKTOP_ENABLE_WALLPAPER_ENGINE_CAPTURE=1)
 endif()
 
+add_library(SnowDesktopHookEntry SHARED src/taskbar_hook/hook_entry.cpp)
+target_compile_features(SnowDesktopHookEntry PRIVATE cxx_std_20)
+target_compile_definitions(SnowDesktopHookEntry PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
+target_compile_options(SnowDesktopHookEntry PRIVATE /W4 /permissive- /EHsc /utf-8)
+target_link_libraries(SnowDesktopHookEntry PRIVATE user32)
+set_property(TARGET SnowDesktopHookEntry PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+add_dependencies(SnowDesktop SnowDesktopHookEntry)
+
 add_library(SnowDesktopDockMinimizeHook SHARED src/dock/dock_minimize_hook.cpp)
 target_compile_features(SnowDesktopDockMinimizeHook PRIVATE cxx_std_20)
 target_compile_definitions(SnowDesktopDockMinimizeHook PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)
@@ -1284,6 +1296,24 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt
         LABELS core contract deployment)
+
+    snowdesktop_add_test(
+        SnowDesktopHookRegistrationRetryTests
+        hook_registration_retry
+        SOURCES tests/platform/hook_registration_retry_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS core rules)
+
+    snowdesktop_add_test(
+        SnowDesktopTrayResidentTests
+        tray_resident_reconnect
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/system/tray_resident_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopTaskbarHook>"
+        LABELS core integration tray)
+    add_dependencies(SnowDesktopTrayResidentTests SnowDesktopTaskbarHook)
 
     snowdesktop_add_test(
         SnowDesktopShellOverlayWindowTests

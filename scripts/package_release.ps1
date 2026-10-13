@@ -125,6 +125,8 @@ function Copy-Payload {
     New-Item -ItemType Directory -Path $runtimeDestination -Force |
         Out-Null
     foreach ($name in @(
+            "SnowDesktopHookEntry.dll",
+            "SnowDesktopHookEntry32.dll",
             "SnowDesktopTaskbarHook.dll",
             "SnowDesktopDockMinimizeHook.dll",
             "SnowDesktopDockMinimizeHook32.dll",

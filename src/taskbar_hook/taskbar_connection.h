@@ -1,4 +1,5 @@
 #pragma once
+#include "../platform/hook_entry_protocol.h"
 
 #include "taskbar_native.h"
 #include "taskbar_hook_lifecycle.h"
@@ -105,6 +106,9 @@ inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
         DWORD owner = 0;
         const DWORD thread = GetWindowThreadProcessId(window, &owner);
         if (!thread || owner != processId) return ERROR_INVALID_WINDOW_HANDLE;
+        const auto entryAbi = reinterpret_cast<const DWORD*>(GetProcAddress(module, "SnowDesktopHookEntryAbi"));
+        if (entryAbi && *entryAbi == hook_entry::kAbi &&
+            !SetPropW(window, hook_entry::kOwnerProperty, ULongToHandle(hostProcessId))) return GetLastError();
         if (stage) *stage = ConnectionStage::RegisterHook;
         hook = SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread);
         if (!hook) return GetLastError();
@@ -180,7 +184,8 @@ DWORD ConnectTaskbarRuntime(HWND primary, std::span<const HWND> taskbars,
         }
         return error;
     }
-    if (isolated == selectedPath) return error;
+    // The stable entry path can remain unchanged while its implementation
+    // catalog selects a fresh image. This still performs only one retry.
     // Keep the choice even after a failed retry: do not mint copies repeatedly.
     selectedPath = isolated;
     return connect(selectedPath);
