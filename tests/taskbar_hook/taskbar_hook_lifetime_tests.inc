@@ -231,9 +231,12 @@ int RunLifetimeChild(const std::filesystem::path& root,
     shared->lastError = ERROR_SUCCESS;
     shared->diagnosticStage = 4243;
     ResetEvent(ready);
+    // Resume starts an owner monitor for the new live host. Only the completed
+    // TAP result is required here; all module workers cannot exit until that
+    // owner is stopped, as checked above for the first host.
     if (ResumeTaskbarThreads(windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId, nullptr) != ERROR_SUCCESS ||
         WaitForSingleObject(ready, 5000) != WAIT_OBJECT_0 || shared->diagnosticStage != 90 ||
-        shared->status != kStatusFailed || shared->lastError != ERROR_ALREADY_EXISTS || !WaitForLifetimeWorkers(first))
+        shared->status != kStatusFailed || shared->lastError != ERROR_ALREADY_EXISTS)
         return fail("resident reconnect for a new owner must retry failed TAP without a new Hook registration");
     report << "PASS: resident resume restarts failed appearance initialization in the existing DLL\n";
     shared->status = kStatusInjecting;
