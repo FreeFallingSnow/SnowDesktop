@@ -443,13 +443,16 @@ int CheckHiddenPopupKeyboardFocus()
         // topmost window between the visible content and its retained glass.
         // Substitute only the host WndProc dispatch, retaining real User32
         // ordering and the production backdrop-placement handler.
-        struct PlacementContext { DesktopBackdropCompositor* glass; bool enabled; } placement{&glass,false};
+        struct PlacementContext { DesktopBackdropCompositor* glass; bool enabled; unsigned notifications=0; } placement{&glass,false};
         const auto followPlacement=[](HWND window,UINT message,WPARAM wparam,LPARAM lparam,
             UINT_PTR,DWORD_PTR data)->LRESULT {
-            const auto& state=*reinterpret_cast<PlacementContext*>(data);
+            auto& state=*reinterpret_cast<PlacementContext*>(data);
             if(message==WM_WINDOWPOSCHANGED&&lparam)
+            {
+                ++state.notifications;
                 snowdesktop::MaintainSystemPanelBackdropPlacement(*state.glass,window,
                     state.enabled);
+            }
             return DefSubclassProc(window,message,wparam,lparam);
         };
         if(!check(SetWindowSubclass(content.handle,followPlacement,1,
@@ -457,14 +460,27 @@ int CheckHiddenPopupKeyboardFocus()
                 "attach only the panel placement dispatch to a private test window"))return;
         glass.SetPopupWindowPairZOrder(content.handle,HWND_TOPMOST,true);
         glass.ShowPopupWindowPair(content.handle);
+        // Record why the original fixture was inconclusive: requesting the
+        // current top position need not deliver a native change notification.
+        SetWindowPos(outside.handle,content.handle,80,80,320,240,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+        const auto probeBefore=placement.notifications;
+        placement.enabled=true;
+        SetWindowPos(content.handle,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+        std::cout<<"native unchanged-position probe: notifications="<<placement.notifications-probeBefore
+            <<"; paired="<<(GetWindow(helper,GW_HWNDPREV)==content.handle)<<'\n';
         for(const bool enabled:{false,true})
         {
             placement.enabled=false;
-            SetWindowPos(outside.handle,content.handle,80,80,320,240,SWP_NOACTIVATE|SWP_SHOWWINDOW);
-            check(GetWindow(helper,GW_HWNDPREV)==outside.handle,
-                "the negative control actually separates the content and glass HWNDs");
+            glass.Reattach(content.handle);
+            SetWindowPos(outside.handle,HWND_TOPMOST,80,80,320,240,SWP_NOACTIVATE|SWP_SHOWWINDOW);
+            check(GetWindow(content.handle,GW_HWNDPREV)==outside.handle&&
+                    GetWindow(helper,GW_HWNDPREV)==content.handle,
+                "the fixture begins with an intact pair below another topmost window");
+            const auto before=placement.notifications;
             placement.enabled=enabled;
             SetWindowPos(content.handle,HWND_TOPMOST,0,0,0,0,SWP_NOMOVE|SWP_NOSIZE|SWP_NOACTIVATE);
+            check(placement.notifications>before,
+                "real content promotion must deliver a position notification to the production handler");
             check((GetWindow(helper,GW_HWNDPREV)==content.handle)==enabled,
                 enabled?"content placement restores its retained glass immediately":
                     "the old content-only promotion leaves the glass behind another window");
