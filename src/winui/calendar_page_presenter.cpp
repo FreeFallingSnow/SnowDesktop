@@ -6,6 +6,7 @@
 #include <cmath>
 #include <cstdio>
 #include <winrt/Windows.Globalization.h>
+#include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 
 namespace snowdesktop::winui
 {
@@ -121,6 +122,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         schedulesSurface.Padding({0, 0, 0, 0});
         list.MaxHeight(320);
         list.SelectionMode(muxc::ListViewSelectionMode::Single);
+        list.ItemContainerTransitions(mux::Media::Animation::TransitionCollection());
         mux::Automation::AutomationProperties::SetAutomationId(list, L"CalendarSchedules");
         mux::Automation::AutomationProperties::SetAutomationId(add, L"CalendarAddSchedule");
         mux::Automation::AutomationProperties::SetAutomationId(save, L"CalendarSaveSchedule");
@@ -440,6 +442,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 detailText.TextWrapping(mux::TextWrapping::Wrap);
                 information.Children().Append(titleText); information.Children().Append(detailText);
                 muxc::ListViewItem item; item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+                item.ContentTransitions(mux::Media::Animation::TransitionCollection());
                 item.Padding({16, 12, 16, 12}); item.Content(information); list.Items().Append(item);
             };
             for (size_t i = 0; i < events.size(); ++i)

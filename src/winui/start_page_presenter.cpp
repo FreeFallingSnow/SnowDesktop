@@ -46,18 +46,19 @@ struct StartPagePresenter::Impl
     muxc::SelectorBar tabs;
     bool dockEnabled = false;
     muxc::ListView lessons;
-    std::array<Group, 6> groups{{
+    std::array<Group, 7> groups{{
+        {Section::Basics, L"general.svg", L"\xE713"},
         {Section::Layout, L"desktop-style.svg", L"\xE7F4"},
         {Section::Files, L"desktop.svg", L"\xE7F4"},
         {Section::Pages, L"pages.svg", L"\xE8A9"},
         {Section::Daily, L"search.svg", L"\xE721"},
         {Section::Appearance, L"appearance-theme.svg", L"\xE790"},
-        {Section::Extensions, L"backup.svg", L"\xE753"},
+        {Section::Extensions, L"widgets.svg", L"\xE74C"},
     }};
     std::vector<std::unique_ptr<Row>> rows;
-    Topic selected = Topic::DesktopStyle;
+    Topic selected = Topic::Startup;
     std::vector<Topic> visibleTopics;
-    Section section = Section::Layout;
+    Section section = Section::Basics;
     std::optional<Topic> expandedTopic;
     mux::Style secondaryStyle{nullptr}, quietButtonStyle{nullptr};
     winrt::event_token tabsToken{}, themeToken{}, sizeToken{};
@@ -211,7 +212,6 @@ struct StartPagePresenter::Impl
             case Topic::ContextMenu:
                 asset = L"context-menu.svg";
                 break;
-            case Topic::Backup: asset = L"backup.svg"; break;
             case Topic::LuaWidget: case Topic::Workshop: case Topic::Develop:
                 asset = L"widgets.svg"; glyph = L"\xE74C"; break;
             case Topic::WidgetPreferences: asset = L"collections-folders.svg"; glyph = L"\xE713"; break;
@@ -364,10 +364,10 @@ void StartPagePresenter::SelectRoute(std::string_view id)
 {
     if (!id.starts_with("start.")) return;
     const auto oldSection = impl_->section;
-    if (id == "start.basics" || id == "start.explore") impl_->section = Section::Layout;
+    if (id == "start.basics" || id == "start.explore") impl_->section = Section::Basics;
     else if (id == "start.welcome")
     {
-        impl_->selected = Topic::DesktopStyle; impl_->section = Section::Layout;
+        impl_->selected = Topic::Startup; impl_->section = Section::Basics;
         impl_->routeExpanded = false; impl_->applyingPreference = true;
         impl_->root.IsExpanded(impl_->expandedPreference); impl_->applyingPreference = false;
     }

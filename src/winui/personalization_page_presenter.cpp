@@ -584,6 +584,7 @@ struct PersonalizationPagePresenter::Impl
         muxc::Border dockThemeSurface;
         presenter_controls::StyleSettingsCard(dockThemeSurface);
         dockThemeSurface.Padding({0});
+        dockThemeSurface.MinHeight(0);
         dockThemeSurface.Child(dockThemeCard.content);
         dockAppearanceHost.Content(dockThemeSurface);
         dockAppearanceHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);

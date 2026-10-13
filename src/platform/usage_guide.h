@@ -10,7 +10,7 @@
 // Private reference catalogue; only the outer expansion preference is saved.
 namespace snowdesktop::usage_guide
 {
-enum class Section { Layout, Files, Pages, Daily, Appearance, Extensions };
+enum class Section { Basics, Layout, Files, Pages, Daily, Appearance, Extensions };
 enum class Topic
 {
     Startup,
@@ -73,7 +73,29 @@ struct Lesson
     const char* secondaryFocus = "";
     const char* secondaryLabel = "";
 };
-inline constexpr std::array<Lesson, 40> kLessons{{
+inline constexpr std::array<Lesson, 39> kLessons{{
+    {Topic::Startup, "startup", Section::Basics, L10N_KEY("start.startup.title"),
+     L10N_KEY("start.startup.description"), L10N_KEY("start.startup.instructions"), SettingsPage::General,
+     "general.autoStart", false, false},
+    {Topic::Move, "move", Section::Basics, L10N_KEY("start.move.title"), L10N_KEY("start.move.description"),
+     L10N_KEY("start.move.instructions"), SettingsPage::General, "", true, false},
+    {Topic::Grid, "grid", Section::Basics, L10N_KEY("start.grid.title"), L10N_KEY("start.grid.description"),
+     L10N_KEY("start.grid.instructions"), SettingsPage::DesktopPages, "pages.grid", false, false},
+    {Topic::Icons, "icons", Section::Basics, L10N_KEY("start.icons.title"),
+     L10N_KEY("start.icons.description"), L10N_KEY("start.icons.instructions"),
+     SettingsPage::AppearanceDesktopIcons, "desktop.iconSize", false, false},
+    {Topic::WidgetLayout, "widgetLayout", Section::Basics, L10N_KEY("start.widgetLayout.title"),
+     L10N_KEY("start.widgetLayout.description"), L10N_KEY("start.widgetLayout.instructions"),
+     SettingsPage::AppearanceDesktopIcons, "personalization.cornerRadius", false, false},
+    {Topic::Beautify, "beautify", Section::Basics, L10N_KEY("start.beautify.title"),
+     L10N_KEY("start.beautify.description"), L10N_KEY("start.beautify.instructions"),
+     SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify", false, false},
+    {Topic::Theme, "theme", Section::Basics, L10N_KEY("start.theme.title"),
+     L10N_KEY("start.theme.description"), L10N_KEY("start.theme.instructions"), SettingsPage::AppearanceTheme,
+     "personalization.theme", false, false},
+    {Topic::ContextMenu, "contextMenu", Section::Basics, L10N_KEY("start.contextMenu.title"),
+     L10N_KEY("start.contextMenu.description"), L10N_KEY("start.contextMenu.instructions"),
+     SettingsPage::ContextMenu, "contextMenu.extensions", false},
     {Topic::DesktopStyle, "desktopStyle", Section::Layout, L10N_KEY("start.desktopStyle.title"),
      L10N_KEY("start.desktopStyle.description"), L10N_KEY("start.desktopStyle.instructions"),
      SettingsPage::DesktopStyle, "desktopStyle", false},
@@ -92,8 +114,6 @@ inline constexpr std::array<Lesson, 40> kLessons{{
     {Topic::DockSpace, "dockSpace", Section::Layout, L10N_KEY("start.dockSpace.title"),
      L10N_KEY("start.dockSpace.description"), L10N_KEY("start.dockSpace.instructions"), SettingsPage::Dock,
      "dock.allowDesktopContentOverlap", false, false},
-    {Topic::Move, "move", Section::Files, L10N_KEY("start.move.title"), L10N_KEY("start.move.description"),
-     L10N_KEY("start.move.instructions"), SettingsPage::General, "", true, false},
     {Topic::Collection, "collection", Section::Files, L10N_KEY("start.collection.title"),
      L10N_KEY("start.collection.description"), L10N_KEY("start.collection.instructions"),
      SettingsPage::General, "", true, false},
@@ -121,8 +141,6 @@ inline constexpr std::array<Lesson, 40> kLessons{{
     {Topic::PagesManage, "pagesManage", Section::Pages, L10N_KEY("start.pagesManage.title"),
      L10N_KEY("start.pagesManage.description"), L10N_KEY("start.pagesManage.instructions"),
      SettingsPage::DesktopPages, "pages.order", true},
-    {Topic::Grid, "grid", Section::Pages, L10N_KEY("start.grid.title"), L10N_KEY("start.grid.description"),
-     L10N_KEY("start.grid.instructions"), SettingsPage::DesktopPages, "pages.grid", false, false},
     {Topic::PagesEdge, "pagesEdge", Section::Pages, L10N_KEY("start.pagesEdge.title"),
      L10N_KEY("start.pagesEdge.description"), L10N_KEY("start.pagesEdge.instructions"),
      SettingsPage::DesktopPages, "pages.add", true},
@@ -132,9 +150,6 @@ inline constexpr std::array<Lesson, 40> kLessons{{
     {Topic::PagesKeys, "pagesKeys", Section::Pages, L10N_KEY("start.pagesKeys.title"),
      L10N_KEY("start.pagesKeys.description"), L10N_KEY("start.pagesKeys.instructions"),
      SettingsPage::DesktopPages, "general.pageNavigation", false},
-    {Topic::Startup, "startup", Section::Daily, L10N_KEY("start.startup.title"),
-     L10N_KEY("start.startup.description"), L10N_KEY("start.startup.instructions"), SettingsPage::General,
-     "general.autoStart", false, false},
     {Topic::Navigation, "navigation", Section::Daily, L10N_KEY("start.navigation.title"),
      L10N_KEY("start.navigation.description"), L10N_KEY("start.navigation.instructions"),
      SettingsPage::QuickNavigation, "general.quickNavigation", false, false},
@@ -159,21 +174,6 @@ inline constexpr std::array<Lesson, 40> kLessons{{
     {Topic::Calendar, "calendar", Section::Daily, L10N_KEY("start.calendar.title"),
      L10N_KEY("start.calendar.description"), L10N_KEY("start.calendar.instructions"),
      SettingsPage::Calendar, "calendar.events", false},
-    {Topic::ContextMenu, "contextMenu", Section::Daily, L10N_KEY("start.contextMenu.title"),
-     L10N_KEY("start.contextMenu.description"), L10N_KEY("start.contextMenu.instructions"),
-     SettingsPage::ContextMenu, "contextMenu.extensions", false},
-    {Topic::Theme, "theme", Section::Appearance, L10N_KEY("start.theme.title"),
-     L10N_KEY("start.theme.description"), L10N_KEY("start.theme.instructions"), SettingsPage::AppearanceTheme,
-     "personalization.theme", false, false},
-    {Topic::Icons, "icons", Section::Appearance, L10N_KEY("start.icons.title"),
-     L10N_KEY("start.icons.description"), L10N_KEY("start.icons.instructions"),
-     SettingsPage::AppearanceDesktopIcons, "desktop.iconSize", false, false},
-    {Topic::Beautify, "beautify", Section::Appearance, L10N_KEY("start.beautify.title"),
-     L10N_KEY("start.beautify.description"), L10N_KEY("start.beautify.instructions"),
-     SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify", false, false},
-    {Topic::WidgetLayout, "widgetLayout", Section::Appearance, L10N_KEY("start.widgetLayout.title"),
-     L10N_KEY("start.widgetLayout.description"), L10N_KEY("start.widgetLayout.instructions"),
-     SettingsPage::AppearanceDesktopIcons, "personalization.cornerRadius", false, false},
     {Topic::DockAppearance, "dockAppearance", Section::Appearance, L10N_KEY("start.dockAppearance.title"),
      L10N_KEY("start.dockAppearance.description"), L10N_KEY("start.dockAppearance.instructions"),
      SettingsPage::AppearanceTheme, "personalization.dockAppearance", false, false,
@@ -185,9 +185,6 @@ inline constexpr std::array<Lesson, 40> kLessons{{
     {Topic::Animation, "animation", Section::Appearance, L10N_KEY("start.animation.title"),
      L10N_KEY("start.animation.description"), L10N_KEY("start.animation.instructions"),
      SettingsPage::AnimationPerformance, "animation.mode", false},
-    {Topic::Backup, "backup", Section::Extensions, L10N_KEY("start.backup.title"),
-     L10N_KEY("start.backup.description"), L10N_KEY("start.backup.instructions"), SettingsPage::BackupAndData,
-     "backup.layout", false, false},
     {Topic::Workshop, "workshop", Section::Extensions, L10N_KEY("start.workshop.title"),
      L10N_KEY("start.workshop.description"), L10N_KEY("start.workshop.instructions"), SettingsPage::Widgets,
      "widgets.workshop", false, false},
@@ -212,7 +209,8 @@ inline const char* SectionTitle(Section section)
 {
     switch (section)
     {
-    case Section::Layout: return L10N_KEY("start.basics");
+    case Section::Basics: return L10N_KEY("start.basics");
+    case Section::Layout: return L10N_KEY("start.section.layout");
     case Section::Files: return L10N_KEY("start.section.files");
     case Section::Daily: return L10N_KEY("start.section.dock");
     case Section::Appearance: return L10N_KEY("start.section.appearance");
@@ -225,6 +223,7 @@ inline const char* SectionDescription(Section section)
 {
     switch (section)
     {
+    case Section::Basics: return L10N_KEY("start.section.basics.description");
     case Section::Layout: return L10N_KEY("start.section.layout.description");
     case Section::Files: return L10N_KEY("start.section.files.description");
     case Section::Pages: return L10N_KEY("start.section.pages.description");
