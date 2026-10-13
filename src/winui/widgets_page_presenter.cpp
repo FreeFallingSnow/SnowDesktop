@@ -644,6 +644,7 @@ struct WidgetsPagePresenter::Impl
             button.MinWidth(96.0);
             button.MaxWidth(160.0);
             button.Padding({12, 4, 12, 4});
+            button.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             button.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
             button.VerticalContentAlignment(mux::VerticalAlignment::Center);
             muxc::ColumnDefinition column;
