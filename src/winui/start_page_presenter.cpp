@@ -41,22 +41,23 @@ struct StartPagePresenter::Impl
     StartPageActions actions;
     muxc::Expander root;
     muxc::StackPanel header, body;
-    muxc::TextBlock title;
+    muxc::TextBlock title, sectionDescription;
     muxc::ScrollViewer tabsScroll;
     muxc::SelectorBar tabs;
     bool dockEnabled = false;
     muxc::ListView lessons;
-    std::array<Group, 5> groups{{
-        {Section::Basics, L"categories.svg", L"\xE8B7"},
+    std::array<Group, 6> groups{{
+        {Section::Layout, L"desktop-style.svg", L"\xE7F4"},
         {Section::Files, L"desktop.svg", L"\xE7F4"},
         {Section::Pages, L"pages.svg", L"\xE8A9"},
-        {Section::Dock, L"dock.svg", L"\xEBC8"},
-        {Section::More, L"widgets.svg", L"\xE74C"},
+        {Section::Daily, L"search.svg", L"\xE721"},
+        {Section::Appearance, L"appearance-theme.svg", L"\xE790"},
+        {Section::Extensions, L"backup.svg", L"\xE753"},
     }};
     std::vector<std::unique_ptr<Row>> rows;
-    Topic selected = Topic::Startup;
+    Topic selected = Topic::DesktopStyle;
     std::vector<Topic> visibleTopics;
-    Section section = Section::Basics;
+    Section section = Section::Layout;
     std::optional<Topic> expandedTopic;
     mux::Style secondaryStyle{nullptr}, quietButtonStyle{nullptr};
     winrt::event_token tabsToken{}, themeToken{}, sizeToken{};
@@ -100,12 +101,15 @@ struct StartPagePresenter::Impl
             SizeRows();
         });
         tabsScroll.HorizontalScrollMode(muxc::ScrollMode::Enabled);
-        tabsScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Hidden);
+        tabsScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Auto);
         tabsScroll.VerticalScrollMode(muxc::ScrollMode::Disabled);
         tabsScroll.VerticalScrollBarVisibility(muxc::ScrollBarVisibility::Disabled);
         tabsScroll.Content(tabs); body.Children().Append(tabsScroll);
         for (auto& group : groups) tabs.Items().Append(group.tab);
         tabs.SelectedItem(groups[0].tab);
+        Wrap(sectionDescription); sectionDescription.Style(secondaryStyle);
+        sectionDescription.Margin({8, 4, 8, 4});
+        body.Children().Append(sectionDescription);
         // The native list owns scrolling, including expanded details.
         lessons.SelectionMode(muxc::ListViewSelectionMode::None);
         lessons.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
@@ -154,15 +158,14 @@ struct StartPagePresenter::Impl
         {
             row->layout.Width(width);
             // Long translations and large text remain clear of the action.
-            const bool twoButtons = *Find(row->topic)->secondaryFocus;
-            const bool narrow = width < (twoButtons ? 640 : 480);
-            const double buttonWidth = std::min(180.0, std::max(60.0,
-                (width - 68.0) / (twoButtons ? 2 : 1) - (twoButtons ? 4 : 0)));
-            row->launch.MaxWidth(buttonWidth); row->settings.MaxWidth(buttonWidth);
+            const bool narrow = width < 480;
+            // Every article shares one action column, including articles with
+            // a secondary action. Translations wrap inside equal-width buttons.
+            row->buttons.Width(std::min(144.0, std::max(60.0, width - 60.0)));
             muxc::Grid::SetRow(row->buttons, narrow ? 1 : 0);
             muxc::Grid::SetColumn(row->buttons, narrow ? 0 : 1);
             muxc::Grid::SetColumnSpan(row->buttons, narrow ? 2 : 1);
-            row->buttons.HorizontalAlignment(narrow ? mux::HorizontalAlignment::Left : mux::HorizontalAlignment::Right);
+            row->buttons.HorizontalAlignment(mux::HorizontalAlignment::Right);
             row->buttons.Margin(narrow ? mux::Thickness{44, 0, 8, 8} : mux::Thickness{8, 0, 8, 0});
         }
     }
@@ -192,6 +195,10 @@ struct StartPagePresenter::Impl
             {
             case Topic::Startup: asset = L"general.svg"; break;
             case Topic::DesktopStyle: asset = L"desktop-style.svg"; glyph = L"\xE7F4"; break;
+            case Topic::DockEnable: case Topic::DockPin: case Topic::DockCollection:
+            case Topic::DockFiles: case Topic::DockPosition: case Topic::DockSummon:
+            case Topic::DockHotkeys: case Topic::DockSpace: case Topic::DockAppearance:
+                asset = L"dock.svg"; glyph = L"\xEBC8"; break;
             case Topic::Taskbar: asset = L"taskbar.svg"; break;
             case Topic::StatusBarEnable: case Topic::StatusBarContents:
                 asset = L"status-bar.svg"; glyph = L"\xE737"; break;
@@ -205,6 +212,11 @@ struct StartPagePresenter::Impl
                 asset = L"context-menu.svg";
                 break;
             case Topic::Backup: asset = L"backup.svg"; break;
+            case Topic::LuaWidget: case Topic::Workshop: case Topic::Develop:
+                asset = L"widgets.svg"; glyph = L"\xE74C"; break;
+            case Topic::WidgetPreferences: asset = L"collections-folders.svg"; glyph = L"\xE713"; break;
+            case Topic::Calendar: asset = L"calendar.svg"; glyph = L"\xE787"; break;
+            case Topic::Animation: asset = L"animation-performance.svg"; glyph = L"\xE768"; break;
             default: break;
             }
             row->icon.Content(Icon(asset, glyph, highContrast));
@@ -212,6 +224,7 @@ struct StartPagePresenter::Impl
     }
     void PopulateLessons()
     {
+        sectionDescription.Text(L(SectionDescription(section)));
         rows.clear(); lessons.Items().Clear();
         for (const auto& lesson : kLessons)
         {
@@ -235,8 +248,11 @@ struct StartPagePresenter::Impl
             r->layout.Children().Append(r->disclosure);
             r->launch.MinHeight(36); r->launch.VerticalAlignment(mux::VerticalAlignment::Center);
             Wrap(r->launchLabel); r->launchLabel.Text(L(ActionLabel(lesson)));
-            r->launch.Content(r->launchLabel); r->launch.MaxWidth(180);
-            r->buttons.Orientation(muxc::Orientation::Horizontal); r->buttons.Spacing(8);
+            r->launch.Content(r->launchLabel);
+            r->launch.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            r->launch.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+            r->launchLabel.TextAlignment(mux::TextAlignment::Center);
+            r->buttons.Orientation(muxc::Orientation::Vertical); r->buttons.Spacing(8);
             r->buttons.VerticalAlignment(mux::VerticalAlignment::Center);
             r->buttons.Children().Append(r->launch);
             muxc::Grid::SetColumn(r->buttons, 1); r->layout.Children().Append(r->buttons);
@@ -244,9 +260,11 @@ struct StartPagePresenter::Impl
             Wrap(r->prerequisite); r->details.Children().Append(r->prerequisite);
             Wrap(r->instructions); r->instructions.Text(L(lesson.instructions)); r->details.Children().Append(r->instructions);
             Wrap(r->settingsLabel); if (*lesson.secondaryLabel) r->settingsLabel.Text(L(lesson.secondaryLabel)); r->settings.Content(r->settingsLabel);
-            r->settings.HorizontalAlignment(mux::HorizontalAlignment::Left);
+            r->settings.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            r->settings.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+            r->settingsLabel.TextAlignment(mux::TextAlignment::Center);
             r->settings.Visibility(*lesson.secondaryFocus ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-            r->settings.MaxWidth(180); r->settings.MinHeight(36); r->buttons.Children().Append(r->settings);
+            r->settings.MinHeight(36); r->buttons.Children().Append(r->settings);
             muxc::Grid::SetRow(r->details, 2); muxc::Grid::SetColumnSpan(r->details, 2); r->layout.Children().Append(r->details);
             r->item.Content(r->layout); lessons.Items().Append(r->item);
             muxa::AutomationProperties::SetName(r->launch, L(lesson.practice ? "start.practice" : "start.openSettings") + L" · " + L(lesson.title));
@@ -346,10 +364,10 @@ void StartPagePresenter::SelectRoute(std::string_view id)
 {
     if (!id.starts_with("start.")) return;
     const auto oldSection = impl_->section;
-    if (id == "start.basics" || id == "start.explore") impl_->section = Section::Basics;
+    if (id == "start.basics" || id == "start.explore") impl_->section = Section::Layout;
     else if (id == "start.welcome")
     {
-        impl_->selected = Topic::Startup; impl_->section = Section::Basics;
+        impl_->selected = Topic::DesktopStyle; impl_->section = Section::Layout;
         impl_->routeExpanded = false; impl_->applyingPreference = true;
         impl_->root.IsExpanded(impl_->expandedPreference); impl_->applyingPreference = false;
     }

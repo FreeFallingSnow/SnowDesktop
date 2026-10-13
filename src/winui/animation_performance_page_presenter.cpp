@@ -105,7 +105,7 @@ struct AnimationPerformancePagePresenter::Impl
         dockOverview.Initialize(style, root);
         dockOverview.content.Children().Append(dockHost);
         performanceCard.Initialize(style, root);
-        AddChoice(mode, generalCard, "mode", "animation.mode", 0,
+        AddChoice(mode, generalCard, "mode", "animation.mode", animation::DefaultMode,
             {L10N_KEY("settings.animation.option.followSystem"),
              L10N_KEY("settings.animation.option.alwaysOn"),
              L10N_KEY("settings.animation.option.off")});

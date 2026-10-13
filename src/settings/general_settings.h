@@ -54,7 +54,7 @@ struct GeneralSettings
     bool dockEnabled = kDefaultDockEnabled;
     snowdesktop::StatusBarSettings statusBar;
     bool widgetDeveloperToolsEnabled = false;
-    int animationMode = 0;
+    int animationMode = snowdesktop::animation::DefaultMode;
     int popupAnimationEffect = 2;
     int animationSpeed = 1;
     int animationFrameLimit = 0;

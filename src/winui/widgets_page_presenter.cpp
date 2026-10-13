@@ -3082,12 +3082,16 @@ struct WidgetsPagePresenter::Impl
         const double width = managementToolbar.ActualWidth();
         if (width <= 0.0) return;
         // Preserve all three commands at ordinary sizes. At the supported
-        // smaller window width they move together below the compact search.
+        // smaller window width they move together below a full-width search.
         const bool stacked = width < 744.0;
         managementToolbar.RowSpacing(stacked ? 8.0 : 0.0);
         managementToolbar.ColumnDefinitions().GetAt(1).Width(stacked
             ? mux::GridLength{0, mux::GridUnitType::Pixel}
             : mux::GridLengthHelper::Auto());
+        muxc::Grid::SetColumnSpan(searchBox, stacked ? 2 : 1);
+        searchBox.Width(stacked ? std::numeric_limits<double>::quiet_NaN() : 240.0);
+        searchBox.HorizontalAlignment(stacked
+            ? mux::HorizontalAlignment::Stretch : mux::HorizontalAlignment::Left);
         muxc::Grid::SetColumn(managementActions, stacked ? 0 : 1);
         muxc::Grid::SetColumnSpan(managementActions, stacked ? 2 : 1);
         muxc::Grid::SetRow(managementActions, stacked ? 1 : 0);

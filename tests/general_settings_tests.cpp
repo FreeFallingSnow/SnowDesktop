@@ -1151,7 +1151,7 @@ int main(int argc, char** argv)
             clamped.pageNavigationPreviousVirtualKey == VK_PRIOR &&
             clamped.pageNavigationNextVirtualKey == VK_NEXT,
         "general settings reject invalid persisted themes and page keys");
-    Check(clamped.animationMode == 0 && clamped.popupAnimationEffect == 2 &&
+    Check(clamped.animationMode == snowdesktop::animation::AlwaysOn && clamped.popupAnimationEffect == 2 &&
         clamped.animationSpeed == 1 && clamped.animationFrameLimit == 0,
         "invalid animation choices fall back without disabling the interface");
 
@@ -1168,10 +1168,22 @@ int main(int argc, char** argv)
     Check(!migrated.contextMenuExpandQuickActions && !migrated.contextMenuHidePageManagement &&
         !migrated.contextMenuHideMoreManagement,
         "legacy settings preserve the quick strip and page menus");
-    Check(migrated.animationMode == 0 && migrated.popupAnimationEffect == 2 &&
+    Check(migrated.animationMode == snowdesktop::animation::AlwaysOn && migrated.popupAnimationEffect == 2 &&
         migrated.animationSpeed == 1 && migrated.animationFrameLimit == 0 &&
         migrated.animationEnergySaver && !migrated.animationOnBattery,
-        "legacy animation defaults preserve current effects and automatic cadence");
+        "missing animation mode enables animations and preserves effects and automatic cadence");
+    for (const int storedMode : {snowdesktop::animation::FollowSystem,
+             snowdesktop::animation::Disabled})
+    {
+        GeneralSettings explicitChoice;
+        explicitChoice.animationMode = storedMode;
+        Check(SaveGeneralSettings(path.c_str(), explicitChoice),
+            "explicit animation choice can be saved");
+        GeneralSettings restoredChoice;
+        Check(LoadGeneralSettings(path.c_str(), restoredChoice) &&
+                restoredChoice.animationMode == storedMode,
+            "new animation default preserves saved follow-system and disabled choices");
+    }
     Check(!migrated.demoModeEnabled &&
         !migrated.widgetDeveloperToolsEnabled &&
         migrated.collectionPopupTheme == kFourThemeDark &&

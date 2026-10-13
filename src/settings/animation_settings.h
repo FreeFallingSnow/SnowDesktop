@@ -14,13 +14,14 @@ namespace snowdesktop::animation
 inline constexpr int FollowSystem = 0;
 inline constexpr int AlwaysOn = 1;
 inline constexpr int Disabled = 2;
+inline constexpr int DefaultMode = AlwaysOn;
 inline constexpr int NoEffect = 0;
 inline constexpr int Fade = 1;
 inline constexpr int Scale = 2;
 
 inline int NormalizeMode(int value) noexcept
 {
-    return value >= FollowSystem && value <= Disabled ? value : FollowSystem;
+    return value >= FollowSystem && value <= Disabled ? value : DefaultMode;
 }
 inline int NormalizePopupEffect(int value) noexcept
 {
@@ -89,7 +90,7 @@ inline bool SystemAnimationsEnabled(bool refresh = false) noexcept
 
 namespace detail
 {
-inline std::atomic<int> mode{FollowSystem};
+inline std::atomic<int> mode{DefaultMode};
 inline std::atomic<int> popupEffect{Scale};
 inline std::atomic<int> speed{1};
 inline std::atomic<int> frameLimit{0};
