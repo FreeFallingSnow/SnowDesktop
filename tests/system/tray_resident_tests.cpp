@@ -71,6 +71,7 @@ int wmain(int argc, wchar_t** argv)
     auto state = mapping ? static_cast<SharedState*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState))) : nullptr;
     HANDLE signal = CreateEventW(nullptr, FALSE, FALSE, ObjectName(host, L"Signal").c_str());
     HMODULE module = nullptr;
+    unsigned warmPathResolutions = 0;
     if (!state || !signal) passed = false;
     else
     {
@@ -117,16 +118,18 @@ int wmain(int argc, wchar_t** argv)
             InterlockedExchange64(&state->epoch, 1002 + cycle);
             HMODULE warmModule = nullptr;
             const DWORD warm = AttachCollector(fixture->window, *state, warmModule, stage,
-                [] { return std::wstring(L"path-must-not-be-resolved"); }, {DenyRegistration, UnhookWindowsHookEx});
+                [&] { ++warmPathResolutions; return std::wstring(argv[1]); }, {DenyRegistration, UnhookWindowsHookEx});
             passed = passed && warm == 0 && !warmModule && WaitFor([&] { return Read(state->ready) != 0; });
-            std::cout << "warm cycle=" << cycle << " error=" << warm << " registrations=" << denied << '\n';
+            if (warmModule) FreeLibrary(warmModule);
+            std::cout << "warm cycle=" << cycle << " error=" << warm << " registrations=" << denied
+                << " pathResolutions=" << warmPathResolutions << '\n';
         }
         if (state)
         {
             DWORD_PTR invalidAck = 0;
             SendMessageTimeoutW(fixture->window, RegisterWindowMessageW(kResumeMessage), host,
                 static_cast<LPARAM>(Read(state->epoch) + 500), SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &invalidAck);
-            passed = passed && invalidAck == 0 && Read(state->ready) && denied == 0;
+            passed = passed && invalidAck == 0 && Read(state->ready) && denied == 0 && warmPathResolutions == 0;
             InterlockedExchange(&state->stop, 1);
             PostMessageW(fixture->window, RegisterWindowMessageW(kDetachMessage), host, static_cast<LPARAM>(Read(state->epoch)));
         }
