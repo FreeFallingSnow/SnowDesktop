@@ -4,6 +4,7 @@
 #include "settings_presenter_controls.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
+#include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 
 #include <algorithm>
 #include <atomic>
@@ -372,6 +373,7 @@ struct BackupDataPagePresenter::Impl
         noLayoutBackups.VerticalAlignment(mux::VerticalAlignment::Center);
         layoutList = muxc::ListView{};
         layoutList.SelectionMode(muxc::ListViewSelectionMode::None);
+        layoutList.ItemContainerTransitions(mux::Media::Animation::TransitionCollection());
         layoutList.IsItemClickEnabled(false);
         layoutList.MinHeight(48.0);
         layoutList.MaxHeight(320.0);
@@ -413,6 +415,7 @@ struct BackupDataPagePresenter::Impl
         noFullBackups.VerticalAlignment(mux::VerticalAlignment::Center);
         fullBackupList = muxc::ListView{};
         fullBackupList.SelectionMode(muxc::ListViewSelectionMode::None);
+        fullBackupList.ItemContainerTransitions(mux::Media::Animation::TransitionCollection());
         fullBackupList.IsItemClickEnabled(false);
         fullBackupList.MinHeight(48.0);
         fullBackupList.MaxHeight(320.0);
@@ -661,6 +664,7 @@ struct BackupDataPagePresenter::Impl
             LayoutRow row;
             row.entry = entry;
             row.item = muxc::ListViewItem{};
+            row.item.ContentTransitions(mux::Media::Animation::TransitionCollection());
             row.item.HorizontalContentAlignment(
                 mux::HorizontalAlignment::Stretch);
             row.item.IsTabStop(false);
@@ -725,6 +729,7 @@ struct BackupDataPagePresenter::Impl
             FullBackupRow row;
             row.entry = entry;
             row.item = muxc::ListViewItem{};
+            row.item.ContentTransitions(mux::Media::Animation::TransitionCollection());
             row.item.HorizontalContentAlignment(
                 mux::HorizontalAlignment::Stretch);
             row.item.IsTabStop(false);

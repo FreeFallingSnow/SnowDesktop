@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "start_page_presenter.h"
+#include "settings_presenter_controls.h"
 #include "platform/usage_guide_settings.h"
 #include <algorithm>
 #include <cmath>
@@ -102,10 +103,11 @@ struct StartPagePresenter::Impl
             SizeRows();
         });
         tabsScroll.HorizontalScrollMode(muxc::ScrollMode::Enabled);
-        tabsScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Auto);
+        tabsScroll.HorizontalScrollBarVisibility(muxc::ScrollBarVisibility::Hidden);
         tabsScroll.VerticalScrollMode(muxc::ScrollMode::Disabled);
         tabsScroll.VerticalScrollBarVisibility(muxc::ScrollBarVisibility::Disabled);
         tabsScroll.Content(tabs); body.Children().Append(tabsScroll);
+        presenter_controls::HideSettingsTabScrollBar(tabs);
         for (auto& group : groups) tabs.Items().Append(group.tab);
         tabs.SelectedItem(groups[0].tab);
         Wrap(sectionDescription); sectionDescription.Style(secondaryStyle);

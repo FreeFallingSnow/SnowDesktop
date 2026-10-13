@@ -215,8 +215,10 @@ bool Widget::UsesLightContentTheme() const
 
 snowdesktop::PageItemVisualMetrics Widget::GetItemVisualMetrics() const
 {
+    const auto* container = dynamic_cast<const WidgetContainer*>(this);
     return app_
-        ? app_->GetItemVisualMetrics(GetBounds(), app_->ResolveItemTitleLines(data_))
+        ? app_->GetItemVisualMetrics(GetBounds(), app_->ResolveItemTitleLines(data_,
+            container && container->IsPopupHosted()))
         : snowdesktop::ResolvePageItemVisualMetrics(
             kCellWidth, kMinCellHeight, kDefaultItemFontSizeCu);
 }
@@ -483,7 +485,7 @@ RECT WidgetContainer::GetCollapseButtonRect() const
 snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
 {
     return app_
-        ? app_->GetItemVisualMetrics(GetLayoutFrameRect(), app_->ResolveItemTitleLines(data_))
+        ? app_->GetItemVisualMetrics(GetLayoutFrameRect(), app_->ResolveItemTitleLines(data_, IsPopupHosted()))
         : Widget::GetItemVisualMetrics();
 }
 
@@ -2436,7 +2438,7 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
-                UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
+                UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
         return;
     }
 
@@ -2458,14 +2460,14 @@ void ScrollingItemWidget::DrawPrivacyPlaceholder(ID2D1DeviceContext* context, RE
         std::round(50.0f * layoutScale));
     if (height >= regularLayoutThreshold)
     {
-        RECT iconRect = app_->GetItemIconRect(rect, app_->ResolveItemTitleLines(data_));
+        RECT iconRect = app_->GetItemIconRect(rect, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
         if (centerIconVertically)
             iconRect = snowdesktop::ResolveVerticallyCenteredIconRect(
                 rect, iconRect);
         app_->DrawPrivacyFaIcon(context, iconRect, isDir);
         if (showLabel)
             app_->DrawItemText(context, rect, label, false, 1.0f,
-                UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
+                UsesLightContentTheme(), true, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
         return;
     }
 

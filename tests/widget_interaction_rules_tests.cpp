@@ -15,6 +15,7 @@
 #include "layout/list_detail_rules.h"
 #include "layout/popup_icon_load_rules.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/item_layout_rules.h"
 #include "test_source_boundary.h"
 #include "widget/runtime/widget_menu_catalogue.h"
 
@@ -53,6 +54,26 @@ void Check(bool condition, const char* message)
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
+}
+
+void TestCollectionTitleSettingScope()
+{
+    using snowdesktop::item_layout_rules::ResolveTitleLines;
+    // Exercise opposite settings, so accidentally applying the large-folder
+    // preference to its popup cannot pass with the default two-line values.
+    for (const int largeFolderLines : {1, 2})
+    {
+        const int scrollingLines = 3 - largeFolderLines;
+        Check(ResolveTitleLines(true, true, false, 2, largeFolderLines, scrollingLines) == largeFolderLines,
+            "desktop large-folder preview follows its own label-line preference");
+        Check(ResolveTitleLines(true, true, true, 2, largeFolderLines, scrollingLines) == scrollingLines,
+            "expanding a large folder uses scrolling labels instead of its desktop-preview preference");
+        Check(ResolveTitleLines(true, false, true, 2, largeFolderLines, scrollingLines) == scrollingLines &&
+            ResolveTitleLines(true, false, false, 2, largeFolderLines, scrollingLines) == scrollingLines,
+            "scrolling collections and folder mappings retain their label preference on both surfaces");
+        Check(ResolveTitleLines(false, false, false, 1, largeFolderLines, scrollingLines) == 1,
+            "desktop icon labels stay independent of both container preferences");
+    }
 }
 
 void TestWidgetMenuMetadataReuse()
@@ -2114,6 +2135,7 @@ void TestWholeColumnPopupWidth()
 
 int main()
 {
+    TestCollectionTitleSettingScope();
     TestWidgetMenuMetadataReuse();
     TestMarqueeUsesContentCoordinates();
     TestViewportClipping();

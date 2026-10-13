@@ -149,6 +149,8 @@ struct ContextMenuPagePresenter::Impl : std::enable_shared_from_this<Impl>
         managementSection.Children().Append(titleRow);
         SetRefreshing(false);
         tabs.Items().Append(objectsTab); tabs.Items().Append(backgroundTab); tabs.SelectedItem(objectsTab);
+        presenter_controls::HideSettingsTabScrollBar(tabs);
+        presenter_controls::HideSettingsTabScrollBar(views);
         views.Items().Append(byObject); views.Items().Append(byApplication); views.Items().Append(byExtension);
         views.SelectedItem(byObject);
         muxc::Grid selectors; selectors.ColumnSpacing(16);

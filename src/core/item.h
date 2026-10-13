@@ -123,7 +123,8 @@ struct FolderEntry;
 class DesktopIcon : public Item
 {
 public:
-    explicit DesktopIcon(DesktopItem* item, Container* container = nullptr, DesktopApp* app = nullptr);
+    explicit DesktopIcon(DesktopItem* item, Container* container = nullptr, DesktopApp* app = nullptr,
+        bool popupHosted = false);
     std::wstring GetTitle() const override;
     std::wstring GetPath() const override;
     HBITMAP GetIconBitmap() const override;
@@ -153,6 +154,7 @@ private:
     DesktopItem* item_;              /**< 指向底层 DesktopItem 的非拥有指针 */
     Container* container_;           /**< 项所属的容器 */
     DesktopApp* app_;                /**< 桌面应用实例指针 */
+    bool popupHosted_ = false;       /**< 无容器弹窗中的图标使用弹窗标题布局 */
     RECT boundsOverride_{};          /**< 覆盖的边界矩形（当 hasBoundsOverride_=true 时生效） */
     bool hasBoundsOverride_ = false; /**< 是否启用边界矩形覆盖 */
 };

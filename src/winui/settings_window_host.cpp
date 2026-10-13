@@ -227,6 +227,13 @@ void ApplySettingsWindowChrome(HWND window, bool darkTheme) noexcept
     if (!window || !IsWindow(window))
         return;
 
+    // A restored Island can become visible after DWM has already started
+    // animating the host snapshot. Avoid exposing that empty transition frame;
+    // the existing XAML tree and the user's desktop animation settings remain.
+    const BOOL disableTransitions = TRUE;
+    (void)DwmSetWindowAttribute(window, DWMWA_TRANSITIONS_FORCEDISABLED,
+        &disableTransitions, sizeof(disableTransitions));
+
     const BOOL dark = darkTheme ? TRUE : FALSE;
     (void)DwmSetWindowAttribute(window, DWMWA_USE_IMMERSIVE_DARK_MODE,
         &dark, sizeof(dark));

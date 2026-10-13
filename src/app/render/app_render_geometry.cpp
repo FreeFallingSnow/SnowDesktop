@@ -126,11 +126,11 @@ RECT DesktopApp::GetQuickNavItemIconRect(RECT bounds) const
     return MakeRect(iconX, iconY, iconX + iconSz, iconY + iconSz);
 }
 
-int DesktopApp::ResolveItemTitleLines(const DesktopWidget* widget) const
+int DesktopApp::ResolveItemTitleLines(const DesktopWidget* widget, bool popupHosted) const
 {
-    if (!widget) return desktopTitleLines_;
-    return widget->type == DesktopWidgetType::Collection && !widget->scrollContainerMode
-        ? largeFolderTitleLines_ : scrollingTitleLines_;
+    return snowdesktop::item_layout_rules::ResolveTitleLines(widget != nullptr,
+        widget && widget->type == DesktopWidgetType::Collection && !widget->scrollContainerMode,
+        popupHosted, desktopTitleLines_, largeFolderTitleLines_, scrollingTitleLines_);
 }
 
 RECT DesktopApp::GetItemTextRect(RECT bounds, bool expanded, int componentTitleLines) const

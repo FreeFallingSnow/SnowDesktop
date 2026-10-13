@@ -20,8 +20,8 @@
  * @param container 所属的容器对象
  * @param app       DesktopApp 实例指针，用于访问绘制工具与缓存
  */
-DesktopIcon::DesktopIcon(DesktopItem* item, Container* container, DesktopApp* app)
-    : item_(item), container_(container), app_(app) {}
+DesktopIcon::DesktopIcon(DesktopItem* item, Container* container, DesktopApp* app, bool popupHosted)
+    : item_(item), container_(container), app_(app), popupHosted_(popupHosted) {}
 
 /**
  * @brief  获取图标标题
@@ -126,7 +126,8 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
 
     const auto* widget = dynamic_cast<WidgetContainer*>(container_);
     const int componentTitleLines = demoCollection || widget
-        ? app_->ResolveItemTitleLines(demoCollection ? demoCollection : widget->GetWidgetData()) : 0;
+        ? app_->ResolveItemTitleLines(widget ? widget->GetWidgetData() : demoCollection,
+            popupHosted_ || (widget && widget->IsPopupHosted())) : 0;
 
     RECT iconRect = forcedIconSize > 0 && !quickNavLayout
         ? snowdesktop::ResolveCenteredIconRect(
@@ -236,12 +237,13 @@ void DesktopIcon::DrawTitle(ID2D1RenderTarget* context, RECT rect,
                 *demoCollection, demoIdentity)
             : app_->GetDemoIdentityTitle(demoIdentity))
         : item_->name;
+    const auto* widget = dynamic_cast<WidgetContainer*>(container_);
     app_->DrawItemText(
         context, rect, title,
         selected, opacity, lightTheme,
-        demoCollection || dynamic_cast<WidgetContainer*>(container_),
-        app_->ResolveItemTitleLines(demoCollection ? demoCollection :
-            (dynamic_cast<WidgetContainer*>(container_) ? dynamic_cast<WidgetContainer*>(container_)->GetWidgetData() : nullptr)));
+        demoCollection || widget,
+        app_->ResolveItemTitleLines(widget ? widget->GetWidgetData() : demoCollection,
+            popupHosted_ || (widget && widget->IsPopupHosted())));
 }
 
 /**

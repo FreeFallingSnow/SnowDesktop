@@ -60,6 +60,24 @@ inline void ConfigureSettingsHeadingLink(const muxc::HyperlinkButton& link)
     link.HorizontalAlignment(mux::HorizontalAlignment::Right);
 }
 
+// SelectorBar hosts an ItemsView/ScrollView in its native template. Hide only
+// the indicator so overflow, touchpad scrolling and keyboard navigation remain.
+inline void HideSettingsTabScrollBar(const muxc::SelectorBar& tabs)
+{
+    tabs.Loaded([](const auto& sender, const auto&) {
+        const auto hide = [](const auto& self, const mux::DependencyObject& node) -> void {
+            if (const auto scroll = node.try_as<muxc::ScrollView>())
+            {
+                scroll.HorizontalScrollBarVisibility(muxc::ScrollingScrollBarVisibility::Hidden);
+                return;
+            }
+            for (int index = 0; index < muxm::VisualTreeHelper::GetChildrenCount(node); ++index)
+                self(self, muxm::VisualTreeHelper::GetChild(node, index));
+        };
+        hide(hide, sender.template as<muxc::SelectorBar>());
+    });
+}
+
 template <typename Surface>
 inline void StyleSettingsCard(const Surface& surface)
 {

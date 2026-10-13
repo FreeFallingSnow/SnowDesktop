@@ -311,7 +311,7 @@ void DesktopApp::BeginRenameSelected(
     RECT textRect = leftAlignedRename
         ? GetCollectionPopupItemTextRect(
             itemBounds)
-        : GetItemRenameRect(itemBounds, ResolveItemTitleLines(titleWidget));
+        : GetItemRenameRect(itemBounds, ResolveItemTitleLines(titleWidget, popupRename));
     if (!popupRename)
     {
         for (const auto& container : containers_)

@@ -481,7 +481,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         DrawListItem(context, cell, nullptr, -1, L"", false, false);
                     else
                         app_->DrawPlaceholderIcon(context, -1,
-                            app_->GetItemIconRect(cell, app_->ResolveItemTitleLines(data_)), 1.0f);
+                            app_->GetItemIconRect(cell, app_->ResolveItemTitleLines(data_, IsPopupHosted())), 1.0f);
                 }
                 continue;
             }
@@ -575,7 +575,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 const RECT iconRect = compact ? GetThumbnailIconRect(slotRect) : titlelessLargeFolder
                     ? snowdesktop::ResolveCenteredIconRect(slotRect, titlelessIconSize)
-                    : app_->GetItemIconRect(slotRect, app_->ResolveItemTitleLines(data_));
+                    : app_->GetItemIconRect(slotRect, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
                 app_->DrawPlaceholderIcon(context, -1, iconRect, 1.0f);
             }
             continue;
@@ -671,7 +671,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                 return;
             }
 
-            RECT mosaicRect = app_->GetItemIconRect(allRect, app_->ResolveItemTitleLines(data_));
+            RECT mosaicRect = app_->GetItemIconRect(allRect, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
             if (titlelessLargeFolder)
                 mosaicRect =
                     snowdesktop::ResolveCenteredIconRect(
@@ -718,7 +718,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
             {
                 app_->DrawItemText(context, allRect,
                     collectionTitle, false, 1.0f,
-                    app_->IsLightContentTheme(), true, app_->ResolveItemTitleLines(data_));
+                    app_->IsLightContentTheme(), true, app_->ResolveItemTitleLines(data_, IsPopupHosted()));
             }
             else if (canShowTitlelessTooltip &&
                 PtInRect(&allRect,

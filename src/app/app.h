@@ -2793,7 +2793,7 @@ private:
     void DrawItemText(ID2D1RenderTarget* ctx, RECT bounds,
         const std::wstring& text, bool selected, float opacity = 1.0f,
         bool lightTheme = false, bool componentPanel = false, int titleLines = 0);
-    int ResolveItemTitleLines(const DesktopWidget* widget = nullptr) const;
+    int ResolveItemTitleLines(const DesktopWidget* widget = nullptr, bool popupHosted = false) const;
     /**
      * @brief 快捷导航大图标下标签的自绘文本（不依赖桌面 DrawItemText）。
      * 使用 quickNavItemTextFormat_（变量字体 + 细字重），居中、可换行。

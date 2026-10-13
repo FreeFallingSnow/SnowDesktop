@@ -506,7 +506,7 @@ void DesktopApp::DrawCollectionPopup(
                 popupAnimation_.IsInteractive() &&
                 !items_[itemIndex].selected &&
                 PtInRect(&itemRect, lastMousePoint_);
-            DesktopIcon icon(&items_[itemIndex], nullptr, this);
+            DesktopIcon icon(&items_[itemIndex], nullptr, this, true);
             const auto titleLayers =
                 snowdesktop::item_render_layer_rules::
                     ResolveTitleLayerPlan(
@@ -544,7 +544,7 @@ void DesktopApp::DrawCollectionPopup(
             if (itemIndex == static_cast<size_t>(-1) ||
                 !items_[itemIndex].selected)
                 continue;
-            DesktopIcon icon(&items_[itemIndex], nullptr, this);
+            DesktopIcon icon(&items_[itemIndex], nullptr, this, true);
             icon.DrawTitle(
                 ctx, itemRect, true, 1.0f,
                 collectionPopupLightTheme_,
