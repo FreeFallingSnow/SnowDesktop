@@ -3,6 +3,7 @@
 #include <mutex>
 #include <map>
 #include <filesystem>
+#include <atomic>
 
 extern "C" __declspec(dllexport) const DWORD SnowDesktopHookEntryAbi = snowdesktop::hook_entry::kAbi;
 
@@ -17,6 +18,7 @@ struct Module
 std::mutex modulesMutex;
 std::map<std::wstring, std::shared_ptr<Module>> modules;
 thread_local bool loadingPayload = false;
+std::atomic_bool entryPinned{false};
 
 std::shared_ptr<Module> LoadPayload(DWORD owner, Payload payload)
 {
@@ -61,6 +63,16 @@ LRESULT Dispatch(DWORD owner, Payload payload, const char* name, int code, WPARA
     {
         try
         {
+            // A timeout can unhook while a callback is still executing. The
+            // implementation's own pin does not retain this forwarding frame.
+            if (!entryPinned.load(std::memory_order_acquire))
+            {
+                HMODULE entry = nullptr;
+                if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN,
+                        reinterpret_cast<LPCWSTR>(&Dispatch), &entry))
+                    return CallNextHookEx(nullptr, code, wp, lp);
+                entryPinned.store(true, std::memory_order_release);
+            }
             const auto module = LoadPayload(owner, payload);
             const auto callback = module ? reinterpret_cast<HOOKPROC>(GetProcAddress(module->value, name)) : nullptr;
             if (callback) return callback(code, wp, lp);

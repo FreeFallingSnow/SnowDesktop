@@ -22,11 +22,28 @@ constexpr char kTestExport[] = "_SnowDesktopDockSourceCloakHook@12";
 struct Fixture
 {
     std::uint64_t window = 0;
+    wchar_t entryPath[32768]{};
     HWND Window() const noexcept { return reinterpret_cast<HWND>(static_cast<UINT_PTR>(window)); }
 };
-constexpr UINT kMarkerMessage = WM_APP + 91, kClose = WM_APP + 92;
+constexpr UINT kMarkerMessage = WM_APP + 91, kClose = WM_APP + 92, kDirect = WM_APP + 93;
+Fixture* targetFixture = nullptr;
 LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
 {
+    if (message == kDirect && targetFixture)
+    {
+        const HMODULE module = LoadLibraryW(targetFixture->entryPath);
+        if (!module) return 0;
+        const auto procedure = reinterpret_cast<HOOKPROC>(GetProcAddress(module, kTestExport));
+        if (procedure)
+        {
+            CWPSTRUCT payload{}; payload.hwnd = window; payload.message = kMarkerMessage; payload.wParam = wp;
+            procedure(HC_ACTION, 0, reinterpret_cast<LPARAM>(&payload));
+        }
+        FreeLibrary(module);
+        // No User32 Hook has ever been registered in this target yet. Only
+        // the entry's lifetime protection can retain this caller-owned load.
+        return procedure && GetModuleHandleW(targetFixture->entryPath) == module ? 1 : 0;
+    }
     if (message == kClose) { DestroyWindow(window); return 0; }
     if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(window, message, wp, lp);
@@ -43,6 +60,7 @@ int Target(const wchar_t* name)
     if (!mapping) return 2;
     auto fixture = static_cast<Fixture*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Fixture)));
     if (!fixture) return 3;
+    targetFixture = fixture;
     WNDCLASSW definition{};
     definition.hInstance = GetModuleHandleW(nullptr); definition.lpfnWndProc = WindowProcedure;
     definition.lpszClassName = L"SnowDesktop.Hook.Entry.Fixture";
@@ -107,6 +125,8 @@ int wmain(int argc, wchar_t** argv)
     const auto first = root / L"implementation-0.dll";
     std::filesystem::copy_file(argv[2 + offset], first);
     const auto entry = Prepare(root / L"cache", entrySource, payload, first);
+    passed = passed && entry.size() < std::size(fixture->entryPath);
+    if (passed) wcscpy_s(fixture->entryPath, entry.c_str());
     passed = passed && !entry.empty() && HasEntryAbi(entry, machine) &&
         !HasEntryAbi(entry, machine == IMAGE_FILE_MACHINE_I386 ? IMAGE_FILE_MACHINE_AMD64 : IMAGE_FILE_MACHINE_I386);
     const HMODULE module = entry.empty() || cross ? nullptr : LoadLibraryW(entry.c_str());
@@ -121,6 +141,10 @@ int wmain(int argc, wchar_t** argv)
     const HWND receiver = CreateWindowExW(0, hostType.lpszClassName, L"", 0, 0, 0, 0, 0,
         HWND_MESSAGE, nullptr, hostType.hInstance, nullptr);
     passed = passed && receiver && SetPropW(fixture->Window(), L"SnowDesktop.Dock.MinimizeTarget.v1", receiver);
+    DWORD_PTR retained = 0;
+    passed = passed && SendMessageTimeoutW(fixture->Window(), kDirect, owner, 0,
+        SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &retained) && retained == 1;
+    std::cout << "entryRetainedAfterCallerRelease=" << retained << " beforeUser32Registration=1\n";
     const HHOOK hook = procedure ? SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread) : nullptr;
     const auto readyName = name + L".ready", stopName = name + L".stop";
     HANDLE ready = nullptr, stop = nullptr;
