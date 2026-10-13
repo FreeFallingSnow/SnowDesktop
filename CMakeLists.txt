@@ -734,6 +734,7 @@ if (MSVC)
         src/taskbar_hook/taskbar_native.cpp
         src/taskbar_hook/taskbar_classic_surface.cpp
         src/taskbar_hook/taskbar_hook_protocol.h
+        src/taskbar_hook/taskbar_xaml_readiness.h
         src/taskbar_hook/taskbar_autohide_observer.cpp
         src/taskbar_hook/taskbar_autohide_observer.h
         src/taskbar_hook/taskbar_autohide_trace.h

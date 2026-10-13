@@ -74,6 +74,7 @@
 #include "../src/taskbar_hook/taskbar_autohide_trace.h"
 #include "../src/taskbar_hook/taskbar_autohide_rules.h"
 #include "../src/taskbar_hook/taskbar_hook_lifecycle.h"
+#include "taskbar_hook/taskbar_xaml_readiness.h"
 #include "../src/taskbar_hook/taskbar_symbol_resolver.h"
 
 int RunTaskbarSymbolResolverTests();
@@ -588,6 +589,8 @@ void CheckTaskbarAutoHideTraceTransport()
         DrainAutoHideTrace(buffer, drained, dropped) == 1 && drained.front().tick == 9000,
         "the trace buffer must accept new samples after draining");
 }
+
+#include "taskbar_hook/taskbar_xaml_readiness_tests.inc"
 
 void CheckTaskbarHookLifecycle()
 {
@@ -2330,6 +2333,7 @@ int main(int argc, char** argv)
     CheckClipboardShellDropKeys();
     CheckTaskbarAutoHideTraceTransport();
     CheckTaskbarHookLifecycle();
+    CheckTaskbarXamlReadiness();
     CheckTaskbarActivationRevealDispatch();
     failures += RunTaskbarSymbolResolverTests();
     CheckNativeDesktopCaptureReadiness();

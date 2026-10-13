@@ -11,6 +11,7 @@
 #include "taskbar_autohide_observer.h"
 #include "taskbar_native.h"
 #include "taskbar_hook_lifecycle.h"
+#include "taskbar_xaml_readiness.h"
 #include "taskview_visibility.h"
 #include "../shell/shell_start_pin_command.h"
 
@@ -1797,21 +1798,24 @@ DWORD WINAPI InstallTaskbarTap(void* parameter)
         return finish(error, false);
     }
 
-    HRESULT result = E_FAIL;
-    for (unsigned attempt = 1; attempt <= 60 && FAILED(result); ++attempt)
-    {
-        if (g_retired.load()) return finish(ERROR_CANCELLED, false);
+    const auto readiness = WaitForTaskbarXaml([&](unsigned endpoint) {
         wchar_t connection[64]{};
-        swprintf_s(connection, L"VisualDiagConnection%u", attempt);
+        swprintf_s(connection, L"VisualDiagConnection%u", endpoint);
         InterlockedExchange(&g_sharedState->diagnosticStage,
-            static_cast<LONG>(100 + attempt));
+            static_cast<LONG>(100 + endpoint));
+        HRESULT result = E_FAIL;
         std::thread([&, connectionName = std::wstring(connection)] {
             result = initialize(connectionName.c_str(), GetCurrentProcessId(),
                 nullptr, modulePath, kTapSiteClsid, nullptr);
         }).join();
-        if (FAILED(result))
-            Sleep(500);
-    }
+        return result;
+    }, [] { return GetTickCount64(); }, [](DWORD duration) { Sleep(duration); },
+        [] { return g_retired.load(); });
+    const HRESULT result = readiness.error;
+    wchar_t diagnostic[256]{};
+    swprintf_s(diagnostic, L"SnowDesktop XAML readiness: endpoint=%u attempts=%u passes=%u result=0x%08X\n",
+        readiness.endpoint, readiness.attempts, readiness.passes, static_cast<unsigned>(result));
+    OutputDebugStringW(diagnostic);
     if (FAILED(result))
     {
         SetHookStatus(kStatusFailed, static_cast<DWORD>(result));
