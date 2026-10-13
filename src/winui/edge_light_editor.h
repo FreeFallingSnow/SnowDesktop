@@ -2,6 +2,7 @@
 #include "settings_presenter_controls.h"
 #include "theme/edge_light_settings.h"
 #include <winrt/Windows.UI.Text.h>
+#include <winrt/Windows.Globalization.NumberFormatting.h>
 
 namespace snowdesktop::winui
 {
@@ -74,11 +75,18 @@ private:
         c::NumberBox number; number.Minimum(minimum); number.Maximum(maximum); number.SmallChange(step);
         number.SpinButtonPlacementMode(c::NumberBoxSpinButtonPlacementMode::Hidden);
         number.ValidationMode(c::NumberBoxValidationMode::InvalidInputOverwritten);
+        winrt::Windows::Globalization::NumberFormatting::IncrementNumberRounder rounder;
+        rounder.Increment(step);
+        winrt::Windows::Globalization::NumberFormatting::DecimalFormatter formatter;
+        formatter.FractionDigits(0);
+        formatter.NumberRounder(rounder);
+        number.NumberFormatter(formatter);
         c::TextBlock suffix; suffix.Text(unit); suffix.VerticalAlignment(x::VerticalAlignment::Center); suffix.Opacity(.72);
         c::Button restore; presenter_controls::ConfigureRestoreDefaultButton(restore, L("app.settings.restore_default") + L" · " + L(key));
         pair.Children().Append(slider); c::Grid::SetColumn(number, 1); pair.Children().Append(number);
         c::Grid::SetColumn(suffix, 2); pair.Children().Append(suffix); c::Grid::SetColumn(restore, 3); pair.Children().Append(restore);
         presenter_controls::SettingRow row; row.Initialize(pair, presenter_controls::kSettingControlWidth + 40);
+        presenter_controls::StyleSettingsSubrow(row.root, true, 0);
         const bool needsHelp = key != "edgeLight.primary" && key != "edgeLight.opposite" && key != "edgeLight.glowStrength";
         row.SetText(L(key), needsHelp ? L(key + ".description") : std::wstring{}); parent.Children().Append(row.root);
         x::Automation::AutomationProperties::SetName(slider, L(key)); x::Automation::AutomationProperties::SetName(number, L(key));
@@ -96,13 +104,14 @@ private:
     void Build()
     {
         namespace c = winrt::Microsoft::UI::Xaml::Controls;
-        syncing_ = true; root_.Children().Clear(); sync_.clear(); root_.Spacing(4);
+        syncing_ = true; root_.Children().Clear(); sync_.clear(); root_.Spacing(0);
         Number(root_, "direction", &EdgeLightSettings::direction, 0, 360, 1, 1, L"°");
         c::Expander advanced; advanced.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
         advanced.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
         advanced.Header(winrt::box_value(L("edgeLight.advanced"))); advanced.IsExpanded(false);
-        Panel details; details.Spacing(4); advanced.Content(details); root_.Children().Append(advanced);
-        const auto group = [&](const char* key) { c::TextBlock title; title.Text(L(key)); title.Margin({0,12,0,4}); title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); details.Children().Append(title); };
+        presenter_controls::StyleInlineSettingsExpander(advanced);
+        Panel details; details.Spacing(0); advanced.Content(details); root_.Children().Append(advanced);
+        const auto group = [&](const char* key) { c::TextBlock title; title.Text(L(key)); title.Margin({16,16,16,4}); title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); details.Children().Append(title); };
         group("edgeLight.lighting");
         Number(details,"spread",&EdgeLightSettings::spread,0,180,1,1,L"°");
         Number(details,"feather",&EdgeLightSettings::feather,.5,90,.5,1,L"°");

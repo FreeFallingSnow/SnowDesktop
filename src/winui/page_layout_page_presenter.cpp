@@ -38,7 +38,7 @@ void InitializeCard(
     card.root = muxc::StackPanel{};
     card.root.Spacing(8.0);
     card.content = muxc::StackPanel{};
-    card.content.Spacing(sharedSurface ? 12.0 : 2.0);
+    card.content.Spacing(sharedSurface ? 12.0 : 8.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
@@ -121,8 +121,8 @@ struct PageLayoutPagePresenter::Impl
     muxc::InfoBar feedback{nullptr};
     muxc::InfoBar mappingNotice{nullptr};
     muxc::ListView pageList{nullptr};
-    muxc::Button addPageButton{nullptr};
-    muxc::Button deletePageButton{nullptr};
+    muxc::HyperlinkButton addPageButton{nullptr};
+    muxc::HyperlinkButton deletePageButton{nullptr};
     muxc::TextBox nameBox{nullptr};
     presenter_controls::SettingRow nameRow;
     presenter_controls::SettingRow columnsRow;
@@ -188,19 +188,20 @@ struct PageLayoutPagePresenter::Impl
         pageList.CanReorderItems(true);
         pageList.AllowDrop(true);
         pageList.IsSwipeEnabled(false);
-        pageList.MinHeight(180.0);
+        pageList.MinHeight(68.0);
         pageList.MaxHeight(360.0);
         pagesCard.content.Children().Append(pageList);
 
-        addPageButton = muxc::Button{};
-        addPageButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        addPageButton = muxc::HyperlinkButton{};
+        presenter_controls::ConfigureSettingsHeadingLink(addPageButton);
         muxc::StackPanel pageActions;
         pageActions.Orientation(muxc::Orientation::Horizontal);
         pageActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         pageActions.Spacing(8.0);
-        deletePageButton = muxc::Button{};
+        deletePageButton = muxc::HyperlinkButton{};
+        presenter_controls::ConfigureSettingsHeadingLink(deletePageButton);
         pageActions.Children().Append(deletePageButton);
-        pagesCard.content.Children().Append(pageActions);
+        pageActions.Children().Append(addPageButton);
         muxc::Grid pageHeader;
         pageHeader.ColumnSpacing(12.0);
         muxc::ColumnDefinition titleColumn, addColumn;
@@ -211,21 +212,39 @@ struct PageLayoutPagePresenter::Impl
         pagesCard.root.Children().RemoveAt(0);
         pagesCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
         pageHeader.Children().Append(pagesCard.title);
-        muxc::Grid::SetColumn(addPageButton, 1);
-        pageHeader.Children().Append(addPageButton);
+        muxc::Grid::SetColumn(pageActions, 1);
+        pageHeader.Children().Append(pageActions);
         pagesCard.root.Children().InsertAt(0, pageHeader);
 
         InitializeCard(gridCard, cardStyle, root, false);
         selectedPageText = muxc::TextBlock{};
         selectedPageText.Opacity(0.72);
-        selectedPageText.TextWrapping(mux::TextWrapping::Wrap);
-        gridCard.content.Children().Append(selectedPageText);
+        selectedPageText.TextWrapping(mux::TextWrapping::NoWrap);
+        selectedPageText.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+        selectedPageText.VerticalAlignment(mux::VerticalAlignment::Center);
+        selectedPageText.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        muxc::Grid gridHeading;
+        gridHeading.ColumnSpacing(16.0);
+        muxc::ColumnDefinition headingTitle, headingContext;
+        headingTitle.Width(mux::GridLengthHelper::Auto());
+        gridHeading.ColumnDefinitions().Append(headingTitle);
+        gridHeading.ColumnDefinitions().Append(headingContext);
+        gridCard.root.Children().RemoveAt(0);
+        gridCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
+        gridHeading.Children().Append(gridCard.title);
+        muxc::Grid::SetColumn(selectedPageText, 1);
+        gridHeading.Children().Append(selectedPageText);
+        gridCard.root.Children().InsertAt(0, gridHeading);
         nameBox = muxc::TextBox{};
         nameBox.MaxLength(128); // Final shared validation counts Unicode scalars.
         nameBox.AcceptsReturn(false);
         nameBox.TextWrapping(mux::TextWrapping::NoWrap);
-        muxc::StackPanel nameEditor;
-        nameEditor.Spacing(8.0);
+        muxc::Grid nameEditor;
+        nameEditor.ColumnSpacing(8.0);
+        muxc::ColumnDefinition nameColumn, nameActionsColumn;
+        nameActionsColumn.Width(mux::GridLengthHelper::Auto());
+        nameEditor.ColumnDefinitions().Append(nameColumn);
+        nameEditor.ColumnDefinitions().Append(nameActionsColumn);
         nameEditor.Children().Append(nameBox);
         muxc::StackPanel nameActions;
         nameActions.Orientation(muxc::Orientation::Horizontal);
@@ -235,6 +254,7 @@ struct PageLayoutPagePresenter::Impl
         cancelNameButton = muxc::Button{};
         nameActions.Children().Append(saveNameButton);
         nameActions.Children().Append(cancelNameButton);
+        muxc::Grid::SetColumn(nameActions, 1);
         nameEditor.Children().Append(nameActions);
         nameRow.Initialize(nameEditor);
         presenter_controls::StyleSettingsCard(nameRow.root);
@@ -242,7 +262,7 @@ struct PageLayoutPagePresenter::Impl
 
         muxc::StackPanel dimensions;
         dimensions.Orientation(muxc::Orientation::Vertical);
-        dimensions.Spacing(2.0);
+        dimensions.Spacing(8.0);
         columnsBox = muxc::NumberBox{};
         columnsBox.Width(presenter_controls::kSettingNumberWidth);
         columnsBox.Minimum(1.0);

@@ -40,6 +40,7 @@ struct SettingsCard
 {
     muxc::Border root{nullptr};
     muxc::StackPanel content{nullptr};
+    muxc::StackPanel heading{nullptr};
     muxc::TextBlock title{nullptr};
     muxc::TextBlock description{nullptr};
 };
@@ -50,7 +51,6 @@ void InitializeCard(
     const muxc::StackPanel& page)
 {
     card.root = muxc::Border{};
-    card.root.Style(style);
     card.content = muxc::StackPanel{};
     card.content.Spacing(10.0);
     card.content.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -60,10 +60,13 @@ void InitializeCard(
     card.title.TextWrapping(mux::TextWrapping::Wrap);
     card.description = muxc::TextBlock{};
     card.description.Opacity(0.72);
+    card.description.FontSize(12);
     card.description.TextWrapping(mux::TextWrapping::Wrap);
-    card.content.Children().Append(card.title);
+    card.heading = muxc::StackPanel{};
+    card.heading.Spacing(4.0);
+    card.heading.Children().Append(card.title);
     card.content.Children().Append(card.description);
-    card.root.Child(card.content);
+    presenter_controls::InitializeSettingsGroup(card.root, card.heading, card.content, style, true);
     page.Children().Append(card.root);
 }
 
@@ -85,6 +88,19 @@ void StretchExpanderBody(
                     static_cast<double>(args.NewSize().Width) - 32.0 - border.Left - border.Right));
             }
         });
+}
+
+// Each package remains one object surface; disclosures are subordinate rows.
+void AppendPackageDisclosure(const muxc::StackPanel& body, const muxc::Expander& expander)
+{
+    presenter_controls::StyleInlineSettingsExpander(expander);
+    muxc::Border divider;
+    divider.BorderThickness({0, 1, 0, 0});
+    if (const auto app = mux::Application::Current())
+        if (const auto brush = app.Resources().TryLookup(winrt::box_value(L"DividerStrokeColorDefaultBrush")))
+            divider.BorderBrush(brush.as<muxm::Brush>());
+    divider.Child(expander);
+    body.Children().Append(divider);
 }
 
 void SetAutomation(
@@ -264,7 +280,7 @@ struct WidgetsPagePresenter::Impl
     muxc::Button openDevelopmentFolderButton{nullptr};
     muxc::TextBlock developmentWorkspacePath{nullptr};
     muxc::StackPanel cliRows{nullptr};
-    muxc::Button publishWorkspaceButton{nullptr};
+    muxc::HyperlinkButton publishWorkspaceButton{nullptr};
     muxc::TextBlock publishWorkspaceLabel{nullptr};
     muxc::TextBlock iconReferenceTitle{nullptr};
     muxc::Expander fluentIconsExpander{nullptr};
@@ -567,7 +583,7 @@ struct WidgetsPagePresenter::Impl
     void BuildControls()
     {
         root = muxc::StackPanel{};
-        root.Spacing(8.0);
+        root.Spacing(24.0);
         root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
 
         feedbackBar = muxc::InfoBar{};
@@ -600,7 +616,10 @@ struct WidgetsPagePresenter::Impl
         managementRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         searchCard.content.Children().Append(managementRow.root);
 
-        InitializeCard(filterCard, cardStyle, root);
+        muxc::StackPanel installedSection;
+        installedSection.Spacing(8);
+        root.Children().Append(installedSection);
+        InitializeCard(filterCard, cardStyle, installedSection);
 
         searchBox = muxc::AutoSuggestBox{};
         searchBox.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -652,10 +671,10 @@ struct WidgetsPagePresenter::Impl
         installedRows = muxc::StackPanel{};
         installedRows.Spacing(8.0);
         installedRows.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        root.Children().Append(installedRows);
+        installedSection.Children().Append(installedRows);
 
         developerRoot = muxc::StackPanel{};
-        developerRoot.Spacing(8.0);
+        developerRoot.Spacing(24.0);
         developerRoot.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         developerFeedbackBar = muxc::InfoBar{};
@@ -716,9 +735,9 @@ struct WidgetsPagePresenter::Impl
         developerCliCard.content.Children().Append(cliRows);
 
         InitializeCard(developerPublishCard, cardStyle, developerRoot);
-        publishWorkspaceButton = muxc::Button{};
+        publishWorkspaceButton = muxc::HyperlinkButton{};
         publishWorkspaceButton.UseSystemFocusVisuals(true);
-        ApplyAccentButtonStyle(publishWorkspaceButton);
+        presenter_controls::ConfigureSettingsHeadingLink(publishWorkspaceButton);
         publishWorkspaceButton.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
         publishWorkspaceButton.VerticalAlignment(mux::VerticalAlignment::Center);
@@ -743,12 +762,12 @@ struct WidgetsPagePresenter::Impl
         publishActionColumn.Width({1, mux::GridUnitType::Auto});
         publishHeading.ColumnDefinitions().Append(publishTitleColumn);
         publishHeading.ColumnDefinitions().Append(publishActionColumn);
-        developerPublishCard.content.Children().RemoveAt(0);
+        developerPublishCard.heading.Children().RemoveAt(0);
         developerPublishCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
         publishHeading.Children().Append(developerPublishCard.title);
         muxc::Grid::SetColumn(publishWorkspaceButton, 1);
         publishHeading.Children().Append(publishWorkspaceButton);
-        developerPublishCard.content.Children().InsertAt(0, publishHeading);
+        developerPublishCard.heading.Children().InsertAt(0, publishHeading);
 
         InitializeCard(developerReferenceCard, cardStyle, developerRoot);
         iconReferenceTitle = muxc::TextBlock{};
@@ -831,7 +850,7 @@ struct WidgetsPagePresenter::Impl
             developerDiagnosticRows);
 
         debugRoot = muxc::StackPanel{};
-        debugRoot.Spacing(8.0);
+        debugRoot.Spacing(24.0);
         debugRoot.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         debugFeedbackBar = muxc::InfoBar{};
         debugFeedbackBar.IsClosable(true);
@@ -1843,6 +1862,7 @@ struct WidgetsPagePresenter::Impl
 
         int pendingTargets = 0;
         int updateTargets = 0;
+        std::wstring targetsToRemove;
         bool skillScopeChanged = false;
         bool selectedTargetUnavailable = false;
         unsigned int latestRevision = 0;
@@ -1866,6 +1886,11 @@ struct WidgetsPagePresenter::Impl
             }
             if (skill.selected != skill.installed)
                 skillScopeChanged = true;
+            if (!skill.selected && skill.installed)
+            {
+                if (!targetsToRemove.empty()) targetsToRemove += L", ";
+                targetsToRemove += AgentSkillTargetLabel(skill.kind);
+            }
             if (skill.selected && skill.state ==
                     WidgetAgentSkillInstallState::Unavailable)
             {
@@ -1894,11 +1919,13 @@ struct WidgetsPagePresenter::Impl
             ? L"—" : std::to_wstring(latestRevision);
         agentSkillActionsRow.SetText(L(
             "app.settings.widgets_skill_all_agents",
-            L"All compatible assistants"), FormatValues(L(
+            L"All compatible assistants"), !targetsToRemove.empty()
+                ? L("app.settings.widgets_uninstall", L"Uninstall") + L" · " + targetsToRemove
+                : FormatValues(L(
                 "app.settings.widgets_skill_latest_version",
                 L"Latest version %s"), {latestVersion}));
         SetAutomation(agentSkillApplyButton, applyLabel,
-            developerOverridesCard.description.Text());
+            agentSkillActionsRow.help.Text());
 
         for (const auto& skill : agentSkills)
         {
@@ -2224,7 +2251,7 @@ struct WidgetsPagePresenter::Impl
         StretchExpanderBody(permissionsExpander, permissionBody);
         SetAutomation(permissionsExpander,
             permissionHeader.Text(), stateText);
-        body.Children().Append(permissionsExpander);
+        AppendPackageDisclosure(body, permissionsExpander);
     }
 
     void AddInstanceControls(
@@ -2284,7 +2311,7 @@ struct WidgetsPagePresenter::Impl
         instancesExpander.Content(rows);
         StretchExpanderBody(instancesExpander, rows);
         SetAutomation(instancesExpander, header.Text());
-        body.Children().Append(instancesExpander);
+        AppendPackageDisclosure(body, instancesExpander);
     }
 
     void AddLegacyPackageActions(
@@ -2302,11 +2329,6 @@ struct WidgetsPagePresenter::Impl
             package.canPublishDevelopmentPackage ||
             package.canExportDevelopmentPackage ||
             !package.restorableVersions.empty() || hasWorkshopItem);
-        muxc::Expander advanced;
-        advanced.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        advanced.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
-        advanced.Header(winrt::box_value(L(
-            "app.settings.widgets_advanced", L"Advanced Options")));
         muxc::StackPanel actionsPanel;
         actionsPanel.Spacing(7.0);
         actionsPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -2430,12 +2452,8 @@ struct WidgetsPagePresenter::Impl
                 L"Open Workshop Page"));
         }
 
-        advanced.Content(actionsPanel);
-        StretchExpanderBody(advanced, actionsPanel);
-        SetAutomation(advanced,
-            L("app.settings.widgets_advanced", L"Advanced Options"),
-            package.name);
-        body.Children().Append(advanced);
+        // Already inside Technical details: keep a single disclosure boundary.
+        body.Children().Append(actionsPanel);
     }
 
     [[nodiscard]] std::wstring PackageDisplayName(
@@ -2460,9 +2478,10 @@ struct WidgetsPagePresenter::Impl
         const muxc::StackPanel& targetRows)
     {
         muxc::Border row;
+        row.Style(cardStyle);
+        row.Padding({0, 0, 0, 0});
         std::vector<std::function<void()>> revokers;
         std::vector<muxc::Button> advancedActions;
-        row.Style(cardStyle);
         row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         row.IsTabStop(true);
         row.UseSystemFocusVisuals(true);
@@ -2492,17 +2511,33 @@ struct WidgetsPagePresenter::Impl
         PopulatePackageTags(tags, package);
 
         muxc::StackPanel body;
-        body.Spacing(8.0);
+        body.Spacing(0.0);
         body.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        body.Children().Append(summaryRow.root);
-        body.Children().Append(tags);
         muxc::TextBlock description = MakeSecondaryText(package.description);
         description.MaxLines(2);
         description.TextTrimming(mux::TextTrimming::CharacterEllipsis);
         description.Visibility(package.description.empty()
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);
-        body.Children().Append(description);
+        muxc::Grid identity;
+        identity.ColumnSpacing(12);
+        muxc::ColumnDefinition identityName, identityState;
+        identityState.Width(mux::GridLengthHelper::Auto());
+        identity.ColumnDefinitions().Append(identityName);
+        identity.ColumnDefinitions().Append(identityState);
+        summaryRow.text.Children().Clear();
+        identity.Children().Append(name);
+        metadata.VerticalAlignment(mux::VerticalAlignment::Center);
+        metadata.TextWrapping(mux::TextWrapping::NoWrap);
+        muxc::Grid::SetColumn(metadata, 1);
+        identity.Children().Append(metadata);
+        summaryRow.text.Children().Append(identity);
+        muxc::StackPanel summary; summary.Spacing(8);
+        summary.Children().Append(summaryRow.root);
+        summary.Children().Append(tags);
+        summary.Children().Append(description);
+        muxc::Border summaryCard; summaryCard.Padding({16, 16, 16, 16}); summaryCard.Child(summary);
+        body.Children().Append(summaryCard);
 
         muxc::StackPanel detailsBody;
         detailsBody.Spacing(8.0);
@@ -2739,7 +2774,7 @@ struct WidgetsPagePresenter::Impl
             details.Content(detailsBody);
             StretchExpanderBody(details, detailsBody);
             SetAutomation(details, detailsText);
-            body.Children().Append(details);
+            AppendPackageDisclosure(body, details);
         }
 
         row.Child(body);
@@ -3184,6 +3219,7 @@ struct WidgetsPagePresenter::Impl
         searchCard.title.Text(L("app.settings.widgets_management",
             L"Add Components"));
         searchCard.title.Visibility(mux::Visibility::Collapsed);
+        searchCard.heading.Visibility(mux::Visibility::Collapsed);
         searchCard.description.Text(L"");
         searchCard.description.Visibility(mux::Visibility::Collapsed);
         managementRow.SetText(
@@ -3194,9 +3230,8 @@ struct WidgetsPagePresenter::Impl
         filterCard.description.Visibility(mux::Visibility::Collapsed);
         developerOverridesCard.title.Text(L(
             "app.settings.widgets_agent_skill", L"Agent Skill"));
-        developerOverridesCard.description.Text(L(
-            "app.settings.widgets_agent_skill_description",
-            L"Choose which assistants should receive the Skill."));
+        developerOverridesCard.description.Text(L"");
+        developerOverridesCard.description.Visibility(mux::Visibility::Collapsed);
         developerWorkspaceCard.title.Text(L(
             "app.settings.widgets_authoring_workspace",
             L"Development Workspace"));
@@ -3208,15 +3243,13 @@ struct WidgetsPagePresenter::Impl
         developerCliCard.description.Visibility(mux::Visibility::Collapsed);
         developerPublishCard.title.Text(L(
             "app.settings.widgets_authoring_publish", L"Publish"));
-        developerPublishCard.description.Text(L(
-            "app.settings.widgets_authoring_publish_description",
-            L"Select a preview image and upload the component in Workshop Manager."));
+        developerPublishCard.description.Text(L"");
+        developerPublishCard.description.Visibility(mux::Visibility::Collapsed);
         developerReferenceCard.title.Text(L(
             "app.settings.widgets_authoring_reference",
             L"Development Reference"));
-        developerReferenceCard.description.Text(L(
-            "app.settings.widgets_authoring_reference_description",
-            L"Browse icon resources and component runtime information."));
+        developerReferenceCard.description.Text(L"");
+        developerReferenceCard.description.Visibility(mux::Visibility::Collapsed);
         iconReferenceTitle.Text(L(
             "app.settings.widgets_icon_reference", L"Icon Resources"));
         developerToolsCard.title.Text(L(

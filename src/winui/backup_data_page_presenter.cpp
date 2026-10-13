@@ -55,8 +55,6 @@ void InitializeCard(
     const muxc::StackPanel& page)
 {
     card.root = muxc::Border{};
-    if (style)
-        card.root.Style(style);
     card.content = muxc::StackPanel{};
     card.content.Spacing(12.0);
     card.title = muxc::TextBlock{};
@@ -65,10 +63,13 @@ void InitializeCard(
     card.title.TextWrapping(mux::TextWrapping::Wrap);
     card.description = muxc::TextBlock{};
     card.description.Opacity(0.72);
+    card.description.FontSize(12);
     card.description.TextWrapping(mux::TextWrapping::Wrap);
-    card.content.Children().Append(card.title);
+    muxc::StackPanel heading;
+    heading.Spacing(4.0);
+    heading.Children().Append(card.title);
     card.content.Children().Append(card.description);
-    card.root.Child(card.content);
+    presenter_controls::InitializeSettingsGroup(card.root, heading, card.content, style, true);
     page.Children().Append(card.root);
 }
 
@@ -342,7 +343,7 @@ struct BackupDataPagePresenter::Impl
     void BuildControls()
     {
         root = muxc::StackPanel{};
-        root.Spacing(8.0);
+        root.Spacing(24.0);
 
         infoBar = muxc::InfoBar{};
         infoBar.IsClosable(true);
@@ -372,6 +373,7 @@ struct BackupDataPagePresenter::Impl
         layoutCard.description.Visibility(mux::Visibility::Collapsed);
         layoutName = muxc::TextBox{};
         layoutName.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        layoutName.MinWidth(240);
         layoutName.UseSystemFocusVisuals(true);
         layoutActionBar = NewCommandBar();
         createLayoutButton = NewCommandButton(L"\xE74E");
@@ -387,7 +389,7 @@ struct BackupDataPagePresenter::Impl
         layoutList.SelectionMode(muxc::ListViewSelectionMode::None);
         layoutList.IsItemClickEnabled(false);
         layoutList.MinHeight(48.0);
-        layoutList.MaxHeight(132.0);
+        layoutList.MaxHeight(320.0);
         layoutCard.content.Children().Append(layoutActionBar);
         layoutCard.content.Children().Append(noLayoutBackups);
         layoutCard.content.Children().Append(layoutList);
@@ -413,7 +415,7 @@ struct BackupDataPagePresenter::Impl
         fullBackupList.SelectionMode(muxc::ListViewSelectionMode::None);
         fullBackupList.IsItemClickEnabled(false);
         fullBackupList.MinHeight(48.0);
-        fullBackupList.MaxHeight(172.0);
+        fullBackupList.MaxHeight(320.0);
         fullBackupCard.content.Children().Append(fullBackupActionBar);
         fullBackupCard.content.Children().Append(noFullBackups);
         fullBackupCard.content.Children().Append(fullBackupList);

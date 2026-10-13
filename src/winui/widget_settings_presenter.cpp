@@ -15,6 +15,7 @@
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Windows.System.h>
+#include <winrt/Windows.Globalization.NumberFormatting.h>
 #include <winrt/Windows.UI.h>
 
 #include <algorithm>
@@ -595,6 +596,12 @@ struct WidgetSettingsPresenter::Impl
         control.number.Maximum(maximum);
         control.number.SmallChange(step);
         control.number.LargeChange(step * 5.0);
+        winrt::Windows::Globalization::NumberFormatting::IncrementNumberRounder rounder;
+        rounder.Increment(step);
+        winrt::Windows::Globalization::NumberFormatting::DecimalFormatter formatter;
+        formatter.FractionDigits(step < 1.0 ? 2 : 0);
+        formatter.NumberRounder(rounder);
+        control.number.NumberFormatter(formatter);
         control.number.Width(presenter_controls::kSettingNumberWidth);
         control.number.SpinButtonPlacementMode(
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
@@ -697,6 +704,10 @@ struct WidgetSettingsPresenter::Impl
         root.Children().Append(fieldsHost);
 
         InitializeCard(appearanceCard);
+        appearanceCard.root.Style(nullptr);
+        appearanceCard.root.Padding({0, 0, 0, 0});
+        appearanceCard.root.BorderThickness({0, 0, 0, 0});
+        appearanceCard.root.Background(nullptr);
         appearanceTitle = MakeSectionTitle();
         appearanceTitle.Margin({4.0, 8.0, 4.0, 0.0});
         root.Children().Append(appearanceTitle);
@@ -704,6 +715,7 @@ struct WidgetSettingsPresenter::Impl
         followGlobal = muxc::ToggleSwitch{};
         followGlobal.HorizontalAlignment(mux::HorizontalAlignment::Right);
         followGlobalRow.Initialize(followGlobal);
+        presenter_controls::StyleSettingsCard(followGlobalRow.root);
         followGlobalRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         appearanceCard.content.Children().Append(followGlobalRow.root);
 
@@ -712,6 +724,7 @@ struct WidgetSettingsPresenter::Impl
             mux::HorizontalAlignment::Stretch);
         appearanceTheme.MaxWidth(520.0);
         appearanceThemeRow.Initialize(appearanceTheme);
+        presenter_controls::StyleSettingsCard(appearanceThemeRow.root);
         appearanceCard.content.Children().Append(appearanceThemeRow.root);
 
         muxc::Button restoreBackground; restoreBackground.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -729,6 +742,7 @@ struct WidgetSettingsPresenter::Impl
             RunAppearancePatch(std::move(patch));
         });
         restoreBackgroundRow.Initialize(restoreBackground);
+        presenter_controls::StyleSettingsCard(restoreBackgroundRow.root);
         appearanceCard.content.Children().Append(restoreBackgroundRow.root);
         customAppearanceHost = muxc::StackPanel{};
         customAppearanceHost.Spacing(10.0);
@@ -1196,16 +1210,13 @@ struct WidgetSettingsPresenter::Impl
             }
             else
             {
-                if (cardStyle) group.root.Style(cardStyle);
-                group.root.Padding({0, 0, 0, 0});
                 muxc::StackPanel container;
-                container.Spacing(0.0);
+                container.Spacing(4.0);
                 muxc::TextBlock title;
                 title.Text(ToText(schema.label));
                 title.FontWeight(
                     winrt::Windows::UI::Text::FontWeights::SemiBold());
                 title.TextWrapping(mux::TextWrapping::Wrap);
-                title.Margin({16, 16, 16, 8});
                 muxa::AutomationProperties::SetHeadingLevel(title,
                     muxa::Peers::AutomationHeadingLevel::Level2);
                 container.Children().Append(title);
@@ -1215,11 +1226,11 @@ struct WidgetSettingsPresenter::Impl
                     description.Text(ToText(schema.description));
                     description.Opacity(0.72);
                     description.TextWrapping(mux::TextWrapping::Wrap);
-                    description.Margin({16, 0, 16, 8});
-                    container.Children().Append(description);
+                    description.FontSize(12);
+                    description.Margin({16, 12, 16, 8});
+                    group.content.Children().Append(description);
                 }
-                container.Children().Append(group.content);
-                group.root.Child(container);
+                presenter_controls::InitializeSettingsGroup(group.root, container, group.content, cardStyle);
             }
             muxa::AutomationProperties::SetName(
                 group.root, ToText(schema.label));

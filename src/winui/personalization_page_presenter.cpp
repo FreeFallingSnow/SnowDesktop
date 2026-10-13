@@ -98,18 +98,15 @@ void InitializeCard(
     const muxc::StackPanel& page)
 {
     card.root = muxc::Border{};
-    if (style)
-        card.root.Style(style);
     card.content = muxc::StackPanel{};
-    card.content.Spacing(12.0);
+    card.content.Spacing(8.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
     muxa::AutomationProperties::SetHeadingLevel(card.title,
         muxa::Peers::AutomationHeadingLevel::Level2);
-    card.content.Children().Append(card.title);
-    card.root.Child(card.content);
+    presenter_controls::InitializeSettingsGroup(card.root, card.title, card.content, style);
     page.Children().Append(card.root);
 }
 
@@ -359,18 +356,19 @@ struct PersonalizationPagePresenter::Impl
     void BuildControls()
     {
         themeRoot = muxc::StackPanel{};
-        themeRoot.Spacing(8.0);
+        themeRoot.Spacing(24.0);
         widgetLayoutRoot = muxc::StackPanel{};
-        widgetLayoutRoot.Spacing(8.0);
-        quickThemeRoot.Spacing(8.0);
-        widgetCommonRoot.Spacing(8.0);
+        widgetLayoutRoot.Spacing(24.0);
+        quickThemeRoot.Spacing(24.0);
+        widgetCommonRoot.Spacing(24.0);
         widgetBehaviorRoot.Spacing(24.0);
 
-        InitializeCard(themeCard, cardStyle, themeRoot);
+        InitializeCard(themeCard, nullptr, themeRoot);
         presetCombo = muxc::ComboBox{};
         presetCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         presetCombo.MaxWidth(520.0);
         presetRow.Initialize(presetCombo);
+        presenter_controls::StyleSettingsCard(presetRow.root);
         themeCard.content.Children().Append(presetRow.root);
         globalThemes = std::make_unique<ThemeLibraryControls>(localize, "global", false, presetCombo, 8, 7);
         presetRow.controlHost.Content(nullptr); presetRow.controlHost.Content(globalThemes->SelectionContent());
@@ -498,7 +496,7 @@ struct PersonalizationPagePresenter::Impl
         contextMenuRow.Initialize(contextMenuCombo);
         contextMenuCard.content.Children().Append(contextMenuRow.root);
 
-        InitializeCard(themeTargetsCard, cardStyle, quickThemeRoot);
+        InitializeCard(themeTargetsCard, nullptr, quickThemeRoot);
         quickNavigationThemeCombo = muxc::ComboBox{};
         collectionPopupThemeCombo = muxc::ComboBox{};
         for (const auto& combo : {
@@ -509,6 +507,8 @@ struct PersonalizationPagePresenter::Impl
         }
         quickNavigationThemeRow.Initialize(quickNavigationThemeCombo);
         collectionPopupThemeRow.Initialize(collectionPopupThemeCombo);
+        presenter_controls::StyleSettingsCard(quickNavigationThemeRow.root);
+        presenter_controls::StyleSettingsCard(collectionPopupThemeRow.root);
         themeTargetsCard.content.Children().Append(
             quickNavigationThemeRow.root);
 
@@ -534,7 +534,7 @@ struct PersonalizationPagePresenter::Impl
         quickAppearanceContent.Children().Append(quickAppearanceOptions->Content());
         quickAppearanceContent.Children().Append(quickThemes->SaveContent());
         themeTargetsCard.content.Children().Append(quickAppearanceContent);
-        InitializeCard(popupThemeCard, cardStyle, themeRoot);
+        InitializeCard(popupThemeCard, nullptr, themeRoot);
         popupThemeCard.content.Children().Append(collectionPopupThemeRow.root);
         popupThemes = std::make_unique<ThemeLibraryControls>(localize, "popup", false, collectionPopupThemeCombo, 6, 5);
         collectionPopupThemeRow.controlHost.Content(nullptr); collectionPopupThemeRow.controlHost.Content(popupThemes->SelectionContent());
@@ -564,7 +564,7 @@ struct PersonalizationPagePresenter::Impl
         popupThemeCard.content.Children().Append(popupAppearanceContent);
         dockThemeRoot = muxc::StackPanel{};
         dockThemeCard.content = muxc::StackPanel{};
-        dockThemeCard.content.Spacing(12.0);
+        dockThemeCard.content.Spacing(8.0);
         dockAppearanceHost.Content(dockThemeCard.content);
         dockAppearanceHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         dockThemeRoot.Children().Append(dockAppearanceHost);
@@ -572,6 +572,7 @@ struct PersonalizationPagePresenter::Impl
         dockAppearanceCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         dockAppearanceCombo.MaxWidth(520.0);
         dockAppearanceRow.Initialize(dockAppearanceCombo);
+        presenter_controls::StyleSettingsCard(dockAppearanceRow.root);
         dockThemeCard.content.Children().Append(dockAppearanceRow.root);
         dockThemes = std::make_unique<ThemeLibraryControls>(localize, "dock", false, dockAppearanceCombo, 9, 8);
         dockAppearanceRow.controlHost.Content(nullptr); dockAppearanceRow.controlHost.Content(dockThemes->SelectionContent());
@@ -659,15 +660,10 @@ struct PersonalizationPagePresenter::Impl
         dockThemes->SetCustomContent({dockAppearanceEditor->Content()});
 
         // These geometry preferences remain editable under every theme.
-        InitializeCard(layoutCard, cardStyle, themeRoot);
+        InitializeCard(layoutCard, cardStyle, widgetLayoutRoot);
         InitializeCard(collectionSizeCard, cardStyle, widgetBehaviorRoot);
         InitializeCard(collectionTitleCard, cardStyle, widgetBehaviorRoot);
         InitializeCard(behaviorCard, cardStyle, widgetBehaviorRoot);
-        for (const auto* card : {&collectionSizeCard, &collectionTitleCard, &behaviorCard})
-        {
-            card->root.Padding({0.0});
-            card->title.Margin({16.0, 16.0, 16.0, 8.0});
-        }
         InitializeCard(widgetDisplayCard, cardStyle, widgetCommonRoot);
         InitializeCard(widgetInteractionCard, cardStyle, widgetCommonRoot);
         InitializeContinuousControl(cornerRadius,
@@ -684,6 +680,7 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(categorizedTabHeight, L"cu");
         layoutCard.content.Children().Append(cornerRadius.row.root);
         layoutCard.content.Children().Append(barHeight.row.root);
+        presenter_controls::UpdateSettingsSubrows(layoutCard.content, 0.0);
         collectionSizeCard.content.Children().Append(categorizedTabHeight.row.root);
         topTitleBarToggle = muxc::ToggleSwitch{};
         topTitleBarToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -701,6 +698,10 @@ struct PersonalizationPagePresenter::Impl
         widgetTransformCursorsRow.Initialize(widgetTransformCursors);
         widgetTransformCursorsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         widgetInteractionCard.content.Children().Append(widgetTransformCursorsRow.root);
+        presenter_controls::UpdateSettingsSubrows(fontCard.content, 0.0);
+        presenter_controls::UpdateSettingsSubrows(contextMenuCard.content, 0.0);
+        presenter_controls::UpdateSettingsSubrows(widgetDisplayCard.content, 0.0);
+        presenter_controls::UpdateSettingsSubrows(widgetInteractionCard.content, 0.0);
         showGroupTabCounts = muxc::ToggleSwitch{};
         showGroupTabCounts.HorizontalAlignment(mux::HorizontalAlignment::Right);
         showGroupTabCountsRow.Initialize(showGroupTabCounts);
@@ -774,7 +775,7 @@ struct PersonalizationPagePresenter::Impl
         muxc::Grid::SetColumn(chevron, 1);
         content.Children().Append(chevron);
         button.Content(content);
-        (parent ? parent : themeRoot).Children().Append(button);
+        if (parent) parent.Children().Append(button);
     }
 
     void InitializeColorControl(
@@ -1044,7 +1045,7 @@ struct PersonalizationPagePresenter::Impl
         });
         collectionFooterLinkToken = collectionFooterLink.Click([this](const auto&, const auto&) {
             if (!closed && active && actions.navigate)
-                actions.navigate(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.barHeight"));
+                actions.navigate(SettingsRoute::ForPage(SettingsPage::AppearanceDesktopIcons, "personalization.barHeight"));
         });
         collectionThemeLinkToken = collectionThemeLink.Click([this](const auto&, const auto&) {
             if (!closed && active && actions.navigate)
@@ -2129,8 +2130,7 @@ void PersonalizationPagePresenter::SetLayoutSpacingContent(
     if (!impl_ || !content) return;
     uint32_t index = 0;
     const auto children = impl_->layoutCard.content.Children();
-    // The card title remains first; spacing is the first setting below it.
-    if (!children.IndexOf(content, index)) children.InsertAt(1, content);
+    if (!children.IndexOf(content, index)) children.InsertAt(0, content);
 }
 
 mux::UIElement PersonalizationPagePresenter::MenuContent() const noexcept

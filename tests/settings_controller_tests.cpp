@@ -387,8 +387,8 @@ void TestRoutes()
     const RelocatedSetting relocated[]{
         {"personalization.font", SettingsPage::AppearanceDesktopIcons},
         {"personalization.tooltipFontSize", SettingsPage::AppearanceDesktopIcons},
-        {"personalization.cornerRadius", SettingsPage::AppearanceTheme},
-        {"personalization.barHeight", SettingsPage::AppearanceTheme},
+        {"personalization.cornerRadius", SettingsPage::AppearanceDesktopIcons},
+        {"personalization.barHeight", SettingsPage::AppearanceDesktopIcons},
         {"personalization.luaWidgetRowHeight", SettingsPage::Widgets},
         {"personalization.widgetTransformCursors", SettingsPage::Widgets},
         {"desktop.spacing", SettingsPage::DesktopPages},

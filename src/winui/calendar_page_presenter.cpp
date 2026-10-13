@@ -36,9 +36,11 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     std::vector<muxc::CheckBox> weekdays;
     muxc::StackPanel weekdayRow;
     muxc::TimePicker start, end;
+    muxc::Grid times;
     muxc::ComboBox reminder;
     static constexpr std::array<int, 7> reminderValues = {-1, 0, 5, 15, 30, 60, 1440};
-    muxc::Button add, save, remove, cancel, refresh;
+    muxc::Button save, remove, cancel;
+    muxc::HyperlinkButton add, refresh;
     muxc::ContentDialog dialog{nullptr};
     std::vector<calendar::DisplayOption> calendars;
     std::vector<calendar::CalendarEvent> events;
@@ -69,7 +71,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (outer) *outer = border;
         return content;
     }
-    template<class F> void Click(muxc::Button button, F callback)
+    template<class Control, class F> void Click(Control button, F callback)
     {
         auto token = button.Click([this, callback](const auto&, const auto&) {
             if (!closed && active && hasSnapshot) callback();
@@ -78,8 +80,10 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     Impl(LocalizeCallback callback, const mux::Style& style) : localize(std::move(callback))
     {
-        root.Spacing(8);
-        preferences = Card(style);
+        root.Spacing(24);
+        muxc::Border preferencesSurface;
+        preferences = Card(style, &preferencesSurface);
+        preferencesSurface.Padding({0, 0, 0, 0});
         calendarEnabledRow.Initialize(calendarToggle);
         calendarRow.Initialize(calendarChoice);
         calendarEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -87,20 +91,31 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (const auto& row : {calendarEnabledRow.root, calendarRow.root})
             preferences.Children().Append(row);
         presenter_controls::UpdateSettingsSubrows(preferences, 0);
-        auto schedules = Card(style);
         muxc::StackPanel toolbar;
         toolbar.Orientation(muxc::Orientation::Horizontal); toolbar.Spacing(8);
+        presenter_controls::ConfigureSettingsHeadingLink(add);
+        presenter_controls::ConfigureSettingsHeadingLink(refresh);
         toolbar.Children().Append(add); toolbar.Children().Append(refresh);
         SettingRow schedulesHeader;
         schedulesHeader.Initialize(toolbar, 0.0);
         schedulesHeader.SetControlAlignment(mux::HorizontalAlignment::Right);
         listHeading = schedulesHeader.label;
         listHeading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        schedules.Children().Append(schedulesHeader.root);
+        muxc::StackPanel schedulesSection;
+        schedulesSection.Spacing(8);
+        root.Children().Append(schedulesSection);
+        schedulesSection.Children().Append(schedulesHeader.root);
+        muxc::Border schedulesSurface;
+        auto schedules = Card(style, &schedulesSurface);
+        root.Children().RemoveAtEnd();
+        schedulesSection.Children().Append(schedulesSurface);
+        schedulesSurface.Padding({0, 0, 0, 0});
         list.MaxHeight(320);
         list.SelectionMode(muxc::ListViewSelectionMode::Single);
         schedules.Children().Append(list);
         editor = Card(style, &editorCard);
+        root.Children().RemoveAtEnd();
+        schedulesSection.Children().Append(editorCard);
         title.MaxLength(512); notes.MaxLength(8192);
         date.CalendarIdentifier(L"GregorianCalendar");
         date.DateFormat(L"{year.full}-{month.integer(2)}-{day.integer(2)}");
@@ -136,14 +151,22 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         editor.Children().Append(monthDay); editor.Children().Append(endType);
         editor.Children().Append(until); editor.Children().Append(occurrenceDate);
         editor.Children().Append(editOccurrence); editor.Children().Append(allDay);
-        editor.Children().Append(start); editor.Children().Append(end); editor.Children().Append(reminder);
+        times.ColumnSpacing(12);
+        times.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+        times.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+        start.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        end.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        muxc::Grid::SetColumn(end, 1); times.Children().Append(start); times.Children().Append(end);
+        editor.Children().Append(times); editor.Children().Append(reminder);
         editor.Children().Append(notes);
         muxc::StackPanel buttons; buttons.Orientation(muxc::Orientation::Horizontal); buttons.Spacing(8);
+        buttons.HorizontalAlignment(mux::HorizontalAlignment::Right);
         buttons.Children().Append(save); buttons.Children().Append(cancel); buttons.Children().Append(remove);
         if (const auto accent = mux::Application::Current().Resources().TryLookup(winrt::box_value(L"AccentButtonStyle")))
             if (const auto accentStyle = accent.try_as<mux::Style>()) save.Style(accentStyle);
         editor.Children().Append(buttons);
-        error.TextWrapping(mux::TextWrapping::Wrap); root.Children().Append(error);
+        error.TextWrapping(mux::TextWrapping::Wrap);
+        error.Visibility(mux::Visibility::Collapsed); root.Children().Append(error);
         editorCard.Visibility(mux::Visibility::Collapsed);
         auto ctoken = calendarToggle.Toggled([this](const auto&, const auto&) { Commit(); });
         revoke.push_back([c = calendarToggle, ctoken] { c.Toggled(ctoken); });
@@ -318,7 +341,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         {
             const auto result = actions.events(generation);
             const auto seriesResult = actions.series(generation);
-            if (!result || !seriesResult) { error.Text(L("settings.calendar.failed")); return; }
+            if (!result || !seriesResult) { SetError(L("settings.calendar.failed")); return; }
             bool same = result->size() == events.size() && seriesResult->size() == series.size();
             for (size_t i = 0; same && i < events.size(); ++i)
                 same = (*result)[i].id == events[i].id && (*result)[i].revision == events[i].revision;
@@ -328,11 +351,21 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             updating = true;
             events = *result; series = *seriesResult; rows.clear(); list.Items().Clear();
             int selected = -1;
+            const auto appendRow = [&](const std::string& name, const std::wstring& details) {
+                muxc::StackPanel information; information.Spacing(4);
+                muxc::TextBlock titleText, detailText;
+                titleText.Text(winrt::to_hstring(name)); titleText.TextWrapping(mux::TextWrapping::Wrap);
+                detailText.Text(details); detailText.FontSize(12); detailText.Opacity(.72);
+                detailText.TextWrapping(mux::TextWrapping::Wrap);
+                information.Children().Append(titleText); information.Children().Append(detailText);
+                muxc::ListViewItem item; item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+                item.Padding({16, 12, 16, 12}); item.Content(information); list.Items().Append(item);
+            };
             for (size_t i = 0; i < events.size(); ++i)
             {
                 const auto& event = events[i];
                 rows.push_back({false, i});
-                list.Items().Append(winrt::box_value(winrt::to_hstring(event.date + "  " + event.title)));
+                appendRow(event.title, std::wstring(winrt::to_hstring(event.date).c_str()));
                 if (editingSeries.id.empty() && event.id == editing.id) selected = static_cast<int>(rows.size() - 1);
             }
             for (size_t i = 0; i < series.size(); ++i)
@@ -342,9 +375,9 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 const auto summary = RuleSummary(item.rule);
                 const auto firstDate = item.rule.kind == "dates" && !item.rule.dates.empty()
                     ? item.rule.dates.front() : item.rule.startDate;
-                std::wstring label = winrt::to_hstring(firstDate + "  " + item.event.title).c_str();
+                std::wstring label = winrt::to_hstring(firstDate).c_str();
                 label += L" · " + summary;
-                list.Items().Append(winrt::box_value(label));
+                appendRow(item.event.title, label);
                 if (item.id == editingSeries.id) selected = static_cast<int>(rows.size() - 1);
             }
             list.SelectedIndex(selected); updating = false;
@@ -352,7 +385,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             listHeading.Text(L(rows.empty() ? "settings.calendar.empty" : "settings.calendar.events"));
             if (explicitRefresh)
             {
-                error.Text(L"");
+                SetError(L"");
                 if (selected >= 0)
                 {
                     const auto row = rows[static_cast<std::size_t>(selected)];
@@ -361,13 +394,19 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 }
             }
         }
-        catch (...) { updating = false; error.Text(L("settings.calendar.failed")); }
+        catch (...) { updating = false; SetError(L("settings.calendar.failed")); }
     }
     void UpdateTimeVisibility()
     {
         const auto visibility = allDay.IsChecked() && allDay.IsChecked().Value() ? mux::Visibility::Collapsed : mux::Visibility::Visible;
-        start.Visibility(visibility); end.Visibility(visibility);
+        start.Visibility(visibility); end.Visibility(visibility); times.Visibility(visibility);
     }
+    void SetError(const std::wstring& message)
+    {
+        error.Text(message);
+        error.Visibility(message.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+    }
+
     void UpdateModeVisibility()
     {
         if (updating) return;
@@ -394,6 +433,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             ruleSummary.Text(L(selected == 2 ? "settings.calendar.mode.weekly" : "settings.calendar.mode.monthly") +
                 L" · " + interval.Text());
         else ruleSummary.Text(L"");
+        ruleSummary.Visibility(ruleSummary.Text().empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
     }
     static winrt::Windows::Foundation::DateTime PickerDate(const std::string& value)
     {
@@ -446,7 +486,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         if (editorCard.Visibility() != mux::Visibility::Visible || savedDraft.empty() || DraftKey() == savedDraft)
             return true;
-        error.Text(L("settings.calendar.unsavedDraft"));
+        SetError(L("settings.calendar.unsavedDraft"));
         return false;
     }
     void Edit(const calendar::CalendarEvent& event)
@@ -481,7 +521,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         start.Time(std::chrono::minutes(event.startMinutes)); end.Time(std::chrono::minutes(event.endMinutes));
         UpdateTimeVisibility();
         notes.Text(winrt::to_hstring(event.notes)); for (size_t i = 0; i < reminderValues.size(); ++i) if (reminderValues[i] == event.reminderMinutes) reminder.SelectedIndex(static_cast<int>(i));
-        remove.IsEnabled(!event.id.empty()); error.Text(L""); editorCard.Visibility(mux::Visibility::Visible);
+        remove.IsEnabled(!event.id.empty()); SetError(L""); editorCard.Visibility(mux::Visibility::Visible);
         updating = false; UpdateModeVisibility();
         editingListIndex = list.SelectedIndex();
         savedDraft = DraftKey();
@@ -522,7 +562,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (!item.rule.endDate.empty())
             until.Date(winrt::box_value(PickerDate(item.rule.endDate))
                 .as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
-        remove.IsEnabled(true); error.Text(L""); editorCard.Visibility(mux::Visibility::Visible);
+        remove.IsEnabled(true); SetError(L""); editorCard.Visibility(mux::Visibility::Visible);
         updating = false; UpdateTimeVisibility(); UpdateModeVisibility();
         editingListIndex = list.SelectedIndex();
         savedDraft = DraftKey();
@@ -533,7 +573,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (editingSeries.id.empty() || !occurrenceDate.Date() || !actions.occurrence) return;
         const auto original = DateString(occurrenceDate.Date().Value());
         const auto result = actions.occurrence(generation, editingSeries.id + "/" + original);
-        if (!result) { error.Text(L("settings.calendar.invalidOccurrence")); return; }
+        if (!result) { SetError(L("settings.calendar.invalidOccurrence")); return; }
         Edit(*result);
     }
     void Save()
@@ -592,13 +632,13 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                         rule.endDate < rule.startDate)))) ||
                 (selectedMode == 2 && rule.weekdays.empty()) ||
                 (selectedMode == 3 && (rule.monthDay < 0 || rule.monthDay > 31));
-            if (invalid) { error.Text(L("settings.calendar.invalid")); return; }
+            if (invalid) { SetError(L("settings.calendar.invalid")); return; }
         }
         else event.date = SelectedDate();
         if (minutes < -1 ||
             event.title.empty() || !calendar::CalendarService::GetDateInfo(event.date) ||
             event.startMinutes < 0 || event.endMinutes < event.startMinutes)
-        { error.Text(L("settings.calendar.invalid")); return; }
+        { SetError(L("settings.calendar.invalid")); return; }
         event.reminderMinutes = static_cast<int>(minutes);
         if (seriesMode) candidate.event = event;
         try
@@ -617,7 +657,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 if (discards && confirmedRule != signature)
                 {
                     confirmedRule = std::move(signature);
-                    error.Text(L("settings.calendar.confirmExceptions"));
+                    SetError(L("settings.calendar.confirmExceptions"));
                     return;
                 }
             }
@@ -625,10 +665,10 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 ? actions.mutateSeries(generation, candidate, false)
                 : seriesMode ? calendar::MutationResult{false, {}, 0, "unavailable"}
                     : actions.mutate(generation, event, false);
-            if (!result.ok) { error.Text(L(result.error == "conflict" ? "settings.calendar.conflict" : "settings.calendar.failed")); return; }
+            if (!result.ok) { SetError(L(result.error == "conflict" ? "settings.calendar.conflict" : "settings.calendar.failed")); return; }
             editing = {}; editingSeries = {}; editorCard.Visibility(mux::Visibility::Collapsed); Refresh(true);
         }
-        catch (...) { error.Text(L("settings.calendar.failed")); }
+        catch (...) { SetError(L("settings.calendar.failed")); }
     }
     winrt::fire_and_forget ConfirmDelete()
     {
@@ -654,10 +694,10 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             const auto result = removeSeries && actions.mutateSeries
                 ? actions.mutateSeries(session, targetSeries, true)
                 : actions.mutate(session, target, true);
-            if (!result.ok) { error.Text(L(result.error == "conflict" ? "settings.calendar.conflict" : "settings.calendar.failed")); co_return; }
+            if (!result.ok) { SetError(L(result.error == "conflict" ? "settings.calendar.conflict" : "settings.calendar.failed")); co_return; }
             editing = {}; editingSeries = {}; editorCard.Visibility(mux::Visibility::Collapsed); Refresh(true);
         }
-        catch (...) { dialog = nullptr; if (!closed) error.Text(L("settings.calendar.failed")); }
+        catch (...) { dialog = nullptr; if (!closed) SetError(L("settings.calendar.failed")); }
     }
     void Deactivate()
     { active = false; timer.Stop(); if (dialog) dialog.Hide(); }

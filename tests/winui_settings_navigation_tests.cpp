@@ -67,9 +67,15 @@ void TestHistoryAndFocusRoutes()
     Check(state.Navigate(SettingsRoute::ForPage(
               SettingsPage::AppearanceWidgets,
               "personalization.cornerRadius")) &&
-            state.Route().page == SettingsPage::AppearanceTheme &&
+            state.Route().page == SettingsPage::AppearanceDesktopIcons &&
             state.Route().focusId == "personalization.cornerRadius",
-        "legacy component appearance links reach the shared theme without losing their focus");
+        "legacy component geometry links reach global appearance without losing their focus");
+    for (const auto source : {SettingsPage::Personalization, SettingsPage::AppearanceTheme, SettingsPage::AppearanceDesktopIcons})
+    {
+        const auto route = CanonicalizeSettingsRoute(SettingsRoute::ForPage(source, "personalization.barHeight"));
+        Check(route.page == SettingsPage::AppearanceDesktopIcons && route.focusId == "personalization.barHeight",
+            "geometry links from existing pages retain their target after relocation");
+    }
 }
 
 void TestRelocatedWidgetBehaviorNavigation()

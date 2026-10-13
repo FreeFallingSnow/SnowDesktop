@@ -176,8 +176,6 @@ void InitializeCard(
     bool collapsible = false)
 {
     card.root = muxc::Border{};
-    if (style && !collapsible)
-        card.root.Style(style);
     card.content = muxc::StackPanel{};
     card.content.Spacing(2.0);
     card.title = muxc::TextBlock{};
@@ -197,8 +195,7 @@ void InitializeCard(
     }
     else
     {
-        card.content.Children().Append(card.title);
-        card.root.Child(card.content);
+        presenter_controls::InitializeSettingsGroup(card.root, card.title, card.content, style);
     }
     page.Children().Append(card.root);
 }
@@ -373,6 +370,7 @@ struct DockPagePresenter::Impl
     SettingsCard itemsCard;
     SettingsCard taskbarCard;
     SettingsCard taskbarAppearanceCard;
+    bool centralizedAppearance = false;
     std::unique_ptr<ThemeLibraryControls> taskbarThemes;
     SettingsCard taskbarRulesCard;
     SettingsCard taskbarSystemPanelCard;
@@ -569,19 +567,19 @@ struct DockPagePresenter::Impl
     void BuildControls()
     {
         dockEnableRoot = muxc::StackPanel{};
-        dockEnableRoot.Spacing(8.0);
+        dockEnableRoot.Spacing(24.0);
         dockAppearanceRoot = muxc::StackPanel{};
-        dockAppearanceRoot.Spacing(8.0);
-        InitializeCard(appearanceCard, cardStyle, dockAppearanceRoot);
+        dockAppearanceRoot.Spacing(24.0);
+        InitializeCard(appearanceCard, nullptr, dockAppearanceRoot);
         InitializeCard(animationCard, cardStyle, dockAppearanceRoot);
         for (auto const& host : {appearanceHost, animationHost, shortcutsHost})
             host.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         appearanceCard.content.Children().Append(appearanceHost);
         animationCard.content.Children().Append(animationHost);
         dockRoot = muxc::StackPanel{};
-        dockRoot.Spacing(8.0);
+        dockRoot.Spacing(24.0);
         taskbarRoot = muxc::StackPanel{};
-        taskbarRoot.Spacing(8.0);
+        taskbarRoot.Spacing(24.0);
         root = dockRoot;
 
         InitializeCard(enableCard, cardStyle, dockEnableRoot);
@@ -592,6 +590,7 @@ struct DockPagePresenter::Impl
         dockEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         enableCard.content.Children().Append(dockEnabledRow.root);
 
+        presenter_controls::UpdateSettingsSubrows(enableCard.content, 0);
         InitializeCard(edgeSwipeCard, cardStyle, dockRoot);
         InitializeCard(layoutCard, cardStyle, dockRoot);
         InitializeCard(mergedCard, cardStyle, dockRoot, true);
@@ -708,7 +707,7 @@ struct DockPagePresenter::Impl
         fullscreenExceptionsManagementTitle.TextWrapping(mux::TextWrapping::Wrap);
         fullscreenExceptionsExpander.Header(fullscreenExceptionsManagementTitle);
         fullscreenExceptionList = muxc::StackPanel{};
-        fullscreenExceptionList.Spacing(12);
+        fullscreenExceptionList.Spacing(0);
         fullscreenExceptionListHost = muxc::ContentControl{};
         fullscreenExceptionListHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         fullscreenExceptionListHost.Content(fullscreenExceptionList);
@@ -772,11 +771,12 @@ struct DockPagePresenter::Impl
         taskbarSettingsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         taskbarCard.content.Children().Append(taskbarSettingsRow.root);
 
-        InitializeCard(taskbarAppearanceCard, cardStyle, taskbarRoot);
+        InitializeCard(taskbarAppearanceCard, nullptr, taskbarRoot);
         taskbarThemeCombo = NewCombo();
         taskbarThemes = std::make_unique<ThemeLibraryControls>(localize, "taskbar", false, taskbarThemeCombo, 10, 8);
         taskbarContentThemeCombo = NewCombo();
         taskbarThemeRow.Initialize(taskbarThemes->SelectionContent());
+        presenter_controls::StyleSettingsCard(taskbarThemeRow.root);
         taskbarContentThemeRow.Initialize(taskbarContentThemeCombo);
         taskbarRuntimeStatus = muxc::InfoBar{};
         taskbarRuntimeStatus.IsClosable(false);
@@ -788,7 +788,7 @@ struct DockPagePresenter::Impl
         taskbarAppearanceCard.content.Children().Append(taskbarRuntimeStatus);
 
         taskbarCustomAppearance = muxc::StackPanel{};
-        taskbarCustomAppearance.Spacing(12.0);
+        taskbarCustomAppearance.Spacing(8.0);
         taskbarCustomTitle = muxc::TextBlock{};
         taskbarCustomTitle.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
@@ -823,7 +823,7 @@ struct DockPagePresenter::Impl
         taskbarAppearanceCard.content.Children().Append(
             taskbarCustomAppearance);
 
-        InitializeCard(taskbarRulesCard, cardStyle, taskbarRoot);
+        InitializeCard(taskbarRulesCard, nullptr, taskbarRoot);
         taskbarRulesHint = NewHint();
         taskbarRulesCard.content.Children().Append(taskbarRulesHint);
         InitializeDynamicRule(shellUiRule,
@@ -1059,40 +1059,37 @@ struct DockPagePresenter::Impl
         control.enabledRow.Initialize(control.enabled);
         control.enabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
 
-        muxc::StackPanel header{};
-        header.Spacing(3.0);
         control.detailTitle = muxc::TextBlock{};
         control.detailTitle.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
         control.detailTitle.TextWrapping(mux::TextWrapping::Wrap);
         control.summary = NewHint();
-        header.Children().Append(control.detailTitle);
-        header.Children().Append(control.summary);
-        header.Margin({0,12,0,0});
-        control.root.Children().Append(header);
 
         control.details = muxc::StackPanel{};
-        control.details.Spacing(12.0);
+        control.details.Spacing(8.0);
         control.details.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         control.contentThemeRow.Initialize(control.contentTheme);
         // The always-visible scenario switch discloses its appearance editors.
         control.details.Children().Append(control.enabledRow.root);
+        presenter_controls::StyleSettingsCard(control.enabledRow.root);
         control.appearanceDetails = muxc::StackPanel{};
-        control.appearanceDetails.Spacing(12.0);
+        control.appearanceDetails.Spacing(8.0);
         control.appearanceDetails.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         const std::string target = member == &DockSettings::systemTaskbarShellUi ? "taskbar/shellUi" :
             member == &DockSettings::systemTaskbarMaximizedWindow ? "taskbar/maximizedWindow" : "taskbar/visibleWindow";
         control.savedThemes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.theme, 10, 8);
         control.themeRow.Initialize(control.savedThemes->SelectionContent());
+        presenter_controls::StyleSettingsCard(control.themeRow.root);
+        presenter_controls::StyleSettingsCard(control.contentThemeRow.root);
         control.appearanceDetails.Children().Append(control.themeRow.root);
         control.appearanceDetails.Children().Append(control.savedThemes->Content());
         control.appearanceDetails.Children().Append(
             control.contentThemeRow.root);
 
         control.customAppearance = muxc::StackPanel{};
-        control.customAppearance.Spacing(12.0);
+        control.customAppearance.Spacing(8.0);
         InitializeTaskbarGradient(control.gradient, control.customAppearance, member);
         InitializeColorControl(control.backgroundColor,
             ColorField::TaskbarBackground, member);
@@ -1194,7 +1191,9 @@ struct DockPagePresenter::Impl
 
     void HookEvents()
     {
-        taskbarRootLoadedToken = taskbarRoot.Loaded(
+        // The shared appearance surface can also be mounted on the themes
+        // page, where taskbarRoot itself is not in the visual tree.
+        taskbarRootLoadedToken = taskbarAppearanceCard.root.Loaded(
             [this](const auto&, const auto&) {
                 if (closed)
                     return;
@@ -2332,6 +2331,7 @@ struct DockPagePresenter::Impl
             muxc::Grid::SetColumn(item.remove, 1);
             editors.Children().Append(item.remove);
             item.row.Initialize(editors);
+            item.row.root.Padding({0, 8, 0, 8});
             const auto name = std::filesystem::path(entry.executable).filename().wstring();
             item.row.SetText(name, entry.executable);
             item.row.help.FontSize(12);
@@ -2670,7 +2670,7 @@ struct DockPagePresenter::Impl
         SetCardText(taskbarCard,
             "settings.taskbar.behavior", L"Behavior");
         SetCardText(taskbarAppearanceCard,
-            "settings.taskbar.defaultAppearance", L"Default appearance");
+            centralizedAppearance ? "settings.nav.taskbar" : "settings.taskbar.defaultAppearance", L"Default appearance");
         SetCardText(taskbarRulesCard,
             "settings.taskbar.scenarioOverrides", L"Scenario overrides");
         SetCardText(taskbarSystemPanelCard,
@@ -2929,8 +2929,7 @@ struct DockPagePresenter::Impl
     {
         const std::wstring context = L(titleKey, fallback);
         control.detailTitle.Text(context);
-        control.enabledRow.SetText(
-            L("app.settings.widgets_enabled", L"Enabled"));
+        control.enabledRow.SetText(context);
         control.themeRow.SetText(L(
             "app.settings.taskbar_dynamic_theme", L"Appearance when active"));
         ReplaceTaskbarThemeItems(control.theme);
@@ -3267,7 +3266,7 @@ struct DockPagePresenter::Impl
             runtimeTimer.Stop();
             runtimeTimer.Tick(runtimeTimerToken);
             highlightTimer.Tick(highlightTimerToken);
-            taskbarRoot.Loaded(taskbarRootLoadedToken);
+            taskbarAppearanceCard.root.Loaded(taskbarRootLoadedToken);
             dockEnabledToggle.Toggled(dockEnabledToken);
             positionCombo.SelectionChanged(positionToken);
             layoutCombo.SelectionChanged(layoutToken);
@@ -3372,9 +3371,35 @@ mux::UIElement DockPagePresenter::DockEnableContent() const noexcept
     return impl_ ? impl_->dockEnableRoot : nullptr;
 }
 
-mux::UIElement DockPagePresenter::DockAppearanceContent() const noexcept
+mux::UIElement DockPagePresenter::DockAppearanceContent() const
 {
+    if (impl_)
+    {
+        uint32_t index = 0;
+        if (!impl_->dockAppearanceRoot.Children().IndexOf(impl_->appearanceCard.root, index))
+            impl_->dockAppearanceRoot.Children().InsertAt(0, impl_->appearanceCard.root);
+    }
     return impl_ ? impl_->dockAppearanceRoot : nullptr;
+}
+
+mux::UIElement DockPagePresenter::DockThemeContent() const
+{
+    if (!impl_) return nullptr;
+    uint32_t index = 0;
+    if (impl_->dockAppearanceRoot.Children().IndexOf(impl_->appearanceCard.root, index))
+        impl_->dockAppearanceRoot.Children().RemoveAt(index);
+    return impl_->appearanceCard.root;
+}
+
+mux::UIElement DockPagePresenter::TaskbarAppearanceContent() const
+{
+    if (!impl_) return nullptr;
+    impl_->centralizedAppearance = true;
+    impl_->SetCardText(impl_->taskbarAppearanceCard, "settings.nav.taskbar", L"Windows taskbar");
+    uint32_t index = 0;
+    if (impl_->taskbarRoot.Children().IndexOf(impl_->taskbarAppearanceCard.root, index))
+        impl_->taskbarRoot.Children().RemoveAt(index);
+    return impl_->taskbarAppearanceCard.root;
 }
 
 void DockPagePresenter::SetSupplementalContent(const mux::UIElement& appearance,
@@ -3394,8 +3419,16 @@ mux::UIElement DockPagePresenter::DockContent() const noexcept
     return impl_ ? impl_->dockRoot : nullptr;
 }
 
-mux::UIElement DockPagePresenter::TaskbarContent() const noexcept
+mux::UIElement DockPagePresenter::TaskbarContent() const
 {
+    if (impl_)
+    {
+        impl_->centralizedAppearance = false;
+        impl_->SetCardText(impl_->taskbarAppearanceCard, "settings.taskbar.defaultAppearance", L"Default appearance");
+        uint32_t index = 0;
+        if (!impl_->taskbarRoot.Children().IndexOf(impl_->taskbarAppearanceCard.root, index))
+            impl_->taskbarRoot.Children().InsertAt(1, impl_->taskbarAppearanceCard.root);
+    }
     return impl_ ? impl_->taskbarRoot : nullptr;
 }
 

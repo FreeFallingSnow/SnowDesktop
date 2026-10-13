@@ -4,6 +4,7 @@
 #include "number_box_update_rules.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
+#include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
@@ -37,13 +38,23 @@ inline constexpr double kSettingLabelMinWidth = 180.0;
 inline constexpr double kSettingColumnGap = 24.0;
 inline constexpr std::chrono::milliseconds kContinuousPreviewInterval{33};
 
+// Section headings have no surface. Keep their secondary actions equally
+// lightweight while retaining native hyperlink focus and keyboard behavior.
+inline void ConfigureSettingsHeadingLink(const muxc::HyperlinkButton& link)
+{
+    link.Padding({4.0, 0.0, 4.0, 0.0});
+    link.MinHeight(32.0);
+    link.VerticalAlignment(mux::VerticalAlignment::Center);
+    link.HorizontalAlignment(mux::HorizontalAlignment::Right);
+}
+
 template <typename Surface>
 inline void StyleSettingsCard(const Surface& surface)
 {
-    surface.Padding({16.0});
+    surface.Padding({16.0, 16.0, 16.0, 16.0});
     surface.MinHeight(68.0);
-    surface.CornerRadius({8.0});
-    surface.BorderThickness({1.0});
+    surface.CornerRadius({4.0, 4.0, 4.0, 4.0});
+    surface.BorderThickness({1.0, 1.0, 1.0, 1.0});
     surface.ClearValue(surface.template try_as<muxc::Grid>()
         ? muxc::Panel::BackgroundProperty() : muxc::Border::BackgroundProperty());
     surface.ClearValue(Surface::BorderBrushProperty());
@@ -92,10 +103,76 @@ inline void UpdateSettingsSubrows(const muxc::StackPanel& panel,
             StyleSettingsSubrow(border, first, indent);
         else if (const auto grid = child.try_as<muxc::Grid>())
             StyleSettingsSubrow(grid, first, indent);
+        else if (const auto group = child.try_as<muxc::StackPanel>(); group &&
+            group.Resources().HasKey(winrt::box_value(L"SnowDesktopSettingsRowGroup")))
+        {
+            group.Resources().Insert(winrt::box_value(L"SnowDesktopSettingsFirstRow"), winrt::box_value(first));
+            for (const auto& nested : group.Children())
+            {
+                const auto row = nested.try_as<muxc::Grid>();
+                if (!row || row.Visibility() != mux::Visibility::Visible ||
+                    !row.Resources().HasKey(winrt::box_value(L"SnowDesktopSettingRow"))) continue;
+                row.BorderThickness({0, first ? 0.0 : 1.0, 0, 0});
+                first = false;
+            }
+            continue;
+        }
         else
             continue;
         first = false;
     }
+}
+
+// PowerToys SettingsGroup separates the section heading from the surface.
+// Keep the stable outer element for visibility/focus ownership; only the body
+// is a card. Rows inside it share one surface and one horizontal inset.
+inline muxc::Border InitializeSettingsGroup(const muxc::Border& root,
+    const mux::FrameworkElement& heading, const muxc::StackPanel& body,
+    const mux::Style& style, bool paddedBody = false)
+{
+    muxc::StackPanel group;
+    group.Spacing(8.0);
+    if (heading)
+    {
+        heading.Margin({0.0, 0.0, 0.0, 0.0});
+        muxa::AutomationProperties::SetHeadingLevel(heading,
+            muxa::Peers::AutomationHeadingLevel::Level2);
+        group.Children().Append(heading);
+    }
+    muxc::Border surface;
+    if (style) surface.Style(style);
+    if (!paddedBody) surface.Padding({0.0, 0.0, 0.0, 0.0});
+    surface.Child(body);
+    group.Children().Append(surface);
+    root.Child(group);
+    return surface;
+}
+
+// A disclosure embedded in an existing settings surface keeps native keyboard
+// and automation behavior, without introducing another background or outline.
+inline void StyleInlineSettingsExpander(const muxc::Expander& expander)
+{
+    muxm::SolidColorBrush transparent{winrt::Windows::UI::Color{0, 0, 0, 0}};
+    expander.Background(transparent);
+    expander.BorderBrush(transparent);
+    expander.BorderThickness({0, 0, 0, 0});
+    expander.Resources().Insert(winrt::box_value(L"ExpanderHeaderBorderThickness"),
+        winrt::box_value(mux::Thickness{0, 0, 0, 0}));
+    for (const auto key : {L"ExpanderHeaderBackground", L"ExpanderHeaderBorderBrush",
+        L"ExpanderHeaderBorderPointerOverBrush", L"ExpanderHeaderBorderPressedBrush",
+        L"ExpanderHeaderDisabledBorderBrush"})
+        expander.Resources().Insert(winrt::box_value(key), transparent);
+    expander.Loaded([](const auto& sender, const auto&) {
+        const auto disclosure = sender.template as<muxc::Expander>();
+        (void)disclosure.ApplyTemplate();
+        const auto flatten = [](const auto& self, const mux::DependencyObject& node) -> void {
+            if (const auto border = node.try_as<muxc::Border>(); border && border.Name() == L"ExpanderContent")
+            { border.BorderThickness({0, 0, 0, 0}); border.Background(nullptr); return; }
+            for (int index = 0; index < muxm::VisualTreeHelper::GetChildrenCount(node); ++index)
+                self(self, muxm::VisualTreeHelper::GetChild(node, index));
+        };
+        flatten(flatten, disclosure);
+    });
 }
 
 inline bool IsNumberBoxTextEditing(const muxc::NumberBox& number)
@@ -307,6 +384,8 @@ struct SettingRow
         layout->controlWidth = controlWidth;
         layout->compact = static_cast<bool>(control.try_as<muxc::ToggleSwitch>()) ||
             static_cast<bool>(control.try_as<muxc::Button>());
+        if (layout->compact) layout->alignment = mux::HorizontalAlignment::Right;
+        if (const auto toggle = control.try_as<muxc::ToggleSwitch>()) toggle.MinWidth(0.0);
 
         muxc::ColumnDefinition labelColumn{};
         labelColumn.Width(mux::GridLengthHelper::FromValueAndType(
@@ -320,7 +399,7 @@ struct SettingRow
         root.ColumnDefinitions().Append(labelColumn);
         root.ColumnDefinitions().Append(controlColumn);
         muxc::RowDefinition labelRow{};
-        labelRow.Height(mux::GridLengthHelper::Auto());
+        labelRow.Height(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
         root.RowDefinitions().Append(labelRow);
         muxc::RowDefinition controlRow{};
         controlRow.Height(mux::GridLengthHelper::Auto());
@@ -332,6 +411,7 @@ struct SettingRow
         label = muxc::TextBlock{};
         label.TextWrapping(mux::TextWrapping::Wrap);
         help = muxc::TextBlock{};
+        help.FontSize(12.0);
         help.TextWrapping(mux::TextWrapping::Wrap);
         help.Opacity(0.68);
         help.Visibility(mux::Visibility::Collapsed);
@@ -344,6 +424,9 @@ struct SettingRow
             mux::HorizontalAlignment::Stretch);
         controlHost.VerticalContentAlignment(
             mux::VerticalAlignment::Center);
+        controlHost.VerticalAlignment(mux::VerticalAlignment::Center);
+        controlHost.HorizontalAlignment(layout->alignment);
+        controlHost.HorizontalContentAlignment(layout->alignment);
 
         muxc::Grid::SetColumn(text, 0);
         muxc::Grid::SetColumn(controlHost, 1);

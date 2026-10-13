@@ -237,9 +237,13 @@ struct DesktopStylePagePresenter::Impl
     {
         auto section = std::make_unique<Section>();
         section->key = key;
-        section->content = Card(style);
         ConfigureText(section->title, true);
-        section->content.Children().Append(section->title);
+        muxc::Border group;
+        const auto surface = presenter_controls::InitializeSettingsGroup(
+            group, section->title, section->content, style);
+        if (std::string_view(key) == "settings.common.relatedSettings")
+            surface.Padding({8, 8, 8, 8});
+        root.Children().Append(group);
         const auto content = section->content;
         sections.push_back(std::move(section));
         return content;

@@ -12,6 +12,8 @@ public:
     ~StatusBarPagePresenter();
     void SetActions(DockPageActions actions);
     winrt::Microsoft::UI::Xaml::UIElement Content() const;
+    // Mount the same theme editors on the centralized appearance page.
+    winrt::Microsoft::UI::Xaml::UIElement AppearanceContent() const;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
     void Activate(std::string_view focusId = {});

@@ -47,18 +47,17 @@ struct SettingsCard
 void InitializeCard(
     SettingsCard& card,
     const mux::Style& style,
-    const muxc::StackPanel& page)
+    const muxc::StackPanel& page, bool withHeading = true)
 {
     card.root = muxc::Border{};
-    card.root.Style(style);
     card.content = muxc::StackPanel{};
     card.content.Spacing(12.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
-    card.content.Children().Append(card.title);
-    card.root.Child(card.content);
+    presenter_controls::InitializeSettingsGroup(card.root,
+        withHeading ? card.title.as<mux::FrameworkElement>() : nullptr, card.content, style, !withHeading);
     page.Children().Append(card.root);
 }
 
@@ -275,13 +274,13 @@ struct GeneralPagePresenter::Impl
         pageNavigationRoot = muxc::StackPanel{};
         pageNavigationRoot.Spacing(24.0);
         dockShortcutRoot = muxc::StackPanel{};
-        dockShortcutRoot.Spacing(8.0);
+        dockShortcutRoot.Spacing(0.0);
 
         onboarding = std::make_unique<StartPagePresenter>(localize, cardStyle, navigationCardStyle);
         root.Children().Append(onboarding->Content());
         InitializeCard(startupCard, cardStyle, root);
         if (const auto guide = onboarding->Content().try_as<muxc::Expander>())
-            guide.CornerRadius(startupCard.root.CornerRadius());
+            guide.CornerRadius({4, 4, 4, 4});
         autoStartToggle = muxc::ToggleSwitch{};
         autoStartToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -295,7 +294,7 @@ struct GeneralPagePresenter::Impl
         startupOwnershipNotice.IsOpen(false);
         startupCard.content.Children().Append(startupOwnershipNotice);
 
-        InitializeCard(advancedFeaturesCard, cardStyle, root);
+        InitializeCard(advancedFeaturesCard, cardStyle, root, false);
         advancedFeaturesCard.content.Children().Clear();
         advancedFeatureExpander = muxc::Expander{};
         advancedFeatureExpander.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -474,7 +473,14 @@ struct GeneralPagePresenter::Impl
         if (root.Children().IndexOf(advancedFeaturesCard.root, advancedFeaturesIndex))
         {
             root.Children().RemoveAt(advancedFeaturesIndex);
-            root.Children().Append(advancedFeaturesCard.root);
+            uint32_t languageIndex = 0;
+            if (root.Children().IndexOf(languageCard.root, languageIndex))
+                root.Children().RemoveAt(languageIndex);
+            muxc::StackPanel generalCards;
+            generalCards.Spacing(8);
+            generalCards.Children().Append(languageCard.root);
+            generalCards.Children().Append(advancedFeaturesCard.root);
+            root.Children().Append(generalCards);
         }
 
         quickRoot = muxc::StackPanel{}; quickRoot.Spacing(8);
@@ -531,6 +537,7 @@ struct GeneralPagePresenter::Impl
         floatingDockToggleRow.Initialize(floatingDockToggle);
         floatingDockToggleRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(floatingDockToggleRow.root, false, 0.0);
         dockShortcutRoot.Children().Append(floatingDockToggleRow.root);
         floatingDockHotkeyLabel = muxc::TextBlock{};
         floatingDockHotkeyRow.Initialize(floatingDockHotkey);
@@ -543,7 +550,17 @@ struct GeneralPagePresenter::Impl
                  previousPageHotkeyRow.row.root, nextPageHotkeyRow.row.root,
                  desktopPassthroughHotkeyRow.row.root,
                  floatingDockHotkeyRow.row.root})
-            row.Margin({16.0, 0.0, 0.0, 0.0});
+        {
+            row.Margin({0.0, 0.0, 0.0, 0.0});
+            presenter_controls::StyleSettingsSubrow(row, false, 16.0);
+        }
+        for (const auto* card : {&startupCard, &desktopBehaviorCard, &languageCard,
+                 &quickNavigationCard, &pageNavigationCard, &desktopPassthroughCard})
+            presenter_controls::UpdateSettingsSubrows(card->content, 0.0);
+        for (const auto& row : {softwareDesktopHotkeyRow.row.root, quickNavigationHotkeyRow.row.root,
+                 previousPageHotkeyRow.row.root, nextPageHotkeyRow.row.root, desktopPassthroughHotkeyRow.row.root})
+            presenter_controls::StyleSettingsSubrow(row, false, 16.0);
+        startupOwnershipNotice.Margin({16, 0, 16, 8});
     }
 
     template <typename Edit>
@@ -973,6 +990,7 @@ struct GeneralPagePresenter::Impl
             "settings.general.advancedFeatures");
         SetCardText(desktopBehaviorCard, "settings.desktop.behavior");
         SetCardText(languageCard, "app.settings.language");
+        languageCard.title.Visibility(mux::Visibility::Collapsed);
         SetCardText(quickNavigationCard, "app.settings.quick_navigation");
         SetCardText(pageNavigationCard,
             "settings.general.pageNavigation");

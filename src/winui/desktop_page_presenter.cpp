@@ -62,12 +62,12 @@ void InitializeCard(
     (void)style;
     card.root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
     card.content = muxc::StackPanel{};
-    card.content.Spacing(2.0);
+    card.content.Spacing(8.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     card.title.TextWrapping(mux::TextWrapping::Wrap);
-    card.title.Margin({0, 12, 0, 6});
+    card.title.Margin({0, 0, 0, 0});
     muxa::AutomationProperties::SetHeadingLevel(card.title,
         muxa::Peers::AutomationHeadingLevel::Level2);
     card.content.Children().Append(card.title);
@@ -679,7 +679,7 @@ struct DesktopPagePresenter::Impl
     muxc::TextBox newCategoryLabel{nullptr};
     muxc::TextBox newCategoryExtensions{nullptr};
     muxc::Button addCategory{nullptr};
-    muxc::Button revealAddCategory{nullptr};
+    muxc::HyperlinkButton revealAddCategory{nullptr};
     muxc::Grid newCategoryNameActions{nullptr};
     SettingRow newCategoryLabelRow;
     SettingRow newCategoryExtensionsRow;
@@ -881,7 +881,7 @@ struct DesktopPagePresenter::Impl
         beautifyCard.title.Visibility(mux::Visibility::Collapsed);
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
         beautifyAdvanced = muxc::StackPanel{};
-        beautifyAdvanced.Spacing(12.0);
+        beautifyAdvanced.Spacing(8.0);
         beautifyCard.content.Children().Append(beautifyAdvanced);
 
         AppendAdvancedCombo(beautifyModeRow, beautifyMode);
@@ -1049,10 +1049,10 @@ struct DesktopPagePresenter::Impl
         geometryTitle = muxc::TextBlock{};
         geometryTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         geometryTitle.TextWrapping(mux::TextWrapping::Wrap);
-        geometryTitle.Margin({0, 8, 0, 6});
+        geometryTitle.Margin({0, 8, 0, 0});
         beautifyAdvanced.Children().Append(geometryTitle);
         muxc::StackPanel geometry;
-        geometry.Spacing(2);
+        geometry.Spacing(8);
         beautifyAdvanced.Children().Append(geometry);
         geometry.Children().Append(beautifyModeRow.root);
         geometry.Children().Append(shapeRow.root);
@@ -1081,12 +1081,8 @@ struct DesktopPagePresenter::Impl
         categoryRulesCard.content.Children().RemoveAt(0);
         categoryRulesCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
         categoryHeader.Children().Append(categoryRulesCard.title);
-        revealAddCategory = muxc::Button{};
-        muxc::FontIcon addIcon;
-        addIcon.FontFamily(winrt::Microsoft::UI::Xaml::Media::FontFamily{L"Segoe Fluent Icons"});
-        addIcon.Glyph(L"\uE710");
-        addIcon.FontSize(16);
-        revealAddCategory.Content(addIcon);
+        revealAddCategory = muxc::HyperlinkButton{};
+        presenter_controls::ConfigureSettingsHeadingLink(revealAddCategory);
         muxc::Grid::SetColumn(revealAddCategory, 1);
         categoryHeader.Children().Append(revealAddCategory);
         categoryRulesCard.content.Children().InsertAt(0, categoryHeader);
@@ -1102,7 +1098,7 @@ struct DesktopPagePresenter::Impl
         categoryHint.Opacity(0.72);
         categoryHint.TextWrapping(mux::TextWrapping::Wrap);
         categoryRulePanel = muxc::StackPanel{};
-        categoryRulePanel.Spacing(2.0);
+        categoryRulePanel.Spacing(8.0);
         categoryRulesCard.content.Children().Append(categoryRulePanel);
         addCategorySection = muxc::Expander{};
         addCategorySection.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -2062,6 +2058,7 @@ struct DesktopPagePresenter::Impl
         addCategoryHeading.Text(
             L("app.settings.add_category", L"Add category type"));
         muxa::AutomationProperties::SetName(revealAddCategory, L("app.settings.add_category", L"Add category"));
+        revealAddCategory.Content(winrt::box_value(L("app.settings.add_category", L"Add category")));
         muxc::ToolTipService::SetToolTip(revealAddCategory, winrt::box_value(L("app.settings.add_category", L"Add category")));
         newCategoryLabelRow.SetText(
             L("app.settings.category_name", L"Category name"));

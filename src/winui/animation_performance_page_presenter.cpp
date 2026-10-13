@@ -28,7 +28,6 @@ struct Card
     void Initialize(const mux::Style& style, const muxc::StackPanel& parent)
     {
         root = muxc::Border{};
-        root.Style(style);
         content = muxc::StackPanel{};
         content.Spacing(2);
         header = muxc::Grid{};
@@ -44,9 +43,7 @@ struct Card
         title.TextWrapping(mux::TextWrapping::Wrap);
         title.VerticalAlignment(mux::VerticalAlignment::Center);
         header.Children().Append(title);
-        header.Margin({0, 0, 0, 8});
-        content.Children().Append(header);
-        root.Child(content);
+        presenter_controls::InitializeSettingsGroup(root, header, content, style);
         parent.Children().Append(root);
     }
 };
@@ -98,7 +95,7 @@ struct AnimationPerformancePagePresenter::Impl
         : localize(std::move(callback)), navigate(std::move(navigate))
     {
         root = muxc::StackPanel{};
-        root.Spacing(8);
+        root.Spacing(24);
         generalCard.Initialize(style, root);
         dockCard.content = muxc::StackPanel{};
         dockCard.content.Spacing(2);

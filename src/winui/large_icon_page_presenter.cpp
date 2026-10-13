@@ -575,7 +575,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         c::Button button; button.HorizontalAlignment(x::HorizontalAlignment::Right);
         c::StackPanel content; content.Orientation(c::Orientation::Horizontal); content.Spacing(8);
-        c::Border swatch; swatch.Width(20); swatch.Height(20); swatch.CornerRadius({4});
+        c::Border swatch; swatch.Width(20); swatch.Height(20); swatch.CornerRadius({4, 4, 4, 4});
         c::TextBlock label; content.Children().Append(swatch); content.Children().Append(label); button.Content(content);
         c::ColorPicker picker; picker.IsAlphaEnabled(false); c::Flyout flyout;
         c::StackPanel body; body.Spacing(8); body.Children().Append(picker); flyout.Content(body); button.Flyout(flyout);

@@ -82,7 +82,9 @@ public:
         Content() const noexcept;
     /** Separate appearance and animation groups, placed after Dock behavior. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
-        DockAppearanceContent() const noexcept;
+        DockAppearanceContent() const;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement DockThemeContent() const;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement TaskbarAppearanceContent() const;
     void SetSupplementalContent(
         const winrt::Microsoft::UI::Xaml::UIElement& appearance,
         const winrt::Microsoft::UI::Xaml::UIElement& animation,
@@ -95,7 +97,7 @@ public:
         DockContent() const noexcept;
     /** Taskbar behavior, default appearance, scenario overrides and shell UI. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
-        TaskbarContent() const noexcept;
+        TaskbarContent() const;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
 

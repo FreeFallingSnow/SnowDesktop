@@ -70,6 +70,11 @@ private:
     std::vector<std::function<void()>> sync_;
     bool syncing_ = false, dirty_ = false, expanded_ = false, required_ = false, compact_ = false;
     std::wstring L(std::string_view key) const { return localize_ ? localize_(key) : std::wstring{}; }
+    bool FirstRow() const
+    {
+        return root_.Children().Size() == 0 && winrt::unbox_value_or<bool>(
+            root_.Resources().TryLookup(winrt::box_value(L"SnowDesktopSettingsFirstRow")), true);
+    }
     void Sync()
     {
         syncing_ = true; for (const auto& sync : sync_) sync(); syncing_ = false;
@@ -102,7 +107,8 @@ private:
         restore.Click([reset = std::move(reset)](auto const&, auto const&) { reset(); });
         presenter_controls::SettingRow row;
         row.Initialize(editor, presenter_controls::kSettingControlWidth + 40);
-        row.SetText(L(key)); row.root.MinHeight(44); row.root.Margin({level * 16., 0, 0, 0});
+        row.SetText(L(key));
+        presenter_controls::StyleSettingsSubrow(row.root, FirstRow(), level * 16.);
         x::Automation::AutomationProperties::SetName(control, L(key));
         root_.Children().Append(row.root);
     }
@@ -112,7 +118,7 @@ private:
         presenter_controls::SettingRow row;
         row.Initialize(control); row.SetText(L(key));
         row.SetControlAlignment(x::HorizontalAlignment::Right);
-        row.root.MinHeight(44); row.root.Margin({level * 16., 0, 0, 0});
+        presenter_controls::StyleSettingsSubrow(row.root, FirstRow(), level * 16.);
         x::Automation::AutomationProperties::SetName(control, L(key));
         root_.Children().Append(row.root);
     }
@@ -160,7 +166,7 @@ private:
         namespace m = x::Media;
         c::Button button; button.HorizontalAlignment(x::HorizontalAlignment::Right);
         c::StackPanel content; content.Orientation(c::Orientation::Horizontal); content.Spacing(8);
-        c::Border swatch; swatch.Width(20); swatch.Height(20); swatch.CornerRadius({4});
+        c::Border swatch; swatch.Width(20); swatch.Height(20); swatch.CornerRadius({4, 4, 4, 4});
         c::TextBlock text; content.Children().Append(swatch); content.Children().Append(text); button.Content(content);
         c::Flyout flyout; c::ColorPicker picker; picker.IsAlphaEnabled(false);
         c::StackPanel body; body.Spacing(8); body.Children().Append(picker); flyout.Content(body); button.Flyout(flyout);
@@ -193,7 +199,23 @@ private:
     void Color(const char* key, size_t index, unsigned defaultColor, int level = 1)
     {
         std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
-        Row(key, ColorButton(key, index), [weak, index, defaultColor] {
+        Panel actions;
+        actions.Orientation(winrt::Microsoft::UI::Xaml::Controls::Orientation::Horizontal);
+        actions.Spacing(8);
+        actions.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
+        actions.Children().Append(ColorButton(key, index));
+        if (index > 0 && index + 1 < value_.stops.size())
+        {
+            winrt::Microsoft::UI::Xaml::Controls::Button remove;
+            remove.Content(winrt::box_value(L("panelGradient.removeStop")));
+            remove.Click([weak, index](auto const&, auto const&) {
+                if (auto self = weak.lock()) self->Apply([index](auto& v) {
+                    if (index > 0 && index + 1 < v.stops.size()) v.stops.erase(v.stops.begin() + index);
+                }, true);
+            });
+            actions.Children().Append(remove);
+        }
+        Row(key, actions, [weak, index, defaultColor] {
             if (auto self = weak.lock()) self->Apply([&](auto& v) { if (index < v.stops.size()) v.stops[index].color = defaultColor; }, true);
         }, level);
     }
@@ -215,22 +237,13 @@ private:
                     v.stops[index].position = std::clamp(n / 100, left + gap, right - gap);
                 }
             }, 0, 100, .1, 50, L"%", 2);
-        namespace x = winrt::Microsoft::UI::Xaml;
-        x::Controls::Button remove; remove.Content(winrt::box_value(L("panelGradient.removeStop")));
-        remove.HorizontalAlignment(x::HorizontalAlignment::Right);
-        std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
-        remove.Click([weak, index](auto const&, auto const&) {
-            if (auto self = weak.lock()) self->Apply([index](auto& v) {
-                if (index > 0 && index + 1 < v.stops.size()) v.stops.erase(v.stops.begin() + index);
-            }, true);
-        });
-        root_.Children().Append(remove);
     }
     void Build()
     {
         namespace x = winrt::Microsoft::UI::Xaml;
         namespace c = x::Controls;
-        syncing_ = true; sync_.clear(); root_.Children().Clear(); root_.Spacing(4);
+        syncing_ = true; sync_.clear(); root_.Children().Clear(); root_.Spacing(0);
+        root_.Resources().Insert(winrt::box_value(L"SnowDesktopSettingsRowGroup"), winrt::box_value(true));
         std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
         if (!required_)
         {

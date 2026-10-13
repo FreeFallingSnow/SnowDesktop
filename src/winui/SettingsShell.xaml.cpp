@@ -717,6 +717,10 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         break;
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme:
+        ensurePersonalization();
+        ensureDock();
+        EnsurePresentersForPage(SettingsPage::StatusBar);
+        break;
     case SettingsPage::ThemeManager:
     case SettingsPage::WidgetBehavior:
         ensurePersonalization();
@@ -2550,7 +2554,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     };
     const auto usesDockPresenter = [](SettingsPage page) {
         return page == SettingsPage::Dock ||
-            page == SettingsPage::Taskbar;
+            page == SettingsPage::Taskbar || page == SettingsPage::AppearanceTheme || page == SettingsPage::Personalization;
     };
     const bool leavingGeneral = renderedPageRoute_ &&
         usesGeneralPresenter(renderedPageRoute_->page) &&
@@ -2577,7 +2581,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::AnimationPerformance && pageRoute.page != SettingsPage::Dock)
         animationPage_->Deactivate();
     if (calendarPage_ && pageRoute.page != SettingsPage::Calendar) calendarPage_->Deactivate();
-    if (statusBarPage_ && pageRoute.page != SettingsPage::StatusBar) statusBarPage_->Deactivate();
+    if (statusBarPage_ && pageRoute.page != SettingsPage::StatusBar &&
+        pageRoute.page != SettingsPage::AppearanceTheme && pageRoute.page != SettingsPage::Personalization) statusBarPage_->Deactivate();
     if (desktopStylePage_ && pageRoute.page != SettingsPage::DesktopStyle) desktopStylePage_->Deactivate();
     if (contextMenuPage_ && pageRoute.page != SettingsPage::ContextMenu) contextMenuPage_->Deactivate();
     const bool leavingHomeAbout = renderedPageRoute_ &&
@@ -2741,9 +2746,25 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         {
             PageCards().Children().Append(
                 personalizationPage_->ThemeContent());
+            if (dockPage_)
+            {
+                dockPage_->SetSupplementalContent(personalizationPage_->DockAppearanceContent(), nullptr, nullptr);
+                PageCards().Children().Append(dockPage_->DockThemeContent());
+                PageCards().Children().Append(dockPage_->TaskbarAppearanceContent());
+                dockPage_->ActivateTaskbar();
+                registerDockFocus({"taskbar.theme"});
+            }
+            if (statusBarPage_)
+            {
+                PageCards().Children().Append(statusBarPage_->AppearanceContent());
+                statusBarPage_->Activate();
+            }
+            PageCards().Children().Append(personalizationPage_->QuickNavigationAppearanceContent());
             registerPersonalizationFocus({
                 "personalization.theme",
                 "personalization.globalTheme",
+                "personalization.dockAppearance",
+                "personalization.quickNavigationTheme",
                 "personalization.backgroundColor",
                 "personalization.borderColor",
                 "personalization.widgetAlpha",
@@ -2752,7 +2773,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "personalization.edgeHighlight",
                 "personalization.edgeHighlightWidth",
                 "personalization.edgeHighlightStrength",
-                "personalization.cornerRadius", "personalization.barHeight",
                 "personalization.collectionPopupTheme",
                 "personalization.enableGradient",
                 "personalization.gradientEndAlpha",
@@ -2856,7 +2876,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         if (personalizationPage_)
         {
             PageCards().Children().Append(personalizationPage_->TypographyContent());
-            registerPersonalizationFocus({"personalization.font", "personalization.tooltipFontSize"});
+            registerPersonalizationFocus({"personalization.font", "personalization.tooltipFontSize",
+                "personalization.cornerRadius", "personalization.barHeight"});
             personalizationPage_->Activate();
         }
         if (desktopPage_)
@@ -3438,58 +3459,12 @@ std::wstring SettingsShell::PageTitleText(SettingsPage page) const
     return Localize(snowdesktop::SettingsPageTitleKey(page));
 }
 
-std::wstring SettingsShell::PageDescriptionText(SettingsPage page) const
+std::wstring SettingsShell::PageDescriptionText(SettingsPage) const
 {
-    switch (page)
-    {
-    case SettingsPage::ContextMenu: return Localize("settings.contextMenu.description");
-    case SettingsPage::DesktopStyle: return {};
-    case SettingsPage::Calendar: return Localize("settings.calendar.pageDescription");
-    case SettingsPage::AnimationPerformance: return Localize("settings.page.animation.description");
-    case SettingsPage::Home: return Localize("settings.page.home.description");
-    case SettingsPage::QuickNavigation: return Localize("quickNav.description");
-    case SettingsPage::General:
-        return {};
-    case SettingsPage::Personalization:
-        return Localize("settings.page.personalization.description");
-    case SettingsPage::ThemeManager: return Localize("themeLibrary.transferHint");
-    case SettingsPage::AppearanceTheme:
-        return {};
-    case SettingsPage::AppearanceWidgets:
-        return Localize("settings.personalization.widgets.description");
-    case SettingsPage::WidgetBehavior:
-        return {};
-    case SettingsPage::AppearanceDesktopIcons:
-        return Localize("settings.desktop.layout.description");
-    case SettingsPage::AppearanceIconBeautification:
-        return Localize("settings.desktop.beautify.description");
-    case SettingsPage::Desktop:
-        return {};
-    case SettingsPage::DesktopPages:
-        return Localize("settings.page.pages.description");
-    case SettingsPage::DesktopCategories:
-        return Localize("settings.page.categories.description");
-    case SettingsPage::Dock:
-    case SettingsPage::DockAndTaskbar:
-        return Localize("settings.page.dock.description");
-    case SettingsPage::Taskbar:
-        return Localize("settings.page.taskbar.description");
-    case SettingsPage::StatusBar:
-        return Localize("settings.page.statusBar.description");
-    case SettingsPage::Widgets:
-        return Localize("settings.page.widgets.description");
-    case SettingsPage::WidgetSettings:
-        return Localize("settings.page.widget.description");
-    case SettingsPage::BackupAndData:
-        return Localize("settings.page.backup.description");
-    case SettingsPage::About:
-        return Localize("settings.page.about.description");
-    case SettingsPage::DeveloperTools:
-        return Localize("settings.page.developer.description");
-    case SettingsPage::Debug:
-        return Localize("settings.page.debug.description");
-    default: return {};
-    }
+    // Page titles and section headings already identify the available settings.
+    // Keep effect/constraint guidance beside its control; search descriptions
+    // remain in the independent settings catalogue.
+    return {};
 }
 
 muxc::NavigationViewItem SettingsShell::NavigationItemForPage(

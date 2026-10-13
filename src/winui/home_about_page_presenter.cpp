@@ -40,7 +40,6 @@ void InitializeSection(
     const muxc::StackPanel& page)
 {
     section.root = muxc::Border{};
-    section.root.Style(style);
     section.root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
     section.content = muxc::StackPanel{};
     section.content.Spacing(9.0);
@@ -49,8 +48,7 @@ void InitializeSection(
     section.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     section.title.TextWrapping(mux::TextWrapping::Wrap);
-    section.content.Children().Append(section.title);
-    section.root.Child(section.content);
+    presenter_controls::InitializeSettingsGroup(section.root, section.title, section.content, style, true);
     page.Children().Append(section.root);
 }
 
@@ -140,7 +138,6 @@ struct HomeAboutPagePresenter::Impl
     controls::SettingRow initializationRow;
     muxc::ToggleSwitch initializationToggle{nullptr};
     controls::SettingRow animationRow;
-    muxc::StackPanel animationControls{nullptr};
     muxc::ToggleSwitch animationToggle{nullptr};
     muxc::TextBlock animationStatus{nullptr};
     controls::SettingRow resetUnlockRow;
@@ -248,7 +245,7 @@ struct HomeAboutPagePresenter::Impl
     {
 
         aboutRoot = muxc::StackPanel{};
-        aboutRoot.Spacing(8.0);
+        aboutRoot.Spacing(24.0);
         InitializeSection(introductionSection, cardStyle, aboutRoot);
         introductionText = MakeBodyText(0.78);
         introductionSection.content.Children().Append(introductionText);
@@ -395,16 +392,13 @@ struct HomeAboutPagePresenter::Impl
 
         InitializeSection(animationSection, cardStyle, debugRoot);
         animationSection.title.Visibility(mux::Visibility::Collapsed);
-        animationControls = muxc::StackPanel{};
-        animationControls.Spacing(6.0);
         animationToggle = muxc::ToggleSwitch{};
         animationToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         animationToggle.UseSystemFocusVisuals(true);
         animationStatus = MakeBodyText(0.72);
         animationStatus.Visibility(mux::Visibility::Collapsed);
-        animationControls.Children().Append(animationToggle);
-        animationControls.Children().Append(animationStatus);
-        animationRow.Initialize(animationControls, 420.0);
+        animationRow.Initialize(animationToggle);
+        animationRow.text.Children().Append(animationStatus);
         animationSection.content.Children().Append(animationRow.root);
 
         InitializeSection(resetUnlockSection, cardStyle, debugRoot);

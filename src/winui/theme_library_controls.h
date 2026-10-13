@@ -113,6 +113,11 @@ public:
             revoke_.push_back([control = cancel_, cancelToken] { control.Click(cancelToken); });
         }
         feedback_.IsOpen(false); root_.Children().Append(feedback_);
+        if (!transfer_) root_.Visibility(x::Visibility::Collapsed);
+        const auto feedbackClosed = feedback_.Closed([this](const auto&, const auto&) {
+            if (!transfer_) root_.Visibility(x::Visibility::Collapsed);
+        });
+        revoke_.push_back([control = feedback_, feedbackClosed] { control.Closed(feedbackClosed); });
         saveFeedback_.IsOpen(false); if (!transfer_) saveBody_.Children().Append(saveFeedback_);
         const auto choiceToken = choice_.SelectionChanged([this](const auto&, const auto&) {
             if (syncing_) return;
@@ -744,6 +749,8 @@ private:
         if (result.succeeded && result.message.empty()) { feedback.IsOpen(false); return; }
         feedback.Severity(result.succeeded ? c::InfoBarSeverity::Warning : c::InfoBarSeverity::Error);
         feedback.Message(result.message); feedback.IsOpen(!result.message.empty());
+        if (!save && !transfer_)
+            root_.Visibility(feedback.IsOpen() ? x::Visibility::Visible : x::Visibility::Collapsed);
     }
     winrt::fire_and_forget ConfirmRemove(std::string themeId)
     {

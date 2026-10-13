@@ -24,14 +24,14 @@
             <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
             <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
         </Style>
         <Style x:Key="SettingsShellCardStyle" TargetType="Border">
             <Setter Property="Padding" Value="16" />
             <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
             <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
             <Setter Property="BorderThickness" Value="1" />
-            <Setter Property="CornerRadius" Value="8" />
+            <Setter Property="CornerRadius" Value="{ThemeResource ControlCornerRadius}" />
         </Style>
         <DataTemplate x:Key="SettingsShellFluentGlyphTemplate">
             <Border Width="38" Height="38">
@@ -319,8 +319,8 @@
                             </StackPanel>
                             <Canvas x:Name="FocusHighlightLayer" IsHitTestVisible="False" Visibility="Collapsed">
                                 <Grid x:Name="FocusHighlight" Opacity="0">
-                                    <Border Background="{ThemeResource AccentTextFillColorPrimaryBrush}" Opacity="0.08" CornerRadius="8" />
-                                    <Border BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="8" />
+                                    <Border Background="{ThemeResource AccentTextFillColorPrimaryBrush}" Opacity="0.08" CornerRadius="{ThemeResource ControlCornerRadius}" />
+                                    <Border BorderBrush="{ThemeResource AccentTextFillColorPrimaryBrush}" BorderThickness="2" CornerRadius="{ThemeResource ControlCornerRadius}" />
                                 </Grid>
                             </Canvas>
                             </Grid>

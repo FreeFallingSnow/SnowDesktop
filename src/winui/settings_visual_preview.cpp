@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "settings_visual_preview.h"
+#include "settings/settings_search_catalog.h"
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
 #include "common/l10n.h"
@@ -132,10 +133,12 @@ constexpr SettingsPage pages[] = {
     SettingsPage::AppearanceTheme, SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceIconBeautification,
     SettingsPage::AnimationPerformance, SettingsPage::ContextMenu, SettingsPage::ThemeManager,
     SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::BackupAndData, SettingsPage::About,
-    SettingsPage::DeveloperTools, SettingsPage::Debug, SettingsPage::WidgetSettings, SettingsPage::LargeIcon};
+    SettingsPage::DeveloperTools, SettingsPage::Debug, SettingsPage::WidgetSettings, SettingsPage::LargeIcon,
+    // Revisit editors after the centralized theme page to verify reattachment.
+    SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar, SettingsPage::QuickNavigation};
 
 void Export(const std::filesystem::path& output, std::string_view selected, bool dark,
-    const std::string& locale, int width, int height, bool expanded, bool custom, bool disabled)
+    const std::string& locale, int width, int height, bool expanded, bool custom, bool disabled, const std::string& focusId)
 {
     Locale::Instance().Init((std::filesystem::path(GetExecutableDirectoryPath()) / L"lang").c_str());
     if (!Locale::Instance().HasLanguage(locale)) throw std::runtime_error("preview locale is not installed");
@@ -154,6 +157,9 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         static_cast<int>(std::ceil(height * scale)), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 
     PreviewWidgetService widgets(locale == "en-US");
+    widgets.value.customStyle = custom;
+    widgets.value.hostAppearance.followPersonalization = !custom;
+    if (custom) widgets.value.hostAppearance.presetId = "__custom";
     auto shell = winrt::make_self<winrt::SnowDesktop::implementation::SettingsShell>();
     shell->RequestedTheme(dark ? x::ElementTheme::Dark : x::ElementTheme::Light);
     shell->SetSystemBackdropActive(false);
@@ -161,14 +167,70 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     shell->SetConditionalPagesVisible(true, true);
     shell->SetWidgetSettingsService(&widgets);
     GeneralPageActions general;
+    general.onboarding.settingsIndex = [] {
+        SettingsSearchIndexInput index; index.developerToolsVisible = index.debugVisible = true;
+        PopulateSettingsSearchCatalog(index, [](std::string_view key) { return std::wstring(_LW(std::string(key).c_str())); }, true, true);
+        return index.staticSettings;
+    };
+    general.probeHotkey = [](SettingsHostActions::HotkeyTarget, HotkeyChord, std::uint64_t,
+        std::uint64_t, HotkeyRecorder::AvailabilityCompletion complete) { complete(true, {}); };
     general.languageCatalog = [] { return std::vector<SettingsLanguageOption>{{"zh-CN", L"简体中文"}, {"en-US", L"English"}}; }; // l10n-allow: isolated bilingual preview fixture, not production UI text.
     general.queryAdvancedFeatureStatus = [] { GeneralAdvancedFeatureStatus status; status.state = GeneralAdvancedFeatureState::Registered;
         status.bridgeAvailable = status.registered = status.cardVisible = true; return status; };
     shell->SetGeneralPageActions(std::move(general));
     PersonalizationPageActions appearance;
+    const bool english = locale == "en-US";
+    const auto themeLibrary = [english](std::uint64_t, const ThemeLibraryRequest& request) {
+        ThemeLibraryResult result;
+        if (request.command != ThemeLibraryCommand::Refresh) return result;
+        result.succeeded = true;
+        for (int index = 0; index < 4; ++index)
+        {
+            themes::Theme theme; theme.id = "preview-theme-" + std::to_string(index);
+            theme.kind = index == 2 ? themes::Kind::Popup : index == 3 ? themes::Kind::QuickPanel : themes::Kind::Global;
+            theme.name = english ? "Example theme for work and focus " : "工作与专注的示例主题 "; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+            theme.name += std::to_string(index + 1); result.library.themes.emplace(theme.id, std::move(theme));
+        }
+        return result;
+    };
+    appearance.themeLibrary = themeLibrary;
+    appearance.contextMenu = [english](const shell_extensions::Request&, bool) {
+        shell_extensions::CatalogueView result; result.catalogue.revision = 1;
+        for (int index = 0; index < 3; ++index)
+        {
+            shell_extensions::Registration item;
+            item.id = "preview-menu-" + std::to_string(index);
+            item.display.registration = item.id;
+            item.display.label = english ? L"Example file action " : L"示例文件操作 "; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+            item.display.label += std::to_wstring(index + 1);
+            item.application = {"preview-tools", english ? L"Example tools" : L"示例工具"}; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+            item.contexts = shell_extensions::ContextBit(shell_extensions::Context::File) |
+                shell_extensions::ContextBit(shell_extensions::Context::Folder);
+            item.linked = true; item.types = {L"*"};
+            result.catalogue.rows.push_back(std::move(item));
+        }
+        return result;
+    };
     appearance.listFonts = [] { return std::vector<app_fonts::Choice>{{{}, L"Segoe UI", L"Segoe UI"}}; };
     appearance.appliedFont = [] { return app_fonts::Selection{}; };
     shell->SetPersonalizationPageActions(std::move(appearance));
+    DockPageActions dock; dock.themeLibrary = themeLibrary; shell->SetDockPageActions(std::move(dock));
+    CalendarPageActions calendarActions;
+    calendarActions.events = [english](std::uint64_t) -> std::optional<std::vector<calendar::CalendarEvent>> {
+        std::vector<calendar::CalendarEvent> result;
+        for (int index = 0; index < 3; ++index)
+        {
+            calendar::CalendarEvent event; event.id = "preview-event-" + std::to_string(index); event.revision = 1;
+            event.title = english ? "Project planning and weekly review" : "项目规划与每周回顾"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+            event.date = "2026-10-13"; event.startMinutes = 540 + index * 60; event.endMinutes = event.startMinutes + 30;
+            result.push_back(std::move(event));
+        }
+        return result;
+    };
+    calendarActions.series = [](std::uint64_t) -> std::optional<std::vector<calendar::CalendarSeries>> {
+        return std::vector<calendar::CalendarSeries>{};
+    };
+    shell->SetCalendarPageActions(std::move(calendarActions));
     PageLayoutPageActions layout;
     layout.capture = [] { PageLayoutSnapshot snapshot; snapshot.revision = 1; snapshot.editable = true; snapshot.monitorCount = 2;
         snapshot.pages = {{L"example-1", L"Work / 工作", 12, 8, 10, 2}, {L"example-2", L"Projects / 项目", 10, 7, 5, 1}}; return snapshot; }; // l10n-allow: isolated bilingual preview fixture, not production UI text.
@@ -198,9 +260,19 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         snapshot.values.general.dockEnabled = !disabled;
         snapshot.values.general.statusBar.enabled = !disabled;
         snapshot.values.general.widgetDeveloperToolsEnabled = true;
+        snapshot.values.dock.fullscreenExceptions = {
+            {L"C:\\Preview\\Presentation.exe", DockFullscreenPolicy::Allow},
+            {L"C:\\Preview\\Game.exe", DockFullscreenPolicy::FullProtection}};
         if (custom)
         {
+            auto& icons = snapshot.values.desktop.iconBeautify;
+            icons.enabled = true; icons.preset = IconBeautifyPreset::Custom;
+            icons.glassEnabled = icons.edgeHighlightEnabled = icons.gradientEnabled = true;
+            icons.filterEnabled = icons.outlineEnabled = true;
             snapshot.values.personalization.backgroundPreset = kAppearancePresetCustom;
+            snapshot.values.personalization.panelGradient.enabled = true;
+            snapshot.values.personalization.panelGradient.stops = {
+                {0, 0xb6d6ef, .65}, {.5, 0xc8d0ef, .65}, {1, 0xd5c7ef, .65}};
             snapshot.values.dock.followComponentAppearance = false;
             snapshot.values.dock.appearancePreset = kAppearancePresetCustom;
             snapshot.values.dock.systemTaskbarBackdropEnabled = true;
@@ -214,9 +286,59 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         snapshot.route = SettingsRoute::ForPage(page);
         if (page == SettingsPage::WidgetSettings) snapshot.route = SettingsRoute::ForWidget(widgets.value.widgetId);
         if (page == SettingsPage::LargeIcon) snapshot.route.itemKey = L"settings-visual-example";
+        snapshot.route.focusId = focusId;
         if (!shell->ApplySnapshot(snapshot)) throw std::runtime_error("preview route refused: " + key);
+        HomeAboutStatusPatch status; status.generation = 1; status.revision = revision;
+        status.usageGuideExpanded = expanded; status.installedWidgetCount = 3;
+        status.backupState = SettingsBackupState::Ready; status.backupCount = 3;
+        status.debugDataDirectory = L"C:\\Preview\\SnowDesktop";
+        status.debugDesktopDirectory = L"C:\\Preview\\Desktop";
+        (void)shell->ApplyHomeAboutStatusPatch(status);
+        if (page == SettingsPage::Widgets || page == SettingsPage::DeveloperTools)
+        {
+            WidgetsPageSnapshot packages; packages.generation = 1; packages.revision = revision;
+            packages.developmentWorkspace = L"C:\\Preview\\Components";
+            packages.componentCliPath = L"C:\\Preview\\SnowDesktop\\snowwidget.exe";
+            WidgetAgentSkillTargetSnapshot skill; skill.id = "shared";
+            skill.targetPath = L"C:\\Preview\\Skills";
+            skill.state = WidgetAgentSkillInstallState::Current;
+            skill.installed = skill.selected = true; skill.installedRevision = skill.bundledRevision = 1;
+            packages.agentSkills.push_back(std::move(skill));
+            for (int index = 0; index < 3; ++index)
+            {
+                InstalledWidgetPackageSnapshot package;
+                package.packageId = L"preview-package-" + std::to_wstring(index);
+                package.name = english ? L"Workspace overview and daily progress" : L"工作区概览与每日进度"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+                package.name += L" " + std::to_wstring(index + 1);
+                package.description = english ? L"An example component with a longer description for layout review." : L"用于检查长名称、状态与操作排列的示例组件。"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+                package.version = L"1.2.0"; package.author = L"SnowDesktop"; package.builtIn = index == 0;
+                package.enabled = index != 2; packages.installed.push_back(std::move(package));
+            }
+            if (!shell->ApplyWidgetsPageSnapshot(packages)) throw std::runtime_error("preview component snapshot refused");
+        }
+        if (page == SettingsPage::BackupAndData)
+        {
+            BackupDataPageSnapshot backups; backups.generation = 1; backups.revision = revision; backups.initialized = true;
+            backups.dataDirectory = L"C:\\Preview\\SnowDesktop"; backups.fullBackupDirectory = L"D:\\Preview\\Backups";
+            for (int index = 0; index < 3; ++index)
+            {
+                const auto id = L"preview-backup-" + std::to_wstring(index);
+                const auto name = (english ? L"Before reorganizing the workspace " : L"重新整理工作区之前的备份 ") + std::to_wstring(index + 1); // l10n-allow: isolated bilingual preview fixture, not production UI text.
+                backups.layoutBackups.push_back({id, name, L"2026-10-13 09:00", index == 0});
+                backups.fullBackups.push_back({id, name, L"2026-10-13 09:00", L"Manual", 84, 12582912, false});
+            }
+            if (!shell->ApplyBackupDataPageSnapshot(backups)) throw std::runtime_error("preview backup snapshot refused");
+        }
         Settle(shell.as<x::FrameworkElement>());
         const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
+        if (page == SettingsPage::Calendar && custom)
+        {
+            Walk(cards, [](const x::DependencyObject& node) {
+                if (const auto list = node.try_as<c::ListView>(); list && list.Items().Size() > 0)
+                    list.SelectedIndex(0);
+            });
+            Settle(shell.as<x::FrameworkElement>());
+        }
         if (expanded)
         {
             for (int pass = 0; pass < 4; ++pass)
@@ -236,7 +358,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             const auto text = row.Children().GetAt(0).try_as<c::StackPanel>();
             const auto editor = row.Children().GetAt(1).try_as<x::FrameworkElement>();
             if (!text || text.Children().Size() == 0 || !editor) return;
-            const auto label = text.Children().GetAt(0).try_as<c::TextBlock>();
+            c::TextBlock label{nullptr};
+            Walk(text, [&](const x::DependencyObject& child) {
+                if (!label) label = child.try_as<c::TextBlock>();
+            });
             if (!label) return;
             auto title = winrt::to_string(label.Text());
             std::replace(title.begin(), title.end(), '\t', ' '); std::replace(title.begin(), title.end(), '\n', ' ');
@@ -270,6 +395,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 {reinterpret_cast<const std::uint32_t*>(bytes), static_cast<std::size_t>(buffer.Length() / 4)}, error))
                 throw std::runtime_error(error);
             manifest << key << '\t' << image << '\t' << width << '\t' << height << '\t' << scroll.VerticalOffset() << '\t' << maximum << '\n';
+            manifest.flush(); rows.flush();
             if (offset >= maximum) break;
         }
     }
@@ -286,8 +412,8 @@ std::optional<int> TryRunSettingsVisualPreview()
     struct FreeArgs { LPWSTR* value; ~FreeArgs() { LocalFree(value); } } freeArgs{args};
     if (count < 2 || std::wstring_view(args[1]) != L"--settings-visual-preview") return std::nullopt;
     // Internal diagnostic only: output, page key/all, light/dark, locale,
-    // supported window width/height in DIP, expanded/collapsed.
-    if (count != 9) return ERROR_BAD_ARGUMENTS;
+    // supported window width/height in DIP, disclosure state, optional focus ID.
+    if (count != 9 && count != 10) return ERROR_BAD_ARGUMENTS;
     std::filesystem::path output(args[2]);
     try
     {
@@ -299,7 +425,8 @@ std::optional<int> TryRunSettingsVisualPreview()
         if (theme != L"light" && theme != L"dark") throw std::runtime_error("preview supports light or dark XAML surfaces");
         if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled") throw std::runtime_error("invalid disclosure state");
         Export(output, winrt::to_string(args[3]), theme == L"dark", winrt::to_string(args[5]), width, height,
-            state == L"expanded" || state == L"custom", state == L"custom", state == L"disabled");
+            state == L"expanded" || state == L"custom", state == L"custom", state == L"disabled",
+            count == 10 ? winrt::to_string(args[9]) : std::string{});
         std::ofstream(output / L"result.txt") << "passed\nIsolated production XAML, example data; no desktop material or interaction acceptance.\n";
         return 0;
     }

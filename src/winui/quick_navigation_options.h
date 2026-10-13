@@ -27,12 +27,12 @@ public:
             edit(candidate);
             if (Accept(candidate)) apply(std::move(edit));
         };
-        root_.Spacing(8);
+        root_.Spacing(appearanceOnly_ ? 8 : 24);
         notice_.Severity(winrt::Microsoft::UI::Xaml::Controls::InfoBarSeverity::Error);
         notice_.IsClosable(false); notice_.IsOpen(false); root_.Children().Append(notice_);
         if (appearanceOnly_)
         {
-            winrt::Microsoft::UI::Xaml::Controls::Button resetLayout;
+            winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton resetLayout;
             ConfigureGroupReset(resetLayout,"quickNav.layout");
             resetLayout.Click([this](auto&&,auto&&) {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});});
             auto layoutHeader = Header("quickNav.layout",resetLayout);
@@ -86,14 +86,8 @@ public:
             AddRow(engines, "quickNav.defaultEngine", defaultEngine_, [](auto& value) {if (!value.engines.empty()) value.defaultEngine = std::any_of(value.engines.begin(), value.engines.end(), [](const auto& engine) {return engine.id == "bing";}) ? "bing" : value.engines.front().id;});
             presenter_controls::StyleSettingsCard(rowStorage_.back()->root);
             Panel management; management.Spacing(8);
-            winrt::Microsoft::UI::Xaml::Controls::TextBlock engineHint; engineHint.Text(L("quickNav.engines.hint"));
-            engineHint.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap); engineHint.Opacity(.68);
-            labels_.emplace_back("quickNav.engines.hint",engineHint); management.Children().Append(engineHint);
             management.Children().Append(engineRows_);
-            engineManagement_.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
-            engineManagement_.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
-            engineManagement_.Content(management);
-            engines.Children().Append(engineManagement_);
+
             addEngine_.Click([this](auto&&, auto&&) {
                 auto candidate = values_;
                 unsigned id = 1;
@@ -102,19 +96,20 @@ public:
                 candidate.engines.push_back({"custom" + std::to_string(id), "Bing " + std::to_string(id), "web" + std::to_string(id), "https://www.bing.com/search?q={query}"});
                 if (Accept(candidate))
                 {
-                    engineManagement_.IsExpanded(true);
                     commit_([engines = candidate.engines](auto& value) {value.engines = engines;});
                 }
             });
-            addEngine_.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Right);
+            presenter_controls::ConfigureSettingsHeadingLink(addEngine_);
             Panel engineActions; engineActions.Orientation(winrt::Microsoft::UI::Xaml::Controls::Orientation::Horizontal); engineActions.Spacing(8);
-            winrt::Microsoft::UI::Xaml::Controls::Button resetEngines;
+            winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton resetEngines;
             ConfigureGroupReset(resetEngines,"quickNav.engines.manage");
             resetEngines.Click([this](auto&&,auto&&) {commit_([](auto& value) {value.engines = NavigationSettings{}.engines; value.defaultEngine = "bing";});});
             engineActions.Children().Append(addEngine_); engineActions.Children().Append(resetEngines);
-            engineManagement_.Header(Header("quickNav.engines.manage", engineActions));
-            focus_.emplace("quickNav.engines",engineManagement_);
-            focus_.emplace("quickNav.engines.manage",engineManagement_);
+            auto managementHeading = Header("quickNav.engines.manage", engineActions);
+            management.Children().InsertAt(0, managementHeading);
+            engines.Children().Append(management);
+            focus_.emplace("quickNav.engines",management);
+            focus_.emplace("quickNav.engines.manage",management);
         }
         if (appearanceOnly_)
         {
@@ -182,7 +177,13 @@ public:
         for (const auto& [key, label] : labels_) label.Text(L(key));
         for (const auto& [key, button] : groupResets_)
             presenter_controls::ConfigureRestoreDefaultButton(button, L("app.settings.restore_default") + L" · " + L(key));
-        for (const auto& [key, row] : rows_) row->SetText(L(key), key == "quickNav.layout.visibleRows" ? L("quickNav.layout.rowsHint") : std::wstring{});
+        for (const auto& [key, link] : groupResetLinks_)
+        {
+            link.Content(winrt::box_value(L("app.settings.restore_default")));
+            winrt::Microsoft::UI::Xaml::Automation::AutomationProperties::SetName(link,
+                L("app.settings.restore_default") + L" · " + L(key));
+        }
+        for (const auto& [key, row] : rows_) row->SetText(L(key));
         if (!appearanceOnly_)
         {
             addEngine_.Content(winrt::box_value(L("quickNav.engine.add")));
@@ -216,6 +217,11 @@ private:
     {
         presenter_controls::ConfigureRestoreDefaultButton(button, L("app.settings.restore_default") + L" · " + L(key));
         groupResets_.emplace_back(key, button);
+    }
+    void ConfigureGroupReset(const winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton& link, const std::string& key)
+    {
+        presenter_controls::ConfigureSettingsHeadingLink(link);
+        groupResetLinks_.emplace_back(key, link);
     }
     bool Accept(const NavigationSettings& candidate)
     {
@@ -262,7 +268,7 @@ private:
                 const QuickNavigationLayout defaults;
                 for (const auto field : fields) value.layout.*field = defaults.*field;
             });
-        }, "quickNav.layout.pixelHint");
+        });
     }
     winrt::Microsoft::UI::Xaml::Controls::Grid Header(const std::string& key,
         const winrt::Microsoft::UI::Xaml::FrameworkElement& action)
@@ -333,6 +339,13 @@ private:
                 });
                 group.Children().Append(row.root);
             }
+            winrt::Microsoft::UI::Xaml::Controls::TextBlock inputHint;
+            inputHint.Text(L("quickNav.engines.hint"));
+            inputHint.FontSize(12);
+            inputHint.TextWrapping(winrt::Microsoft::UI::Xaml::TextWrapping::Wrap);
+            inputHint.Opacity(.68);
+            inputHint.Margin({16, 8, 16, 12});
+            group.Children().Append(inputHint);
             winrt::Microsoft::UI::Xaml::Controls::Expander expander;
             expander.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
             expander.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
@@ -349,8 +362,7 @@ private:
     std::vector<Panel> groupPanels_;
     winrt::Microsoft::UI::Xaml::Controls::ComboBox defaultEngine_;
     winrt::Microsoft::UI::Xaml::Controls::InfoBar notice_;
-    winrt::Microsoft::UI::Xaml::Controls::Button addEngine_;
-    winrt::Microsoft::UI::Xaml::Controls::Expander engineManagement_;
+    winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton addEngine_;
     std::string expandedEngine_;
     std::vector<std::pair<std::string,winrt::Microsoft::UI::Xaml::Controls::Expander>> engineExpanders_;
     std::array<winrt::Microsoft::UI::Xaml::Controls::TextBox, 6> prefixes_;
@@ -360,6 +372,7 @@ private:
     std::vector<std::pair<std::string,presenter_controls::SettingRow*>> rows_;
     std::vector<std::pair<std::string,winrt::Microsoft::UI::Xaml::Controls::TextBlock>> labels_;
     std::vector<std::pair<std::string,winrt::Microsoft::UI::Xaml::Controls::Button>> groupResets_;
+    std::vector<std::pair<std::string,winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton>> groupResetLinks_;
     std::map<std::string,winrt::Microsoft::UI::Xaml::FrameworkElement> focus_;
 };
 }

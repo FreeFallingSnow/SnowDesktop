@@ -241,7 +241,7 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
         else if (focus == "personalization.font" || focus == "personalization.tooltipFontSize")
             route.page = SettingsPage::AppearanceDesktopIcons;
         else if (focus == "personalization.cornerRadius" || focus == "personalization.barHeight")
-            route.page = SettingsPage::AppearanceTheme;
+            route.page = SettingsPage::AppearanceDesktopIcons;
         else if (focus == "personalization.luaWidgetRowHeight" || focus == "personalization.widgetTransformCursors")
             route.page = SettingsPage::Widgets;
         else if (focus == "desktop.spacing" || focus == "desktop.iconSpacing")
