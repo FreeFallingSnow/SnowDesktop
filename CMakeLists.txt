@@ -1344,6 +1344,12 @@ if (BUILD_TESTING)
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_1.dll"
         "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_2.dll")
     set_tests_properties(hook_stable_entry32 PROPERTIES LABELS "core;integration;deployment" TIMEOUT 30)
+    add_test(NAME hook_stable_entry_cross32 COMMAND SnowDesktopHookEntryTests --cross32
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopHookEntry32.dll"
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_1.dll"
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_2.dll"
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryTests32.exe")
+    set_tests_properties(hook_stable_entry_cross32 PROPERTIES LABELS "core;integration;deployment" TIMEOUT 30)
 
     snowdesktop_add_test(
         SnowDesktopShellOverlayWindowTests

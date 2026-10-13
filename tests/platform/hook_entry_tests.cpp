@@ -19,7 +19,11 @@ constexpr Payload kTestPayload = Payload::Dock32;
 constexpr WORD kTestMachine = IMAGE_FILE_MACHINE_I386, kOtherMachine = IMAGE_FILE_MACHINE_AMD64;
 constexpr char kTestExport[] = "_SnowDesktopDockSourceCloakHook@12";
 #endif
-struct Fixture { HWND window = nullptr; };
+struct Fixture
+{
+    std::uint64_t window = 0;
+    HWND Window() const noexcept { return reinterpret_cast<HWND>(static_cast<UINT_PTR>(window)); }
+};
 constexpr UINT kMarkerMessage = WM_APP + 91, kClose = WM_APP + 92;
 LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
 {
@@ -43,8 +47,8 @@ int Target(const wchar_t* name)
     definition.hInstance = GetModuleHandleW(nullptr); definition.lpfnWndProc = WindowProcedure;
     definition.lpszClassName = L"SnowDesktop.Hook.Entry.Fixture";
     if (!RegisterClassW(&definition)) return 4;
-    fixture->window = CreateWindowExW(0, definition.lpszClassName, L"", 0, 0, 0, 0, 0,
-        HWND_MESSAGE, nullptr, definition.hInstance, nullptr);
+    fixture->window = reinterpret_cast<UINT_PTR>(CreateWindowExW(0, definition.lpszClassName, L"", 0, 0, 0, 0, 0,
+        HWND_MESSAGE, nullptr, definition.hInstance, nullptr));
     MSG message{};
     while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
     UnmapViewOfFile(fixture); CloseHandle(mapping);
@@ -53,8 +57,31 @@ int Target(const wchar_t* name)
 int wmain(int argc, wchar_t** argv)
 {
     if (argc == 3 && std::wstring_view(argv[1]) == L"--target") return Target(argv[2]);
-    if (argc != 4) return 2;
-    auto entrySource = std::filesystem::path(argv[1]);
+#ifndef _WIN64
+    if (argc == 6 && std::wstring_view(argv[1]) == L"--inject")
+    {
+        const HWND window = reinterpret_cast<HWND>(ULongToHandle(wcstoul(argv[2], nullptr, 10)));
+        const HANDLE ready = OpenEventW(EVENT_MODIFY_STATE, FALSE, argv[4]);
+        const HANDLE stop = OpenEventW(SYNCHRONIZE, FALSE, argv[5]);
+        const HMODULE module = LoadLibraryW(argv[3]);
+        const auto procedure = module ? reinterpret_cast<HOOKPROC>(GetProcAddress(module, kTestExport)) : nullptr;
+        const HHOOK hook = procedure ? SetWindowsHookExW(WH_CALLWNDPROC, procedure, module,
+            GetWindowThreadProcessId(window, nullptr)) : nullptr;
+        bool success = ready && stop && hook && SetEvent(ready);
+        if (success) success = WaitForSingleObject(stop, 10000) == WAIT_OBJECT_0;
+        if (hook) success = UnhookWindowsHookEx(hook) && success;
+        if (module) FreeLibrary(module);
+        if (ready) CloseHandle(ready);
+        if (stop) CloseHandle(stop);
+        return success ? 0 : 5;
+    }
+#endif
+    const bool cross = argc == 6 && std::wstring_view(argv[1]) == L"--cross32";
+    if (argc != 4 && !cross) return 2;
+    const int offset = cross ? 1 : 0;
+    const Payload payload = cross ? Payload::Dock32 : kTestPayload;
+    const WORD machine = cross ? IMAGE_FILE_MACHINE_I386 : kTestMachine;
+    auto entrySource = std::filesystem::path(argv[1 + offset]);
     if (!std::filesystem::is_regular_file(entrySource))
         entrySource = entrySource.parent_path() / L"SnowDesktop.Runtime" / entrySource.filename();
     const DWORD owner = GetCurrentProcessId();
@@ -67,51 +94,64 @@ int wmain(int argc, wchar_t** argv)
     if (!fixture) return 3;
     *fixture = {};
     wchar_t executable[32768]{}; GetModuleFileNameW(nullptr, executable, 32768);
-    std::wstring command = L"\"" + std::wstring(executable) + L"\" --target " + name;
+    const std::wstring targetExecutable = cross ? argv[5] : executable;
+    std::wstring command = L"\"" + targetExecutable + L"\" --target " + name;
     STARTUPINFOW startup{}; startup.cb = sizeof(startup);
     PROCESS_INFORMATION target{};
-    if (!CreateProcessW(executable, command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
+    if (!CreateProcessW(targetExecutable.c_str(), command.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW,
             nullptr, nullptr, &startup, &target)) return 4;
-    bool passed = WaitFor([&] { return fixture->window != nullptr; });
+    bool passed = WaitFor([&] { return fixture->window != 0; });
     DWORD targetOwner = 0;
-    const DWORD thread = GetWindowThreadProcessId(fixture->window, &targetOwner);
+    const DWORD thread = GetWindowThreadProcessId(fixture->Window(), &targetOwner);
     passed = passed && thread && targetOwner == target.dwProcessId;
     const auto first = root / L"implementation-0.dll";
-    std::filesystem::copy_file(argv[2], first);
-    const auto entry = Prepare(root / L"cache", entrySource, kTestPayload, first);
-    passed = passed && !entry.empty() && HasEntryAbi(entry, kTestMachine) &&
-        !HasEntryAbi(entry, kOtherMachine);
-    const HMODULE module = entry.empty() ? nullptr : LoadLibraryW(entry.c_str());
+    std::filesystem::copy_file(argv[2 + offset], first);
+    const auto entry = Prepare(root / L"cache", entrySource, payload, first);
+    passed = passed && !entry.empty() && HasEntryAbi(entry, machine) &&
+        !HasEntryAbi(entry, machine == IMAGE_FILE_MACHINE_I386 ? IMAGE_FILE_MACHINE_AMD64 : IMAGE_FILE_MACHINE_I386);
+    const HMODULE module = entry.empty() || cross ? nullptr : LoadLibraryW(entry.c_str());
     const auto procedure = module ? reinterpret_cast<HOOKPROC>(GetProcAddress(module, kTestExport)) : nullptr;
-    SetPropW(fixture->window, kOwnerProperty, ULongToHandle(owner));
-#ifndef _WIN64
+    SetPropW(fixture->Window(), kOwnerProperty, ULongToHandle(owner));
     // Dock32 routes through the marked receiver. The host's catalog remains
     // pointer-free; no target address is dereferenced across this boundary.
     WNDCLASSW hostType{};
     hostType.hInstance = GetModuleHandleW(nullptr); hostType.lpfnWndProc = WindowProcedure;
     hostType.lpszClassName = L"SnowDesktop.Entry.Host.Fixture";
     RegisterClassW(&hostType);
-    HWND receiver = CreateWindowExW(0, hostType.lpszClassName, L"", 0, 0, 0, 0, 0,
+    const HWND receiver = CreateWindowExW(0, hostType.lpszClassName, L"", 0, 0, 0, 0, 0,
         HWND_MESSAGE, nullptr, hostType.hInstance, nullptr);
-    passed = passed && receiver && SetPropW(fixture->window, L"SnowDesktop.Dock.MinimizeTarget.v1", receiver);
-#endif
+    passed = passed && receiver && SetPropW(fixture->Window(), L"SnowDesktop.Dock.MinimizeTarget.v1", receiver);
     const HHOOK hook = procedure ? SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread) : nullptr;
-    passed = passed && hook;
+    const auto readyName = name + L".ready", stopName = name + L".stop";
+    HANDLE ready = nullptr, stop = nullptr;
+    PROCESS_INFORMATION injector{};
+    bool registered = hook != nullptr;
+    if (cross && passed)
+    {
+        ready = CreateEventW(nullptr, TRUE, FALSE, readyName.c_str());
+        stop = CreateEventW(nullptr, TRUE, FALSE, stopName.c_str());
+        command = L"\"" + targetExecutable + L"\" --inject " + std::to_wstring(HandleToULong(fixture->Window())) +
+            L" \"" + entry + L"\" " + readyName + L" " + stopName;
+        passed = ready && stop && CreateProcessW(targetExecutable.c_str(), command.data(), nullptr, nullptr,
+            FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &injector);
+        registered = passed && WaitForSingleObject(ready, 4000) == WAIT_OBJECT_0;
+    }
+    passed = passed && registered;
     unsigned dispatched = 0;
     for (unsigned version = 0; version < 40 && passed; ++version)
     {
         const auto image = version ? root / (L"implementation-" + std::to_wstring(version) + L".dll") : first;
-        if (version) std::filesystem::copy_file(version % 2 ? argv[3] : argv[2], image);
-        const auto selected = Prepare(root / L"cache", entrySource, kTestPayload, image);
+        if (version) std::filesystem::copy_file(version % 2 ? argv[3 + offset] : argv[2 + offset], image);
+        const auto selected = Prepare(root / L"cache", entrySource, payload, image);
         passed = selected == entry;
         DWORD_PTR ignored = 0;
-        passed = passed && SendMessageTimeoutW(fixture->window, kMarkerMessage, owner, 0,
+        passed = passed && SendMessageTimeoutW(fixture->Window(), kMarkerMessage, owner, 0,
             SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &ignored) != 0;
-        passed = passed && GetPropW(fixture->window, L"SnowDesktop.Entry.Fixture.Marker") == ULongToHandle(version % 2 ? 2 : 1);
+        passed = passed && GetPropW(fixture->Window(), L"SnowDesktop.Entry.Fixture.Marker") == ULongToHandle(version % 2 ? 2 : 1);
         if (passed) ++dispatched;
     }
     unsigned entryImages = 0, implementationImages = 0;
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, target.dwProcessId);
+    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, target.dwProcessId);
     if (snapshot != INVALID_HANDLE_VALUE)
     {
         MODULEENTRY32W image{sizeof(image)};
@@ -130,20 +170,29 @@ int wmain(int argc, wchar_t** argv)
     {
         const auto creation = catalog->ownerCreation;
         InterlockedIncrement(&catalog->sequence); catalog->ownerCreation ^= 1; InterlockedIncrement(&catalog->sequence);
-        RemovePropW(fixture->window, L"SnowDesktop.Entry.Fixture.Marker");
+        RemovePropW(fixture->Window(), L"SnowDesktop.Entry.Fixture.Marker");
         DWORD_PTR ignored = 0;
-        SendMessageTimeoutW(fixture->window, kMarkerMessage, owner, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &ignored);
-        passed = passed && !GetPropW(fixture->window, L"SnowDesktop.Entry.Fixture.Marker");
+        SendMessageTimeoutW(fixture->Window(), kMarkerMessage, owner, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &ignored);
+        passed = passed && !GetPropW(fixture->Window(), L"SnowDesktop.Entry.Fixture.Marker");
         InterlockedIncrement(&catalog->sequence); catalog->ownerCreation = creation; InterlockedIncrement(&catalog->sequence);
         UnmapViewOfFile(catalog);
     }
     else passed = false;
     if (catalogMapping) CloseHandle(catalogMapping);
     if (hook) passed = UnhookWindowsHookEx(hook) && passed;
-#ifndef _WIN64
+    if (stop) SetEvent(stop);
+    if (injector.hProcess)
+    {
+        DWORD result = 99;
+        const bool done = WaitForSingleObject(injector.hProcess, 4000) == WAIT_OBJECT_0;
+        passed = done && GetExitCodeProcess(injector.hProcess, &result) && result == 0 && passed;
+        if (!done) TerminateProcess(injector.hProcess, 99);
+        CloseHandle(injector.hProcess); CloseHandle(injector.hThread);
+    }
+    if (ready) CloseHandle(ready);
+    if (stop) CloseHandle(stop);
     DestroyWindow(receiver);
-#endif
-    PostMessageW(fixture->window, kClose, 0, 0);
+    PostMessageW(fixture->Window(), kClose, 0, 0);
     const bool exited = WaitForSingleObject(target.hProcess, 5000) == WAIT_OBJECT_0;
     passed = passed && exited;
     if (!exited) { TerminateProcess(target.hProcess, 99); WaitForSingleObject(target.hProcess, 2000); }
@@ -153,6 +202,7 @@ int wmain(int argc, wchar_t** argv)
     std::error_code ignored;
     std::filesystem::remove_all(root, ignored);
     std::cout << (passed ? "PASS" : "FAIL") << " implementations=" << dispatched << " entryImages=" << entryImages
-        << " implementationImages=" << implementationImages << " HookRegistrations=" << (hook ? 1 : 0) << '\n';
+        << " implementationImages=" << implementationImages << " HookRegistrations=" << (registered ? 1 : 0)
+        << " cross32=" << cross << '\n';
     return passed ? 0 : 1;
 }
