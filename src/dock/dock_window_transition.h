@@ -199,6 +199,7 @@ private:
     bool CreateGenieStrips();
     bool ApplyGenieFrame(double progress, BYTE opacity);
     void ClearGenieStrips();
+    bool StartGenieTimeline();
     bool StartCompositionTimeline(bool opacityOnly = false);
     bool CommitCompositionTimeline(std::span<IDCompositionAnimation* const> animations);
     bool ScheduleAnimationWake();

@@ -1,4 +1,5 @@
 #include "dock_window_transition.h"
+#include "dock_genie_timeline.h"
 #include "dock_minimize_protocol.h"
 #include "dock_window_source_cloak.h"
 #include "dock_window_rules.h"
@@ -1179,6 +1180,65 @@ bool DockWindowTransition::ApplyGenieFrame(double collapsed, BYTE opacity)
     return SUCCEEDED(hr);
 }
 
+bool DockWindowTransition::StartGenieTimeline()
+{
+    snowdesktop::performance::Scope performanceScope("dock.transition", "genie.timeline.prepare");
+    namespace genie = snowdesktop::dock_genie;
+    if (genieStrips_.size() != genie::StripCount) return false;
+    const genie::Rect window{static_cast<double>(windowRect_.left), static_cast<double>(windowRect_.top),
+        static_cast<double>(windowRect_.right), static_cast<double>(windowRect_.bottom)};
+    const genie::Rect dock{static_cast<double>(dockRect_.left), static_cast<double>(dockRect_.top),
+        static_cast<double>(dockRect_.right), static_cast<double>(dockRect_.bottom)};
+    const bool vertical = genie::Vertical(genieEdge_);
+    const std::array<std::array<int, 2>, 7> elements{{{0, 0},
+        vertical ? std::array<int, 2>{1, 0} : std::array<int, 2>{0, 1}, {1, 1},
+        vertical ? std::array<int, 2>{1, 3} : std::array<int, 2>{0, 3}, {3, 0}, {3, 1}, {3, 3}}};
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionAnimation>> ownedAnimations;
+    std::vector<IDCompositionAnimation*> animations;
+    ownedAnimations.reserve(genieStrips_.size() * elements.size() + 1);
+    animations.reserve(ownedAnimations.capacity());
+    const double duration = animationDurationMs_ / 1000.0;
+    const double stepSeconds = duration / genie::TimelineSteps;
+    HRESULT hr = S_OK;
+    for (std::size_t strip = 0; strip < genieStrips_.size() && SUCCEEDED(hr); ++strip)
+    {
+        Microsoft::WRL::ComPtr<IDCompositionMatrixTransform3D> transform;
+        hr = compositionDevice_->CreateMatrixTransform3D(&transform);
+        const double begin = static_cast<double>(strip) / static_cast<double>(genieStrips_.size());
+        const double end = static_cast<double>(strip + 1) / static_cast<double>(genieStrips_.size());
+        std::array<genie::TimelineSample, genie::TimelineSteps + 1> samples{};
+        for (std::size_t step = 0; step < samples.size(); ++step)
+            samples[step] = genie::SampleTimeline(window, dock, genieEdge_, collapseFrom_, collapseTo_,
+                static_cast<double>(step) / genie::TimelineSteps, compositionImageSize_.cx,
+                compositionImageSize_.cy, begin, end, imageHostRect_.left, imageHostRect_.top);
+        for (std::size_t element = 0; element < elements.size() + (strip == 0 ? 1 : 0) && SUCCEEDED(hr); ++element)
+        {
+            Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
+            hr = compositionDevice_->CreateAnimation(&animation);
+            for (std::size_t step = 0; step < genie::TimelineSteps && SUCCEEDED(hr); ++step)
+            {
+                const auto curve = genie::TimelineSegment(samples[step], samples[step + 1], element, duration);
+                hr = animation->AddCubic(step * stepSeconds,
+                    curve.constant, curve.linear, curve.quadratic, curve.cubic);
+            }
+            if (SUCCEEDED(hr)) hr = animation->End(duration, static_cast<float>(samples.back().value[element]));
+            if (SUCCEEDED(hr))
+            {
+                if (element == elements.size()) hr = compositionEffect_->SetOpacity(animation.Get());
+                else hr = transform->SetMatrixElement(
+                    elements[element][0], elements[element][1], animation.Get());
+            }
+            if (SUCCEEDED(hr))
+            {
+                animations.push_back(animation.Get());
+                ownedAnimations.push_back(std::move(animation));
+            }
+        }
+        if (SUCCEEDED(hr)) hr = genieStrips_[strip]->SetTransform(transform.Get());
+    }
+    return SUCCEEDED(hr) && CommitCompositionTimeline(animations);
+}
+
 bool DockWindowTransition::CommitCompositionTimeline(
     std::span<IDCompositionAnimation* const> animations)
 {
@@ -1227,6 +1287,9 @@ bool DockWindowTransition::StartCompositionTimeline(bool opacityOnly)
         const std::array<IDCompositionAnimation*, 1> animations{opacity.Get()};
         return SUCCEEDED(hr) && CommitCompositionTimeline(animations);
     }
+
+    if (effect_ == 3)
+        return StartGenieTimeline();
 
     const auto width = [](const RECT& rect) {
         return std::max(1L, rect.right - rect.left);
@@ -1331,7 +1394,7 @@ bool DockWindowTransition::ScheduleAnimationWake()
     animationToken_ = 0;
 
     const bool retiring = awaitingRestoreVisibility_ && restoreFadeStartTimeMs_ > 0.0;
-    if (UsesCompositionImage() && !preparingRestore_ && (effect_ != 3 || retiring))
+    if (UsesCompositionImage() && !preparingRestore_)
     {
         if (!StartCompositionTimeline(retiring))
             return false;
@@ -1532,18 +1595,14 @@ bool DockWindowTransition::OnAnimationFrame(
     if (preparingRestore_)
     {
         if (!PrepareRestoredWindow(now)) return IsActive();
-        if (effect_ != 3)
+        // The preparation poll owns a CPU frame token, but the restored
+        // image now has its final geometry and can run independently.
+        if (!ScheduleAnimationWake())
         {
-            // The preparation poll owns a CPU frame token, but the restored
-            // image now has its final geometry and can run independently.
-            if (!ScheduleAnimationWake())
-            {
-                CompleteRestoreAfterRenderFailure();
-                Finish();
-            }
-            return false;
+            CompleteRestoreAfterRenderFailure();
+            Finish();
         }
-        return true;
+        return false;
     }
     if (awaitingRestoreVisibility_)
     {

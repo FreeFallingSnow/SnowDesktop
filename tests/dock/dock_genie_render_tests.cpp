@@ -1,4 +1,5 @@
 #include "dock/dock_genie_rules.h"
+#include "dock/dock_genie_timeline.h"
 #include "dock/dock_minimize_protocol.h"
 #include "dock/dock_window_shared_thumbnail.h"
 #include "dock/dock_window_source_cloak.h"
@@ -31,6 +32,10 @@ struct DockWindowTransitionTestAccess
     static bool RetainsPresentedImage(const DockWindowTransition& transition)
     {
         return transition.retiredWindowImage_.visual || !transition.retiredGenieWindowImages_.empty();
+    }
+    static bool TimelineActive(const DockWindowTransition& transition)
+    {
+        return transition.compositionTimelineActive_;
     }
 };
 
@@ -136,6 +141,73 @@ void CheckContinuousOutline()
             Gap(Transform(matrix, 3840, 2160), {target.right, target.bottom}) < 0.001,
             "projective animation preserves both window and Dock endpoints");
     }
+}
+
+void CheckTimelineGeometry()
+{
+    using namespace snowdesktop::dock_genie;
+    double maximumError = 0, maximumGap = 0, maximumOpacityError = 0;
+    bool positive = true;
+    // Compare the compositor's float cubic coefficients with the exact spatial
+    // deformation, including mid-segment times and reversals on mixed monitors.
+    for (const double width : {1920.0, 3840.0, 7680.0})
+        for (const auto edge : {Edge::Bottom, Edge::Top, Edge::Left, Edge::Right})
+            for (const auto range : {std::array<double, 2>{0, 1}, {1, 0}, {0.43, 0}, {0.43, 1}})
+            {
+                const double height = width * 0.5625;
+                const Rect window{-width, -height, 0, 0};
+                const Rect dock{-width + 73, height * 0.3, -width + 137, height * 0.3 + 64};
+                TimelineValues previous{};
+                for (std::size_t step = 0; step < TimelineSteps; ++step)
+                    for (const double fraction : {0.0, 0.19, 0.51, 0.83, 1.0})
+                        for (std::size_t strip = 0; strip < StripCount; ++strip)
+                        {
+                            const double begin = static_cast<double>(strip) / StripCount;
+                            const double end = static_cast<double>(strip + 1) / StripCount;
+                            const auto sample = [&](std::size_t time) {
+                                return SampleTimeline(window, dock, edge, range[0], range[1],
+                                    static_cast<double>(time) / TimelineSteps, width, height,
+                                    begin, end, -width, -height);
+                            };
+                            const auto first = sample(step), last = sample(step + 1);
+                            TimelineValues value{};
+                            for (std::size_t element = 0; element < value.size(); ++element)
+                                value[element] = TimelineSegment(first, last, element, 0.08).Evaluate(
+                                    fraction * 0.08 / TimelineSteps);
+                            const double progress = (step + fraction) / TimelineSteps;
+                            const double collapsed = Mix(range[0], range[1], Smooth(progress));
+                            const auto exact = StripProjectiveMatrix(window, dock, edge, collapsed,
+                                width, height, begin, end, -width, -height);
+                            const auto project = [&](const TimelineValues& values, double axis, double cross) {
+                                const double x = Vertical(edge) ? cross * width : axis * width;
+                                const double y = Vertical(edge) ? axis * height : cross * height;
+                                const double w = values[3] * (Vertical(edge) ? y : x) + values[6];
+                                positive = positive && w > 0 && std::isfinite(w);
+                                return Point{(values[0] * x + (Vertical(edge) ? values[1] * y : 0) + values[4]) / w,
+                                    ((Vertical(edge) ? 0 : values[1] * x) + values[2] * y + values[5]) / w};
+                            };
+                            for (const double axis : {begin, end})
+                                for (const double cross : {0.0, 0.5, 1.0})
+                                {
+                                    const Point actual = project(value, axis, cross);
+                                    const double x = (Vertical(edge) ? cross : axis) * width;
+                                    const double y = (Vertical(edge) ? axis : cross) * height;
+                                    maximumError = std::max(maximumError, Gap(actual, Transform(exact, x, y)));
+                                }
+                            if (strip)
+                                for (const double cross : {0.0, 0.5, 1.0})
+                                    maximumGap = std::max(maximumGap,
+                                        Gap(project(previous, begin, cross), project(value, begin, cross)));
+                            maximumOpacityError = std::max(maximumOpacityError, std::abs(value[7] - Opacity(collapsed)));
+                            previous = value;
+                        }
+            }
+    std::cout << "Genie cubic maximum error=" << maximumError << "px gap=" << maximumGap
+        << "px opacity=" << maximumOpacityError << '\n';
+    Check(positive, "compositor curves keep the entire mesh in front of the perspective camera");
+    Check(maximumError < 0.5, "compositor timeline preserves the exact deformation to half a pixel through 8K");
+    Check(maximumGap < 0.15, "adjacent compositor strips remain continuous between keyframes and during reversals");
+    Check(maximumOpacityError < 1.0 / 255.0, "compositor opacity remains within one alpha step of the original effect");
 }
 
 LRESULT CALLBACK FrameFixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -294,6 +366,64 @@ void CheckFramePixelAlignment()
         if (target) target->SetRoot(nullptr);
         if (composition) { composition->Commit(); composition->WaitForCommitCompletion(); }
         image.Reset();
+        if (SUCCEEDED(hr))
+        {
+            snowdesktop::UiAnimationScheduler scheduler;
+            DockWindowTransition transition;
+            Check(scheduler.Initialize() && transition.Initialize(type.hInstance, &scheduler, nullptr, composition.Get()),
+                "owned compositor animation fixture initializes");
+            snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                2, 0, 60, false, false, 3);
+            const RECT dock{frame.left + 80, frame.bottom + 8, frame.left + 144, frame.bottom + 72};
+            const RECT host = ResolveDockWindowImageHostRect(frame, dock);
+            ShowWindow(destination, SW_HIDE);
+            SetWindowPos(backing, HWND_TOPMOST, host.left, host.top, host.right - host.left,
+                host.bottom - host.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            UpdateWindow(backing);
+            const ULONGLONG prepareStarted = GetTickCount64();
+            const bool started = transition.StartMinimize(source, dock);
+            std::cout << "Genie compositor preparation: " << GetTickCount64() - prepareStarted << "ms\n";
+            Check(started && DockWindowTransitionTestAccess::TimelineActive(transition) &&
+                scheduler.Metrics().activeAnimations == 0 && scheduler.Metrics().activeTimers == 1,
+                "real Genie entry arms one completion timer without a UI frame animation");
+            if (started)
+            {
+                ShowWindow(source, SW_MINIMIZE);
+                const ULONGLONG deadline = GetTickCount64() + 250;
+                bool moved = false;
+                // Do not dispatch the animation scheduler: the test must observe
+                // the real compositor moving the owned image while the UI stalls.
+                do
+                {
+                    DwmFlush();
+                    const auto markers = FrameMarkerCenters(transition.GetPresentationWindow());
+                    if (markers[0] >= 0 && markers[1] >= 0 &&
+                        markers[1] - markers[0] < client.right - 70)
+                    {
+                        moved = true;
+                        break;
+                    }
+                } while (GetTickCount64() < deadline);
+                Check(moved, "Genie window pixels deform while the UI animation scheduler is not dispatched");
+                int requests = 0;
+                Check(transition.StartRestore(source, dock, [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                    if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                    {
+                        ++requests;
+                        ShowWindow(window, SW_SHOWNOACTIVATE);
+                    }
+                }) && DockWindowTransitionTestAccess::TimelineActive(transition) &&
+                    scheduler.Metrics().activeAnimations == 0 && requests == 1,
+                    "reversing a running compositor Genie preserves independent playback and requests restore once");
+                transition.Cancel();
+                DWORD flags = 0;
+                Check(!transition.IsActive() && scheduler.Metrics().activeAnimations == 0 &&
+                    scheduler.Metrics().activeTimers == 0 &&
+                    SUCCEEDED(DwmGetWindowAttribute(source, DWMWA_CLOAKED, &flags, sizeof(flags))) &&
+                    (flags & DWM_CLOAKED_APP) == 0,
+                    "cancelling a compositor Genie retires its wake and releases the source window");
+            }
+        }
     }
     if (destination) DestroyWindow(destination);
     if (backing) DestroyWindow(backing);
@@ -581,9 +711,8 @@ void CheckRetainedWindowImage()
                         snowdesktop::animation::RuntimeDurationScale();
                     Check(shortRestore.activatedAt - shortRestore.preparedAt >= visibleDuration - 15.0,
                         "slow restored-image preparation does not skip the start of the visible animation");
-                    if (effect != 3)
-                        Check(shortRestore.preparedFrames <= 4,
-                            "restore scale and fade advance on the compositor without CPU frame submissions");
+                    Check(shortRestore.preparedFrames <= 4,
+                        "all restore effects advance on the compositor without CPU frame submissions");
                     transition.SetOcclusionRectsProvider({});
                     KillTimer(source, 2);
                     KillTimer(source, 3);
@@ -971,6 +1100,7 @@ void CheckRetainedWindowImage()
 int main()
 {
     CheckContinuousOutline();
+    CheckTimelineGeometry();
     CheckFramePixelAlignment();
     CheckRetainedWindowImage();
     if (!failures) std::cout << "Genie outline and cache-independent DWM image checks passed\n";
