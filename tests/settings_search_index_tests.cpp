@@ -221,7 +221,7 @@ void TestLocalizedTaskAliasesAndReadOnlyQueries()
         {L"AUTO HIDE", "dock.showOnlyWhenSummoned", SettingsPage::Dock},
         {L"多显示器", "pages.order", SettingsPage::DesktopPages},
         {L"副屏", "dock.monitor", SettingsPage::Dock},
-        {L"图标挤在一起", "desktop.spacing", SettingsPage::DesktopPages},
+        {L"图标挤在一起", "desktop.spacing", SettingsPage::AppearanceDesktopIcons},
         {L"网格间距", "pages.grid", SettingsPage::DesktopPages},
         {L"自动分类", "desktop.categoryRules", SettingsPage::DesktopCategories},
         {L"搜索窗口颜色", "personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
@@ -350,11 +350,17 @@ int main(int argc, char* argv[])
         Check(route == CanonicalizeSettingsRoute(route) && descriptor.page != SettingsPage::AppearanceWidgets,
             "all catalog destinations are already canonical and avoid the retired appearance leaf");
     }
-    for (const auto focus : {"desktop.spacing", "pages.order", "pages.grid"})
+    for (const auto focus : {"pages.order", "pages.grid"})
     {
         const auto entry = find(focus);
         Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::DesktopPages,
-            "page and spacing search tasks share the Pages and displays destination");
+            "page and grid search tasks remain on Pages and displays");
+    }
+    for (const auto focus : {"desktop.spacing", "desktop.categoryLayout", "personalization.luaWidgetRowHeight"})
+    {
+        const auto entry = find(focus);
+        Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::AppearanceDesktopIcons,
+            "shared layout dimensions are indexed under Global appearance");
     }
     Check(find("quickNav.prefixes")->page == SettingsPage::QuickNavigation &&
             find("quickNav.defaultCollapsed") == catalog.staticSettings.end() &&

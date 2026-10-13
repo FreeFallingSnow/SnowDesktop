@@ -79,6 +79,7 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
+    const bool requestedThemeOverview = route.page == SettingsPage::AppearanceTheme;
     if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
         route.focusId == "personalization.savedThemes") route.page = SettingsPage::ThemeManager;
     if (route.page == SettingsPage::General &&
@@ -152,7 +153,7 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
             route.focusId == "desktop.categoryLayout" ||
             route.focusId == "desktop.tabHeight")
         {
-            route.page = SettingsPage::AppearanceWidgets;
+            route.page = SettingsPage::AppearanceDesktopIcons;
             route.focusId = "desktop.categoryLayout";
         }
         else if (route.focusId ==
@@ -193,7 +194,7 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
         else if (route.focusId == "desktop.categoryLayout" ||
             route.focusId == "desktop.tabHeight")
         {
-            route.page = SettingsPage::AppearanceWidgets;
+            route.page = SettingsPage::AppearanceDesktopIcons;
             route.focusId = "desktop.categoryLayout";
         }
         else if (route.focusId == "desktop.categories" ||
@@ -212,7 +213,7 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
         (route.focusId == "desktop.categoryLayout" ||
             route.focusId == "desktop.tabHeight"))
     {
-        route.page = SettingsPage::AppearanceWidgets;
+        route.page = SettingsPage::AppearanceDesktopIcons;
         route.focusId = "desktop.categoryLayout";
     }
     // Retain old focus aliases while moving the shared layout control.
@@ -220,12 +221,7 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
          route.page == SettingsPage::AppearanceDesktopIcons ||
          route.page == SettingsPage::AppearanceWidgets) &&
         (route.focusId == "desktop.spacing" || route.focusId == "desktop.iconSpacing"))
-        route.page = SettingsPage::AppearanceWidgets;
-    if ((route.page == SettingsPage::AppearanceTheme && route.focusId == "personalization.dockAppearance") ||
-        (route.page == SettingsPage::AnimationPerformance &&
-         (route.focusId == "animation.hover" || route.focusId == "animation.hoverScale" ||
-          route.focusId == "animation.launch" || route.focusId == "animation.window")))
-        route.page = SettingsPage::Dock;
+        route.page = SettingsPage::AppearanceDesktopIcons;
     if (route.page == SettingsPage::Dock && route.focusId == "dock.suppressSystemTaskbar")
     { route.page = SettingsPage::Taskbar; route.focusId = "taskbar.displayMode"; }
 
@@ -234,21 +230,24 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
     if (route.page != SettingsPage::WidgetSettings && route.page != SettingsPage::LargeIcon)
     {
         const std::string_view focus = route.focusId;
-        if (focus == "personalization.quickNavigationTheme" || focus == "personalization.quickNavTheme" ||
+        if (!requestedThemeOverview &&
+            (focus == "personalization.quickNavigationTheme" || focus == "personalization.quickNavTheme" ||
             focus == "quickNav.layout" || focus.starts_with("quickNav.layout.") ||
-            focus.starts_with("quickNav.color.") || focus.starts_with("quickNav.colors."))
+            focus.starts_with("quickNav.color.") || focus.starts_with("quickNav.colors.")))
             route.page = SettingsPage::QuickNavigation;
         else if (focus == "personalization.font" || focus == "personalization.tooltipFontSize")
             route.page = SettingsPage::AppearanceDesktopIcons;
         else if (focus == "personalization.cornerRadius" || focus == "personalization.barHeight")
             route.page = SettingsPage::AppearanceDesktopIcons;
-        else if (focus == "personalization.luaWidgetRowHeight" || focus == "personalization.widgetTransformCursors")
+        else if (focus == "personalization.luaWidgetRowHeight")
+            route.page = SettingsPage::AppearanceDesktopIcons;
+        else if (focus == "personalization.widgetTransformCursors")
             route.page = SettingsPage::Widgets;
         else if (focus == "desktop.spacing" || focus == "desktop.iconSpacing")
-            route.page = SettingsPage::DesktopPages;
+            route.page = SettingsPage::AppearanceDesktopIcons;
         else if (focus == "desktop.categoryLayout" || focus == "desktop.tabHeight" || focus == "personalization.tabHeight")
         {
-            route.page = SettingsPage::WidgetBehavior;
+            route.page = SettingsPage::AppearanceDesktopIcons;
             route.focusId = "desktop.categoryLayout";
         }
         else if (route.page == SettingsPage::AppearanceWidgets)

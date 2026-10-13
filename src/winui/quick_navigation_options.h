@@ -29,7 +29,8 @@ public:
         };
         root_.Spacing(appearanceOnly_ ? 8 : 24);
         notice_.Severity(winrt::Microsoft::UI::Xaml::Controls::InfoBarSeverity::Error);
-        notice_.IsClosable(false); notice_.IsOpen(false); root_.Children().Append(notice_);
+        notice_.IsClosable(false); notice_.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(notice_); root_.Children().Append(notice_);
         if (appearanceOnly_)
         {
             winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton resetLayout;
@@ -77,15 +78,14 @@ public:
                 });
                 AddRow(prefixes, typeKeys[i], prefixes_[i], [i](auto& value) {value.prefixes[i] = NavigationSettings{}.prefixes[i];});
             }
-            Panel engines; engines.Spacing(8); root_.Children().InsertAt(1,engines);
+            Panel management; management.Spacing(8); root_.Children().Append(management);
             defaultEngine_.SelectionChanged([this](auto&&, auto&&) {
                 const int index = defaultEngine_.SelectedIndex();
                 if (!sync_ && index >= 0 && static_cast<size_t>(index) < values_.engines.size())
                     commit_([id = values_.engines[static_cast<size_t>(index)].id](auto& value) {value.defaultEngine = id;});
             });
-            AddRow(engines, "quickNav.defaultEngine", defaultEngine_, [](auto& value) {if (!value.engines.empty()) value.defaultEngine = std::any_of(value.engines.begin(), value.engines.end(), [](const auto& engine) {return engine.id == "bing";}) ? "bing" : value.engines.front().id;});
+            AddRow(management, "quickNav.defaultEngine", defaultEngine_, [](auto& value) {if (!value.engines.empty()) value.defaultEngine = std::any_of(value.engines.begin(), value.engines.end(), [](const auto& engine) {return engine.id == "bing";}) ? "bing" : value.engines.front().id;});
             presenter_controls::StyleSettingsCard(rowStorage_.back()->root);
-            Panel management; management.Spacing(8);
             management.Children().Append(engineRows_);
 
             addEngine_.Click([this](auto&&, auto&&) {
@@ -107,7 +107,6 @@ public:
             engineActions.Children().Append(addEngine_); engineActions.Children().Append(resetEngines);
             auto managementHeading = Header("quickNav.engines.manage", engineActions);
             management.Children().InsertAt(0, managementHeading);
-            engines.Children().Append(management);
             focus_.emplace("quickNav.engines",management);
             focus_.emplace("quickNav.engines.manage",management);
         }
@@ -256,6 +255,7 @@ private:
             text.Margin({16,8,16,8}); panel.Children().Append(text); labels_.emplace_back(hint, text);
         }
         winrt::Microsoft::UI::Xaml::Controls::Expander expander; expander.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
+        expander.Padding({0, 0, 0, 0});
         expander.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch); expander.Header(Header(key,button)); expander.Content(panel);
         expander.IsExpanded(false);
         root_.Children().Append(expander);
@@ -347,6 +347,7 @@ private:
             inputHint.Margin({16, 8, 16, 12});
             group.Children().Append(inputHint);
             winrt::Microsoft::UI::Xaml::Controls::Expander expander;
+            expander.Padding({0, 0, 0, 0});
             expander.HorizontalAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
             expander.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
             presenter_controls::UpdateSettingsSubrows(group,0.0);

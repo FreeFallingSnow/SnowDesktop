@@ -74,7 +74,8 @@ struct AppearanceSections
     }
 
     static Panel Section(const Panel& parent, Heading& title,
-        std::vector<winrt::Microsoft::UI::Xaml::Controls::Expander>* disclosures = nullptr)
+        std::vector<winrt::Microsoft::UI::Xaml::Controls::Expander>* disclosures = nullptr,
+        bool paddedContent = false)
     {
         namespace x = winrt::Microsoft::UI::Xaml;
         title = Heading{};
@@ -88,6 +89,7 @@ struct AppearanceSections
         Panel body; body.Spacing(8); body.Margin({0, 0, 0, 0});
         body.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         x::Controls::Expander disclosure;
+        if (!paddedContent) disclosure.Padding({0, 0, 0, 0});
         disclosure.Header(title); disclosure.Content(body);
         disclosure.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         disclosure.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);

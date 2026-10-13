@@ -282,7 +282,7 @@ void TestRoutes()
             legacyTheme.page == SettingsPage::ContextMenu &&
             legacyWidgetAppearance.page == SettingsPage::AppearanceTheme &&
             edgeHighlight.page == SettingsPage::AppearanceTheme &&
-            legacyTabHeight.page == SettingsPage::WidgetBehavior &&
+            legacyTabHeight.page == SettingsPage::AppearanceDesktopIcons &&
             legacyTabHeight.focusId == "desktop.categoryLayout" &&
             legacyCounts.page == SettingsPage::DesktopCategories &&
             legacyCounts.focusId == "desktop.categoryCounts",
@@ -359,13 +359,13 @@ void TestRoutes()
     const SettingsRoute legacyCategoryLayout = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
             SettingsPage::DesktopCategories, "desktop.categoryLayout"));
-    for (const auto sourcePage : {SettingsPage::Desktop, SettingsPage::AppearanceDesktopIcons,
-             SettingsPage::AppearanceWidgets})
+    for (const auto sourcePage : {SettingsPage::Desktop, SettingsPage::DesktopPages,
+             SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceWidgets})
         for (const auto focus : {"desktop.spacing", "desktop.iconSpacing"})
         {
             const auto spacing = CanonicalizeSettingsRoute(SettingsRoute::ForPage(sourcePage, focus));
-            Check(spacing.page == SettingsPage::DesktopPages && spacing.focusId == focus,
-                "layout spacing links reach Pages and displays while retaining their focus target");
+            Check(spacing.page == SettingsPage::AppearanceDesktopIcons && spacing.focusId == focus,
+                "layout spacing links reach Global appearance while retaining their focus target");
         }
     const SettingsRoute desktopBehavior = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Desktop));
@@ -375,10 +375,10 @@ void TestRoutes()
     Check(desktopIcons.page == SettingsPage::AppearanceDesktopIcons &&
             iconBeautification.page ==
                 SettingsPage::AppearanceIconBeautification &&
-            desktopTabHeight.page == SettingsPage::WidgetBehavior &&
+            desktopTabHeight.page == SettingsPage::AppearanceDesktopIcons &&
             desktopTabHeight.focusId == "desktop.categoryLayout" &&
             categoryRules.page == SettingsPage::DesktopCategories &&
-            legacyCategoryLayout.page == SettingsPage::WidgetBehavior &&
+            legacyCategoryLayout.page == SettingsPage::AppearanceDesktopIcons &&
             pageNavigation.page == SettingsPage::DesktopPages &&
             desktopBehavior.page == SettingsPage::Desktop,
         "legacy focus aliases route appearance, page, category, and behavior tasks to distinct owners");
@@ -389,25 +389,42 @@ void TestRoutes()
         {"personalization.tooltipFontSize", SettingsPage::AppearanceDesktopIcons},
         {"personalization.cornerRadius", SettingsPage::AppearanceDesktopIcons},
         {"personalization.barHeight", SettingsPage::AppearanceDesktopIcons},
-        {"personalization.luaWidgetRowHeight", SettingsPage::Widgets},
+        {"personalization.luaWidgetRowHeight", SettingsPage::AppearanceDesktopIcons},
         {"personalization.widgetTransformCursors", SettingsPage::Widgets},
-        {"desktop.spacing", SettingsPage::DesktopPages},
-        {"desktop.iconSpacing", SettingsPage::DesktopPages},
+        {"desktop.spacing", SettingsPage::AppearanceDesktopIcons},
+        {"desktop.iconSpacing", SettingsPage::AppearanceDesktopIcons},
         {"personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
         {"quickNav.layout.iconSize", SettingsPage::QuickNavigation},
         {"quickNav.color.searchBg", SettingsPage::QuickNavigation},
     };
     for (const auto& setting : relocated)
         for (const auto sourcePage : {SettingsPage::Personalization,
-                 SettingsPage::AppearanceWidgets, SettingsPage::AppearanceTheme, setting.owner})
+                 SettingsPage::AppearanceWidgets, SettingsPage::AppearanceTheme,
+                 SettingsPage::Widgets, setting.owner})
         {
             auto source = SettingsRoute::ForPage(sourcePage, setting.focus);
             source.guideTopic = "appearance";
             const auto target = CanonicalizeSettingsRoute(source);
-            Check(target.page == setting.owner && target.focusId == setting.focus &&
+            const auto expected = sourcePage == SettingsPage::AppearanceTheme && setting.owner == SettingsPage::QuickNavigation
+                ? SettingsPage::AppearanceTheme : setting.owner;
+            Check(target.page == expected && target.focusId == setting.focus &&
                     target.guideTopic == source.guideTopic &&
                     CanonicalizeSettingsRoute(target) == target,
                 "relocated global fields preserve their IDs and are canonical after one pass");
+        }
+    for (const auto sourcePage : {SettingsPage::Personalization, SettingsPage::Desktop,
+             SettingsPage::DesktopCategories, SettingsPage::WidgetBehavior,
+             SettingsPage::AppearanceWidgets, SettingsPage::AppearanceDesktopIcons})
+        for (const auto focus : {"desktop.categoryLayout", "desktop.tabHeight", "personalization.tabHeight"})
+        {
+            auto source = SettingsRoute::ForPage(sourcePage, focus);
+            source.guideTopic = "appearance";
+            const auto target = CanonicalizeSettingsRoute(source);
+            Check(target.page == SettingsPage::AppearanceDesktopIcons &&
+                    target.focusId == "desktop.categoryLayout" &&
+                    target.guideTopic == source.guideTopic &&
+                    CanonicalizeSettingsRoute(target) == target,
+                "shared height aliases preserve their canonical locator under Global appearance");
         }
     Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceWidgets)).page ==
             SettingsPage::AppearanceTheme,

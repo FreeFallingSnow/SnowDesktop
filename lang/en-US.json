@@ -1388,7 +1388,7 @@
     "settings.personalization.contextMenu": "Context menu appearance",
     "settings.personalization.contextMenu.description": "Choose how SnowDesktop context menus are rendered.",
     "settings.desktop.layout": "Icon layout",
-    "settings.desktop.layout.description": "Adjust icon size, title and list fonts, and shortcut arrows.",
+    "settings.desktop.layout.description": "Adjust shared font, icon and component appearance.",
     "settings.desktop.behavior": "Desktop behavior",
     "settings.desktop.passthrough": "Desktop passthrough",
     "settings.desktop.beautify": "Icon beautification",
@@ -2616,7 +2616,7 @@
   "app.settings.third_party_data": "Data",
   "app.settings.third_party_fonts": "Interface Fonts",
   "appearance.openQuickNavigation": "Open quick navigation appearance",
-  "appearance.widgetDimensions": "Component shape and size",
+  "appearance.widgetDimensions": "Layout and dimensions",
   "font.interfaceText": "Interface text",
   "largeIcon.allOff": "Turn all off",
   "largeIcon.allOn": "Turn all on",
@@ -2630,7 +2630,7 @@
   "settings.dock.contentAndLaunch": "Items and launch",
   "settings.dock.spaceAvoidance": "Space reservation",
   "settings.nav.backupData": "Backup and data",
-  "settings.nav.fontsIcons": "Fonts and icons",
+  "settings.nav.fontsIcons": "Global appearance",
   "settings.nav.group.appearanceInteraction": "Appearance and interaction",
   "settings.nav.group.layout": "Desktop layout",
   "settings.nav.group.organization": "Desktop and organization",
@@ -2692,5 +2692,7 @@
   "settings.search.prerequisite.dependency": "This option depends on the current value of “{0}”. Its controlling setting is highlighted.",
   "settings.search.prerequisite.disable": "To adjust this option, first turn off “{0}”.",
   "settings.search.prerequisite.enable": "To adjust this option, first turn on “{0}”.",
-  "settings.search.prerequisite.unavailable": "This option cannot be adjusted under the current conditions."
+  "settings.search.prerequisite.unavailable": "This option cannot be adjusted under the current conditions.",
+  "settings.search.alias.globalAppearance": "Fonts and icons Global appearance",
+  "statusBar.theme.mergedHint": "Merged status bars use the Dock appearance."
 }

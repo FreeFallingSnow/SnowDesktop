@@ -12,7 +12,8 @@ public:
     ~StatusBarPagePresenter();
     void SetActions(DockPageActions actions);
     winrt::Microsoft::UI::Xaml::UIElement Content() const;
-    // Mount the same theme editors on the centralized appearance page.
+    // Mount the same default theme and collapsed scenario rules on the
+    // centralized page; merged-bar guidance stays within the default theme row.
     winrt::Microsoft::UI::Xaml::UIElement AppearanceContent() const;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();

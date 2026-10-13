@@ -24,7 +24,7 @@ void TestHistoryAndFocusRoutes()
     for (const auto focus : {"general.quickNavigation","general.quickNavigation.hotkey","general.hotkeys"})
         Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::General,focus)).page == SettingsPage::QuickNavigation,"legacy navigation shortcuts route to the dedicated page");
     for (const auto focus : {"personalization.quickNavigationTheme","personalization.quickNavTheme"})
-        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme,focus)).page == SettingsPage::QuickNavigation,"quick-navigation theme links reach the same page as navigation behavior");
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme,focus)).page == SettingsPage::AppearanceTheme,"shared quick-navigation theme remains on the requested overview page");
     for (const auto focus : {"quickNav.layout", "quickNav.layout.iconSize", "quickNav.colors.search", "quickNav.color.searchBg"})
     {
         const auto route = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::QuickNavigation, focus));
@@ -35,10 +35,10 @@ void TestHistoryAndFocusRoutes()
         Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::QuickNavigation, focus)).page == SettingsPage::QuickNavigation,
             "navigation behavior and legacy opening links remain on the functional page");
     for (const auto focus : {"animation.hover", "animation.hoverScale", "animation.launch", "animation.window"})
-        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, focus)).page == SettingsPage::Dock,
-            "old Dock animation links reach the Dock tab after settings reorganization");
-    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.dockAppearance")).page == SettingsPage::Dock,
-        "old Dock theme links reach the Dock tab");
+        Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AnimationPerformance, focus)).page == SettingsPage::AnimationPerformance,
+            "Dock effects can be edited and located directly on the animation page");
+    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.dockAppearance")).page == SettingsPage::AppearanceTheme,
+        "shared Dock theme remains on the requested overview page");
     Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::Dock, "dock.suppressSystemTaskbar")).page == SettingsPage::Taskbar,
         "old taskbar hiding links reach the taskbar visibility control");
     Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceTheme, "personalization.savedThemes")).page == SettingsPage::ThemeManager,

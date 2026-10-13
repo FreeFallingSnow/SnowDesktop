@@ -92,14 +92,18 @@ struct AnimationPerformancePagePresenter::Impl
 {
     Impl(LocalizeCallback callback, const mux::Style& style,
         const mux::Style& navigationStyle, NavigateCallback navigate)
-        : localize(std::move(callback)), navigate(std::move(navigate))
+        : localize(std::move(callback))
     {
+        (void)navigationStyle;
+        (void)navigate;
         root = muxc::StackPanel{};
         root.Spacing(24);
         generalCard.Initialize(style, root);
         dockCard.content = muxc::StackPanel{};
         dockCard.content.Spacing(2);
         dockRoot.Children().Append(dockCard.content);
+        dockOverview.Initialize(style, root);
+        dockOverview.content.Children().Append(dockHost);
         performanceCard.Initialize(style, root);
         AddChoice(mode, generalCard, "mode", "animation.mode", 0,
             {L10N_KEY("settings.animation.option.followSystem"),
@@ -120,38 +124,6 @@ struct AnimationPerformancePagePresenter::Impl
         dockNotice = muxc::TextBlock{};
         dockNotice.TextWrapping(mux::TextWrapping::Wrap);
         dockCard.content.Children().Append(dockNotice);
-        dockLink = muxc::Button{};
-        dockLink.Style(navigationStyle);
-        muxc::Grid linkContent;
-        linkContent.ColumnSpacing(20);
-        muxc::ColumnDefinition textColumn, actionColumn;
-        textColumn.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
-        actionColumn.Width(mux::GridLengthHelper::Auto());
-        linkContent.ColumnDefinitions().Append(textColumn);
-        linkContent.ColumnDefinitions().Append(actionColumn);
-        muxc::StackPanel linkText;
-        linkText.Spacing(4);
-        dockLinkTitle = muxc::TextBlock{};
-        dockLinkTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-        dockLinkTitle.TextWrapping(mux::TextWrapping::Wrap);
-        dockLinkDescription = muxc::TextBlock{};
-        dockLinkDescription.TextWrapping(mux::TextWrapping::Wrap);
-        dockLinkDescription.Opacity(0.68);
-        linkText.Children().Append(dockLinkTitle);
-        linkText.Children().Append(dockLinkDescription);
-        linkContent.Children().Append(linkText);
-        muxc::FontIcon chevron;
-        chevron.Glyph(L"\xE76C");
-        chevron.FontSize(14);
-        muxc::Grid::SetColumn(chevron, 1);
-        linkContent.Children().Append(chevron);
-        dockLink.Content(linkContent);
-        root.Children().Append(dockLink);
-        const auto linkToken = dockLink.Click([this](const auto&, const auto&) {
-            if (active && !closed && this->navigate)
-                this->navigate(SettingsRoute::ForPage(SettingsPage::Dock, "animation.hover"));
-        });
-        revoke.push_back([control = dockLink, linkToken]() { control.Click(linkToken); });
         AddChoice(hover, dockCard, "hover", "animation.hover", 2,
             {L10N_KEY("settings.animation.option.noMagnification"),
              L10N_KEY("settings.animation.option.singleIcon"),
@@ -258,11 +230,11 @@ struct AnimationPerformancePagePresenter::Impl
     }
 
     LocalizeCallback localize;
-    NavigateCallback navigate;
     DockPageActions actions;
     muxc::StackPanel dockRoot;
     muxc::StackPanel root{nullptr};
-    Card generalCard, dockCard, performanceCard;
+    Card generalCard, dockCard, dockOverview, performanceCard;
+    muxc::ContentControl dockHost;
     Choice mode, popup, speed, hover, launch, window, frameLimit;
     Switch energySaver, onBattery;
     SettingRow scaleRow;
@@ -270,8 +242,6 @@ struct AnimationPerformancePagePresenter::Impl
     muxc::NumberBox hoverScaleNumber{nullptr};
     muxc::Button scaleReset{nullptr};
     muxc::TextBlock dockNotice{nullptr};
-    muxc::Button dockLink{nullptr};
-    muxc::TextBlock dockLinkTitle{nullptr}, dockLinkDescription{nullptr};
     std::vector<std::function<void()>> revoke;
     presenter_controls::CoalescedPreviewTimer<double> scalePreview;
     mux::DispatcherTimer scaleIdle{nullptr};
@@ -400,6 +370,7 @@ struct AnimationPerformancePagePresenter::Impl
         const bool wasUpdating = updating;
         updating = true;
         generalCard.title.Text(L("settings.animation.general"));
+        dockOverview.title.Text(L("settings.animation.dock"));
         performanceCard.title.Text(L("settings.animation.performance"));
         for (auto* choice : {&mode, &popup, &speed, &hover, &launch, &window, &frameLimit})
         {
@@ -428,10 +399,6 @@ struct AnimationPerformancePagePresenter::Impl
                 L(control->key) + L": " + L("settings.animation.restore"));
         }
         dockNotice.Text(L("settings.animation.dockDisabled"));
-        dockLinkTitle.Text(L("settings.animation.openDock"));
-        dockLinkDescription.Text(L("settings.animation.openDock.description"));
-        muxa::AutomationProperties::SetName(dockLink, L("settings.animation.openDock"));
-        muxa::AutomationProperties::SetHelpText(dockLink, L("settings.animation.openDock.description"));
         updating = wasUpdating;
         UpdateEnabled();
     }
@@ -493,7 +460,6 @@ struct AnimationPerformancePagePresenter::Impl
         for (auto& unhook : revoke) { try { unhook(); } catch (...) {} }
         revoke.clear();
         actions = {};
-        navigate = {};
     }
 };
 
@@ -504,8 +470,18 @@ AnimationPerformancePagePresenter::AnimationPerformancePagePresenter(
         navigationCardStyle, std::move(navigate))) {}
 AnimationPerformancePagePresenter::~AnimationPerformancePagePresenter() { Close(); }
 void AnimationPerformancePagePresenter::SetActions(DockPageActions actions) { impl_->actions = std::move(actions); }
-mux::UIElement AnimationPerformancePagePresenter::DockContent() const noexcept { return impl_ ? impl_->dockRoot : nullptr; }
-mux::UIElement AnimationPerformancePagePresenter::Content() const noexcept { return impl_->root; }
+mux::UIElement AnimationPerformancePagePresenter::DockContent() const
+{
+    if (!impl_) return nullptr;
+    impl_->dockHost.Content(nullptr);
+    return impl_->dockRoot;
+}
+mux::UIElement AnimationPerformancePagePresenter::Content() const
+{
+    impl_->dockHost.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+    impl_->dockHost.Content(impl_->dockRoot);
+    return impl_->root;
+}
 void AnimationPerformancePagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot) { impl_->ApplySnapshot(snapshot); }
 void AnimationPerformancePagePresenter::RefreshLocalizedText() { impl_->RefreshLocalizedText(); }
 void AnimationPerformancePagePresenter::Activate() noexcept

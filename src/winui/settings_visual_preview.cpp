@@ -13,6 +13,8 @@
 #include <fstream>
 #include <stdexcept>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
+#include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
+#include <winrt/Microsoft.UI.Xaml.Automation.Provider.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.Storage.Streams.h>
@@ -66,6 +68,45 @@ template<class Visit> void Walk(const x::DependencyObject& node, Visit&& visit)
     visit(node);
     for (int i = 0; i < x::Media::VisualTreeHelper::GetChildrenCount(node); ++i)
         Walk(x::Media::VisualTreeHelper::GetChild(node, i), visit);
+}
+
+bool IsPreviewElementVisible(const x::FrameworkElement& element)
+{
+    if (!element || element.ActualWidth() <= 0 || element.ActualHeight() <= 0) return false;
+    auto node = element.as<x::DependencyObject>();
+    while (node)
+    {
+        if (const auto current = node.try_as<x::UIElement>();
+            current && current.Visibility() != x::Visibility::Visible) return false;
+        node = x::Media::VisualTreeHelper::GetParent(node);
+    }
+    return true;
+}
+
+unsigned ExpandGradientDetails(const x::DependencyObject& cards, const x::FrameworkElement& shell)
+{
+    const winrt::hstring expandText{_LW("largeIcon.showDetails")};
+    const winrt::hstring detailsName{_LW("panelGradient.more")};
+    unsigned invoked = 0;
+    for (;;)
+    {
+        c::Button target{nullptr};
+        Walk(cards, [&](const x::DependencyObject& node) {
+            const auto button = node.try_as<c::Button>();
+            if (!target && button && button.IsEnabled() && IsPreviewElementVisible(button) &&
+                winrt::unbox_value_or<winrt::hstring>(button.Content(), winrt::hstring{}) == expandText &&
+                x::Automation::AutomationProperties::GetName(button) == detailsName) target = button;
+        });
+        if (!target) return invoked;
+        if (invoked == 32) throw std::runtime_error("gradient details did not finish expanding");
+        // Invoke after traversal: the production click handler rebuilds its rows.
+        const auto peer = x::Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(target);
+        if (!peer) throw std::runtime_error("gradient details automation peer is missing");
+        peer.GetPattern(x::Automation::Peers::PatternInterface::Invoke)
+            .as<x::Automation::Provider::IInvokeProvider>().Invoke();
+        ++invoked;
+        Settle(shell);
+    }
 }
 
 // Deliberately no backend: these are example author fields, never a user's
@@ -162,7 +203,6 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     if (custom) widgets.value.hostAppearance.presetId = "__custom";
     auto shell = winrt::make_self<winrt::SnowDesktop::implementation::SettingsShell>();
     shell->RequestedTheme(dark ? x::ElementTheme::Dark : x::ElementTheme::Light);
-    shell->SetSystemBackdropActive(false);
     shell->SetLocalizer([](std::string_view key) { return std::wstring(_LW(std::string(key).c_str())); });
     shell->SetConditionalPagesVisible(true, true);
     shell->SetWidgetSettingsService(&widgets);
@@ -248,6 +288,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     manifest << "page\timage\twidthDip\theightDip\tscrollY\tscrollMax\n";
     std::ofstream rows(output / L"rows.tsv");
     rows << "page\tlabel\tx\ty\twidth\theight\tpaddingLeft\tpaddingTop\tpaddingRight\tpaddingBottom\teditorX\teditorY\teditorWidth\teditorHeight\n";
+    std::ofstream actions(output / L"actions.tsv");
+    actions << "page\tgradientDetailsInvoked\tvisibleRemoveStopButtons\n";
     std::uint64_t revision = 0;
     bool rendered = false;
     for (const auto page : pages)
@@ -350,6 +392,15 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 Settle(shell.as<x::FrameworkElement>());
             }
         }
+        const unsigned gradientDetailsInvoked = expanded
+            ? ExpandGradientDetails(cards, shell.as<x::FrameworkElement>()) : 0;
+        unsigned removeStopButtons = 0;
+        Walk(cards, [&](const x::DependencyObject& node) {
+            if (const auto button = node.try_as<c::Button>(); button && IsPreviewElementVisible(button) &&
+                winrt::unbox_value_or<winrt::hstring>(button.Content(), winrt::hstring{}) ==
+                    winrt::hstring{_LW("panelGradient.removeStop")}) ++removeStopButtons;
+        });
+        actions << key << '\t' << gradientDetailsInvoked << '\t' << removeStopButtons << '\n';
         const auto scroll = shell->FindName(L"PageScrollViewer").as<c::ScrollViewer>();
         Walk(cards, [&](const x::DependencyObject& node) {
             const auto row = node.try_as<c::Grid>();

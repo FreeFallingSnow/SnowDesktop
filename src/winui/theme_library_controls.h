@@ -31,7 +31,15 @@ public:
         if (transfer_)
         {
             filters_.ColumnSpacing(8); filters_.RowSpacing(8);
-            root_.Children().Append(filters_);
+            c::StackPanel toolbar;
+            toolbar.Spacing(8);
+            toolbar.Children().Append(filters_);
+            toolbar.Children().Append(commands_);
+            c::Border toolbarSurface;
+            if (cardStyle_) toolbarSurface.Style(cardStyle_);
+            else presenter_controls::StyleSettingsCard(toolbarSurface);
+            toolbarSurface.Child(toolbar);
+            root_.Children().Append(toolbarSurface);
             for (std::size_t i = 0; i < tabs_.size(); ++i)
             {
                 auto button = tabs_[i]; button.UseSystemFocusVisuals(true);
@@ -50,7 +58,6 @@ public:
         }
         for (auto combo : {choice_, quick_, popup_}) combo.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         commands_.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
-        if (transfer_) root_.Children().InsertAt(1, commands_);
         if (transfer_)
         {
             AddCommand(ThemeLibraryCommand::OpenWorkshop, "themeLibrary.openWorkshop");
@@ -59,7 +66,7 @@ public:
         }
         else
         {
-            saveBody_ = AppearanceSections::Section(saveRoot_, saveTitle_, &disclosures_);
+            saveBody_ = AppearanceSections::Section(saveRoot_, saveTitle_, &disclosures_, true);
             name_.MaxLength(128); nameRow_.Initialize(name_); saveBody_.Children().Append(nameRow_.root);
             if (Global())
             {
@@ -112,13 +119,15 @@ public:
             });
             revoke_.push_back([control = cancel_, cancelToken] { control.Click(cancelToken); });
         }
-        feedback_.IsOpen(false); root_.Children().Append(feedback_);
+        feedback_.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(feedback_); root_.Children().Append(feedback_);
         if (!transfer_) root_.Visibility(x::Visibility::Collapsed);
         const auto feedbackClosed = feedback_.Closed([this](const auto&, const auto&) {
             if (!transfer_) root_.Visibility(x::Visibility::Collapsed);
         });
         revoke_.push_back([control = feedback_, feedbackClosed] { control.Closed(feedbackClosed); });
-        saveFeedback_.IsOpen(false); if (!transfer_) saveBody_.Children().Append(saveFeedback_);
+        saveFeedback_.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(saveFeedback_); if (!transfer_) saveBody_.Children().Append(saveFeedback_);
         const auto choiceToken = choice_.SelectionChanged([this](const auto&, const auto&) {
             if (syncing_) return;
             PatchButtons();

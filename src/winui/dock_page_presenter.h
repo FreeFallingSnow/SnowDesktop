@@ -84,6 +84,7 @@ public:
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         DockAppearanceContent() const;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement DockThemeContent() const;
+    /** Reparents the shared taskbar appearance group, including scenario rules. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement TaskbarAppearanceContent() const;
     void SetSupplementalContent(
         const winrt::Microsoft::UI::Xaml::UIElement& appearance,

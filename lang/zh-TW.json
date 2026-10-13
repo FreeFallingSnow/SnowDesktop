@@ -1388,7 +1388,7 @@
   "settings.personalization.contextMenu": "快顯功能表外觀",
   "settings.personalization.contextMenu.description": "選擇 SnowDesktop 快顯功能表的顯示方式。",
   "settings.desktop.layout": "圖示版面配置",
-  "settings.desktop.layout.description": "調整圖示大小、標題與清單字型及捷徑箭頭。",
+  "settings.desktop.layout.description": "調整字型、圖示與元件的共用外觀。",
   "settings.desktop.behavior": "桌面行為",
   "settings.desktop.passthrough": "桌面穿透",
   "settings.desktop.beautify": "圖示美化",
@@ -2616,7 +2616,7 @@
   "app.settings.third_party_data": "資料",
   "app.settings.third_party_fonts": "介面字型",
   "appearance.openQuickNavigation": "開啟快捷導覽外觀",
-  "appearance.widgetDimensions": "元件形狀與尺寸",
+  "appearance.widgetDimensions": "配置與尺寸",
   "font.interfaceText": "介面文字",
   "largeIcon.allOff": "全部關閉",
   "largeIcon.allOn": "全部開啟",
@@ -2630,7 +2630,7 @@
   "settings.dock.contentAndLaunch": "內容與啟動",
   "settings.dock.spaceAvoidance": "空間避讓",
   "settings.nav.backupData": "備份與資料",
-  "settings.nav.fontsIcons": "字型與圖示",
+  "settings.nav.fontsIcons": "全域外觀",
   "settings.nav.group.appearanceInteraction": "外觀與互動",
   "settings.nav.group.layout": "桌面配置",
   "settings.nav.group.organization": "桌面與收納",
@@ -2692,5 +2692,7 @@
   "settings.search.prerequisite.dependency": "此項取決於「{0}」目前的值。已定位到控制它的設定。",
   "settings.search.prerequisite.disable": "若要調整此項，請先關閉「{0}」。",
   "settings.search.prerequisite.enable": "若要調整此項，請先開啟「{0}」。",
-  "settings.search.prerequisite.unavailable": "此項在目前條件下無法調整。"
+  "settings.search.prerequisite.unavailable": "此項在目前條件下無法調整。",
+  "settings.search.alias.globalAppearance": "字型與圖示 全域外觀",
+  "statusBar.theme.mergedHint": "與 Dock 合併的狀態列使用 Dock 外觀。"
 }

@@ -1388,7 +1388,7 @@
   "settings.personalization.contextMenu": "Apariencia del menú contextual",
   "settings.personalization.contextMenu.description": "Elige cómo se representan los menús contextuales de SnowDesktop.",
   "settings.desktop.layout": "Diseño de iconos",
-  "settings.desktop.layout.description": "Ajusta el tamaño de los iconos, las fuentes de títulos y listas y las flechas de acceso directo.",
+  "settings.desktop.layout.description": "Ajusta la apariencia general de fuentes, iconos y componentes.",
   "settings.desktop.behavior": "Comportamiento del escritorio",
   "settings.desktop.passthrough": "Clics a través del escritorio",
   "settings.desktop.beautify": "Embellecimiento de iconos",
@@ -2616,7 +2616,7 @@
   "app.settings.third_party_data": "Datos",
   "app.settings.third_party_fonts": "Fuentes de la interfaz",
   "appearance.openQuickNavigation": "Abrir la apariencia de la navegación rápida",
-  "appearance.widgetDimensions": "Forma y tamaño de los componentes",
+  "appearance.widgetDimensions": "Diseño y dimensiones",
   "font.interfaceText": "Texto de la interfaz",
   "largeIcon.allOff": "Desactivar en todos",
   "largeIcon.allOn": "Activar en todos",
@@ -2630,7 +2630,7 @@
   "settings.dock.contentAndLaunch": "Elementos e inicio",
   "settings.dock.spaceAvoidance": "Reserva de espacio",
   "settings.nav.backupData": "Copias de seguridad y datos",
-  "settings.nav.fontsIcons": "Fuentes e iconos",
+  "settings.nav.fontsIcons": "Apariencia global",
   "settings.nav.group.appearanceInteraction": "Apariencia e interacción",
   "settings.nav.group.layout": "Distribución del escritorio",
   "settings.nav.group.organization": "Escritorio y organización",
@@ -2692,5 +2692,7 @@
   "settings.search.prerequisite.dependency": "Esta opción depende del valor actual de «{0}». Se ha resaltado el ajuste del que depende.",
   "settings.search.prerequisite.disable": "Para ajustar esta opción, desactiva primero «{0}».",
   "settings.search.prerequisite.enable": "Para ajustar esta opción, activa primero «{0}».",
-  "settings.search.prerequisite.unavailable": "Esta opción no se puede ajustar en las condiciones actuales."
+  "settings.search.prerequisite.unavailable": "Esta opción no se puede ajustar en las condiciones actuales.",
+  "settings.search.alias.globalAppearance": "Fuentes e iconos Apariencia global",
+  "statusBar.theme.mergedHint": "Las barras de estado combinadas con el Dock usan su apariencia."
 }

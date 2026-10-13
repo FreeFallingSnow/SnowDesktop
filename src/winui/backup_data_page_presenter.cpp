@@ -52,11 +52,12 @@ struct AsyncGate
 void InitializeCard(
     SettingsCard& card,
     const mux::Style& style,
-    const muxc::StackPanel& page)
+    const muxc::StackPanel& page,
+    bool externalHeading = true)
 {
     card.root = muxc::Border{};
     card.content = muxc::StackPanel{};
-    card.content.Spacing(12.0);
+    card.content.Spacing(0.0);
     card.title = muxc::TextBlock{};
     card.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
@@ -68,8 +69,9 @@ void InitializeCard(
     muxc::StackPanel heading;
     heading.Spacing(4.0);
     heading.Children().Append(card.title);
-    card.content.Children().Append(card.description);
-    presenter_controls::InitializeSettingsGroup(card.root, heading, card.content, style, true);
+    presenter_controls::InitializeSettingsGroup(card.root,
+        externalHeading ? heading.as<mux::FrameworkElement>() : nullptr,
+        card.content, style);
     page.Children().Append(card.root);
 }
 
@@ -89,34 +91,15 @@ muxc::Button NewButton()
 muxc::CommandBar NewCommandBar()
 {
     muxc::CommandBar commandBar{};
-    commandBar.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+    commandBar.HorizontalAlignment(mux::HorizontalAlignment::Right);
     commandBar.HorizontalContentAlignment(
-        mux::HorizontalAlignment::Stretch);
+        mux::HorizontalAlignment::Right);
     commandBar.VerticalContentAlignment(
         mux::VerticalAlignment::Center);
     commandBar.DefaultLabelPosition(
         muxc::CommandBarDefaultLabelPosition::Right);
-    commandBar.IsDynamicOverflowEnabled(true);
+    commandBar.IsDynamicOverflowEnabled(false);
     return commandBar;
-}
-
-muxc::TextBlock NewCommandBarTitle()
-{
-    muxc::TextBlock title{};
-    title.VerticalAlignment(mux::VerticalAlignment::Center);
-    title.TextWrapping(mux::TextWrapping::Wrap);
-    return title;
-}
-
-muxc::TextBlock NewCommandBarHint()
-{
-    muxc::TextBlock hint{};
-    hint.VerticalAlignment(mux::VerticalAlignment::Center);
-    hint.TextWrapping(mux::TextWrapping::Wrap);
-    hint.TextTrimming(mux::TextTrimming::CharacterEllipsis);
-    hint.MaxLines(2);
-    hint.Opacity(0.68);
-    return hint;
 }
 
 muxc::AppBarButton NewCommandButton(std::wstring_view glyph)
@@ -226,7 +209,7 @@ struct BackupDataPagePresenter::Impl
         LayoutBackupEntry entry;
         muxc::ListViewItem item{nullptr};
         muxc::CommandBar commandBar{nullptr};
-        muxc::TextBlock title{nullptr};
+        controls::SettingRow settingRow;
         muxc::AppBarButton restore{nullptr};
         muxc::AppBarButton remove{nullptr};
         winrt::event_token restoreToken{};
@@ -238,7 +221,7 @@ struct BackupDataPagePresenter::Impl
         FullDataBackupEntry entry;
         muxc::ListViewItem item{nullptr};
         muxc::CommandBar commandBar{nullptr};
-        muxc::TextBlock title{nullptr};
+        controls::SettingRow settingRow;
         muxc::AppBarButton restore{nullptr};
         muxc::AppBarButton exportArchive{nullptr};
         muxc::AppBarButton open{nullptr};
@@ -282,7 +265,7 @@ struct BackupDataPagePresenter::Impl
 
     SettingsCard fullBackupCard;
     muxc::CommandBar fullBackupActionBar{nullptr};
-    muxc::TextBlock fullBackupHint{nullptr};
+    controls::SettingRow fullBackupActionRow;
     muxc::AppBarButton createFullBackupButton{nullptr};
     muxc::AppBarButton importFullBackupButton{nullptr};
     muxc::AppBarButton openFullBackupDirectoryButton{nullptr};
@@ -348,6 +331,7 @@ struct BackupDataPagePresenter::Impl
         infoBar = muxc::InfoBar{};
         infoBar.IsClosable(true);
         infoBar.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(infoBar);
         root.Children().Append(infoBar);
 
         progressCard = muxc::Border{};
@@ -373,66 +357,93 @@ struct BackupDataPagePresenter::Impl
         layoutCard.description.Visibility(mux::Visibility::Collapsed);
         layoutName = muxc::TextBox{};
         layoutName.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        layoutName.MinWidth(240);
+        layoutName.MinWidth(0.0);
+        layoutName.VerticalAlignment(mux::VerticalAlignment::Center);
         layoutName.UseSystemFocusVisuals(true);
         layoutActionBar = NewCommandBar();
         createLayoutButton = NewCommandButton(L"\xE74E");
         openDataDirectoryButton = NewCommandButton(L"\xE8B7");
-        layoutActionBar.Content(layoutName);
         layoutActionBar.PrimaryCommands().Append(createLayoutButton);
         layoutActionBar.SecondaryCommands().Append(
             openDataDirectoryButton);
         noLayoutBackups = NewEmptyMessage();
-        noLayoutBackups.MinHeight(48.0);
+        noLayoutBackups.MinHeight(36.0);
+        noLayoutBackups.Margin({16.0, 8.0, 16.0, 8.0});
         noLayoutBackups.VerticalAlignment(mux::VerticalAlignment::Center);
         layoutList = muxc::ListView{};
         layoutList.SelectionMode(muxc::ListViewSelectionMode::None);
         layoutList.IsItemClickEnabled(false);
         layoutList.MinHeight(48.0);
         layoutList.MaxHeight(320.0);
-        layoutCard.content.Children().Append(layoutActionBar);
+        layoutList.Padding({0.0});
+        muxc::Grid layoutActionRow;
+        layoutActionRow.ColumnSpacing(16.0);
+        muxc::ColumnDefinition nameColumn;
+        nameColumn.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
+        muxc::ColumnDefinition actionColumn;
+        actionColumn.Width(mux::GridLengthHelper::Auto());
+        layoutActionRow.ColumnDefinitions().Append(nameColumn);
+        layoutActionRow.ColumnDefinitions().Append(actionColumn);
+        layoutActionRow.Children().Append(layoutName);
+        muxc::Grid::SetColumn(layoutActionBar, 1);
+        layoutActionRow.Children().Append(layoutActionBar);
+        presenter_controls::StyleSettingsSubrow(layoutActionRow, true, 0.0);
+        layoutCard.content.Children().Append(layoutActionRow);
         layoutCard.content.Children().Append(noLayoutBackups);
         layoutCard.content.Children().Append(layoutList);
 
         InitializeCard(fullBackupCard, cardStyle, root);
         fullBackupCard.description.Visibility(mux::Visibility::Collapsed);
         fullBackupActionBar = NewCommandBar();
-        fullBackupHint = NewCommandBarHint();
+        fullBackupActionBar.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        fullBackupActionBar.HorizontalContentAlignment(mux::HorizontalAlignment::Right);
+        fullBackupActionBar.IsDynamicOverflowEnabled(false);
         createFullBackupButton = NewCommandButton(L"\xE710");
         importFullBackupButton = NewCommandButton(L"\xE8B5");
         openFullBackupDirectoryButton = NewCommandButton(L"\xE8B7");
-        fullBackupActionBar.Content(fullBackupHint);
         fullBackupActionBar.PrimaryCommands().Append(
             createFullBackupButton);
-        fullBackupActionBar.PrimaryCommands().Append(
+        fullBackupActionBar.SecondaryCommands().Append(
             importFullBackupButton);
         fullBackupActionBar.SecondaryCommands().Append(
             openFullBackupDirectoryButton);
         noFullBackups = NewEmptyMessage();
-        noFullBackups.MinHeight(48.0);
+        noFullBackups.MinHeight(36.0);
+        noFullBackups.Margin({16.0, 8.0, 16.0, 8.0});
         noFullBackups.VerticalAlignment(mux::VerticalAlignment::Center);
         fullBackupList = muxc::ListView{};
         fullBackupList.SelectionMode(muxc::ListViewSelectionMode::None);
         fullBackupList.IsItemClickEnabled(false);
         fullBackupList.MinHeight(48.0);
         fullBackupList.MaxHeight(320.0);
-        fullBackupCard.content.Children().Append(fullBackupActionBar);
+        fullBackupList.Padding({0.0});
+        fullBackupActionRow.Initialize(fullBackupActionBar, 0.0);
+        fullBackupActionRow.SetCompactEditor();
+        fullBackupActionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        fullBackupActionRow.label.Visibility(mux::Visibility::Collapsed);
+        presenter_controls::StyleSettingsSubrow(fullBackupActionRow.root, true, 0.0);
+        fullBackupCard.content.Children().Append(fullBackupActionRow.root);
         fullBackupCard.content.Children().Append(noFullBackups);
         fullBackupCard.content.Children().Append(fullBackupList);
 
-        InitializeCard(migrationCard, cardStyle, root);
+        muxc::StackPanel dataActions;
+        dataActions.Spacing(8.0);
+        root.Children().Append(dataActions);
+        InitializeCard(migrationCard, cardStyle, dataActions, false);
         migrationCard.description.Visibility(mux::Visibility::Collapsed);
         migrateButton = NewButton();
         migrationActionRow.Initialize(migrateButton);
         migrationActionRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(migrationActionRow.root, true, 0.0);
         migrationCard.content.Children().Append(migrationActionRow.root);
 
-        InitializeCard(clearDataCard, cardStyle, root);
+        InitializeCard(clearDataCard, cardStyle, dataActions, false);
         clearDataCard.description.Visibility(mux::Visibility::Collapsed);
         clearDataButton = NewButton();
         clearDataActionRow.Initialize(clearDataButton);
         clearDataActionRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(clearDataActionRow.root, true, 0.0);
         clearDataCard.content.Children().Append(clearDataActionRow.root);
     }
 
@@ -653,15 +664,19 @@ struct BackupDataPagePresenter::Impl
             row.item.HorizontalContentAlignment(
                 mux::HorizontalAlignment::Stretch);
             row.item.IsTabStop(false);
+            row.item.Padding({0.0});
+            row.item.Margin({0.0});
 
             row.commandBar = NewCommandBar();
-            row.title = NewCommandBarTitle();
             row.restore = NewCommandButton(L"\xE777");
             row.remove = NewCommandButton(L"\xE74D");
-            row.commandBar.Content(row.title);
             row.commandBar.PrimaryCommands().Append(row.restore);
             row.commandBar.SecondaryCommands().Append(row.remove);
-            row.item.Content(row.commandBar);
+            row.settingRow.Initialize(row.commandBar, 0.0);
+            row.settingRow.SetCompactEditor();
+            row.settingRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+            presenter_controls::StyleSettingsSubrow(row.settingRow.root, false, 0.0);
+            row.item.Content(row.settingRow.root);
 
             const std::wstring id = row.entry.id;
             const std::wstring label = row.entry.displayName;
@@ -713,21 +728,25 @@ struct BackupDataPagePresenter::Impl
             row.item.HorizontalContentAlignment(
                 mux::HorizontalAlignment::Stretch);
             row.item.IsTabStop(false);
+            row.item.Padding({0.0});
+            row.item.Margin({0.0});
 
             row.commandBar = NewCommandBar();
-            row.title = NewCommandBarTitle();
             row.restore = NewCommandButton(L"\xE777");
             row.exportArchive = NewCommandButton(L"\xEDE1");
             row.open = NewCommandButton(L"\xE8E5");
             row.remove = NewCommandButton(L"\xE74D");
-            row.commandBar.Content(row.title);
             row.commandBar.PrimaryCommands().Append(row.restore);
             row.commandBar.SecondaryCommands().Append(row.exportArchive);
             row.commandBar.SecondaryCommands().Append(row.open);
             row.commandBar.SecondaryCommands().Append(
                 muxc::AppBarSeparator{});
             row.commandBar.SecondaryCommands().Append(row.remove);
-            row.item.Content(row.commandBar);
+            row.settingRow.Initialize(row.commandBar, 0.0);
+            row.settingRow.SetCompactEditor();
+            row.settingRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+            presenter_controls::StyleSettingsSubrow(row.settingRow.root, false, 0.0);
+            row.item.Content(row.settingRow.root);
 
             const std::wstring id = row.entry.id;
             const std::wstring label = row.entry.displayName;
@@ -804,7 +823,7 @@ struct BackupDataPagePresenter::Impl
             L("app.settings.delete", L"Delete");
         for (auto& row : layoutRows)
         {
-            row.title.Text(row.entry.displayName);
+            row.settingRow.SetText(row.entry.displayName);
             SetCommandText(row.restore, restoreText);
             SetCommandText(row.remove, deleteText);
             muxa::AutomationProperties::SetName(row.item,
@@ -843,7 +862,7 @@ struct BackupDataPagePresenter::Impl
                       L"{0} · {1} files · {2}"),
                       {timestamp, std::to_wstring(row.entry.fileCount),
                           FormatBackupSize(row.entry.totalBytes)});
-            row.title.Text(label);
+            row.settingRow.SetText(label);
             SetCommandText(row.restore, restoreText);
             SetCommandText(row.exportArchive, exportText);
             SetCommandText(row.open, openText);
@@ -888,7 +907,7 @@ struct BackupDataPagePresenter::Impl
         fullBackupCard.description.Text(L(
             "app.settings.full_data_backup_description",
             L"Back up layouts, settings, widgets, and widget storage."));
-        fullBackupHint.Text(fullBackupCard.description.Text());
+        fullBackupActionRow.SetText(L"", std::wstring(fullBackupCard.description.Text().c_str()));
         SetCommandText(createFullBackupButton, L(
             "app.settings.create_full_backup", L"Create complete backup"));
         SetCommandText(importFullBackupButton, L(
@@ -906,14 +925,14 @@ struct BackupDataPagePresenter::Impl
         migrationCard.description.Text(L(
             "app.settings.data_migration_description",
             L"Move complete data from another SnowDesktop copy."));
-        migrationActionRow.SetText({},
+        migrationActionRow.SetText(std::wstring(migrationCard.title.Text().c_str()),
             std::wstring(migrationCard.description.Text().c_str()));
         SetButtonText(migrateButton,
             L("app.settings.migrate_all_data", L"Move in complete data…"));
         clearDataCard.title.Text(L("settings.backup.clearData", L"Clear layout"));
         clearDataCard.description.Text(L("settings.backup.clearData.description",
             L"Create a layout backup, clear the desktop layout and widget storage, then reinitialize the grid. Keep component packages and general settings."));
-        clearDataActionRow.SetText({},
+        clearDataActionRow.SetText(std::wstring(clearDataCard.title.Text().c_str()),
             std::wstring(clearDataCard.description.Text().c_str()));
         SetButtonText(clearDataButton, L("settings.backup.clearData", L"Clear layout"));
         SetButtonText(cancelButton,

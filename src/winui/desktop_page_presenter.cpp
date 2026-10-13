@@ -668,7 +668,6 @@ struct DesktopPagePresenter::Impl
     std::unique_ptr<NumericEditor> outlineOpacity;
     std::unique_ptr<ColorEditor> outlineColor;
 
-    muxc::TextBlock categoryHint{nullptr};
     muxc::TextBlock addCategoryHeading{nullptr};
     muxc::Expander addCategorySection{nullptr};
     muxc::StackPanel categoryRulePanel{nullptr};
@@ -1094,9 +1093,6 @@ struct DesktopPagePresenter::Impl
             return heading;
         };
         addCategoryHeading = makeSubsectionHeading();
-        categoryHint = muxc::TextBlock{};
-        categoryHint.Opacity(0.72);
-        categoryHint.TextWrapping(mux::TextWrapping::Wrap);
         categoryRulePanel = muxc::StackPanel{};
         categoryRulePanel.Spacing(8.0);
         categoryRulesCard.content.Children().Append(categoryRulePanel);
@@ -1129,7 +1125,6 @@ struct DesktopPagePresenter::Impl
         addCategoryBody.Children().Append(newCategoryLabelRow.root);
         addCategoryBody.Children().Append(
             newCategoryExtensionsRow.root);
-        addCategoryBody.Children().Append(categoryHint);
         presenter_controls::UpdateSettingsSubrows(addCategoryBody, 0);
     }
 
@@ -1619,6 +1614,18 @@ struct DesktopPagePresenter::Impl
         muxa::AutomationProperties::SetName(row.enabled, action + L" " + row.label.Text());
     }
 
+    void SetCategoryExtensionHelp(const muxc::TextBox& extensions)
+    {
+        const auto help = L("app.settings.category_format_hint",
+            L"Separate extensions with spaces, commas or semicolons, for example .jpg .png.") +
+            L"\n" + L("app.settings.category_hint",
+                L"Standard extensions also match shortcut file targets; "
+                L".LNK:FOLDER matches folder shortcuts, .LNK:.PDF matches PDF shortcuts, "
+                L".LNK:APP matches application shortcuts, and .URL:STEAM matches Steam launch links.");
+        muxc::ToolTipService::SetToolTip(extensions, winrt::box_value(help));
+        muxa::AutomationProperties::SetHelpText(extensions, help);
+    }
+
     void LocalizeRuleRows()
     {
         for (const auto& row : ruleRows)
@@ -1637,8 +1644,7 @@ struct DesktopPagePresenter::Impl
             row->heading.Text(row->label.Text());
             muxa::AutomationProperties::SetName(row->section, row->label.Text());
             row->extensions.PlaceholderText(L".jpg .png");
-            muxa::AutomationProperties::SetHelpText(row->extensions,
-                L("app.settings.category_format_hint", L"Separate extensions with spaces, commas or semicolons, for example .jpg .png."));
+            SetCategoryExtensionHelp(row->extensions);
             row->remove.Content(winrt::box_value(
                 L("app.settings.delete", L"Delete")));
             const auto restore = L("app.settings.restore_default", L"Restore default");
@@ -2048,10 +2054,6 @@ struct DesktopPagePresenter::Impl
             "app.settings.beautify_outline_color", L"Outline color"),
             L("app.settings.cancel", L"Cancel"));
 
-        categoryHint.Text(L("app.settings.category_hint",
-            L"Standard extensions also match shortcut file targets; "
-            L".LNK:FOLDER matches folder shortcuts, .LNK:.PDF matches PDF shortcuts, "
-            L".LNK:APP matches application shortcuts, and .URL:STEAM matches Steam launch links."));
         collectProgramsRow.SetText(
             L("app.settings.collect_programs", L"Collect programs"));
         muxa::AutomationProperties::SetName(collectPrograms, collectProgramsRow.label.Text());
@@ -2065,8 +2067,7 @@ struct DesktopPagePresenter::Impl
         newCategoryExtensionsRow.SetText(
             L("app.settings.category_extensions", L"Extensions"));
         newCategoryExtensions.PlaceholderText(L".jpg .png");
-        muxa::AutomationProperties::SetHelpText(newCategoryExtensions,
-            L("app.settings.category_format_hint", L"Separate extensions with spaces, commas or semicolons, for example .jpg .png."));
+        SetCategoryExtensionHelp(newCategoryExtensions);
         addCategory.Content(winrt::box_value(
             L("app.settings.add", L"Add")));
         muxa::AutomationProperties::SetName(addCategory,

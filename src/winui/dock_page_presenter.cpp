@@ -137,6 +137,7 @@ struct DynamicRuleControl
     muxc::ComboBox contentTheme{nullptr};
     muxc::StackPanel details{nullptr};
     muxc::StackPanel appearanceDetails{nullptr};
+    muxc::StackPanel themeRows;
     muxc::StackPanel customAppearance{nullptr};
     SettingRow enabledRow;
     SettingRow themeRow;
@@ -188,6 +189,7 @@ void InitializeCard(
         card.section = muxc::Expander{};
         card.section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         card.section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        card.section.Padding({0, 0, 0, 0});
         card.section.IsExpanded(false);
         card.section.Header(card.title);
         card.section.Content(card.content);
@@ -423,6 +425,7 @@ struct DockPagePresenter::Impl
     muxc::ComboBox taskbarThemeCombo{nullptr};
     muxc::ComboBox taskbarContentThemeCombo{nullptr};
     muxc::StackPanel taskbarCustomAppearance{nullptr};
+    muxc::StackPanel taskbarBaseRows;
     muxc::TextBlock taskbarCustomTitle{nullptr};
     muxc::TextBlock taskbarRulesHint{nullptr};
     TaskbarGradientControl taskbarGradient;
@@ -730,6 +733,7 @@ struct DockPagePresenter::Impl
         suppressionStatus = muxc::InfoBar{};
         suppressionStatus.IsClosable(false);
         suppressionStatus.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(suppressionStatus);
         behaviorCard.content.Children().Append(suppressionStatus);
         itemsCard.content.Children().Append(showWindowsButtonRow.root);
         itemsCard.content.Children().Append(showQuickSearchButtonRow.root);
@@ -772,19 +776,23 @@ struct DockPagePresenter::Impl
         taskbarCard.content.Children().Append(taskbarSettingsRow.root);
 
         InitializeCard(taskbarAppearanceCard, nullptr, taskbarRoot);
+        taskbarAppearanceCard.content.Spacing(8.0);
         taskbarThemeCombo = NewCombo();
         taskbarThemes = std::make_unique<ThemeLibraryControls>(localize, "taskbar", false, taskbarThemeCombo, 10, 8);
         taskbarContentThemeCombo = NewCombo();
         taskbarThemeRow.Initialize(taskbarThemes->SelectionContent());
-        presenter_controls::StyleSettingsCard(taskbarThemeRow.root);
         taskbarContentThemeRow.Initialize(taskbarContentThemeCombo);
+        taskbarBaseRows.Children().Append(taskbarThemeRow.root);
+        taskbarBaseRows.Children().Append(taskbarContentThemeRow.root);
+        muxc::Border taskbarBaseGroup;
+        presenter_controls::InitializeSettingsGroup(
+            taskbarBaseGroup, nullptr, taskbarBaseRows, cardStyle);
         taskbarRuntimeStatus = muxc::InfoBar{};
         taskbarRuntimeStatus.IsClosable(false);
         taskbarRuntimeStatus.IsOpen(false);
-        taskbarAppearanceCard.content.Children().Append(taskbarThemeRow.root);
+        presenter_controls::BindInfoBarVisibility(taskbarRuntimeStatus);
+        taskbarAppearanceCard.content.Children().Append(taskbarBaseGroup);
         taskbarAppearanceCard.content.Children().Append(taskbarThemes->Content());
-        taskbarAppearanceCard.content.Children().Append(
-            taskbarContentThemeRow.root);
         taskbarAppearanceCard.content.Children().Append(taskbarRuntimeStatus);
 
         taskbarCustomAppearance = muxc::StackPanel{};
@@ -823,11 +831,12 @@ struct DockPagePresenter::Impl
         taskbarAppearanceCard.content.Children().Append(
             taskbarCustomAppearance);
 
-        InitializeCard(taskbarRulesCard, nullptr, taskbarRoot);
+        InitializeCard(taskbarRulesCard, nullptr, taskbarAppearanceCard.content, true);
+        taskbarRulesCard.content.Spacing(8.0);
         taskbarRulesHint = NewHint();
-        taskbarRulesCard.content.Children().Append(taskbarRulesHint);
         InitializeDynamicRule(shellUiRule,
             &DockSettings::systemTaskbarShellUi);
+        shellUiRule.enabledRow.text.Children().Append(taskbarRulesHint);
         InitializeDynamicRule(maximizedWindowRule,
             &DockSettings::systemTaskbarMaximizedWindow);
         InitializeDynamicRule(visibleWindowRule,
@@ -1081,12 +1090,13 @@ struct DockPagePresenter::Impl
             member == &DockSettings::systemTaskbarMaximizedWindow ? "taskbar/maximizedWindow" : "taskbar/visibleWindow";
         control.savedThemes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.theme, 10, 8);
         control.themeRow.Initialize(control.savedThemes->SelectionContent());
-        presenter_controls::StyleSettingsCard(control.themeRow.root);
-        presenter_controls::StyleSettingsCard(control.contentThemeRow.root);
-        control.appearanceDetails.Children().Append(control.themeRow.root);
+        control.themeRows.Children().Append(control.themeRow.root);
+        control.themeRows.Children().Append(control.contentThemeRow.root);
+        muxc::Border themeGroup;
+        presenter_controls::InitializeSettingsGroup(
+            themeGroup, nullptr, control.themeRows, cardStyle);
+        control.appearanceDetails.Children().Append(themeGroup);
         control.appearanceDetails.Children().Append(control.savedThemes->Content());
-        control.appearanceDetails.Children().Append(
-            control.contentThemeRow.root);
 
         control.customAppearance = muxc::StackPanel{};
         control.customAppearance.Spacing(8.0);
@@ -2063,6 +2073,7 @@ struct DockPagePresenter::Impl
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
         taskbarContentThemeRow.SetEnabled(taskbarStyled || IsClassicSystemTaskbar());
+        presenter_controls::UpdateSettingsSubrows(taskbarBaseRows, 0);
         taskbarCustomAppearance.Visibility(taskbarCustom
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
@@ -2095,6 +2106,7 @@ struct DockPagePresenter::Impl
             control->contentThemeRow.root.Visibility(!control->savedThemes->HasSavedSelection() && !native && !IsClassicSystemTaskbar()
                     ? mux::Visibility::Visible
                     : mux::Visibility::Collapsed);
+            presenter_controls::UpdateSettingsSubrows(control->themeRows, 0);
             control->customAppearance.Visibility(custom
                     ? mux::Visibility::Visible
                     : mux::Visibility::Collapsed);

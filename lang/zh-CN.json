@@ -1388,7 +1388,7 @@
     "settings.personalization.contextMenu": "右键菜单外观",
     "settings.personalization.contextMenu.description": "选择 SnowDesktop 右键菜单的呈现方式。",
     "settings.desktop.layout": "图标布局",
-    "settings.desktop.layout.description": "调整图标大小、标题与列表字体和快捷方式箭头。",
+    "settings.desktop.layout.description": "调整字体、图标和组件的通用外观。",
     "settings.desktop.behavior": "桌面行为",
     "settings.desktop.passthrough": "桌面穿透",
     "settings.desktop.beautify": "图标美化",
@@ -2619,11 +2619,11 @@
   "settings.nav.group.layout": "桌面布局",
   "settings.nav.group.appearanceInteraction": "外观与交互",
   "settings.nav.themeMaterials": "主题与材质",
-  "settings.nav.fontsIcons": "字体与图标",
+  "settings.nav.fontsIcons": "全局外观",
   "settings.nav.widgetManagement": "组件管理",
   "settings.nav.backupData": "备份与数据",
   "appearance.openQuickNavigation": "打开快捷导航外观",
-  "appearance.widgetDimensions": "组件形状与尺寸",
+  "appearance.widgetDimensions": "布局与尺寸",
   "font.interfaceText": "界面文字",
   "largeIcon.allOff": "全部关闭",
   "largeIcon.allOn": "全部开启",
@@ -2692,5 +2692,7 @@
   "settings.search.prerequisite.dependency": "此项取决于“{0}”的当前值。已定位到控制它的设置。",
   "settings.search.prerequisite.disable": "要调整此项，请先关闭“{0}”。",
   "settings.search.prerequisite.enable": "要调整此项，请先打开“{0}”。",
-  "settings.search.prerequisite.unavailable": "此项在当前条件下不可调整。"
+  "settings.search.prerequisite.unavailable": "此项在当前条件下不可调整。",
+  "settings.search.alias.globalAppearance": "字体与图标 全局外观",
+  "statusBar.theme.mergedHint": "与 Dock 合并的状态栏使用 Dock 外观。"
 }

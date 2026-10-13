@@ -1388,7 +1388,7 @@
   "settings.personalization.contextMenu": "상황에 맞는 메뉴 모양",
   "settings.personalization.contextMenu.description": "SnowDesktop 상황에 맞는 메뉴의 표시 방식을 선택합니다.",
   "settings.desktop.layout": "아이콘 레이아웃",
-  "settings.desktop.layout.description": "아이콘 크기, 제목과 목록 글꼴, 바로가기 화살표를 조정합니다.",
+  "settings.desktop.layout.description": "글꼴, 아이콘 및 구성 요소의 공통 모양을 조정합니다.",
   "settings.desktop.behavior": "바탕 화면 동작",
   "settings.desktop.passthrough": "바탕 화면 클릭 통과",
   "settings.desktop.beautify": "아이콘 꾸미기",
@@ -2616,7 +2616,7 @@
   "app.settings.third_party_data": "데이터",
   "app.settings.third_party_fonts": "인터페이스 글꼴",
   "appearance.openQuickNavigation": "빠른 탐색 모양 열기",
-  "appearance.widgetDimensions": "구성 요소 모양 및 크기",
+  "appearance.widgetDimensions": "레이아웃 및 크기",
   "font.interfaceText": "인터페이스 텍스트",
   "largeIcon.allOff": "모두 끄기",
   "largeIcon.allOn": "모두 켜기",
@@ -2630,7 +2630,7 @@
   "settings.dock.contentAndLaunch": "항목 및 실행",
   "settings.dock.spaceAvoidance": "공간 확보",
   "settings.nav.backupData": "백업 및 데이터",
-  "settings.nav.fontsIcons": "글꼴 및 아이콘",
+  "settings.nav.fontsIcons": "전체 모양",
   "settings.nav.group.appearanceInteraction": "모양 및 상호 작용",
   "settings.nav.group.layout": "바탕 화면 배치",
   "settings.nav.group.organization": "바탕 화면 및 정리",
@@ -2692,5 +2692,7 @@
   "settings.search.prerequisite.dependency": "이 항목은 “{0}”의 현재 값에 따라 달라집니다. 관련 설정이 강조 표시되어 있습니다.",
   "settings.search.prerequisite.disable": "이 항목을 조정하려면 먼저 “{0}”을(를) 끄세요.",
   "settings.search.prerequisite.enable": "이 항목을 조정하려면 먼저 “{0}”을(를) 켜세요.",
-  "settings.search.prerequisite.unavailable": "현재 조건에서는 이 항목을 조정할 수 없습니다."
+  "settings.search.prerequisite.unavailable": "현재 조건에서는 이 항목을 조정할 수 없습니다.",
+  "settings.search.alias.globalAppearance": "글꼴 및 아이콘 전체 모양",
+  "statusBar.theme.mergedHint": "Dock과 결합된 상태 표시줄은 Dock의 모양을 사용합니다."
 }

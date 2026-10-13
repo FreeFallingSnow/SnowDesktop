@@ -292,6 +292,7 @@ struct GeneralPagePresenter::Impl
             muxc::InfoBarSeverity::Informational);
         startupOwnershipNotice.IsClosable(false);
         startupOwnershipNotice.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(startupOwnershipNotice);
         startupCard.content.Children().Append(startupOwnershipNotice);
 
         InitializeCard(advancedFeaturesCard, cardStyle, root, false);
@@ -414,6 +415,7 @@ struct GeneralPagePresenter::Impl
         advancedFeatureNotice = muxc::InfoBar{};
         advancedFeatureNotice.IsClosable(false);
         advancedFeatureNotice.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(advancedFeatureNotice);
         retryAdvancedFeaturesButton = muxc::Button{};
         advancedFeatureNotice.ActionButton(retryAdvancedFeaturesButton);
         advancedFeatureUpdateButton = muxc::Button{};

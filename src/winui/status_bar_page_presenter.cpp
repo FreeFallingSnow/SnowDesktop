@@ -27,7 +27,7 @@ struct StatusBarPagePresenter::Impl
     muxc::StackPanel independentBody;
     muxc::StackPanel root, basic, leftItems, infoItems, appearanceRoot;
     bool centralizedAppearance = false;
-    muxc::Expander leftSection, infoSection, controlCenterSection;
+    muxc::Expander leftSection, infoSection, controlCenterSection, rulesSection;
     muxc::TextBlock layoutTitle, clickTitle;
     muxc::ComboBox edge, monitors, clockPanel, controlPanel, inputPanel, timeNotificationPosition;
     muxc::Slider scale;
@@ -185,7 +185,7 @@ struct StatusBarPagePresenter::Impl
         : localize(std::move(callback)), navigate(std::move(navigateCallback))
     {
         root.Spacing(24);
-        appearanceRoot.Spacing(12);
+        appearanceRoot.Spacing(8);
         basic = Card(style);
         ToggleRow(basic, "statusBar.enabled", "statusBar.enable", &StatusBarSettings::enabled);
         Title(layoutTitle);
@@ -219,6 +219,7 @@ struct StatusBarPagePresenter::Impl
         {
             section.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             section.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+            section.Padding({0, 0, 0, 0});
             section.IsExpanded(false);
         }
         root.Children().Append(leftSection);
@@ -288,7 +289,7 @@ struct StatusBarPagePresenter::Impl
         });
         revoke.push_back([control = inputPanel, inputSelection] { control.SelectionChanged(inputSelection); });
         independentAppearance.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        independentBody.Spacing(24);
+        independentBody.Spacing(8);
         mergedNotice.TextWrapping(mux::TextWrapping::Wrap);
         dockAppearanceLink.HorizontalAlignment(mux::HorizontalAlignment::Left);
         const auto appearanceLinkToken = dockAppearanceLink.Click([this](const auto&, const auto&) {
@@ -306,8 +307,14 @@ struct StatusBarPagePresenter::Impl
 
         muxc::StackPanel scenarios;
         scenarios.Spacing(8);
-        independentBody.Children().Append(scenarios);
-        Title(rulesTitle); scenarios.Children().Append(rulesTitle);
+        Title(rulesTitle);
+        rulesSection.Header(rulesTitle);
+        rulesSection.Content(scenarios);
+        rulesSection.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        rulesSection.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        rulesSection.Padding({0, 0, 0, 0});
+        rulesSection.IsExpanded(false);
+        independentBody.Children().Append(rulesSection);
         rulesHint.TextWrapping(mux::TextWrapping::Wrap); rulesHint.Opacity(.72); rulesHint.FontSize(12);
         InitializeRule(scenarios, "statusBar.noWindow", "statusBar.noWindow", &StatusBarSettings::noWindow);
         rules.front()->enabledRow.text.Children().Append(rulesHint);
@@ -370,6 +377,16 @@ struct StatusBarPagePresenter::Impl
         mux::Automation::AutomationProperties::SetHelpText(controlPanel,
             systemQuickSettings && value.controlCenterSystemPanel ? placement : L"");
     }
+    void SyncAppearanceContext()
+    {
+        const bool showStandaloneNotice = availability.anyMerged && !centralizedAppearance;
+        mergedNotice.Visibility(showStandaloneNotice ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        dockAppearanceLink.Visibility(showStandaloneNotice ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        mergedNotice.Text(L(availability.allStatusMerged ? "settings.bars.inheritedAppearance" : "settings.bars.partialAppearance"));
+        defaultTheme.row.SetText(L("app.settings.theme"), centralizedAppearance && availability.anyMerged
+            ? L("statusBar.theme.mergedHint") : L"");
+        mux::Automation::AutomationProperties::SetHelpText(defaultTheme.combo, defaultTheme.row.help.Text());
+    }
     void Sync(bool force = false)
     {
         syncing = true;
@@ -403,9 +420,7 @@ struct StatusBarPagePresenter::Impl
                 value.enabled);
         independentHost.IsEnabled(value.enabled);
         independentHost.Opacity(value.enabled ? 1.0 : .62);
-        mergedNotice.Visibility(availability.anyMerged ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        dockAppearanceLink.Visibility(availability.anyMerged ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        mergedNotice.Text(L(availability.allStatusMerged ? "settings.bars.inheritedAppearance" : "settings.bars.partialAppearance"));
+        SyncAppearanceContext();
 
         syncing = false;
     }
@@ -457,6 +472,7 @@ struct StatusBarPagePresenter::Impl
         mergedHeight->RefreshLocalizedText();
         defaultThemeTitle.Text(L(centralizedAppearance ? "settings.nav.statusBar" : "statusBar.defaultAppearance"));
         rulesTitle.Text(L("settings.taskbar.scenarioOverrides"));
+        mux::Automation::AutomationProperties::SetName(rulesSection, rulesTitle.Text());
         rulesHint.Text(L("statusBar.scenarioOverrides.description"));
         LocalizeTheme(defaultTheme);
         mux::Automation::AutomationProperties::SetName(defaultTheme.combo, defaultThemeTitle.Text());
@@ -515,6 +531,7 @@ mux::UIElement StatusBarPagePresenter::Content() const
 {
     impl_->centralizedAppearance = false;
     impl_->defaultThemeTitle.Text(impl_->L("statusBar.defaultAppearance"));
+    impl_->SyncAppearanceContext();
     uint32_t index = 0;
     if (!impl_->root.Children().IndexOf(impl_->appearanceRoot, index))
         impl_->root.Children().Append(impl_->appearanceRoot);
@@ -524,6 +541,7 @@ mux::UIElement StatusBarPagePresenter::AppearanceContent() const
 {
     impl_->centralizedAppearance = true;
     impl_->defaultThemeTitle.Text(impl_->L("settings.nav.statusBar"));
+    impl_->SyncAppearanceContext();
     uint32_t index = 0;
     if (impl_->root.Children().IndexOf(impl_->appearanceRoot, index))
         impl_->root.Children().RemoveAt(index);
@@ -591,7 +609,10 @@ mux::FrameworkElement StatusBarPagePresenter::FocusTarget(
                 prerequisite->messageKey = "settings.search.prerequisite.enable";
                 prerequisite->controlName = toggle->row.label.Text().c_str();
             }
-            return toggle->control;
+            // The centralized editor does not mount the behavior-page switch.
+            // Keep prerequisite navigation on a visible card in this page.
+            return impl_->centralizedAppearance ? impl_->defaultTheme.row.root.as<mux::FrameworkElement>()
+                : toggle->control.as<mux::FrameworkElement>();
         }
         return result;
     };

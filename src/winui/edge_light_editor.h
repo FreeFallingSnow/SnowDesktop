@@ -110,6 +110,7 @@ private:
         advanced.HorizontalContentAlignment(winrt::Microsoft::UI::Xaml::HorizontalAlignment::Stretch);
         advanced.Header(winrt::box_value(L("edgeLight.advanced"))); advanced.IsExpanded(false);
         presenter_controls::StyleInlineSettingsExpander(advanced);
+        advanced.Padding({0, 0, 0, 0});
         Panel details; details.Spacing(0); advanced.Content(details); root_.Children().Append(advanced);
         const auto group = [&](const char* key) { c::TextBlock title; title.Text(L(key)); title.Margin({16,16,16,4}); title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); details.Children().Append(title); };
         group("edgeLight.lighting");

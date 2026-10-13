@@ -645,6 +645,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (collapsible)
         {
             c::Expander disclosure;
+            disclosure.Padding({0, 0, 0, 0});
             disclosure.Header(title); disclosure.Content(body);
             disclosure.HorizontalAlignment(x::HorizontalAlignment::Stretch);
             disclosure.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);

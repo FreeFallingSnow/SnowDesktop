@@ -173,6 +173,7 @@ struct PageLayoutPagePresenter::Impl
         feedback = muxc::InfoBar{};
         feedback.IsOpen(false);
         feedback.IsClosable(true);
+        presenter_controls::BindInfoBarVisibility(feedback);
         root.Children().Append(feedback);
 
         InitializeCard(pagesCard, cardStyle, root);

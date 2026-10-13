@@ -38,6 +38,18 @@ inline constexpr double kSettingLabelMinWidth = 180.0;
 inline constexpr double kSettingColumnGap = 24.0;
 inline constexpr std::chrono::milliseconds kContinuousPreviewInterval{33};
 
+// A closed InfoBar hides its template but still participates in StackPanel
+// spacing unless the control itself is collapsed. Keep both states together.
+inline void BindInfoBarVisibility(const muxc::InfoBar& bar)
+{
+    bar.Visibility(bar.IsOpen() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    (void)bar.RegisterPropertyChangedCallback(muxc::InfoBar::IsOpenProperty(),
+        [](const mux::DependencyObject& sender, const mux::DependencyProperty&) {
+            const auto current = sender.as<muxc::InfoBar>();
+            current.Visibility(current.IsOpen() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        });
+}
+
 // Section headings have no surface. Keep their secondary actions equally
 // lightweight while retaining native hyperlink focus and keyboard behavior.
 inline void ConfigureSettingsHeadingLink(const muxc::HyperlinkButton& link)
@@ -51,6 +63,7 @@ inline void ConfigureSettingsHeadingLink(const muxc::HyperlinkButton& link)
 template <typename Surface>
 inline void StyleSettingsCard(const Surface& surface)
 {
+    surface.Resources().Insert(winrt::box_value(L"SnowDesktopSettingsCard"), winrt::box_value(true));
     surface.Padding({16.0, 16.0, 16.0, 16.0});
     surface.MinHeight(68.0);
     surface.CornerRadius({4.0, 4.0, 4.0, 4.0});
@@ -74,6 +87,8 @@ template <typename Surface>
 inline void StyleSettingsSubrow(const Surface& surface,
     bool first = false, double indent = 16.0)
 {
+    const auto cardKey = winrt::box_value(L"SnowDesktopSettingsCard");
+    if (surface.Resources().HasKey(cardKey)) surface.Resources().Remove(cardKey);
     surface.Padding({16.0 + indent, 8.0, 16.0, 8.0});
     surface.MinHeight(52.0);
     surface.CornerRadius({0.0});

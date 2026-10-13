@@ -88,6 +88,7 @@ public:
         WidgetLayoutContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         WidgetBehaviorContent() const noexcept;
+    /** Mount the existing shared spacing row once, using the layout group's surface. */
     void SetLayoutSpacingContent(
         const winrt::Microsoft::UI::Xaml::UIElement& content);
     void ApplySnapshot(const SettingsSnapshot& snapshot);

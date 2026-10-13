@@ -21,6 +21,7 @@ namespace
 struct Section
 {
     muxc::Border root{nullptr};
+    muxc::Border surface{nullptr};
     muxc::StackPanel content{nullptr};
     muxc::TextBlock title{nullptr};
 };
@@ -48,7 +49,8 @@ void InitializeSection(
     section.title.FontWeight(
         winrt::Windows::UI::Text::FontWeights::SemiBold());
     section.title.TextWrapping(mux::TextWrapping::Wrap);
-    presenter_controls::InitializeSettingsGroup(section.root, section.title, section.content, style, true);
+    section.surface = presenter_controls::InitializeSettingsGroup(
+        section.root, section.title, section.content, style, true);
     page.Children().Append(section.root);
 }
 
@@ -339,13 +341,13 @@ struct HomeAboutPagePresenter::Impl
             aboutRoot.Children().Append(section);
         muxc::StackPanel creditGroups;
         creditGroups.Spacing(24);
-        for (const auto& section : {thirdPartySection.root, dataSection.root,
-                 fontSection.root, referenceSection.root})
+        for (const auto* section : {&thirdPartySection, &dataSection,
+                 &fontSection, &referenceSection})
         {
-            section.Padding({0, 0, 0, 0});
-            section.BorderThickness({0, 0, 0, 0});
-            section.Background(nullptr);
-            creditGroups.Children().Append(section);
+            section->surface.Padding({0, 0, 0, 0});
+            section->surface.BorderThickness({0, 0, 0, 0});
+            section->surface.Background(nullptr);
+            creditGroups.Children().Append(section->root);
         }
         credits = muxc::Expander{};
         credits.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
@@ -431,7 +433,7 @@ struct HomeAboutPagePresenter::Impl
         crashButton.UseSystemFocusVisuals(true);
         crashActionHost.Children().Append(crashButton);
         crashExpander.Content(crashActionHost);
-        crashSection.content.Children().Append(crashExpander);
+        crashSection.root.Child(crashExpander);
     }
 
     void HookEvents()

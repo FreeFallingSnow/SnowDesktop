@@ -1388,7 +1388,7 @@
   "settings.personalization.contextMenu": "コンテキストメニューの外観",
   "settings.personalization.contextMenu.description": "SnowDesktop のコンテキストメニューの表示方法を選択します。",
   "settings.desktop.layout": "アイコンの配置",
-  "settings.desktop.layout.description": "アイコンの大きさ、タイトルと一覧のフォント、ショートカットの矢印を調整します。",
+  "settings.desktop.layout.description": "フォント、アイコン、コンポーネントに共通する外観を調整します。",
   "settings.desktop.behavior": "デスクトップの動作",
   "settings.desktop.passthrough": "デスクトップのクリック透過",
   "settings.desktop.beautify": "アイコン美化",
@@ -2616,7 +2616,7 @@
   "app.settings.third_party_data": "データ",
   "app.settings.third_party_fonts": "インターフェイスのフォント",
   "appearance.openQuickNavigation": "クイックナビゲーションの外観を開く",
-  "appearance.widgetDimensions": "コンポーネントの形状とサイズ",
+  "appearance.widgetDimensions": "レイアウトとサイズ",
   "font.interfaceText": "インターフェイスの文字",
   "largeIcon.allOff": "すべてオフにする",
   "largeIcon.allOn": "すべてオンにする",
@@ -2630,7 +2630,7 @@
   "settings.dock.contentAndLaunch": "項目と起動",
   "settings.dock.spaceAvoidance": "スペースの確保",
   "settings.nav.backupData": "バックアップとデータ",
-  "settings.nav.fontsIcons": "フォントとアイコン",
+  "settings.nav.fontsIcons": "全体の外観",
   "settings.nav.group.appearanceInteraction": "外観と操作",
   "settings.nav.group.layout": "デスクトップの配置",
   "settings.nav.group.organization": "デスクトップと整理",
@@ -2692,5 +2692,7 @@
   "settings.search.prerequisite.dependency": "この項目は「{0}」の現在の値によって変わります。関連する設定を強調表示しています。",
   "settings.search.prerequisite.disable": "この項目を調整するには、先に「{0}」をオフにしてください。",
   "settings.search.prerequisite.enable": "この項目を調整するには、先に「{0}」をオンにしてください。",
-  "settings.search.prerequisite.unavailable": "現在の条件では、この項目を調整できません。"
+  "settings.search.prerequisite.unavailable": "現在の条件では、この項目を調整できません。",
+  "settings.search.alias.globalAppearance": "フォントとアイコン 全体の外観",
+  "statusBar.theme.mergedHint": "Dock と結合されたステータスバーは Dock の外観を使用します。"
 }

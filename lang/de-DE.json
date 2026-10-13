@@ -1388,7 +1388,7 @@
   "settings.personalization.contextMenu": "Kontextmenüdarstellung",
   "settings.personalization.contextMenu.description": "Auswählen, wie SnowDesktop-Kontextmenüs dargestellt werden.",
   "settings.desktop.layout": "Symbollayout",
-  "settings.desktop.layout.description": "Symbolgröße, Titel- und Listenschriften sowie Verknüpfungspfeile anpassen.",
+  "settings.desktop.layout.description": "Gemeinsames Erscheinungsbild von Schrift, Symbolen und Komponenten anpassen.",
   "settings.desktop.behavior": "Desktopverhalten",
   "settings.desktop.passthrough": "Klicks durch den Desktop leiten",
   "settings.desktop.beautify": "Symbolverschönerung",
@@ -2616,7 +2616,7 @@
   "app.settings.third_party_data": "Daten",
   "app.settings.third_party_fonts": "Schriftarten der Benutzeroberfläche",
   "appearance.openQuickNavigation": "Erscheinungsbild der Schnellnavigation öffnen",
-  "appearance.widgetDimensions": "Form und Größe der Komponenten",
+  "appearance.widgetDimensions": "Layout und Größen",
   "font.interfaceText": "Oberflächentext",
   "largeIcon.allOff": "Alle ausschalten",
   "largeIcon.allOn": "Alle einschalten",
@@ -2630,7 +2630,7 @@
   "settings.dock.contentAndLaunch": "Elemente und Startverhalten",
   "settings.dock.spaceAvoidance": "Platz reservieren",
   "settings.nav.backupData": "Sicherung und Daten",
-  "settings.nav.fontsIcons": "Schriftarten und Symbole",
+  "settings.nav.fontsIcons": "Globales Erscheinungsbild",
   "settings.nav.group.appearanceInteraction": "Aussehen und Interaktion",
   "settings.nav.group.layout": "Desktop-Layout",
   "settings.nav.group.organization": "Desktop und Organisation",
@@ -2692,5 +2692,7 @@
   "settings.search.prerequisite.dependency": "Diese Option hängt vom aktuellen Wert von „{0}“ ab. Die zugehörige Einstellung ist hervorgehoben.",
   "settings.search.prerequisite.disable": "Um diese Option anzupassen, deaktivieren Sie zuerst „{0}“.",
   "settings.search.prerequisite.enable": "Um diese Option anzupassen, aktivieren Sie zuerst „{0}“.",
-  "settings.search.prerequisite.unavailable": "Diese Option kann unter den aktuellen Bedingungen nicht angepasst werden."
+  "settings.search.prerequisite.unavailable": "Diese Option kann unter den aktuellen Bedingungen nicht angepasst werden.",
+  "settings.search.alias.globalAppearance": "Schriftarten und Symbole Globales Erscheinungsbild",
+  "statusBar.theme.mergedHint": "Mit dem Dock zusammengeführte Statusleisten verwenden dessen Darstellung."
 }

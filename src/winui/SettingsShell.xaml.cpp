@@ -707,7 +707,6 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
     case SettingsPage::DesktopPages:
         ensureGeneral();
         ensurePageLayout();
-        ensureDesktop();
         break;
     case SettingsPage::LargeIcon:
         if (!largeIconPage_) largeIconPage_ = std::make_unique<snowdesktop::winui::LargeIconPagePresenter>(
@@ -2547,7 +2546,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             page == SettingsPage::AppearanceDesktopIcons;
     };
     const auto usesDesktopPresenter = [](SettingsPage page) {
-        return page == SettingsPage::AppearanceWidgets || page == SettingsPage::DesktopPages ||
+        return page == SettingsPage::AppearanceWidgets ||
             page == SettingsPage::DesktopCategories ||
             page == SettingsPage::AppearanceDesktopIcons ||
             page == SettingsPage::AppearanceIconBeautification;
@@ -2674,19 +2673,24 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         }
         break;
     case SettingsPage::ContextMenu:
+    {
+        muxc::StackPanel menuSection;
+        menuSection.Spacing(8);
         if (personalizationPage_)
         {
-            PageCards().Children().Append(personalizationPage_->MenuContent());
+            menuSection.Children().Append(personalizationPage_->MenuContent());
             registerPersonalizationFocus({"personalization.contextMenu"});
             personalizationPage_->Activate();
         }
         if (contextMenuPage_)
         {
-            PageCards().Children().Append(contextMenuPage_->Content());
+            menuSection.Children().Append(contextMenuPage_->Content());
             contextMenuPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) { RegisterFocusTarget(std::move(id), element); });
             contextMenuPage_->Activate();
         }
+        PageCards().Children().Append(menuSection);
         break;
+    }
     case SettingsPage::Calendar:
         if (calendarPage_)
         {
@@ -2698,9 +2702,9 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     case SettingsPage::AnimationPerformance:
         if (animationPage_)
         {
+            if (dockPage_) dockPage_->SetSupplementalContent(nullptr, nullptr, nullptr);
             PageCards().Children().Append(animationPage_->Content());
             animationPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
-                if (id == "animation.hover" || id == "animation.hoverScale" || id == "animation.launch" || id == "animation.window") return;
                 RegisterFocusTarget(std::move(id), element);
             });
             animationPage_->Activate();
@@ -2752,11 +2756,16 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 PageCards().Children().Append(dockPage_->DockThemeContent());
                 PageCards().Children().Append(dockPage_->TaskbarAppearanceContent());
                 dockPage_->ActivateTaskbar();
-                registerDockFocus({"taskbar.theme"});
+                registerDockFocus({"taskbar.theme", "taskbar.contentTheme",
+                    "taskbar.dynamic.visibleWindow", "taskbar.dynamic.maximizedWindow", "taskbar.dynamic.shellUi"});
             }
             if (statusBarPage_)
             {
                 PageCards().Children().Append(statusBarPage_->AppearanceContent());
+                statusBarPage_->RegisterFocusTargets([this](std::string id, const mux::FrameworkElement& element) {
+                    if (id == "statusBar.theme" || id == "statusBar.noWindow" || id == "statusBar.maximizedWindow")
+                        RegisterFocusTarget(std::move(id), element);
+                });
                 statusBarPage_->Activate();
             }
             PageCards().Children().Append(personalizationPage_->QuickNavigationAppearanceContent());
@@ -2792,7 +2801,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(
                 personalizationPage_->WidgetBehaviorContent());
             registerPersonalizationFocus({
-                "desktop.categoryLayout", "desktop.tabHeight", "personalization.tabHeight",
                 "personalization.scrollableTitleBarOnTop",
                 "personalization.showGroupTabCounts",
                 "personalization.popupHoverOpen",
@@ -2834,35 +2842,14 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 });
             pageLayoutPage_->Activate();
             generalPage_->Activate();
-            if (desktopPage_)
-            {
-                PageCards().Children().Append(desktopPage_->LayoutSpacingContent());
-                registerDesktopFocus({"desktop.spacing", "desktop.iconSpacing"});
-                desktopPage_->Activate();
-            }
-            muxc::StackPanel related; related.Spacing(4);
-            muxc::TextBlock heading; heading.Text(Localize("settings.common.relatedSettings"));
-            heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
-            related.Children().Append(heading);
-            for (const auto targetPage : {SettingsPage::Dock, SettingsPage::StatusBar})
-            {
-                muxc::HyperlinkButton link;
-                const bool dock = targetPage == SettingsPage::Dock;
-                link.Content(winrt::box_value(PageTitleText(targetPage) + L" · " + Localize("app.settings.display_scope")));
-                link.Click([weak = get_weak(), targetPage, dock](const auto&,const auto&) {
-                    if (const auto shell = weak.get(); shell && !shell->closed_)
-                        shell->RequestRoute(SettingsRoute::ForPage(targetPage, dock ? "dock.monitor" : "statusBar.monitor"));
-                });
-                related.Children().Append(link);
-            }
-            muxc::HyperlinkButton display;
+            muxc::Button display;
+            display.Style(Resources().Lookup(winrt::box_value(L"SettingsShellCardButtonStyle")).as<mux::Style>());
             display.Content(winrt::box_value(Localize("app.menu.display_settings")));
             display.Click([](const auto&,const auto&) -> winrt::fire_and_forget {
                 try { co_await winrt::Windows::System::Launcher::LaunchUriAsync(winrt::Windows::Foundation::Uri{L"ms-settings:display"}); }
                 catch (...) {}
             });
-            related.Children().Append(display);
-            PageCards().Children().Append(related);
+            PageCards().Children().Append(display);
         }
         break;
     case SettingsPage::LargeIcon:
@@ -2875,8 +2862,10 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     case SettingsPage::AppearanceDesktopIcons:
         if (personalizationPage_)
         {
+            if (desktopPage_) personalizationPage_->SetLayoutSpacingContent(desktopPage_->LayoutSpacingContent());
             PageCards().Children().Append(personalizationPage_->TypographyContent());
             registerPersonalizationFocus({"personalization.font", "personalization.tooltipFontSize",
+                "desktop.categoryLayout", "desktop.tabHeight", "personalization.tabHeight", "personalization.luaWidgetRowHeight",
                 "personalization.cornerRadius", "personalization.barHeight"});
             personalizationPage_->Activate();
         }
@@ -2885,6 +2874,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             PageCards().Children().Append(
                 desktopPage_->DesktopIconsContent());
             registerDesktopFocus({
+                "desktop.spacing", "desktop.iconSpacing",
                 "desktop.iconSize",
                 "desktop.itemFontSize", "desktop.listFontSize",
                 "desktop.fontWeight", "desktop.shortcutArrow", "desktop.titleLines", "desktop.largeFolderTitleLines", "desktop.scrollingTitleLines", "desktop.titleOverflow"});
@@ -3027,7 +3017,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         if (personalizationPage_)
         {
             PageCards().Children().Append(personalizationPage_->WidgetCommonContent());
-            registerPersonalizationFocus({"personalization.luaWidgetRowHeight", "personalization.widgetTransformCursors"});
+            registerPersonalizationFocus({"personalization.widgetTransformCursors"});
             personalizationPage_->Activate();
         }
         break;
@@ -3191,11 +3181,15 @@ mux::FrameworkElement SettingsShell::ResolveConditionalFocusTarget(
     const auto& focusId = route.focusId;
     prerequisite = {};
     if (focusId.empty()) return nullptr;
+    if (route.page == SettingsPage::Widgets && widgetsPage_ &&
+        (focusId != "widgets.permissions" || route.itemKey.empty()))
+        return widgetsPage_->FocusTarget(focusId);
     if (route.page == SettingsPage::WidgetSettings && widgetSettingsPage_)
         return widgetSettingsPage_->FocusTarget(focusId, reveal, &prerequisite);
     if (route.page == SettingsPage::LargeIcon && largeIconPage_)
         return largeIconPage_->FocusTarget(focusId, &prerequisite, reveal);
-    if (route.page == SettingsPage::StatusBar && statusBarPage_)
+    if (statusBarPage_ && (route.page == SettingsPage::StatusBar ||
+        (route.page == SettingsPage::AppearanceTheme && focusId.starts_with("statusBar."))))
         return statusBarPage_->FocusTarget(focusId, &prerequisite);
     mux::FrameworkElement target{nullptr};
     if (personalizationPage_ && (route.page == SettingsPage::AppearanceTheme ||
@@ -3204,10 +3198,10 @@ mux::FrameworkElement SettingsShell::ResolveConditionalFocusTarget(
         route.page == SettingsPage::Widgets || route.page == SettingsPage::Dock || route.page == SettingsPage::ContextMenu))
         target = personalizationPage_->FocusTarget(focusId, reveal, &prerequisite);
     if (!target && desktopPage_ && (route.page == SettingsPage::AppearanceDesktopIcons ||
-        route.page == SettingsPage::AppearanceIconBeautification || route.page == SettingsPage::DesktopCategories ||
-        route.page == SettingsPage::DesktopPages))
+        route.page == SettingsPage::AppearanceIconBeautification || route.page == SettingsPage::DesktopCategories))
         target = desktopPage_->FocusTarget(focusId, reveal, &prerequisite);
-    if (!target && dockPage_ && (route.page == SettingsPage::Dock || route.page == SettingsPage::Taskbar))
+    if (!target && dockPage_ && (route.page == SettingsPage::Dock || route.page == SettingsPage::Taskbar ||
+        (route.page == SettingsPage::AppearanceTheme && focusId.starts_with("taskbar."))))
         target = dockPage_->FocusTarget(focusId, &prerequisite);
     if (!target && generalPage_ && (route.page == SettingsPage::General ||
         route.page == SettingsPage::QuickNavigation || route.page == SettingsPage::Desktop ||
@@ -3335,23 +3329,18 @@ void SettingsShell::HighlightSetting(const mux::FrameworkElement& target,
     const auto cardStyle = Resources().Lookup(winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>();
     const auto buttonStyle = Resources().Lookup(winrt::box_value(L"SettingsShellCardButtonStyle")).as<mux::Style>();
     mux::FrameworkElement region{nullptr};
-    mux::FrameworkElement settingRow{nullptr};
-    mux::FrameworkElement expander{nullptr};
     auto node = target.as<mux::DependencyObject>();
     while (node && node != PageCards())
     {
         if (auto element = node.try_as<mux::FrameworkElement>())
         {
-            if (!settingRow && element.Resources().HasKey(winrt::box_value(L"SnowDesktopSettingRow")))
-                settingRow = element;
-            if (element.Style() == cardStyle || element.Style() == buttonStyle)
+            if (element.Style() == cardStyle || element.Style() == buttonStyle ||
+                element.Resources().HasKey(winrt::box_value(L"SnowDesktopSettingsCard")) ||
+                node.try_as<muxc::Expander>())
                 region = element;
-            if (node.try_as<muxc::Expander>()) expander = element;
         }
         node = muxm::VisualTreeHelper::GetParent(node);
     }
-    if (settingRow) region = settingRow;
-    if (!region) region = expander;
     mux::BringIntoViewOptions options;
     options.AnimationDesired(false);
     (region ? region : target).StartBringIntoView(options);

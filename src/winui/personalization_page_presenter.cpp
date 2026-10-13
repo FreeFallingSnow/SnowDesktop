@@ -211,8 +211,7 @@ struct PersonalizationPagePresenter::Impl
     SettingsCard contextMenuCard;
     SettingsCard layoutCard;
     SettingsCard behaviorCard;
-    SettingsCard collectionSizeCard, collectionTitleCard;
-    SettingsCard widgetDisplayCard;
+    SettingsCard collectionTitleCard;
     SettingsCard widgetInteractionCard;
     AppearanceSections appearanceSections;
     std::shared_ptr<PanelGradientEditor> panelGradientEditor;
@@ -549,6 +548,7 @@ struct PersonalizationPagePresenter::Impl
         popupAppearanceContent.Spacing(8);
         popupCopyComponentRow.Initialize(popupCopyComponent);
         popupCopyComponentRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsCard(popupCopyComponentRow.root);
         popupCopyComponentToken = popupCopyComponent.Click([this](const auto&, const auto&) {
             if (!CanEmit()) return;
             popupAppearanceEditor->Flush();
@@ -643,6 +643,7 @@ struct PersonalizationPagePresenter::Impl
         tooltipFontSizeRow.Initialize(tooltipEditors);
         fontRestart.IsClosable(false);
         fontRestart.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(fontRestart);
         fontRestart.Severity(muxc::InfoBarSeverity::Informational);
         fontRestartButton.HorizontalAlignment(mux::HorizontalAlignment::Right);
         fontRestart.ActionButton(fontRestartButton);
@@ -661,10 +662,8 @@ struct PersonalizationPagePresenter::Impl
 
         // These geometry preferences remain editable under every theme.
         InitializeCard(layoutCard, cardStyle, widgetLayoutRoot);
-        InitializeCard(collectionSizeCard, cardStyle, widgetBehaviorRoot);
         InitializeCard(collectionTitleCard, cardStyle, widgetBehaviorRoot);
         InitializeCard(behaviorCard, cardStyle, widgetBehaviorRoot);
-        InitializeCard(widgetDisplayCard, cardStyle, widgetCommonRoot);
         InitializeCard(widgetInteractionCard, cardStyle, widgetCommonRoot);
         InitializeContinuousControl(cornerRadius,
             &PersonalizationSettings::cornerRadius,
@@ -680,8 +679,7 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(categorizedTabHeight, L"cu");
         layoutCard.content.Children().Append(cornerRadius.row.root);
         layoutCard.content.Children().Append(barHeight.row.root);
-        presenter_controls::UpdateSettingsSubrows(layoutCard.content, 0.0);
-        collectionSizeCard.content.Children().Append(categorizedTabHeight.row.root);
+        layoutCard.content.Children().Append(categorizedTabHeight.row.root);
         topTitleBarToggle = muxc::ToggleSwitch{};
         topTitleBarToggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         topTitleBarRow.Initialize(topTitleBarToggle);
@@ -691,8 +689,9 @@ struct PersonalizationPagePresenter::Impl
             &PersonalizationSettings::luaWidgetContentRowHeight,
             18.0, 48.0, 1.0, 1.0, 28.0);
         SetUnit(luaWidgetContentRowHeight, L"cu");
-        widgetDisplayCard.content.Children().Append(
+        layoutCard.content.Children().Append(
             luaWidgetContentRowHeight.row.root);
+        presenter_controls::UpdateSettingsSubrows(layoutCard.content, 0.0);
         widgetTransformCursors = muxc::ToggleSwitch{};
         widgetTransformCursors.HorizontalAlignment(mux::HorizontalAlignment::Right);
         widgetTransformCursorsRow.Initialize(widgetTransformCursors);
@@ -700,7 +699,6 @@ struct PersonalizationPagePresenter::Impl
         widgetInteractionCard.content.Children().Append(widgetTransformCursorsRow.root);
         presenter_controls::UpdateSettingsSubrows(fontCard.content, 0.0);
         presenter_controls::UpdateSettingsSubrows(contextMenuCard.content, 0.0);
-        presenter_controls::UpdateSettingsSubrows(widgetDisplayCard.content, 0.0);
         presenter_controls::UpdateSettingsSubrows(widgetInteractionCard.content, 0.0);
         showGroupTabCounts = muxc::ToggleSwitch{};
         showGroupTabCounts.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -723,7 +721,6 @@ struct PersonalizationPagePresenter::Impl
         popupCloseOnMouseLeaveRow.Initialize(popupCloseOnMouseLeave);
         popupCloseOnMouseLeaveRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         behaviorCard.content.Children().Append(popupCloseOnMouseLeaveRow.root);
-        presenter_controls::UpdateSettingsSubrows(collectionSizeCard.content, 0.0);
         presenter_controls::UpdateSettingsSubrows(collectionTitleCard.content, 0.0);
         presenter_controls::UpdateSettingsSubrows(behaviorCard.content, 0.0);
         presenter_controls::StyleSettingsSubrow(popupHoverDelayMs.row.root, false, 16.0);
@@ -1621,13 +1618,9 @@ struct PersonalizationPagePresenter::Impl
         SetCardText(contextMenuCard,
             "app.settings.context_menu_appearance", L"Context Menu");
         SetCardText(layoutCard,
-            "appearance.widgetDimensions", L"Component shape and size");
-        SetCardText(widgetDisplayCard,
-            "widgets.commonDisplay", L"Common display");
+            "appearance.widgetDimensions", L"Layout and dimensions");
         SetCardText(widgetInteractionCard,
             "widgets.commonInteraction", L"Common interaction");
-        SetCardText(collectionSizeCard,
-            "settings.widgetBehavior.commonSize", L"Common dimensions");
         SetCardText(collectionTitleCard,
             "settings.widgetBehavior.titlesAndTabs", L"Title bars and group tabs");
         SetCardText(behaviorCard,
@@ -2131,6 +2124,7 @@ void PersonalizationPagePresenter::SetLayoutSpacingContent(
     uint32_t index = 0;
     const auto children = impl_->layoutCard.content.Children();
     if (!children.IndexOf(content, index)) children.InsertAt(0, content);
+    presenter_controls::UpdateSettingsSubrows(impl_->layoutCard.content, 0.0);
 }
 
 mux::UIElement PersonalizationPagePresenter::MenuContent() const noexcept

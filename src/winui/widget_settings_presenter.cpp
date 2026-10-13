@@ -1176,6 +1176,7 @@ struct WidgetSettingsPresenter::Impl
             if (schema.collapsible)
             {
                 group.expander = muxc::Expander{};
+                group.expander.Padding({0, 0, 0, 0});
                 group.expander.HorizontalAlignment(
                     mux::HorizontalAlignment::Stretch);
                 group.expander.HorizontalContentAlignment(
@@ -2298,9 +2299,8 @@ struct WidgetSettingsPresenter::Impl
             group.root.Visibility(anyVisible
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
-            // A native Expander already contributes the outer content inset.
             presenter_controls::UpdateSettingsSubrows(
-                group.content, group.schema.collapsible ? 0.0 : 16.0);
+                group.content, 0.0);
         }
         presenter_controls::UpdateSettingsSubrows(ungroupedCard.content, 0.0);
         const bool visibleUngrouped = std::any_of(fields.begin(), fields.end(),
