@@ -19,8 +19,12 @@ LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
 bool WaitFor(const std::function<bool()>& condition, DWORD timeout = 4000)
 {
     const auto deadline = GetTickCount64() + timeout;
-    while (!condition() && GetTickCount64() < deadline) Sleep(5);
-    return condition();
+    while (!condition())
+    {
+        if (GetTickCount64() >= deadline) return false;
+        Sleep(5);
+    }
+    return true;
 }
 int Fixture(const wchar_t* name)
 {
