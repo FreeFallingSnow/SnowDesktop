@@ -28,6 +28,7 @@
 #include "platform/single_instance.h"
 #include "widget/authoring/widget_author_preview.h"
 #include "ui/preview/native_component_preview_export.h"
+#include "winui/settings_visual_preview.h"
 #include "steam/steam_runtime_startup.h"
 #include "taskbar_hook/taskbar_symbol_resolver.h"
 
@@ -363,6 +364,7 @@ void ShowStartupFailure(const snowdesktop::operation_feedback::Failure& failure)
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCommand)
 {
     if (const auto result = snowdesktop::taskbar_hook::TryRunTaskbarSymbolHelper()) return *result;
+    if (const auto result = snowdesktop::winui::TryRunSettingsVisualPreview()) return *result;
     snowdesktop::steam_runtime::startup::Begin();
     // Helpers and deployment discovery may access settings before Run.
     // Conservatively prohibit automatic downgrade from this boundary.

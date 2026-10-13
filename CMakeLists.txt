@@ -450,6 +450,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/settings_shell_navigation.cpp
     src/winui/settings_shell_navigation.h
     src/winui/settings_focus_feedback.h
+    src/winui/settings_visual_preview.cpp
+    src/winui/settings_visual_preview.h
     src/winui/settings_window_host.cpp
     src/winui/settings_window_host.h
     src/winui/widget_settings_presenter.cpp
