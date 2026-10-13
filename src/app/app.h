@@ -808,6 +808,9 @@ private:
         bool immediatePaintDeferred = false;
         bool windowRegionPending = false;
         bool backdropRecoveryPending = false;
+        bool desktopLayerRestorePending = false;
+        ULONGLONG desktopLayerRestoreRetryTick = 0;
+        HWND desktopLayerForegroundWindow = nullptr;
         std::uint64_t presentationRevision = 0;
         bool dropTargetRegistered = false;
         DesktopBackdropCompositor backdrop;

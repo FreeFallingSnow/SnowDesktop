@@ -9,6 +9,7 @@
 #include "ui/render/native_tooltip_preferences.h"
 #include "ui/render/native_tooltip_content.h"
 #include "system/panel/system_panel_backdrop_placement.h"
+#include "dock/dock_desktop_layer_cases.h"
 #include <commctrl.h>
 
 #include <roapi.h>
@@ -667,6 +668,7 @@ int RunDesktopBackdropCompositorTests()
         }
         return condition;
     };
+    snowdesktop::test::CheckDockDesktopLayerRestoration(check);
 
     // Like the host, retain the apartment until process exit: the production
     // compositor/DispatcherQueue context is thread-local and outlives fixtures.

@@ -846,14 +846,14 @@ bool DesktopBackdropCompositor::InitializePopup(
         initiallyVisible);
 }
 
-void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
+bool DesktopBackdropCompositor::SetPopupWindowPairZOrder(
     HWND contentWindow, HWND contentInsertAfter,
     bool topmost, HWND preserveAboveWindow)
 {
     const bool contentValid =
         contentWindow && IsWindow(contentWindow);
     if (!contentValid)
-        return;
+        return false;
 
     HWND backdropWindow = nullptr;
     if (impl_ && impl_->popupMode &&
@@ -902,6 +902,14 @@ void DesktopBackdropCompositor::SetPopupWindowPairZOrder(
         if (backdropWindow)
             impl_->SyncWindowPlacement();
     }
+    // A repaired band is useful, but does not complete a requested concrete
+    // placement. Callers restoring the desktop layer must retain retry ownership.
+    const bool concreteAnchor = contentInsertAfter != HWND_TOP &&
+        contentInsertAfter != HWND_BOTTOM && contentInsertAfter != HWND_TOPMOST &&
+        contentInsertAfter != HWND_NOTOPMOST;
+    return positionedTogether && (!concreteAnchor ||
+        (IsWindow(contentInsertAfter) &&
+         GetWindow(contentWindow, GW_HWNDPREV) == contentInsertAfter));
 }
 
 void DesktopBackdropCompositor::SetPopupTopmost(

@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "desktop/desktop_hover_rules.h"
 #include "app/popup/popup_window_pair_z_order.h"
+#include "app/dock/dock_platform_helpers.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "shell/shell_context_menu_invoke.h"
 #include "shell/shell_context_menu_site.h"
@@ -336,6 +337,10 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
         ~LayerUpdateScope() { active = false; }
     } layerUpdateScope{dockWindowTransitionLayerUpdateActive_};
     const bool merged = host.container && host.container->IsMergedWithStatusBar();
+    host.desktopLayerRestorePending = false;
+    host.desktopLayerRestoreRetryTick = GetTickCount64() +
+        snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;
+    host.desktopLayerForegroundWindow = GetForegroundWindow();
     if (merged)
     {
         // The visible merged strip is one topmost surface. Summon/hover policy
@@ -426,40 +431,33 @@ void DesktopApp::ApplyFloatingDockLayerPolicy(
     if (!promoted && !systemShowDesktopGuard)
     {
         // A desktop-band Dock is still a top-level no-activate window. Place
-        // it immediately above Explorer's desktop host and therefore below
-        // every ordinary application, while preserving the same HWND and
+        // it below ordinary applications and above Explorer's desktop host,
+        // while preserving the same HWND and
         // compositor resources used by floating mode.
-        HWND insertAfter = nullptr;
         const HWND desktopHost =
             desktopWindows_.host && IsWindow(desktopWindows_.host)
                 ? desktopWindows_.host : nullptr;
-        if (desktopHost)
-        {
-            insertAfter = GetWindow(desktopHost, GW_HWNDPREV);
-            while (insertAfter)
-            {
-                wchar_t className[96]{};
-                GetClassNameW(
-                    insertAfter, className,
-                    static_cast<int>(std::size(className)));
-                if (!IsPersistentDockHostWindow(insertAfter) &&
-                    _wcsicmp(
-                        className,
-                        L"SnowDesktopBackdropWindow") != 0)
-                {
-                    break;
-                }
-                insertAfter = GetWindow(
-                    insertAfter, GW_HWNDPREV);
-            }
-        }
-        host.backdrop.SetPopupWindowPairZOrder(
-            host.hwnd,
-            // HWND_TOP keeps an already-topmost content window in its band.
-            // If Explorer's desktop anchor is unavailable, explicitly demote.
-            insertAfter ? insertAfter : HWND_NOTOPMOST,
-            false);
-        if (wasTopmost)
+        const bool restored = snowdesktop::floating_dock_rules::RestoreDesktopLayer(
+            host.hwnd, desktopHost,
+            [](HWND window) {
+                // Reject hidden/tool surfaces before the task-window query
+                // reaches DWM; background windows cannot cover this Dock.
+                return IsWindowVisible(window) && !IsIconic(window) &&
+                    snowdesktop::dock_window_rules::IsTaskWindowStyleEligible(
+                        GetWindowLongPtrW(window, GWL_EXSTYLE), GetWindow(window, GW_OWNER) != nullptr) &&
+                    IsDockTaskWindow(window);
+            },
+            [this](HWND window) {
+                return IsPersistentDockHostWindow(window) || IsPersistentDockBackdropWindow(window);
+            },
+            [&host](HWND anchor) {
+                return host.backdrop.SetPopupWindowPairZOrder(host.hwnd, anchor, false);
+            });
+        host.desktopLayerRestorePending = !restored;
+        host.desktopLayerRestoreRetryTick = GetTickCount64() +
+            snowdesktop::floating_dock_rules::kDesktopLayerRestoreRetryMs;
+        host.desktopLayerForegroundWindow = GetForegroundWindow();
+        if (wasTopmost && restored)
             snowdesktop::dock_taskbar_diagnostics::Record(
                 L"dock-returned-to-desktop-band", host.hwnd);
         return;

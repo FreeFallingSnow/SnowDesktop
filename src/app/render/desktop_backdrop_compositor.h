@@ -45,8 +45,9 @@ public:
      * @param contentInsertAfter 内容窗口应插入到其后的窗口或特殊 HWND 值。
      * @param topmost 操作完成后窗口对是否位于 TOPMOST 带。
      * @param preserveAboveWindow 已在内容窗口上方且不可被本次刷新越过的窗口。
+     * @return 请求的配对定位是否成功；失败后的置顶带回退不计为定位成功。
      */
-    void SetPopupWindowPairZOrder(
+    bool SetPopupWindowPairZOrder(
         HWND contentWindow, HWND contentInsertAfter,
         bool topmost, HWND preserveAboveWindow = nullptr);
     /** @brief 临时切换顶层 popup backdrop 所在的 Z 序带。 */
