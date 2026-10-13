@@ -2069,6 +2069,44 @@ void TestBalancedPopupColumns()
             }) == 4,
         "uniform high-DPI scaling preserves the chosen popup proportions");
 }
+
+void TestPopupGridPadding()
+{
+    namespace popup = snowdesktop::collection_popup_layout;
+    // Search controls reserve 320 cu while this page's three tracks need only
+    // 296 cu including popup padding. The spare width must not collect at right.
+    for (const float scale : {0.75f, 1.0f, 1.25f, 2.0f})
+    {
+        const auto metrics = popup::ResolveMetrics(
+            popup::ScaleDimension(80, scale), popup::ScaleDimension(106, scale),
+            popup::ScaleDimension(74, scale), popup::ScaleDimension(100, scale), scale);
+        for (const int roundingPixel : {0, 1})
+        {
+            const int frameWidth = popup::ScaleDimension(320, scale) + roundingPixel;
+            const RECT viewport{-600 + metrics.paddingX, -200,
+                -600 + frameWidth - metrics.paddingX, 200};
+            const int columns = popup::ResolveFixedGridColumnCount(
+                metrics, static_cast<int>(viewport.right - viewport.left));
+            const RECT first = popup::ResolveFixedGridItemRect(metrics, viewport, 0);
+            const RECT last = popup::ResolveFixedGridItemRect(metrics, viewport, columns - 1);
+            const RECT nextRow = popup::ResolveFixedGridItemRect(metrics, viewport, columns, 17);
+            Check(columns == 3 &&
+                    std::abs((first.left - viewport.left) - (viewport.right - last.right)) <= 1 &&
+                    first.left >= viewport.left && last.right <= viewport.right,
+                "minimum control widths keep equal popup grid padding at both edges");
+            Check(nextRow.left == first.left && nextRow.right == first.right &&
+                    nextRow.top == first.top + metrics.cellHeight + metrics.gapY - 17 &&
+                    popup::RequiredRowCount(3, columns) == 2,
+                "centered popup tracks align across rows while preserving scrolling and the two-row floor");
+        }
+    }
+    const auto metrics = popup::ResolveMetrics(92, 116, 84, 108, 1.0f);
+    const RECT exact{-600, -200, -304, 200};
+    const RECT first = popup::ResolveFixedGridItemRect(metrics, exact, 0);
+    const RECT last = popup::ResolveFixedGridItemRect(metrics, exact, 2);
+    Check(first.left == exact.left && last.right == exact.right,
+        "whole-track popup widths retain their existing symmetric baseline insets");
+}
 }
 
 int main()
@@ -2104,6 +2142,7 @@ int main()
     TestListDetailRules();
     TestPopupChromeScaling();
     TestBalancedPopupColumns();
+    TestPopupGridPadding();
     if (failures != 0)
     {
         std::cerr << failures

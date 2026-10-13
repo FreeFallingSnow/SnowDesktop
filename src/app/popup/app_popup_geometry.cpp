@@ -584,10 +584,8 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             metrics.bottomPadding;
     };
     const auto columnsForWidth = [&](int popupWidth) {
-        return std::clamp(
-            (std::max(1, popupWidth - metrics.paddingX * 2) + metrics.gapX) /
-                std::max(1, cellW + metrics.gapX),
-            1, snowdesktop::collection_popup_layout::kMaximumColumns);
+        return snowdesktop::collection_popup_layout::ResolveFixedGridColumnCount(
+            metrics, popupWidth - metrics.paddingX * 2);
     };
     if (!listMode && itemCount > 0)
     {
@@ -848,11 +846,8 @@ int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const
         return 1;
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT content = GetCollectionPopupContentRect(popup);
-    const int cellW = metrics.cellWidth;
-    return std::clamp(
-        (static_cast<int>(content.right - content.left) + metrics.gapX) /
-        std::max(1, cellW + metrics.gapX),
-        1, snowdesktop::collection_popup_layout::kMaximumColumns);
+    return snowdesktop::collection_popup_layout::ResolveFixedGridColumnCount(
+        metrics, static_cast<int>(content.right - content.left));
 }
 
 int DesktopApp::GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const
@@ -915,16 +910,8 @@ RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearInde
         return snowdesktop::widget_item_layout::ItemRect(
             layout, linearIndex, popupScrollOffset_);
     }
-    const int cellW = metrics.cellWidth;
-    const int cellH = metrics.cellHeight;
-    const int columns = GetCollectionPopupColumnCount(popup);
-    const int col = static_cast<int>(linearIndex % static_cast<size_t>(columns));
-    const int row = static_cast<int>(linearIndex / static_cast<size_t>(columns));
-    return MakeRect(
-        content.left + col * (cellW + metrics.gapX),
-        content.top + row * (cellH + metrics.gapY) - popupScrollOffset_,
-        content.left + col * (cellW + metrics.gapX) + cellW,
-        content.top + row * (cellH + metrics.gapY) - popupScrollOffset_ + cellH);
+    return snowdesktop::collection_popup_layout::ResolveFixedGridItemRect(
+        metrics, content, linearIndex, popupScrollOffset_);
 }
 
 RECT DesktopApp::GetCollectionPopupFanDragBounds(const Item* item) const
