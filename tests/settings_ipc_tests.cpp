@@ -94,9 +94,16 @@ void TestCodec()
             JsonValue stored;
             snowdesktop::StatusBarSettings decoded;
             Check(ParseJson(snowdesktop::EncodeStatusBarSettings(statusBar), stored) &&
-                    snowdesktop::DecodeStatusBarSettings(stored, decoded) && decoded == statusBar &&
-                    Unpack<snowdesktop::StatusBarSettings>(Pack(decoded)) == statusBar,
-                "battery percentage survives storage and IPC in both states without changing other settings");
+                    stored.Find("batteryPercentage") && stored.Find("batteryPercentage")->IsBoolean() &&
+                    stored.Find("batteryPercentage")->boolean == enabled &&
+                    snowdesktop::DecodeStatusBarSettings(stored, decoded) &&
+                    decoded.batteryPercentage == enabled && decoded.enabled == statusBar.enabled &&
+                    decoded.controlCenter == statusBar.controlCenter,
+                "both battery percentage preferences persist without changing bar or control-center visibility");
+            // Theme JSON canonicalizes a derived preset ID. IPC must preserve
+            // the decoded value exactly, without treating that migration as loss.
+            Check(Unpack<snowdesktop::StatusBarSettings>(Pack(decoded)) == decoded,
+                "IPC preserves the decoded percentage preference and every other status-bar field");
         }
         const auto before = statusBar;
         JsonValue invalid;

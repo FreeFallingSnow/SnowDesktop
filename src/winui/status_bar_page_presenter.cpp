@@ -493,7 +493,7 @@ struct StatusBarPagePresenter::Impl
         edgeRow.SetText(L("statusBar.position")); monitorsRow.SetText(L("settings.dock.monitor"));
         scaleRow.SetText(L("statusBar.scale"));
         relatedTitle.Text(L("settings.common.relatedSettings"));
-        calendarLinkRow.SetText(L("settings.calendar.page"));
+        calendarLinkRow.SetText(L("settings.calendar.page"), L("settings.related.calendar"));
         calendarLink.Content(winrt::box_value(L("start.openSettings")));
         dockAppearanceLink.Content(winrt::box_value(L("start.openSettings")));
         mergedHeight->RefreshLocalizedText();

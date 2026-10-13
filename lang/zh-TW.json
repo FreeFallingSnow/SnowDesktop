@@ -2700,5 +2700,18 @@
   "settings.widgetBehavior.tabSwitching": "標籤切換",
   "settings.widgetBehavior.groupTabHover": "懸停切換群組標籤",
   "settings.widgetBehavior.categoryTabHover": "懸停切換分類標籤",
-  "settings.widgetBehavior.tabHoverDelay": "標籤懸停延遲"
+  "settings.widgetBehavior.tabHoverDelay": "標籤懸停延遲",
+  "settings.related.dockVisibility": "設定 Dock 的隱藏方式、邊緣喚出與快速鍵。",
+  "settings.related.taskbarTheme": "調整 Windows 工作列的主題、材質與依情境外觀。",
+  "settings.related.dockAnimation": "調整 Dock 的懸停縮放、啟動動畫與視窗動畫。",
+  "settings.related.footerHeight": "調整元件共用的標題列、標籤與搜尋框高度。",
+  "settings.related.popupTheme": "調整資料夾、集合與系統面板彈出視窗共用的主題。",
+  "settings.related.calendar": "管理狀態列行事曆中的行程、重複日期與提醒。",
+  "settings.related.tabHeight": "調整分類標籤、群組標籤與元件標題列的高度。",
+  "settings.related.categoryHover": "設定懸停切換分類標籤的開關與等待時間。",
+  "settings.related.themeManager": "管理已儲存的主題，匯入、匯出與查看工作坊主題。",
+  "settings.related.globalAppearance": "調整圖示大小、文字、間距與元件外觀。",
+  "settings.related.iconBeautification": "調整圖示的圓角、邊框與背景效果。",
+  "settings.related.clockPanel": "選擇點選狀態列時間時開啟 SnowDesktop 行事曆或系統面板。",
+  "settings.widgets.searching": "搜尋中…"
 }

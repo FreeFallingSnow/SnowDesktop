@@ -2700,5 +2700,18 @@
   "settings.widgetBehavior.tabSwitching": "Alternância de abas",
   "settings.widgetBehavior.groupTabHover": "Alternar abas de grupo ao passar o mouse",
   "settings.widgetBehavior.categoryTabHover": "Alternar abas de categoria ao passar o mouse",
-  "settings.widgetBehavior.tabHoverDelay": "Atraso ao passar o mouse pelas abas"
+  "settings.widgetBehavior.tabHoverDelay": "Atraso ao passar o mouse pelas abas",
+  "settings.related.dockVisibility": "Configure como ocultar o Dock, exibi-lo pela borda e usar atalhos de teclado.",
+  "settings.related.taskbarTheme": "Ajuste o tema, o material e a aparência da barra de tarefas do Windows para cada situação.",
+  "settings.related.dockAnimation": "Ajuste o zoom ao passar o cursor e as animações de inicialização e de janelas do Dock.",
+  "settings.related.footerHeight": "Defina a altura compartilhada das barras de título, abas e campos de pesquisa dos widgets.",
+  "settings.related.popupTheme": "Altere o tema compartilhado pelos pop-ups de pastas, coleções e painéis do sistema.",
+  "settings.related.calendar": "Gerencie eventos, datas recorrentes e lembretes no calendário da barra de status.",
+  "settings.related.tabHeight": "Defina a altura das abas de categorias e grupos e das barras de título dos widgets.",
+  "settings.related.categoryHover": "Ative a troca de abas de categorias ao passar o cursor e defina o atraso.",
+  "settings.related.themeManager": "Gerencie temas salvos, importe, exporte e explore temas da Oficina.",
+  "settings.related.globalAppearance": "Ajuste o tamanho dos ícones, o texto, o espaçamento e a aparência dos widgets.",
+  "settings.related.iconBeautification": "Ajuste os cantos, as bordas e os efeitos de fundo dos ícones.",
+  "settings.related.clockPanel": "Escolha se clicar no relógio da barra de status abre o calendário do SnowDesktop ou o painel do sistema.",
+  "settings.widgets.searching": "Pesquisando…"
 }

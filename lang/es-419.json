@@ -2700,5 +2700,18 @@
   "settings.widgetBehavior.tabSwitching": "Cambio de pestañas",
   "settings.widgetBehavior.groupTabHover": "Cambiar pestañas de grupo al pasar el cursor",
   "settings.widgetBehavior.categoryTabHover": "Cambiar pestañas de categoría al pasar el cursor",
-  "settings.widgetBehavior.tabHoverDelay": "Retraso al pasar el cursor por pestañas"
+  "settings.widgetBehavior.tabHoverDelay": "Retraso al pasar el cursor por pestañas",
+  "settings.related.dockVisibility": "Configura cómo ocultar el Dock, mostrarlo desde el borde y usar atajos de teclado.",
+  "settings.related.taskbarTheme": "Ajusta el tema, el material y la apariencia de la barra de tareas de Windows según cada situación.",
+  "settings.related.dockAnimation": "Ajusta el zoom al pasar el cursor y las animaciones de inicio y de ventanas del Dock.",
+  "settings.related.footerHeight": "Ajusta la altura compartida de las barras de título, pestañas y campos de búsqueda de los widgets.",
+  "settings.related.popupTheme": "Cambia el tema compartido por las ventanas emergentes de carpetas, colecciones y paneles del sistema.",
+  "settings.related.calendar": "Administra eventos, fechas recurrentes y recordatorios del calendario de la barra de estado.",
+  "settings.related.tabHeight": "Ajusta la altura de las pestañas de categorías y grupos y de las barras de título de los widgets.",
+  "settings.related.categoryHover": "Activa el cambio de pestañas de categorías al pasar el cursor y ajusta la demora.",
+  "settings.related.themeManager": "Administra temas guardados, importa, exporta y explora temas de Workshop.",
+  "settings.related.globalAppearance": "Ajusta el tamaño de los íconos, el texto, el espaciado y la apariencia de los widgets.",
+  "settings.related.iconBeautification": "Ajusta las esquinas, los bordes y los efectos de fondo de los íconos.",
+  "settings.related.clockPanel": "Elige si al hacer clic en el reloj de la barra de estado se abre el calendario de SnowDesktop o el panel del sistema.",
+  "settings.widgets.searching": "Buscando…"
 }

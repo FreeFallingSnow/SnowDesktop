@@ -2700,5 +2700,18 @@
   "settings.widgetBehavior.tabSwitching": "Changement d'onglet",
   "settings.widgetBehavior.groupTabHover": "Changer les onglets de groupe au survol",
   "settings.widgetBehavior.categoryTabHover": "Changer les onglets de catégorie au survol",
-  "settings.widgetBehavior.tabHoverDelay": "Délai de survol des onglets"
+  "settings.widgetBehavior.tabHoverDelay": "Délai de survol des onglets",
+  "settings.related.dockVisibility": "Réglez le masquage du Dock, son affichage au bord de l'écran et ses raccourcis clavier.",
+  "settings.related.taskbarTheme": "Réglez le thème, le matériau et l'apparence de la barre des tâches Windows selon la situation.",
+  "settings.related.dockAnimation": "Réglez le zoom au survol, les animations de lancement et les animations des fenêtres du Dock.",
+  "settings.related.footerHeight": "Réglez la hauteur commune des barres de titre, onglets et champs de recherche des widgets.",
+  "settings.related.popupTheme": "Modifiez le thème partagé par les fenêtres contextuelles des dossiers, collections et panneaux système.",
+  "settings.related.calendar": "Gérez les événements, dates récurrentes et rappels du calendrier de la barre d'état.",
+  "settings.related.tabHeight": "Réglez la hauteur des onglets de catégories et de groupes et des barres de titre des widgets.",
+  "settings.related.categoryHover": "Activez le changement d'onglet de catégorie au survol et réglez son délai.",
+  "settings.related.themeManager": "Gérez les thèmes enregistrés, importez, exportez et parcourez les thèmes du Workshop.",
+  "settings.related.globalAppearance": "Réglez la taille des icônes, le texte, l'espacement et l'apparence des widgets.",
+  "settings.related.iconBeautification": "Réglez les coins, bordures et effets d'arrière-plan des icônes.",
+  "settings.related.clockPanel": "Choisissez si un clic sur l'horloge de la barre d'état ouvre le calendrier SnowDesktop ou le panneau système.",
+  "settings.widgets.searching": "Recherche…"
 }

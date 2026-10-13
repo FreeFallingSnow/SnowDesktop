@@ -2700,5 +2700,18 @@
   "settings.widgetBehavior.tabSwitching": "タブの切り替え",
   "settings.widgetBehavior.groupTabHover": "ホバーでグループタブを切り替える",
   "settings.widgetBehavior.categoryTabHover": "ホバーでカテゴリタブを切り替える",
-  "settings.widgetBehavior.tabHoverDelay": "タブのホバー待ち時間"
+  "settings.widgetBehavior.tabHoverDelay": "タブのホバー待ち時間",
+  "settings.related.dockVisibility": "Dock の非表示方法、画面端からの呼び出し、ショートカットキーを設定します。",
+  "settings.related.taskbarTheme": "Windows タスクバーのテーマ、マテリアル、状況に応じた外観を調整します。",
+  "settings.related.dockAnimation": "Dock のホバー拡大、起動アニメーション、ウィンドウアニメーションを調整します。",
+  "settings.related.footerHeight": "ウィジェット共通のタイトルバー、タブ、検索ボックスの高さを調整します。",
+  "settings.related.popupTheme": "フォルダー、コレクション、システムパネルのポップアップ共通テーマを変更します。",
+  "settings.related.calendar": "ステータスバーのカレンダーの予定、繰り返し日付、リマインダーを管理します。",
+  "settings.related.tabHeight": "カテゴリタブ、グループタブ、ウィジェットのタイトルバーの高さを調整します。",
+  "settings.related.categoryHover": "ホバーによるカテゴリタブの切り替えを有効にし、待ち時間を設定します。",
+  "settings.related.themeManager": "保存したテーマの管理、インポート、エクスポート、ワークショップのテーマの閲覧を行います。",
+  "settings.related.globalAppearance": "アイコンのサイズ、テキスト、間隔、ウィジェットの外観を調整します。",
+  "settings.related.iconBeautification": "アイコンの角、枠線、背景効果を調整します。",
+  "settings.related.clockPanel": "ステータスバーの時計をクリックしたときに SnowDesktop のカレンダーとシステムパネルのどちらを開くか選択します。",
+  "settings.widgets.searching": "検索中…"
 }

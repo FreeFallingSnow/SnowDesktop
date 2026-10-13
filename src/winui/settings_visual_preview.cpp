@@ -57,6 +57,17 @@ struct RenderHost
 {
     WinUiRuntime runtime;
     HWND window = nullptr;
+    static LRESULT CALLBACK Procedure(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+    {
+        auto* runtime = reinterpret_cast<WinUiRuntime*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+        if (message == WM_NCCREATE)
+        {
+            runtime = static_cast<WinUiRuntime*>(reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(runtime));
+        }
+        if (runtime) runtime->HandleWindowMessage(message, wParam, lParam);
+        return DefWindowProcW(hwnd, message, wParam, lParam);
+    }
     ~RenderHost() { runtime.Detach(); if (window) DestroyWindow(window); runtime.Shutdown(); }
 };
 struct Apartment
@@ -207,7 +218,8 @@ constexpr SettingsPage pages[] = {
 
 void Export(const std::filesystem::path& output, std::string_view selected, bool dark,
     const std::string& locale, int width, int height, bool expanded, bool custom, bool disabled,
-    bool scenarioRules, const std::string& focusId, std::string_view calendarScenario)
+    bool scenarioRules, const std::string& focusId, std::string_view calendarScenario,
+    bool searching, bool restore)
 {
     Locale::Instance().Init((std::filesystem::path(GetExecutableDirectoryPath()) / L"lang").c_str());
     if (!Locale::Instance().HasLanguage(locale)) throw std::runtime_error("preview locale is not installed");
@@ -216,9 +228,14 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     RenderHost host;
     if (!host.runtime.Initialize()) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
+    WNDCLASSW previewClass{};
+    previewClass.lpfnWndProc = RenderHost::Procedure;
+    previewClass.hInstance = GetModuleHandleW(nullptr);
+    previewClass.lpszClassName = L"SnowDesktop.SettingsRenderHost";
+    if (!RegisterClassW(&previewClass) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) winrt::throw_last_error();
     host.window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_NOREDIRECTIONBITMAP,
-        L"STATIC", L"SnowDesktop offline settings render", WS_POPUP,
-        -32000, -32000, width, height, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        previewClass.lpszClassName, L"SnowDesktop offline settings render", WS_POPUP,
+        -32000, -32000, width, height, nullptr, nullptr, GetModuleHandleW(nullptr), &host.runtime);
     if (!host.window) winrt::throw_last_error();
     ShowWindow(host.window, SW_SHOWNOACTIVATE);
     const double scale = GetDpiForWindow(host.window) / 96.;
@@ -359,6 +376,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     std::ofstream manifest(output / L"render.tsv");
     manifest << "page\timage\twidthDip\theightDip\tscrollY\tscrollMax\n";
     std::ofstream rows(output / L"rows.tsv");
+    std::ofstream choices(output / L"choices.tsv");
+    choices << "page\tlabel\tcontrolRight\teditorRight\tcontrolWidth\n";
     rows << "page\tlabel\tx\ty\twidth\theight\tpaddingLeft\tpaddingTop\tpaddingRight\tpaddingBottom\teditorX\teditorY\teditorWidth\teditorHeight\n";
     std::ofstream actions(output / L"actions.tsv");
     actions << "page\tgradientDetailsInvoked\tvisibleRemoveStopButtons\n";
@@ -432,6 +451,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         if (page == SettingsPage::Widgets || page == SettingsPage::DeveloperTools)
         {
             WidgetsPageSnapshot packages; packages.generation = 1; packages.revision = revision;
+            if (searching) packages.task.kind = WidgetsPageTaskKind::Searching;
             packages.workshopAvailable = true;
             packages.developerPublisherAvailable = true;
             packages.developmentWorkspace = L"C:\\Preview\\Components";
@@ -450,6 +470,14 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 package.description = english ? L"An example component with a longer description for layout review." : L"用于检查长名称、状态与操作排列的示例组件。"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
                 package.version = L"1.2.0"; package.author = L"SnowDesktop"; package.builtIn = index == 0;
                 package.enabled = index != 2; packages.installed.push_back(std::move(package));
+                WidgetRuntimeDiagnosticSnapshot diagnostic;
+                diagnostic.instanceId = L"widget-preview-" + std::to_wstring(index + 1);
+                diagnostic.packageId = L"d81cee29-8023-47d8-bfaf-f39d8d7fd5ac";
+                diagnostic.displayName = english ? L"Workspace overview" : L"工作区概览"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+                diagnostic.displayName += L" " + std::to_wstring(index + 1);
+                diagnostic.valid = diagnostic.hasManifest = true;
+                diagnostic.scriptPath = L"C:\\Preview\\Components\\overview\\main.lua";
+                packages.diagnostics.push_back(std::move(diagnostic));
             }
             if (!shell->ApplyWidgetsPageSnapshot(packages)) throw std::runtime_error("preview component snapshot refused");
         }
@@ -596,12 +624,35 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             std::replace(title.begin(), title.end(), '\t', ' '); std::replace(title.begin(), title.end(), '\n', ' ');
             const auto bounds = row.TransformToVisual(cards).TransformBounds({0, 0, static_cast<float>(row.ActualWidth()), static_cast<float>(row.ActualHeight())});
             const auto controls = editor.TransformToVisual(row).TransformBounds({0, 0, static_cast<float>(editor.ActualWidth()), static_cast<float>(editor.ActualHeight())});
+            if (const auto host = editor.try_as<c::ContentControl>())
+                if (const auto combo = host.Content().try_as<c::ComboBox>())
+                {
+                    const auto choice = combo.TransformToVisual(row).TransformBounds({0, 0,
+                        static_cast<float>(combo.ActualWidth()), static_cast<float>(combo.ActualHeight())});
+                    choices << key << '\t' << title << '\t' << choice.X + choice.Width << '\t'
+                        << controls.X + controls.Width << '\t' << choice.Width << '\n';
+                }
             const auto padding = row.Padding();
             rows << key << '\t' << title << '\t' << bounds.X << '\t' << bounds.Y << '\t' << bounds.Width << '\t' << bounds.Height
                 << '\t' << padding.Left << '\t' << padding.Top << '\t' << padding.Right << '\t' << padding.Bottom
                 << '\t' << controls.X << '\t' << controls.Y << '\t' << controls.Width << '\t' << controls.Height << '\n';
         });
         const double maximum = scroll.ScrollableHeight();
+        if (restore)
+        {
+            const auto originalSize = shell->ActualSize();
+            for (int cycle = 0; cycle < 3; ++cycle)
+            {
+                ShowWindow(host.window, SW_SHOWMINNOACTIVE);
+                PumpUntil([&] { return IsIconic(host.window) != FALSE; });
+                ShowWindow(host.window, SW_SHOWNOACTIVATE);
+                PumpUntil([&] { return IsIconic(host.window) == FALSE; });
+                Settle(shell.as<x::FrameworkElement>());
+                if (shell->ActualSize() != originalSize || !host.runtime.IsAttached())
+                    throw std::runtime_error("restore changed the Island bounds or detached its content");
+            }
+            std::ofstream(output / L"restore.tsv") << "cycles\tretained-layout\n3\tpassed\n";
+        }
         const double step = std::max(100., scroll.ViewportHeight() - 48.);
         for (unsigned tile = 0; tile < 64; ++tile)
         {
@@ -689,11 +740,12 @@ std::optional<int> TryRunSettingsVisualPreview()
         if (theme != L"light" && theme != L"dark") throw std::runtime_error("preview supports light or dark XAML surfaces");
         const bool calendarState = state == L"calendar-dates" || state == L"calendar-weekly" ||
             state == L"calendar-monthly" || state == L"calendar-occurrence";
-        if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled" && state != L"scenarios" && !calendarState) throw std::runtime_error("invalid disclosure state");
+        if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled" && state != L"scenarios" && state != L"searching" && state != L"restore" && !calendarState) throw std::runtime_error("invalid disclosure state");
         Export(output, winrt::to_string(args[3]), theme == L"dark", winrt::to_string(args[5]), width, height,
             state == L"expanded" || state == L"custom" || state == L"scenarios",
             state == L"custom" || state == L"scenarios", state == L"disabled", state == L"scenarios",
-            count == 10 ? winrt::to_string(args[9]) : std::string{}, calendarState ? winrt::to_string(state) : std::string{});
+            count == 10 ? winrt::to_string(args[9]) : std::string{}, calendarState ? winrt::to_string(state) : std::string{},
+            state == L"searching", state == L"restore");
         std::ofstream(output / L"result.txt") << "passed\nIsolated production XAML, example data; no desktop material or interaction acceptance.\n";
         return 0;
     }

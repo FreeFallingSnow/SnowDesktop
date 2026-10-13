@@ -422,6 +422,7 @@ struct SettingsWindowHost::Impl
     bool applyingSnapshot = false;
     bool interactionSuspended = true;
     bool darkTheme = false;
+    bool interactiveMoveSize = false;
     bool viewReleaseQueued = false;
     bool workingSetTrimQueued = false;
     std::uint64_t workingSetTrimEpoch = 0;
@@ -3231,9 +3232,19 @@ struct SettingsWindowHost::Impl
         case WM_CLOSE:
             (void)self->HideWindow();
             return 0;
+        case WM_ERASEBKGND:
+            // The full-client Island owns every client pixel. A GDI erase can
+            // be presented before its retained composition surface resumes.
+            return 1;
         case WM_ACTIVATEAPP:
             if (wParam != FALSE)
                 self->QueueExternalStateRefresh();
+            break;
+        case WM_ENTERSIZEMOVE:
+            self->interactiveMoveSize = true;
+            break;
+        case WM_EXITSIZEMOVE:
+            self->interactiveMoveSize = false;
             break;
         case WM_GETMINMAXINFO:
         {
@@ -3274,19 +3285,20 @@ struct SettingsWindowHost::Impl
             const auto* suggested = reinterpret_cast<RECT*>(lParam);
             if (suggested)
             {
-                const auto target = IsZoomed(hwnd) ? *suggested :
-                    settings_window_placement::Constrain(*suggested,
-                        SettingsWindowWorkArea(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)));
-                SetWindowPos(hwnd, nullptr, target.left, target.top,
-                    target.right - target.left,
-                    target.bottom - target.top,
+                // Windows anchors this rectangle to the ongoing native drag
+                // and destination DPI. Clamping against MonitorFromWindow at
+                // this point can still select the old monitor and bounce the
+                // window back across the boundary on every pointer update.
+                SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
+                    suggested->right - suggested->left,
+                    suggested->bottom - suggested->top,
                     SWP_NOACTIVATE | SWP_NOZORDER);
             }
             self->QueueIntegratedTitleBarInsetsUpdate();
             break;
         }
         case WM_SETTINGCHANGE:
-            if (wParam == SPI_SETWORKAREA)
+            if (wParam == SPI_SETWORKAREA && !self->interactiveMoveSize)
                 ConstrainSettingsWindow(hwnd);
             [[fallthrough]];
         case WM_THEMECHANGED:
@@ -3298,7 +3310,7 @@ struct SettingsWindowHost::Impl
             self->QueueIntegratedTitleBarInsetsUpdate();
             break;
         case WM_DISPLAYCHANGE:
-            ConstrainSettingsWindow(hwnd);
+            if (!self->interactiveMoveSize) ConstrainSettingsWindow(hwnd);
             break;
         case WM_NCDESTROY:
             self->CancelWorkingSetTrim();
@@ -3333,8 +3345,7 @@ struct SettingsWindowHost::Impl
         if (!windowClass.hIconSm)
             windowClass.hIconSm = windowClass.hIcon;
         windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-        windowClass.hbrBackground =
-            reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+        windowClass.hbrBackground = nullptr;
         windowClass.lpszClassName = kSettingsWindowClassName;
         if (RegisterClassExW(&windowClass) != 0)
             return true;
@@ -3358,12 +3369,16 @@ struct SettingsWindowHost::Impl
         RECT bounds{0, 0,
             MulDiv(kDefaultClientWidth, static_cast<int>(dpi), 96),
             MulDiv(kDefaultClientHeight, static_cast<int>(dpi), 96)};
+        constexpr DWORD extendedStyle = WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP;
         AdjustWindowRectExForDpi(&bounds, WS_OVERLAPPEDWINDOW, FALSE,
-            WS_EX_APPWINDOW, dpi);
+            extendedStyle, dpi);
         const auto placement = settings_window_placement::Center(
             {bounds.right - bounds.left, bounds.bottom - bounds.top}, work);
 
-        window = CreateWindowExW(WS_EX_APPWINDOW,
+        // The Island and system backdrop render through composition; keeping
+        // an additional GDI redirection bitmap can expose an empty white frame
+        // while the composition tree resumes after minimization.
+        window = CreateWindowExW(extendedStyle,
             kSettingsWindowClassName, options.windowTitle.c_str(),
             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
             placement.left, placement.top,

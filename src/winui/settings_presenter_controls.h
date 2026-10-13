@@ -522,9 +522,15 @@ struct SettingRow
     {
         // Choice editors share the standard column width across settings pages.
         // Compact buttons and toggles still use their natural width at its edge.
-        if (alignment == mux::HorizontalAlignment::Right &&
-            controlHost.Content().try_as<muxc::ComboBox>())
-            alignment = mux::HorizontalAlignment::Stretch;
+        if (alignment == mux::HorizontalAlignment::Right)
+        {
+            if (const auto combo = controlHost.Content().try_as<muxc::ComboBox>())
+            {
+                combo.ClearValue(mux::FrameworkElement::WidthProperty());
+                combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+                alignment = mux::HorizontalAlignment::Stretch;
+            }
+        }
         // ContentControl can still occupy the full editor column even when
         // its ContentPresenter aligns a compact child.  Shrink and align the
         // host as well so ToggleSwitch and other compact templates actually

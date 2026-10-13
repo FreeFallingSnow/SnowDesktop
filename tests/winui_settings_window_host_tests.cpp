@@ -54,10 +54,10 @@ bool CheckWindowPlacement()
         {-1500, 150, -380, 950}, topBarWork);
     check(equal(afterDisplayRemoval, {0, 150, 1120, 950}),
         "normal bounds from a removed monitor become reachable on the remaining work area");
-    const auto dpiSuggestion = placement::Constrain(
+    const auto oversizedSavedWindow = placement::Constrain(
         {-2100, -260, 140, 1340}, leftMonitor);
-    check(equal(dpiSuggestion, leftMonitor) && inside(dpiSuggestion, leftMonitor),
-        "DPI suggestions are clipped in both size and position to the destination work area");
+    check(equal(oversizedSavedWindow, leftMonitor) && inside(oversizedSavedWindow, leftMonitor),
+        "reopening oversized saved bounds fits the available work area");
 
     const auto normalMinimum = placement::FitSize({856, 559}, topBarWork);
     check(normalMinimum.cx == 856 && normalMinimum.cy == 559,
@@ -83,6 +83,10 @@ int main(int argc, char** argv)
         {"src/winui/SettingsShell.xaml", "", "",
          {"x:Name=\"MinimizeButton\"", "x:Name=\"MaximizeButton\"", "x:Name=\"CloseButton\"",
           "<NavigationView.Template>"}},
+        // Native dragging owns the WM_DPICHANGED suggestion. Startup/off-screen
+        // recovery must never constrain it against the previous monitor.
+        {"src/winui/settings_window_host.cpp", "case WM_DPICHANGED:", "case WM_SETTINGCHANGE:",
+         {"settings_window_placement::Constrain", "SettingsWindowWorkArea("}},
     });
     passed = CheckWindowPlacement() && passed;
     using namespace snowdesktop::winui;

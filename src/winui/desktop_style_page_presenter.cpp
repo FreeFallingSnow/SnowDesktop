@@ -159,6 +159,7 @@ struct DesktopStylePagePresenter::Impl
     struct RelatedLink
     {
         std::string key;
+        std::string help;
         std::vector<std::string> focusIds;
         muxc::Button control;
         presenter_controls::SettingRow row;
@@ -249,11 +250,12 @@ struct DesktopStylePagePresenter::Impl
         sections.push_back(std::move(section));
         return content;
     }
-    void AddRelatedLink(const muxc::StackPanel& parent, std::string key,
+    void AddRelatedLink(const muxc::StackPanel& parent, std::string key, std::string help,
         SettingsRoute route, std::vector<std::string> focusIds)
     {
         RelatedLink link;
         link.key = std::move(key);
+        link.help = std::move(help);
         link.focusIds = std::move(focusIds);
         link.row.Initialize(link.control, 0.0);
         link.row.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -488,16 +490,16 @@ struct DesktopStylePagePresenter::Impl
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         spaceCard.Children().Append(mergedHeight->Content());
         const auto related = AddSection(style, "settings.common.relatedSettings");
-        AddRelatedLink(related, "settings.dock.visibilityAndSummon",
+        AddRelatedLink(related, "settings.dock.visibilityAndSummon", "settings.related.dockVisibility",
             SettingsRoute::ForPage(SettingsPage::Dock, "dock.showOnlyWhenSummoned"),
             {"desktopStyle.dock.showOnlyWhenSummoned", "desktopStyle.dock.edgeSwipe", "desktopStyle.dock.edgeRevealGesture"});
-        AddRelatedLink(related, "settings.dock.windowPreviews",
+        AddRelatedLink(related, "settings.dock.windowPreviews", "settings.dock.windowPreviews.description",
             SettingsRoute::ForPage(SettingsPage::Dock, "dock.showWindowPreviews"), {"desktopStyle.dock.showWindowPreviews"});
-        AddRelatedLink(related, "settings.bars.homeSize",
+        AddRelatedLink(related, "settings.bars.homeSize", "settings.bars.homeSize.description",
             SettingsRoute::ForPage(SettingsPage::Dock, "dock.lastMonitorUseHomeSize"), {"desktopStyle.dock.lastMonitorUseHomeSize"});
-        AddRelatedLink(related, "settings.desktopStyle.taskbarAppearance",
+        AddRelatedLink(related, "settings.desktopStyle.taskbarAppearance", "settings.related.taskbarTheme",
             SettingsRoute::ForPage(SettingsPage::Taskbar, "taskbar.theme"), {"desktopStyle.taskbar.appearance"});
-        AddRelatedLink(related, "settings.animation.dock",
+        AddRelatedLink(related, "settings.animation.dock", "settings.related.dockAnimation",
             SettingsRoute::ForPage(SettingsPage::Dock, "animation.hover"), {"desktopStyle.animation.hover", "desktopStyle.animation.launch"});
         for (const auto& section : sections)
             presenter_controls::UpdateSettingsSubrows(section->content, 0);
@@ -964,7 +966,7 @@ struct DesktopStylePagePresenter::Impl
         for (const auto& section : sections) section->title.Text(L(section->key));
         for (auto& link : relatedLinks)
         {
-            link.row.SetText(L(link.key));
+            link.row.SetText(L(link.key), L(link.help));
             link.control.Content(winrt::box_value(L("start.openSettings")));
             muxa::AutomationProperties::SetName(link.control, L(link.key));
         }

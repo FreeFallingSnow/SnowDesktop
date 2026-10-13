@@ -6,6 +6,7 @@
 #include "ui/render/icon_font_glyphs.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
+#include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
@@ -292,6 +293,9 @@ struct WidgetsPagePresenter::Impl
     muxc::Button workshopButton{nullptr};
     muxcp::ToggleButton selfDevelopButton{nullptr};
     muxc::StackPanel taskPanel{nullptr};
+    muxc::StackPanel searchStatusPanel{nullptr};
+    muxc::ProgressRing searchStatusRing{nullptr};
+    muxc::TextBlock searchStatusText{nullptr};
     muxc::ProgressRing taskRing{nullptr};
     muxc::ProgressBar taskProgress{nullptr};
     muxc::TextBlock taskStatus{nullptr};
@@ -653,6 +657,27 @@ struct WidgetsPagePresenter::Impl
         installedSection.Spacing(8);
         root.Children().Append(installedSection);
         InitializeCard(filterCard, cardStyle, installedSection);
+        filterCard.heading.Orientation(muxc::Orientation::Horizontal);
+        filterCard.heading.Spacing(12.0);
+        filterCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
+        searchStatusPanel = muxc::StackPanel{};
+        searchStatusPanel.Orientation(muxc::Orientation::Horizontal);
+        searchStatusPanel.Spacing(6.0);
+        searchStatusPanel.VerticalAlignment(mux::VerticalAlignment::Center);
+        searchStatusPanel.Visibility(mux::Visibility::Collapsed);
+        searchStatusRing = muxc::ProgressRing{};
+        searchStatusRing.Width(14.0); searchStatusRing.Height(14.0);
+        searchStatusRing.MinWidth(0.0); searchStatusRing.MinHeight(0.0);
+        searchStatusRing.IsActive(false);
+        searchStatusText = muxc::TextBlock{};
+        searchStatusText.FontSize(12.0);
+        searchStatusText.Opacity(0.68);
+        searchStatusText.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxa::AutomationProperties::SetLiveSetting(searchStatusText,
+            muxa::Peers::AutomationLiveSetting::Polite);
+        searchStatusPanel.Children().Append(searchStatusRing);
+        searchStatusPanel.Children().Append(searchStatusText);
+        filterCard.heading.Children().Append(searchStatusPanel);
 
         searchBox = muxc::AutoSuggestBox{};
         searchBox.HorizontalAlignment(mux::HorizontalAlignment::Left);
@@ -1722,24 +1747,10 @@ struct WidgetsPagePresenter::Impl
         std::vector<std::function<void()>>& revokers,
         mux::FrameworkElement& firstTarget)
     {
-        muxc::StackPanel row;
-        row.Spacing(6.0);
-        row.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        muxcp::ToggleButton disclosure;
+        muxc::Expander disclosure;
         disclosure.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         disclosure.HorizontalContentAlignment(
             mux::HorizontalAlignment::Stretch);
-        disclosure.UseSystemFocusVisuals(true);
-        disclosure.IsChecked(false);
-        muxc::Grid headerGrid;
-        headerGrid.ColumnSpacing(12.0);
-        muxc::ColumnDefinition headerColumn;
-        headerColumn.Width(mux::GridLengthHelper::FromValueAndType(
-            1.0, mux::GridUnitType::Star));
-        headerGrid.ColumnDefinitions().Append(headerColumn);
-        muxc::ColumnDefinition chevronColumn;
-        chevronColumn.Width(mux::GridLengthHelper::Auto());
-        headerGrid.ColumnDefinitions().Append(chevronColumn);
         muxc::StackPanel header;
         header.Spacing(3.0);
         muxc::TextBlock name;
@@ -1752,20 +1763,11 @@ struct WidgetsPagePresenter::Impl
         header.Children().Append(name);
         header.Children().Append(MakeSecondaryText(JoinMetadata(
             {diagnostic.instanceId, diagnostic.packageId})));
-        headerGrid.Children().Append(header);
-        muxc::TextBlock chevron;
-        chevron.Text(L"⌄");
-        chevron.VerticalAlignment(mux::VerticalAlignment::Center);
-        muxc::Grid::SetColumn(chevron, 1);
-        headerGrid.Children().Append(chevron);
-        disclosure.Content(headerGrid);
-        row.Children().Append(disclosure);
+        disclosure.Header(header);
 
         muxc::StackPanel body;
         body.Spacing(7.0);
-        body.Margin(mux::ThicknessHelper::FromLengths(12.0, 2.0, 12.0, 8.0));
         body.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        body.Visibility(mux::Visibility::Collapsed);
         const std::wstring validity = L(diagnostic.valid
                 ? "app.settings.valid" : "app.settings.invalid",
             diagnostic.valid ? L"Valid" : L"Invalid");
@@ -1841,27 +1843,12 @@ struct WidgetsPagePresenter::Impl
             body.Children().Append(reload);
         }
 
-        row.Children().Append(body);
-        const auto weakBody = winrt::make_weak(body);
-        const auto weakChevron = winrt::make_weak(chevron);
-        HookClick(disclosure,
-            [disclosure, weakBody, weakChevron](const auto&, const auto&) {
-                const auto checked = disclosure.IsChecked();
-                const bool expanded = checked && checked.Value();
-                if (const auto currentBody = weakBody.get())
-                {
-                    currentBody.Visibility(expanded
-                            ? mux::Visibility::Visible
-                            : mux::Visibility::Collapsed);
-                }
-                if (const auto currentChevron = weakChevron.get())
-                    currentChevron.Text(expanded ? L"⌃" : L"⌄");
-            },
-            revokers);
+        disclosure.Content(body);
+        StretchExpanderBody(disclosure, body);
         SetAutomation(disclosure, name.Text(), diagnostic.lastError);
         if (!firstTarget)
             firstTarget = disclosure;
-        rows.Children().Append(row);
+        rows.Children().Append(disclosure);
     }
 
     void RenderDeveloperRows()
@@ -3137,10 +3124,14 @@ struct WidgetsPagePresenter::Impl
     void RenderTask()
     {
         const bool running = task.kind != WidgetsPageTaskKind::None;
-        taskPanel.Visibility(running
+        const bool searching = task.kind == WidgetsPageTaskKind::Searching;
+        searchStatusPanel.Visibility(searching ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        searchStatusRing.IsActive(searching);
+        searchStatusText.Text(searching ? L("settings.widgets.searching", L"Searching…") : L"");
+        taskPanel.Visibility(running && !searching
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
-        taskRing.IsActive(running);
+        taskRing.IsActive(running && !searching);
         taskRing.Visibility(running
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);

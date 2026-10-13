@@ -2700,5 +2700,18 @@
   "settings.widgetBehavior.tabSwitching": "Tab switching",
   "settings.widgetBehavior.groupTabHover": "Switch group tabs on hover",
   "settings.widgetBehavior.categoryTabHover": "Switch category tabs on hover",
-  "settings.widgetBehavior.tabHoverDelay": "Tab hover delay"
+  "settings.widgetBehavior.tabHoverDelay": "Tab hover delay",
+  "settings.related.dockVisibility": "Set Dock hiding, edge reveal and keyboard shortcuts.",
+  "settings.related.taskbarTheme": "Adjust the Windows taskbar theme, material and appearance for each scenario.",
+  "settings.related.dockAnimation": "Adjust Dock hover zoom, launch animations and window animations.",
+  "settings.related.footerHeight": "Set the height of title bars, tabs and search boxes shared by widgets.",
+  "settings.related.popupTheme": "Change the theme shared by folder, collection and system panel popups.",
+  "settings.related.calendar": "Manage events, recurring dates and reminders in the status bar calendar.",
+  "settings.related.tabHeight": "Set the height of category tabs, group tabs and widget title bars.",
+  "settings.related.categoryHover": "Enable category tab switching on hover and set its delay.",
+  "settings.related.themeManager": "Manage saved themes, import, export and browse Workshop themes.",
+  "settings.related.globalAppearance": "Adjust icon size, text, spacing and widget appearance.",
+  "settings.related.iconBeautification": "Adjust icon corners, borders and background effects.",
+  "settings.related.clockPanel": "Choose whether clicking the status bar clock opens the SnowDesktop calendar or the system panel.",
+  "settings.widgets.searching": "Searching…"
 }

@@ -2700,5 +2700,18 @@
   "settings.widgetBehavior.tabSwitching": "Registerkarten wechseln",
   "settings.widgetBehavior.groupTabHover": "Gruppenregisterkarten beim Darüberfahren wechseln",
   "settings.widgetBehavior.categoryTabHover": "Kategorieregisterkarten beim Darüberfahren wechseln",
-  "settings.widgetBehavior.tabHoverDelay": "Verzögerung beim Darüberfahren"
+  "settings.widgetBehavior.tabHoverDelay": "Verzögerung beim Darüberfahren",
+  "settings.related.dockVisibility": "Ausblenden des Docks, Einblenden am Bildschirmrand und Tastenkürzel einstellen.",
+  "settings.related.taskbarTheme": "Design, Material und situationsabhängiges Aussehen der Windows-Taskleiste anpassen.",
+  "settings.related.dockAnimation": "Vergrößerung beim Zeigen sowie Start- und Fensteranimationen des Docks anpassen.",
+  "settings.related.footerHeight": "Höhe der von Widgets gemeinsam verwendeten Titelleisten, Registerkarten und Suchfelder einstellen.",
+  "settings.related.popupTheme": "Gemeinsames Design für Popups von Ordnern, Sammlungen und Systembereichen ändern.",
+  "settings.related.calendar": "Termine, wiederkehrende Daten und Erinnerungen im Kalender der Statusleiste verwalten.",
+  "settings.related.tabHeight": "Höhe der Kategorie- und Gruppenregisterkarten sowie der Widget-Titelleisten einstellen.",
+  "settings.related.categoryHover": "Wechseln der Kategorieregisterkarte beim Zeigen aktivieren und Verzögerung einstellen.",
+  "settings.related.themeManager": "Gespeicherte Designs verwalten, importieren, exportieren und Workshop-Designs durchsuchen.",
+  "settings.related.globalAppearance": "Symbolgröße, Text, Abstände und Widget-Aussehen anpassen.",
+  "settings.related.iconBeautification": "Symbolecken, Rahmen und Hintergrundeffekte anpassen.",
+  "settings.related.clockPanel": "Wählen, ob ein Klick auf die Uhr der Statusleiste den SnowDesktop-Kalender oder den Systembereich öffnet.",
+  "settings.widgets.searching": "Suche läuft…"
 }

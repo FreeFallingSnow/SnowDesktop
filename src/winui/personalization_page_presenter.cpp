@@ -1681,8 +1681,10 @@ struct PersonalizationPagePresenter::Impl
         SetCardText(behaviorCard,
             "settings.widgetBehavior.expansion", L"Expansion behavior");
         collectionRelatedTitle.Text(L("settings.common.relatedSettings", L"Related settings"));
-        collectionFooterLinkTitle.Text(L("settings.widgetBehavior.footerHeight", L"Global component footer height"));
-        collectionThemeLinkTitle.Text(L("settings.widgetBehavior.popupTheme", L"Shared popup theme"));
+        collectionFooterRow.SetText(L("settings.widgetBehavior.footerHeight", L"Global component footer height"),
+            L("settings.related.footerHeight", L"Set the height of title bars, tabs and search boxes shared by widgets."));
+        collectionThemeRow.SetText(L("settings.widgetBehavior.popupTheme", L"Shared popup theme"),
+            L("settings.related.popupTheme", L"Change the theme shared by folder, collection and system panel popups."));
         collectionFooterLink.Content(winrt::box_value(L("start.openSettings", L"Open related settings")));
         collectionThemeLink.Content(winrt::box_value(L("start.openSettings", L"Open related settings")));
         muxa::AutomationProperties::SetName(collectionFooterLink, collectionFooterLinkTitle.Text());

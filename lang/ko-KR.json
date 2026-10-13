@@ -2700,5 +2700,18 @@
   "settings.widgetBehavior.tabSwitching": "탭 전환",
   "settings.widgetBehavior.groupTabHover": "마우스를 올려 그룹 탭 전환",
   "settings.widgetBehavior.categoryTabHover": "마우스를 올려 분류 탭 전환",
-  "settings.widgetBehavior.tabHoverDelay": "탭 호버 지연"
+  "settings.widgetBehavior.tabHoverDelay": "탭 호버 지연",
+  "settings.related.dockVisibility": "Dock 숨기기, 화면 가장자리에서 표시하기, 키보드 단축키를 설정합니다.",
+  "settings.related.taskbarTheme": "상황에 따른 Windows 작업 표시줄의 테마, 재질 및 모양을 조정합니다.",
+  "settings.related.dockAnimation": "Dock의 마우스 오버 확대, 실행 애니메이션 및 창 애니메이션을 조정합니다.",
+  "settings.related.footerHeight": "위젯에서 공통으로 사용하는 제목 표시줄, 탭 및 검색 상자의 높이를 설정합니다.",
+  "settings.related.popupTheme": "폴더, 컬렉션 및 시스템 패널 팝업이 공유하는 테마를 변경합니다.",
+  "settings.related.calendar": "상태 표시줄 달력의 일정, 반복 날짜 및 알림을 관리합니다.",
+  "settings.related.tabHeight": "분류 탭, 그룹 탭 및 위젯 제목 표시줄의 높이를 설정합니다.",
+  "settings.related.categoryHover": "마우스를 올려 분류 탭 전환을 활성화하고 대기 시간을 설정합니다.",
+  "settings.related.themeManager": "저장된 테마를 관리하고 가져오기, 내보내기 및 창작마당 테마 탐색을 수행합니다.",
+  "settings.related.globalAppearance": "아이콘 크기, 텍스트, 간격 및 위젯 모양을 조정합니다.",
+  "settings.related.iconBeautification": "아이콘 모서리, 테두리 및 배경 효과를 조정합니다.",
+  "settings.related.clockPanel": "상태 표시줄 시계를 클릭할 때 SnowDesktop 달력 또는 시스템 패널을 열도록 선택합니다.",
+  "settings.widgets.searching": "검색 중…"
 }

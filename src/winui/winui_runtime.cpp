@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cwchar>
+#include <utility>
 
 namespace snowdesktop::winui
 {
@@ -65,6 +66,7 @@ struct WinUiRuntime::Impl
     bool ownsDispatcherQueue = false;
     bool addedControlParentStyle = false;
     bool systemBackdropEnabled = false;
+    bool minimized = false;
     HWND parentWindow = nullptr;
     HWND islandWindow = nullptr;
     HWND lastFocusedWindow = nullptr;
@@ -316,6 +318,7 @@ void WinUiRuntime::Detach() noexcept
     const bool siteAlive = impl_->islandWindow && IsWindow(impl_->islandWindow);
     impl_->islandWindow = nullptr;
     impl_->lastFocusedWindow = nullptr;
+    impl_->minimized = false;
     if (source)
     {
         // Clear the backdrop while the Island still owns a valid site. This is
@@ -522,6 +525,33 @@ void WinUiRuntime::HandleWindowMessage(
     switch (message)
     {
     case WM_SIZE:
+        if (wParam == SIZE_MINIMIZED)
+        {
+            impl_->minimized = true;
+            break;
+        }
+        ResizeToClient();
+        if (std::exchange(impl_->minimized, false) && impl_->xamlSource)
+        {
+            // Restoring to identical bounds may not trigger an Island layout
+            // pass. Resume the existing tree without recreating the page,
+            // losing editor state, or resetting NavigationView's pane.
+            try
+            {
+                const auto source = impl_->xamlSource;
+                source.SiteBridge().Show();
+                if (const auto content = source.Content())
+                {
+                    content.InvalidateMeasure();
+                    content.InvalidateArrange();
+                }
+                if (impl_->islandWindow)
+                    RedrawWindow(impl_->islandWindow, nullptr, nullptr,
+                        RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE);
+            }
+            catch (...) {}
+        }
+        break;
     case WM_DPICHANGED:
         ResizeToClient();
         break;

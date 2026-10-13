@@ -2347,7 +2347,7 @@ void SettingsShell::ApplyNavigationIcons()
             L"\xE790"},
         IconDescriptor{AppearanceDesktopIconsItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance-desktop-icons.svg",
-            L"\xE7F4"},
+            L"\xE790"},
         IconDescriptor{AppearanceIconBeautificationItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance-icon-beautification.svg",
             L"\xE793"},
@@ -2371,7 +2371,7 @@ void SettingsShell::ApplyNavigationIcons()
         IconDescriptor{WidgetsItem(),
             L"ms-appx:///Assets/Settings/Icons/widgets.svg", L"\xECA5"},
         IconDescriptor{WidgetBehaviorItem(),
-            L"ms-appx:///Assets/Settings/Icons/collections-folders.svg", L"\xE8B7"},
+            L"ms-appx:///Assets/Settings/Icons/collections-folders.svg", L"\xE713"},
         IconDescriptor{BackupItem(),
             L"ms-appx:///Assets/Settings/Icons/backup.svg", L"\xE74E"},
         IconDescriptor{AboutItem(),
@@ -3121,27 +3121,27 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     }
     // Cross-page relationships follow the actual owners of each preference.
     // Object-specific and conditional links remain in their presenters.
-    struct RelatedSetting { std::string_view label; SettingsPage page; const char* focus; };
+    struct RelatedSetting { std::string_view label; SettingsPage page; const char* focus; const char* help; };
     std::vector<RelatedSetting> related;
     switch (pageRoute.page)
     {
     case SettingsPage::DesktopPages:
-        related.push_back({"app.settings.layout_spacing", SettingsPage::AppearanceDesktopIcons, "desktop.iconSpacing"}); break;
+        related.push_back({"app.settings.layout_spacing", SettingsPage::AppearanceDesktopIcons, "desktop.iconSpacing", "app.settings.layout_spacing_hint"}); break;
     case SettingsPage::DesktopCategories:
-        related.push_back({"app.settings.tab_height", SettingsPage::AppearanceDesktopIcons, "desktop.categoryLayout"});
-        related.push_back({"settings.widgetBehavior.categoryTabHover", SettingsPage::WidgetBehavior, "personalization.categoryTabHoverSwitch"}); break;
+        related.push_back({"app.settings.tab_height", SettingsPage::AppearanceDesktopIcons, "desktop.categoryLayout", "settings.related.tabHeight"});
+        related.push_back({"settings.widgetBehavior.categoryTabHover", SettingsPage::WidgetBehavior, "personalization.categoryTabHoverSwitch", "settings.related.categoryHover"}); break;
     case SettingsPage::AppearanceTheme:
     case SettingsPage::Personalization:
-        related.push_back({snowdesktop::SettingsPageTitleKey(SettingsPage::ThemeManager), SettingsPage::ThemeManager, "personalization.savedThemes"});
-        related.push_back({snowdesktop::SettingsPageTitleKey(SettingsPage::AppearanceDesktopIcons), SettingsPage::AppearanceDesktopIcons, ""}); break;
+        related.push_back({snowdesktop::SettingsPageTitleKey(SettingsPage::ThemeManager), SettingsPage::ThemeManager, "personalization.savedThemes", "settings.related.themeManager"});
+        related.push_back({snowdesktop::SettingsPageTitleKey(SettingsPage::AppearanceDesktopIcons), SettingsPage::AppearanceDesktopIcons, "", "settings.related.globalAppearance"}); break;
     case SettingsPage::AppearanceDesktopIcons:
-        related.push_back({snowdesktop::SettingsPageTitleKey(SettingsPage::AppearanceIconBeautification), SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify"}); break;
+        related.push_back({snowdesktop::SettingsPageTitleKey(SettingsPage::AppearanceIconBeautification), SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify", "settings.related.iconBeautification"}); break;
     case SettingsPage::AppearanceIconBeautification:
-        related.push_back({"app.settings.icon_size", SettingsPage::AppearanceDesktopIcons, "desktop.iconSize"}); break;
+        related.push_back({"app.settings.icon_size", SettingsPage::AppearanceDesktopIcons, "desktop.iconSize", "app.settings.icon_size_hint"}); break;
     case SettingsPage::Widgets:
-        related.push_back({"settings.widgetBehavior.title", SettingsPage::WidgetBehavior, ""}); break;
+        related.push_back({"settings.widgetBehavior.title", SettingsPage::WidgetBehavior, "", "settings.widgetBehavior.description"}); break;
     case SettingsPage::Calendar:
-        related.push_back({"statusBar.clockPanel", SettingsPage::StatusBar, "statusBar.clockPanel"}); break;
+        related.push_back({"statusBar.clockPanel", SettingsPage::StatusBar, "statusBar.clockPanel", "settings.related.clockPanel"}); break;
     default: break;
     }
     if (!related.empty())
@@ -3159,7 +3159,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             muxc::Button button;
             button.Content(winrt::box_value(Localize("start.openSettings")));
             controls::SettingRow row;
-            row.Initialize(button); row.SetText(Localize(entry.label));
+            row.Initialize(button); row.SetText(Localize(entry.label), Localize(entry.help));
             const auto route = SettingsRoute::ForPage(entry.page, entry.focus);
             button.Click([weak = get_weak(), route](const auto&, const auto&) {
                 if (const auto self = weak.get()) (void)self->Navigate(route, true);

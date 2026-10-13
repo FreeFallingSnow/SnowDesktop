@@ -639,6 +639,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             {"statusBar.clock", &Settings::clock, Action::MenuTime, L"\uE24E"}, // calendar_ltr
             {"statusBar.clockShowSeconds", &Settings::clockShowSeconds, Action::MenuTime, L"\uF2DD"}, // clock
             {"statusBar.inputMethod", &Settings::inputMethod, Action::MenuControlCenter, L"\uF4B8"}, // keyboard
+            {"statusBar.batteryPercentage", &Settings::batteryPercentage, Action::MenuControlCenter, L"\uF1CD"}, // battery_9_20
             {"statusBar.audioControls", &Settings::audioControls, Action::MenuControlCenter, L"\uEB42"}, // speaker_2
             {"statusBar.brightnessControls", &Settings::brightnessControls, Action::MenuControlCenter, L"\uF8A1"}, // weather_sunny
             {"statusBar.wifiControls", &Settings::wifiControls, Action::MenuControlCenter, L"\uF8AC"}, // wifi_1

@@ -2700,5 +2700,18 @@
   "settings.widgetBehavior.tabSwitching": "标签切换",
   "settings.widgetBehavior.groupTabHover": "悬停切换组标签",
   "settings.widgetBehavior.categoryTabHover": "悬停切换分类标签",
-  "settings.widgetBehavior.tabHoverDelay": "标签悬停延迟"
+  "settings.widgetBehavior.tabHoverDelay": "标签悬停延迟",
+  "settings.related.dockVisibility": "设置 Dock 的隐藏方式、边缘唤出和快捷键。",
+  "settings.related.taskbarTheme": "调整 Windows 任务栏的主题、材质和按场景外观。",
+  "settings.related.dockAnimation": "调整 Dock 的悬停缩放、启动动画和窗口动画。",
+  "settings.related.footerHeight": "调整组件共用的标题栏、标签和搜索框高度。",
+  "settings.related.popupTheme": "调整文件夹、集合和系统面板弹窗共用的主题。",
+  "settings.related.calendar": "管理状态栏日历中的日程、重复日期和提醒。",
+  "settings.related.tabHeight": "调整分类标签、组标签和组件标题栏的高度。",
+  "settings.related.categoryHover": "设置悬停切换分类标签的开关与等待时间。",
+  "settings.related.themeManager": "管理已保存的主题，导入、导出和查看工坊主题。",
+  "settings.related.globalAppearance": "调整图标大小、文字、间距和组件外观。",
+  "settings.related.iconBeautification": "调整图标的圆角、边框和背景效果。",
+  "settings.related.clockPanel": "选择点击状态栏时间时打开 SnowDesktop 日历或系统面板。",
+  "settings.widgets.searching": "搜索中…"
 }
