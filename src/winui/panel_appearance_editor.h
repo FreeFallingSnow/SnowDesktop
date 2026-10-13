@@ -18,11 +18,13 @@ class PanelAppearanceEditor : public std::enable_shared_from_this<PanelAppearanc
 public:
     using Localize = PanelGradientEditor::Localize;
     using Change = std::function<void(const PersonalizationSettings&, bool)>;
-    static std::shared_ptr<PanelAppearanceEditor> Create(Localize localize, Change change, bool borderOnly = false)
+    static std::shared_ptr<PanelAppearanceEditor> Create(Localize localize, Change change,
+        bool borderOnly = false, bool inlineSurface = false)
     {
         auto result = std::make_shared<PanelAppearanceEditor>();
         result->localize_ = std::move(localize); result->change_ = std::move(change);
         result->borderOnly_ = borderOnly;
+        result->inlineSurface_ = inlineSurface;
         std::weak_ptr<PanelAppearanceEditor> weak = result;
         result->preview_.Initialize([weak](auto const& value) {
             if (auto self = weak.lock(); self && self->change_) self->change_(value, false);
@@ -84,6 +86,7 @@ private:
     presenter_controls::CoalescedPreviewTimer<PersonalizationSettings> preview_;
     bool syncing_ = false, dirty_ = false, closed_ = false;
     bool borderOnly_ = false;
+    bool inlineSurface_ = false;
     std::wstring L(const char* key) const { return localize_ ? localize_(key) : std::wstring{}; }
     void Sync()
     {
@@ -183,7 +186,7 @@ private:
         for (auto& editor : colors_) editor->Close(); colors_.clear();
         if (gradient_) gradient_->Close();
         if (edge_) edge_->Close();
-        root_.Children().Clear(); sync_.clear(); targets_.clear(); root_.Spacing(8);
+        root_.Children().Clear(); sync_.clear(); targets_.clear(); root_.Spacing(inlineSurface_ ? 0 : 8);
         sections_ = {};
         if (borderOnly_) sections_.border = root_;
         else { sections_.Initialize(root_); sections_.RefreshLocalizedText(localize_); }
@@ -231,6 +234,9 @@ private:
         });
         sections_.border.Children().Append(edge_->Content());
         sync_.push_back([this] { edge_->Content().Visibility(value_.widgetEdgeHighlightEnabled ? x::Visibility::Visible : x::Visibility::Collapsed); });
+        if (inlineSurface_)
+            for (const auto& disclosure : sections_.disclosures)
+                presenter_controls::StyleInlineSettingsExpander(disclosure);
         Sync();
     }
 };

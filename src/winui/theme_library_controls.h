@@ -160,6 +160,11 @@ public:
     ~ThemeLibraryControls() { Close(); }
     x::UIElement Content() const { return root_; }
     x::UIElement SaveContent() const { return saveRoot_; }
+    void SetInlineSurface()
+    {
+        for (const auto& disclosure : disclosures_)
+            presenter_controls::StyleInlineSettingsExpander(disclosure);
+    }
     x::FrameworkElement Choice() const { return transfer_ ? x::FrameworkElement{entries_} : x::FrameworkElement{choice_}; }
     x::UIElement SelectionContent()
     {

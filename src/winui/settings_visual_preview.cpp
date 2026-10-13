@@ -185,7 +185,8 @@ constexpr SettingsPage pages[] = {
     SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar, SettingsPage::QuickNavigation};
 
 void Export(const std::filesystem::path& output, std::string_view selected, bool dark,
-    const std::string& locale, int width, int height, bool expanded, bool custom, bool disabled, const std::string& focusId)
+    const std::string& locale, int width, int height, bool expanded, bool custom, bool disabled,
+    bool scenarioRules, const std::string& focusId)
 {
     Locale::Instance().Init((std::filesystem::path(GetExecutableDirectoryPath()) / L"lang").c_str());
     if (!Locale::Instance().HasLanguage(locale)) throw std::runtime_error("preview locale is not installed");
@@ -317,7 +318,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         snapshot.values.general.dockEnabled = !disabled;
         snapshot.values.general.statusBar.enabled = !disabled;
         if (expanded && !custom)
+        {
             snapshot.values.general.statusBar.position = snapshot.values.dock.position;
+            snapshot.values.dock.edgeAttached = true;
+        }
         snapshot.values.general.widgetDeveloperToolsEnabled = true;
         snapshot.values.dock.fullscreenExceptions = {
             {L"C:\\Preview\\Presentation.exe", DockFullscreenPolicy::Allow},
@@ -340,6 +344,18 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             for (auto* theme : {&snapshot.values.general.quickNavigationAppearance,
                 &snapshot.values.general.collectionPopupAppearance, &snapshot.values.general.statusBar.theme})
             { theme->mode = 4; theme->customized = true; theme->appearance.backgroundPreset = kAppearancePresetCustom; }
+        }
+        if (scenarioRules)
+        {
+            auto& taskbarRule = snapshot.values.dock.systemTaskbarShellUi;
+            taskbarRule.enabled = true;
+            taskbarRule.themeMode = SystemTaskbarThemeMode::Custom;
+            taskbarRule.appearance.backgroundPreset = kAppearancePresetCustom;
+            auto& statusRule = snapshot.values.general.statusBar.noWindow;
+            statusRule.enabled = true;
+            statusRule.theme.mode = 4;
+            statusRule.theme.customized = true;
+            statusRule.theme.appearance.backgroundPreset = kAppearancePresetCustom;
         }
         snapshot.domainRevisions = {revision, revision, revision, revision, revision, revision, revision};
         snapshot.route = SettingsRoute::ForPage(page);
@@ -528,9 +544,10 @@ std::optional<int> TryRunSettingsVisualPreview()
         if (width < 840 || width > 2400 || height < 520 || height > 1800) throw std::runtime_error("unsupported preview size");
         const std::wstring_view theme(args[4]), state(args[8]);
         if (theme != L"light" && theme != L"dark") throw std::runtime_error("preview supports light or dark XAML surfaces");
-        if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled") throw std::runtime_error("invalid disclosure state");
+        if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled" && state != L"scenarios") throw std::runtime_error("invalid disclosure state");
         Export(output, winrt::to_string(args[3]), theme == L"dark", winrt::to_string(args[5]), width, height,
-            state == L"expanded" || state == L"custom", state == L"custom", state == L"disabled",
+            state == L"expanded" || state == L"custom" || state == L"scenarios",
+            state == L"custom" || state == L"scenarios", state == L"disabled", state == L"scenarios",
             count == 10 ? winrt::to_string(args[9]) : std::string{});
         std::ofstream(output / L"result.txt") << "passed\nIsolated production XAML, example data; no desktop material or interaction acceptance.\n";
         return 0;

@@ -94,7 +94,8 @@ struct StatusBarPagePresenter::Impl
     void InitializeTheme(ThemeControl& control, muxc::StackPanel parent,
         StatusBarAppearanceRule StatusBarSettings::* member = nullptr)
     {
-        control.root.Spacing(8);
+        control.root.Spacing(member ? 0 : 8);
+        if (member) control.root.Margin({16, 0, 0, 0});
         control.combo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         control.combo.MaxWidth(520);
         control.editor = PanelAppearanceEditor::Create(localize,
@@ -104,12 +105,14 @@ struct StatusBarPagePresenter::Impl
                     theme.appearance = appearance;
                     theme.customized = true;
                 }, commit);
-            });
+            }, false, member != nullptr);
         const std::string target = member == &StatusBarSettings::noWindow ? "statusBar/noWindow" :
             member == &StatusBarSettings::maximizedWindow ? "statusBar/maximizedWindow" : "statusBar";
         control.themes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.combo, 10, 9);
+        if (member) control.themes->SetInlineSurface();
         control.row.Initialize(control.themes->SelectionContent());
-        presenter_controls::StyleSettingsCard(control.row.root);
+        if (member) presenter_controls::StyleSettingsSubrow(control.row.root, true, 0);
+        else presenter_controls::StyleSettingsCard(control.row.root);
         control.root.Children().Append(control.row.root);
         control.root.Children().Append(control.themes->Content());
         control.root.Children().Append(control.editor->Content());
@@ -145,7 +148,7 @@ struct StatusBarPagePresenter::Impl
         rule->key = key; rule->focus = focus; rule->member = member;
         Title(rule->title);
         rule->enabledRow.Initialize(rule->enabled);
-        presenter_controls::StyleSettingsCard(rule->enabledRow.root);
+        presenter_controls::StyleSettingsSubrow(rule->enabledRow.root, rules.empty(), 0);
         rule->enabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         parent.Children().Append(rule->enabledRow.root);
         InitializeTheme(rule->theme, parent, member);
@@ -312,7 +315,7 @@ struct StatusBarPagePresenter::Impl
         InitializeTheme(defaultTheme, appearance);
 
         muxc::StackPanel scenarios;
-        scenarios.Spacing(8);
+        scenarios.Spacing(0);
         Title(rulesTitle);
         rulesSection.Header(rulesTitle);
         rulesSection.Content(scenarios);

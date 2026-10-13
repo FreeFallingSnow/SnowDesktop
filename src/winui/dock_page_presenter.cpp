@@ -832,7 +832,7 @@ struct DockPagePresenter::Impl
             taskbarCustomAppearance);
 
         InitializeCard(taskbarRulesCard, nullptr, taskbarAppearanceCard.content, true);
-        taskbarRulesCard.content.Spacing(8.0);
+        taskbarRulesCard.content.Spacing(0.0);
         taskbarRulesHint = NewHint();
         InitializeDynamicRule(shellUiRule,
             &DockSettings::systemTaskbarShellUi);
@@ -1014,6 +1014,9 @@ struct DockPagePresenter::Impl
         SystemTaskbarDynamicRule DockSettings::* member = nullptr)
     {
         control.sections.Initialize(parent, true, false, false);
+        if (member)
+            for (const auto& disclosure : control.sections.disclosures)
+                presenter_controls::StyleInlineSettingsExpander(disclosure);
         control.borderEditor = PanelAppearanceEditor::Create(
             [this](auto key) { return L(key, L""); },
             [this, member](const PersonalizationSettings& value, bool commit) {
@@ -1075,31 +1078,32 @@ struct DockPagePresenter::Impl
         control.summary = NewHint();
 
         control.details = muxc::StackPanel{};
-        control.details.Spacing(8.0);
+        control.details.Spacing(0.0);
         control.details.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         control.contentThemeRow.Initialize(control.contentTheme);
         // The always-visible scenario switch discloses its appearance editors.
         control.details.Children().Append(control.enabledRow.root);
-        presenter_controls::StyleSettingsCard(control.enabledRow.root);
+        presenter_controls::StyleSettingsSubrow(control.enabledRow.root,
+            member == &DockSettings::systemTaskbarShellUi, 0.0);
         control.appearanceDetails = muxc::StackPanel{};
-        control.appearanceDetails.Spacing(8.0);
+        control.appearanceDetails.Spacing(0.0);
+        control.appearanceDetails.Margin({16, 0, 0, 0});
         control.appearanceDetails.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         const std::string target = member == &DockSettings::systemTaskbarShellUi ? "taskbar/shellUi" :
             member == &DockSettings::systemTaskbarMaximizedWindow ? "taskbar/maximizedWindow" : "taskbar/visibleWindow";
         control.savedThemes = std::make_unique<ThemeLibraryControls>(localize, target, false, control.theme, 10, 8);
+        control.savedThemes->SetInlineSurface();
         control.themeRow.Initialize(control.savedThemes->SelectionContent());
         control.themeRows.Children().Append(control.themeRow.root);
         control.themeRows.Children().Append(control.contentThemeRow.root);
-        muxc::Border themeGroup;
-        presenter_controls::InitializeSettingsGroup(
-            themeGroup, nullptr, control.themeRows, cardStyle);
-        control.appearanceDetails.Children().Append(themeGroup);
+        presenter_controls::UpdateSettingsSubrows(control.themeRows, 0.0);
+        control.appearanceDetails.Children().Append(control.themeRows);
         control.appearanceDetails.Children().Append(control.savedThemes->Content());
 
         control.customAppearance = muxc::StackPanel{};
-        control.customAppearance.Spacing(8.0);
+        control.customAppearance.Spacing(0.0);
         InitializeTaskbarGradient(control.gradient, control.customAppearance, member);
         InitializeColorControl(control.backgroundColor,
             ColorField::TaskbarBackground, member);
