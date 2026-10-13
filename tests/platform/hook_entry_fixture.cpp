@@ -12,3 +12,7 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopTaskbarHookProc(int
     }
     return CallNextHookEx(nullptr, code, wp, lp);
 }
+extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockSourceCloakHook(int code, WPARAM wp, LPARAM lp)
+{
+    return SnowDesktopTaskbarHookProc(code, wp, lp);
+}

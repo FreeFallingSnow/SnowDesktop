@@ -149,12 +149,14 @@ std::wstring Prepare(const std::filesystem::path& cacheRoot,
 {
     auto& publication = Publisher();
     std::lock_guard lock(publication.mutex);
+    if (!cacheRoot.is_absolute() || !entrySource.is_absolute() || !implementation.is_absolute())
+    { SetLastError(ERROR_INVALID_PARAMETER); return {}; }
     const WORD machine = payload == Payload::Dock32 ? IMAGE_FILE_MACHINE_I386 : IMAGE_FILE_MACHINE_AMD64;
     if (!HasEntryAbi(entrySource, machine) || !std::filesystem::is_regular_file(implementation))
     { SetLastError(ERROR_BAD_EXE_FORMAT); return {}; }
     const auto directory = cacheRoot / L"entry-v1";
     const auto target = directory / entrySource.filename();
-    if (Reparse(cacheRoot) || Reparse(directory) || Reparse(target))
+    if (Reparse(cacheRoot) || Reparse(directory) || Reparse(target) || Reparse(directory / L".publish.lock"))
     { SetLastError(ERROR_ACCESS_DENIED); return {}; }
     std::error_code error;
     std::filesystem::create_directories(directory, error);

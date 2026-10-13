@@ -10,6 +10,15 @@
 #include <functional>
 
 using namespace snowdesktop::hook_entry;
+#ifdef _WIN64
+constexpr Payload kTestPayload = Payload::Taskbar;
+constexpr WORD kTestMachine = IMAGE_FILE_MACHINE_AMD64, kOtherMachine = IMAGE_FILE_MACHINE_I386;
+constexpr char kTestExport[] = "SnowDesktopTaskbarHookProc";
+#else
+constexpr Payload kTestPayload = Payload::Dock32;
+constexpr WORD kTestMachine = IMAGE_FILE_MACHINE_I386, kOtherMachine = IMAGE_FILE_MACHINE_AMD64;
+constexpr char kTestExport[] = "_SnowDesktopDockSourceCloakHook@12";
+#endif
 struct Fixture { HWND window = nullptr; };
 constexpr UINT kMarkerMessage = WM_APP + 91, kClose = WM_APP + 92;
 LRESULT CALLBACK WindowProcedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
@@ -45,6 +54,9 @@ int wmain(int argc, wchar_t** argv)
 {
     if (argc == 3 && std::wstring_view(argv[1]) == L"--target") return Target(argv[2]);
     if (argc != 4) return 2;
+    auto entrySource = std::filesystem::path(argv[1]);
+    if (!std::filesystem::is_regular_file(entrySource))
+        entrySource = entrySource.parent_path() / L"SnowDesktop.Runtime" / entrySource.filename();
     const DWORD owner = GetCurrentProcessId();
     const auto root = std::filesystem::temp_directory_path() /
         (L"SnowDesktop-hook-entry-test-" + std::to_wstring(owner) + L"-" + std::to_wstring(GetTickCount64()));
@@ -66,12 +78,23 @@ int wmain(int argc, wchar_t** argv)
     passed = passed && thread && targetOwner == target.dwProcessId;
     const auto first = root / L"implementation-0.dll";
     std::filesystem::copy_file(argv[2], first);
-    const auto entry = Prepare(root / L"cache", argv[1], Payload::Taskbar, first);
-    passed = passed && !entry.empty() && HasEntryAbi(entry, IMAGE_FILE_MACHINE_AMD64) &&
-        !HasEntryAbi(entry, IMAGE_FILE_MACHINE_I386);
+    const auto entry = Prepare(root / L"cache", entrySource, kTestPayload, first);
+    passed = passed && !entry.empty() && HasEntryAbi(entry, kTestMachine) &&
+        !HasEntryAbi(entry, kOtherMachine);
     const HMODULE module = entry.empty() ? nullptr : LoadLibraryW(entry.c_str());
-    const auto procedure = module ? reinterpret_cast<HOOKPROC>(GetProcAddress(module, "SnowDesktopTaskbarHookProc")) : nullptr;
+    const auto procedure = module ? reinterpret_cast<HOOKPROC>(GetProcAddress(module, kTestExport)) : nullptr;
     SetPropW(fixture->window, kOwnerProperty, ULongToHandle(owner));
+#ifndef _WIN64
+    // Dock32 routes through the marked receiver. The host's catalog remains
+    // pointer-free; no target address is dereferenced across this boundary.
+    WNDCLASSW hostType{};
+    hostType.hInstance = GetModuleHandleW(nullptr); hostType.lpfnWndProc = WindowProcedure;
+    hostType.lpszClassName = L"SnowDesktop.Entry.Host.Fixture";
+    RegisterClassW(&hostType);
+    HWND receiver = CreateWindowExW(0, hostType.lpszClassName, L"", 0, 0, 0, 0, 0,
+        HWND_MESSAGE, nullptr, hostType.hInstance, nullptr);
+    passed = passed && receiver && SetPropW(fixture->window, L"SnowDesktop.Dock.MinimizeTarget.v1", receiver);
+#endif
     const HHOOK hook = procedure ? SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread) : nullptr;
     passed = passed && hook;
     unsigned dispatched = 0;
@@ -79,7 +102,7 @@ int wmain(int argc, wchar_t** argv)
     {
         const auto image = version ? root / (L"implementation-" + std::to_wstring(version) + L".dll") : first;
         if (version) std::filesystem::copy_file(version % 2 ? argv[3] : argv[2], image);
-        const auto selected = Prepare(root / L"cache", argv[1], Payload::Taskbar, image);
+        const auto selected = Prepare(root / L"cache", entrySource, kTestPayload, image);
         passed = selected == entry;
         DWORD_PTR ignored = 0;
         passed = passed && SendMessageTimeoutW(fixture->window, kMarkerMessage, owner, 0,
@@ -117,6 +140,9 @@ int wmain(int argc, wchar_t** argv)
     else passed = false;
     if (catalogMapping) CloseHandle(catalogMapping);
     if (hook) passed = UnhookWindowsHookEx(hook) && passed;
+#ifndef _WIN64
+    DestroyWindow(receiver);
+#endif
     PostMessageW(fixture->window, kClose, 0, 0);
     const bool exited = WaitForSingleObject(target.hProcess, 5000) == WAIT_OBJECT_0;
     passed = passed && exited;

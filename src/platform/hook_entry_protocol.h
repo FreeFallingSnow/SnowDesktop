@@ -46,6 +46,7 @@ inline bool Read(const Catalog& catalog, DWORD owner, Payload payload, Snapshot&
         catalog.bytes != sizeof(Catalog) || !owner || catalog.owner != owner || !catalog.ownerCreation) return false;
     const LONG sequence = catalog.sequence;
     if (sequence & 1) return false;
+    MemoryBarrier();
     const auto& path = catalog.paths[index];
     const auto end = std::find(path.begin(), path.end(), L'\0');
     if (end == path.begin() || end == path.end()) return false;

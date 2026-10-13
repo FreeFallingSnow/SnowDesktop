@@ -23,6 +23,29 @@ foreach(target SnowDesktopDockMinimizeHook32 SnowDesktopDockMinimizeHost32 SnowD
         RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SNOWDESKTOP_OUTPUT_DIR}")
 endforeach()
 if (SNOWDESKTOP_BUILD_HOOK_FIXTURE)
+    foreach(marker 1 2)
+        add_library(SnowDesktopHookEntryFixture32_${marker} SHARED "../../tests/platform/hook_entry_fixture.cpp")
+        target_compile_features(SnowDesktopHookEntryFixture32_${marker} PRIVATE cxx_std_20)
+        target_compile_definitions(SnowDesktopHookEntryFixture32_${marker} PRIVATE HOOK_ENTRY_FIXTURE_MARKER=${marker} UNICODE _UNICODE)
+        target_compile_options(SnowDesktopHookEntryFixture32_${marker} PRIVATE /W4 /EHsc /utf-8)
+        target_link_libraries(SnowDesktopHookEntryFixture32_${marker} PRIVATE user32)
+        set_property(TARGET SnowDesktopHookEntryFixture32_${marker} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        set_target_properties(SnowDesktopHookEntryFixture32_${marker} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${SNOWDESKTOP_OUTPUT_DIR}/tests"
+            RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SNOWDESKTOP_OUTPUT_DIR}/tests"
+            RUNTIME_OUTPUT_DIRECTORY_DEBUG "${SNOWDESKTOP_OUTPUT_DIR}/tests")
+    endforeach()
+    add_executable(SnowDesktopHookEntryTests32 "../../tests/platform/hook_entry_tests.cpp" "../platform/hook_entry_deployment.cpp")
+    target_compile_features(SnowDesktopHookEntryTests32 PRIVATE cxx_std_20)
+    target_compile_definitions(SnowDesktopHookEntryTests32 PRIVATE UNICODE _UNICODE NOMINMAX)
+    target_include_directories(SnowDesktopHookEntryTests32 PRIVATE "..")
+    target_compile_options(SnowDesktopHookEntryTests32 PRIVATE /W4 /EHsc /utf-8)
+    target_link_libraries(SnowDesktopHookEntryTests32 PRIVATE user32 bcrypt)
+    set_property(TARGET SnowDesktopHookEntryTests32 PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    set_target_properties(SnowDesktopHookEntryTests32 PROPERTIES
+        RUNTIME_OUTPUT_DIRECTORY "${SNOWDESKTOP_OUTPUT_DIR}/tests"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SNOWDESKTOP_OUTPUT_DIR}/tests"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${SNOWDESKTOP_OUTPUT_DIR}/tests")
     add_executable(SnowDesktopDockMinimizeFixture32 "../../tests/dock/dock_minimize_fixture.cpp")
     target_compile_features(SnowDesktopDockMinimizeFixture32 PRIVATE cxx_std_20)
     target_compile_definitions(SnowDesktopDockMinimizeFixture32 PRIVATE UNICODE _UNICODE NOMINMAX WIN32_LEAN_AND_MEAN)

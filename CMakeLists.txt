@@ -1338,6 +1338,12 @@ if (BUILD_TESTING)
             "$<TARGET_FILE:SnowDesktopHookEntryFixture1>" "$<TARGET_FILE:SnowDesktopHookEntryFixture2>"
         LABELS core integration deployment)
     add_dependencies(SnowDesktopHookEntryTests SnowDesktopHookEntry SnowDesktopHookEntryFixture1 SnowDesktopHookEntryFixture2)
+    add_dependencies(SnowDesktopHookEntryTests SnowDesktopDockMinimize32)
+    add_test(NAME hook_stable_entry32 COMMAND "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryTests32.exe"
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/SnowDesktopHookEntry32.dll"
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_1.dll"
+        "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/SnowDesktopHookEntryFixture32_2.dll")
+    set_tests_properties(hook_stable_entry32 PROPERTIES LABELS "core;integration;deployment" TIMEOUT 30)
 
     snowdesktop_add_test(
         SnowDesktopShellOverlayWindowTests

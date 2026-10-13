@@ -106,6 +106,7 @@ extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopStartPinHookProc(in
 }
 extern "C" __declspec(dllexport) LRESULT CALLBACK SnowDesktopDockMinimizeHook(int code, WPARAM wp, LPARAM lp)
 {
+    if (code != HCBT_MINMAX) return CallNextHookEx(nullptr, code, wp, lp);
 #ifdef _WIN64
     constexpr auto payload = snowdesktop::hook_entry::Payload::Dock64;
     constexpr char name[] = "SnowDesktopDockMinimizeHook";
