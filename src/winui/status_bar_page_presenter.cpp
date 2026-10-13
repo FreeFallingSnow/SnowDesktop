@@ -390,6 +390,7 @@ struct StatusBarPagePresenter::Impl
     {
         const bool showStandaloneNotice = availability.anyMerged && !centralizedAppearance;
         relatedAppearance.Visibility(showStandaloneNotice ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        independentAppearance.Margin({0, showStandaloneNotice ? 16.0 : 0.0, 0, 0});
         relatedAppearanceRow.SetText(L("settings.bars.openDockAppearance"), L("statusBar.theme.mergedHint"));
         defaultTheme.row.SetText(L("app.settings.theme"), centralizedAppearance && availability.anyMerged
             ? L("statusBar.theme.mergedHint") : L"");
