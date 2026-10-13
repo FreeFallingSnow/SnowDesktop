@@ -30,7 +30,7 @@ struct Card
         root = muxc::Border{};
         root.Style(style);
         content = muxc::StackPanel{};
-        content.Spacing(16);
+        content.Spacing(2);
         header = muxc::Grid{};
         header.ColumnSpacing(12);
         muxc::ColumnDefinition heading{};
@@ -44,6 +44,7 @@ struct Card
         title.TextWrapping(mux::TextWrapping::Wrap);
         title.VerticalAlignment(mux::VerticalAlignment::Center);
         header.Children().Append(title);
+        header.Margin({0, 0, 0, 8});
         content.Children().Append(header);
         root.Child(content);
         parent.Children().Append(root);
@@ -100,7 +101,7 @@ struct AnimationPerformancePagePresenter::Impl
         root.Spacing(8);
         generalCard.Initialize(style, root);
         dockCard.content = muxc::StackPanel{};
-        dockCard.content.Spacing(16);
+        dockCard.content.Spacing(2);
         dockRoot.Children().Append(dockCard.content);
         performanceCard.Initialize(style, root);
         AddChoice(mode, generalCard, "mode", "animation.mode", 0,
@@ -167,7 +168,26 @@ struct AnimationPerformancePagePresenter::Impl
         hoverScale.SmallChange(1);
         hoverScale.LargeChange(10);
         hoverScale.Value(128);
-        scaleRow.Initialize(EditorWithReset(hoverScale, scaleReset));
+        hoverScaleNumber = muxc::NumberBox{};
+        hoverScaleNumber.Minimum(100); hoverScaleNumber.Maximum(200);
+        hoverScaleNumber.SmallChange(1); hoverScaleNumber.LargeChange(10);
+        hoverScaleNumber.Width(96);
+        hoverScaleNumber.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        presenter_controls::SetNumberBoxValue(hoverScaleNumber, 128);
+        muxc::Grid scaleEditors;
+        scaleEditors.ColumnSpacing(8);
+        for (int index = 0; index < 3; ++index)
+        {
+            muxc::ColumnDefinition column;
+            column.Width(index == 0 ? mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star) : mux::GridLengthHelper::Auto());
+            scaleEditors.ColumnDefinitions().Append(column);
+        }
+        muxc::TextBlock unit;
+        unit.Text(L"%"); unit.VerticalAlignment(mux::VerticalAlignment::Center);
+        scaleEditors.Children().Append(hoverScale);
+        muxc::Grid::SetColumn(hoverScaleNumber, 1); scaleEditors.Children().Append(hoverScaleNumber);
+        muxc::Grid::SetColumn(unit, 2); scaleEditors.Children().Append(unit);
+        scaleRow.Initialize(EditorWithReset(scaleEditors, scaleReset));
         dockCard.content.Children().Append(scaleRow.root);
         scalePreview.Initialize([this](double value) { PublishScale(value, SettingsUpdateMode::Preview); });
         scaleIdle = mux::DispatcherTimer{};
@@ -176,12 +196,30 @@ struct AnimationPerformancePagePresenter::Impl
         revoke.push_back([timer = scaleIdle, token]() { timer.Tick(token); });
         token = hoverScale.ValueChanged([this](const auto&, const auto&) {
             if (!CanEdit()) return;
+            updating = true;
+            presenter_controls::SetNumberBoxValue(hoverScaleNumber, hoverScale.Value());
+            updating = false;
             scaleDirty = true;
             scalePreview.Queue(hoverScale.Value());
             scaleIdle.Stop();
             scaleIdle.Start();
         });
         revoke.push_back([control = hoverScale, token]() { control.ValueChanged(token); });
+        token = hoverScaleNumber.ValueChanged([this](const auto&, const auto&) {
+            if (!CanEdit() || !std::isfinite(hoverScaleNumber.Value())) return;
+            hoverScale.Value(presenter_controls::QuantizeNumericValue(hoverScaleNumber.Value(), 100, 200, 1));
+        });
+        revoke.push_back([control = hoverScaleNumber, token]() { control.ValueChanged(token); });
+        token = hoverScaleNumber.LostFocus([this](const auto&, const auto&) {
+            if (CanEdit())
+            {
+                updating = true;
+                presenter_controls::SetNumberBoxValue(hoverScaleNumber, hoverScale.Value());
+                updating = false;
+            }
+            CommitScale();
+        });
+        revoke.push_back([control = hoverScaleNumber, token]() { control.LostFocus(token); });
         token = hoverScale.PointerCaptureLost([this](const auto&, const auto&) { CommitScale(); });
         revoke.push_back([control = hoverScale, token]() { control.PointerCaptureLost(token); });
         token = hoverScale.LostFocus([this](const auto&, const auto&) { CommitScale(); });
@@ -213,6 +251,12 @@ struct AnimationPerformancePagePresenter::Impl
         HookGeneral(frameLimit, &GeneralSettings::animationFrameLimit, true);
         AddSwitch(energySaver, "energySaver", &GeneralSettings::animationEnergySaver, true);
         AddSwitch(onBattery, "onBattery", &GeneralSettings::animationOnBattery, false);
+        for (const auto* choice : {&mode, &popup, &speed, &hover, &launch, &window, &frameLimit})
+            presenter_controls::StyleSettingsSubrow(choice->row.root,
+                choice == &mode || choice == &hover || choice == &frameLimit, 0);
+        presenter_controls::StyleSettingsSubrow(scaleRow.root, false, 0);
+        for (const auto* control : {&energySaver, &onBattery})
+            presenter_controls::StyleSettingsSubrow(control->row.root, false, 0);
         RefreshLocalizedText();
     }
 
@@ -226,6 +270,7 @@ struct AnimationPerformancePagePresenter::Impl
     Switch energySaver, onBattery;
     SettingRow scaleRow;
     muxc::Slider hoverScale{nullptr};
+    muxc::NumberBox hoverScaleNumber{nullptr};
     muxc::Button scaleReset{nullptr};
     muxc::TextBlock dockNotice{nullptr};
     muxc::Button dockLink{nullptr};
@@ -304,6 +349,8 @@ struct AnimationPerformancePagePresenter::Impl
         control.toggle.MinWidth(0);
         control.toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         control.row.Initialize(EditorWithReset(control.toggle, control.reset));
+        control.row.SetCompactEditor();
+        control.row.SetControlAlignment(mux::HorizontalAlignment::Right);
         performanceCard.content.Children().Append(control.row.root);
         auto token = control.toggle.Toggled([this, &control](const auto&, const auto&) {
             if (!CanEdit() || !actions.updateGeneral) return;
@@ -373,6 +420,7 @@ struct AnimationPerformancePagePresenter::Impl
         }
         scaleRow.SetText(L("settings.animation.hoverScale"), L("settings.animation.hoverScale.description"));
         muxa::AutomationProperties::SetName(hoverScale, L("settings.animation.hoverScale"));
+        muxa::AutomationProperties::SetName(hoverScaleNumber, L("settings.animation.hoverScale"));
         presenter_controls::ConfigureRestoreDefaultButton(scaleReset,
             L("settings.animation.hoverScale") + L": " + L("settings.animation.restore"));
         for (auto* control : {&energySaver, &onBattery})
@@ -421,7 +469,10 @@ struct AnimationPerformancePagePresenter::Impl
             const auto& dock = snapshot.values.dock;
             hover.combo.SelectedIndex(animation::NormalizeHoverEffect(dock.hoverEffect));
             if (!scaleDirty)
+            {
                 hoverScale.Value(std::round(animation::NormalizeHoverScale(dock.hoverScale) * 100.0));
+                presenter_controls::SyncNumberBoxValue(hoverScaleNumber, hoverScale.Value());
+            }
             launch.combo.SelectedIndex(animation::NormalizeLaunchEffect(dock.launchEffect));
             window.combo.SelectedIndex(animation::NormalizeWindowEffect(dock.windowEffect));
             dockRevision = snapshot.domainRevisions.dock;

@@ -23,7 +23,8 @@ local function copy()
         path=l10n.tr("lua_widget.api_balance_whale.path"),path_hint=l10n.tr("lua_widget.api_balance_whale.path_hint"),
         total_path=l10n.tr("lua_widget.api_balance_whale.total_path"),scale=l10n.tr("lua_widget.api_balance_whale.scale"),
         kind=l10n.tr("lua_widget.api_balance_whale.kind"),balance_kind=l10n.tr("lua_widget.api_balance_whale.balance_kind"),
-        quota_kind=l10n.tr("lua_widget.api_balance_whale.quota_kind"),auth=l10n.tr("lua_widget.api_balance_whale.auth"),
+        quota_kind=l10n.tr("lua_widget.api_balance_whale.quota_kind"),
+        auth_header=l10n.tr("lua_widget.api_balance_whale.auth_header"),auth_style=l10n.tr("lua_widget.api_balance_whale.auth_style"),
         label=l10n.tr("lua_widget.api_balance_whale.label"),loading=l10n.tr("lua_widget.api_balance_whale.loading"),
         key_missing=l10n.tr("lua_widget.api_balance_whale.key_missing"),permission=l10n.tr("lua_widget.api_balance_whale.permission"),
         auth_error=l10n.tr("lua_widget.api_balance_whale.auth_error"),forbidden=l10n.tr("lua_widget.api_balance_whale.forbidden"),
@@ -396,8 +397,8 @@ local function settings()
     add({key="remainingPath",type="text",label=c.path,description=c.path_hint,default="data.balance"},"custom")
     add({key="totalPath",type="text",label=c.total_path,default="data.total"},"custom")
     add({key="scale",type="float",label=c.scale,default=1,min=0.00000001,max=1000000},"custom")
-    add({key="authHeader",type="select",label=c.auth,default="Authorization",options={"Authorization","x-api-key","api-key"}},"custom")
-    add({key="authStyle",type="select",label=c.auth,default="bearer",options={"bearer","raw"},optionLabels={"Bearer","API Key"}},"custom")
+    add({key="authHeader",type="select",label=c.auth_header,default="Authorization",options={"Authorization","x-api-key","api-key"}},"custom")
+    add({key="authStyle",type="select",label=c.auth_style,default="bearer",options={"bearer","raw"},optionLabels={"Bearer","API Key"}},"custom")
     return {fields=fields}
 end
 return widget.define({name=copy().name,useCustomStyle=true,followPersonalizationDefault=true,showTitle=false,

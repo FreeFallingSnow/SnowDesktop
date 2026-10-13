@@ -39,6 +39,45 @@ HANDLE CurrentProcessHandle()
     return result;
 }
 
+void TestPermissionAndRelocatedRoutesCodec()
+{
+    using snowdesktop::SettingsPage;
+    using snowdesktop::SettingsRoute;
+    using snowdesktop::CanonicalizeSettingsRoute;
+    auto permissions = SettingsRoute::ForPage(SettingsPage::Widgets, "widgets.permissions");
+    permissions.itemKey = L"org.snowdesktop.天气包";
+    permissions.guideTopic = "widgets";
+    const auto restored = Unpack<SettingsRoute>(Pack(permissions));
+    Check(restored == permissions && restored.IsValid() &&
+            CanonicalizeSettingsRoute(restored) == restored,
+        "permission IPC preserves the exact Unicode package key and its focused destination");
+    auto invalid = permissions;
+    invalid.widgetInstanceId = L"weather-instance";
+    Check(!Unpack<SettingsRoute>(Pack(invalid)).IsValid(),
+        "IPC does not erase an invalid package and instance combination before route validation");
+    invalid = permissions;
+    invalid.focusId = "widgets.installed";
+    Check(!Unpack<SettingsRoute>(Pack(invalid)).IsValid(),
+        "an unrelated widget section cannot gain permission scope through IPC");
+    invalid = permissions;
+    invalid.page = SettingsPage::General;
+    Check(!Unpack<SettingsRoute>(Pack(invalid)).IsValid(),
+        "a package key on a global page remains invalid after transport");
+
+    for (const auto focus : {"desktop.spacing", "personalization.font", "personalization.cornerRadius",
+             "personalization.widgetTransformCursors", "personalization.quickNavigationTheme"})
+    {
+        auto legacy = SettingsRoute::ForPage(SettingsPage::AppearanceWidgets, focus);
+        legacy.guideTopic = "appearance";
+        const auto decoded = Unpack<SettingsRoute>(Pack(legacy));
+        const auto canonical = CanonicalizeSettingsRoute(decoded);
+        Check(decoded == legacy && canonical == CanonicalizeSettingsRoute(legacy) &&
+                Unpack<SettingsRoute>(Pack(canonical)) == canonical &&
+                CanonicalizeSettingsRoute(canonical) == canonical,
+            "old settings routes retain their IDs across IPC and resolve consistently at either end");
+    }
+}
+
 void TestCodec()
 {
     snowdesktop::PageLayoutSnapshot pages;
@@ -982,6 +1021,7 @@ void TestLargeIconEditing()
 int RunSettingsIpcTests()
 {
     TestCodec();
+    TestPermissionAndRelocatedRoutesCodec();
     TestLargeIconEditing();
     TestChannel();
     TestAsyncOpening();

@@ -91,6 +91,7 @@ private:
         gradient_->SetValue(value_.panelGradient);
         if (edge_) edge_->SetValue(value_.edgeLight);
         for (auto const& sync : sync_) sync();
+        sections_.UpdateRows();
         syncing_ = false;
     }
     void Apply(Edit edit, bool commit)
@@ -105,7 +106,8 @@ private:
     void Row(Panel parent, const char* key, Element control, Edit reset, Condition visible = {})
     {
         namespace x = winrt::Microsoft::UI::Xaml; namespace c = x::Controls;
-        c::Grid group; group.ColumnSpacing(8);
+        if (auto toggle = control.try_as<c::ToggleSwitch>()) toggle.MinWidth(0);
+        c::Grid group; group.ColumnSpacing(presenter_controls::kSettingControlGap);
         c::ColumnDefinition main; main.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
         c::ColumnDefinition tail; tail.Width(x::GridLengthHelper::Auto());
         group.ColumnDefinitions().Append(main); group.ColumnDefinitions().Append(tail);
@@ -114,7 +116,10 @@ private:
         c::Grid::SetColumn(restore, 1); group.Children().Append(restore);
         std::weak_ptr<PanelAppearanceEditor> weak = shared_from_this();
         restore.Click([weak, reset](auto const&, auto const&) { if (auto self = weak.lock()) self->Apply(reset, true); });
-        presenter_controls::SettingRow row; row.Initialize(group, presenter_controls::kSettingControlWidth + 40);
+        presenter_controls::SettingRow row; row.Initialize(group);
+        row.SetCompactEditor(control.try_as<c::ToggleSwitch>() || control.try_as<c::Button>());
+        if (control.try_as<c::ToggleSwitch>() || control.try_as<c::Button>())
+            row.SetControlAlignment(x::HorizontalAlignment::Right);
         row.SetText(L(key)); row.root.MinHeight(44); parent.Children().Append(row.root);
         x::Automation::AutomationProperties::SetName(control, L(key));
         targets_.insert_or_assign(key, control.as<x::FrameworkElement>());
@@ -128,7 +133,7 @@ private:
         for (int i = 0; i < 3; ++i)
         {
             c::ColumnDefinition column;
-            column.Width(i == 0 ? x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star) : i == 1 ? x::GridLengthHelper::FromValueAndType(70, x::GridUnitType::Pixel) : x::GridLengthHelper::Auto());
+            column.Width(i == 0 ? x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star) : i == 1 ? x::GridLengthHelper::FromValueAndType(presenter_controls::kSettingNumberWidth, x::GridUnitType::Pixel) : x::GridLengthHelper::Auto());
             pair.ColumnDefinitions().Append(column);
         }
         c::Slider slider; slider.Minimum(minimum); slider.Maximum(maximum); slider.StepFrequency(step); slider.VerticalAlignment(x::VerticalAlignment::Center);

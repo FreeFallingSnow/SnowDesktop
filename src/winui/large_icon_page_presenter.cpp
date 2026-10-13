@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "large_icon_page_presenter.h"
 #include "settings_presenter_controls.h"
+#include "appearance_sections.h"
 #include "panel_gradient_editor.h"
 #include "edge_light_editor.h"
 #include "icons/large_icon_settings_rules.h"
@@ -9,6 +10,7 @@
 #include "icons/large_icon_title_measure.h"
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.System.h>
+#include <unordered_map>
 
 namespace snowdesktop::winui
 {
@@ -36,6 +38,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     std::shared_ptr<PanelGradientEditor> gradient;
     std::shared_ptr<EdgeLightEditor> edge;
     std::vector<std::function<void()>> synchronize, visibility;
+    struct FocusEntry { x::FrameworkElement target{nullptr}; Field field = Field::Always; };
+    std::unordered_map<std::string, FocusEntry> focusTargets;
+    std::unordered_map<std::string, bool> expansionState;
+    std::vector<std::pair<std::string, c::Expander>> disclosures;
+    std::vector<std::pair<c::StackPanel, double>> sharedRows;
+    std::vector<std::pair<c::Grid, double>> rowIndents;
     std::array<c::Image, 2> coverImages;
     std::array<c::TextBlock, 2> coverLabels;
     std::array<std::wstring, 2> coverPaths;
@@ -97,6 +105,10 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         editorHost.IsEnabled(snapshot.available && snapshot.editable && snapshot.error != "largeIcon.stale");
         for (auto& fn : synchronize) fn();
         for (auto& fn : visibility) fn();
+        for (const auto& [panel, indent] : sharedRows)
+            presenter_controls::UpdateSettingsSubrows(panel, indent);
+        for (const auto& [row, indent] : rowIndents)
+            row.Padding({16.0 + indent, 8.0, 16.0, 8.0});
         if (gradient) gradient->SetValue(draft.gradient);
         if (edge) edge->SetValue(draft.edgeLight);
         for (int i = 0; i < 2; ++i)
@@ -162,17 +174,72 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             element.Visibility(steam && large_icon_settings_rules::Visible(field, draft, snapshot.hasEdgeColor) ? x::Visibility::Visible : x::Visibility::Collapsed);
         });
     }
+    void RegisterTarget(std::string id, const x::FrameworkElement& target, Field field)
+    {
+        focusTargets.insert_or_assign(std::move(id), FocusEntry{target, field});
+    }
+    void RegisterVisibleAlias(const char* id, const x::FrameworkElement& target, Field field)
+    {
+        const auto previous = focusTargets.find(id);
+        if (previous != focusTargets.end() &&
+            large_icon_settings_rules::Visible(previous->second.field, draft, snapshot.hasEdgeColor) &&
+            !large_icon_settings_rules::Visible(field, draft, snapshot.hasEdgeColor)) return;
+        RegisterTarget(id, target, field);
+    }
+    x::FrameworkElement FocusTarget(std::string_view id)
+    {
+        if (!snapshot.available || !snapshot.editable) return status;
+        auto entry = focusTargets.find(std::string(id));
+        if (entry == focusTargets.end()) return nullptr;
+        // Object links never select a different mode or overwrite a field
+        // just to reveal the requested editor.
+        for (int depth = 0; depth < 4; ++depth)
+        {
+            const auto field = entry->second.field;
+            const bool visible = (field != Field::Steam || snapshot.steam) &&
+                large_icon_settings_rules::Visible(field, draft, snapshot.hasEdgeColor);
+            if (visible) break;
+            const char* parent = "largeIcon.backgroundStyle";
+            switch (field)
+            {
+            case Field::FillImage: case Field::Steam:
+                parent = "largeIcon.fillSource"; break;
+            case Field::Crop: parent = "largeIcon.fit"; break;
+            case Field::Gradient: case Field::Solid:
+                parent = "largeIcon.defaultBackground"; break;
+            case Field::Blur: parent = "largeIcon.material"; break;
+            case Field::Border: parent = "largeIcon.border"; break;
+            case Field::Edge: parent = "largeIcon.edgeHighlight"; break;
+            case Field::ForegroundImage: parent = "largeIcon.foregroundSource"; break;
+            case Field::ManualTitle: parent = "largeIcon.autoTitleColor"; break;
+            case Field::Title: case Field::Tilt: case Field::Zoom: case Field::Glow: case Field::Shine:
+                parent = "largeIcon.effect"; break;
+            case Field::Radius: parent = "largeIcon.followComponentRadius"; break;
+            case Field::RadiusFollow: case Field::FlagDirection: case Field::RegularHexagon:
+                parent = "largeIcon.shape"; break;
+            default: break;
+            }
+            const auto ancestor = focusTargets.find(parent);
+            if (ancestor == focusTargets.end() || ancestor == entry) break;
+            entry = ancestor;
+        }
+        AppearanceSections::RevealWithin(root, entry->second.target);
+        return entry->second.target;
+    }
     c::StackPanel Group(const char* key, Field field = Field::Always)
     {
         c::StackPanel group; group.Spacing(8); group.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         c::TextBlock heading; heading.Text(L(key)); heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         c::Border card; card.Style(style); card.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-        c::StackPanel content; content.Spacing(4); content.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        c::StackPanel content; content.Spacing(0); content.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        card.Padding({0, 0, 0, 0});
         card.Child(content); group.Children().Append(heading); group.Children().Append(card);
+        sharedRows.emplace_back(content, 0);
         editors.Children().Append(group); Track(group, field); return content;
     }
     void Row(c::StackPanel panel, const char* key, const x::UIElement& control,
-        std::function<void(Impl&)> reset, Field field = Field::Always, int level = 0)
+        std::function<void(Impl&)> reset, Field field = Field::Always, int level = 0,
+        bool compact = false)
     {
         c::Grid editor; editor.ColumnSpacing(8);
         c::ColumnDefinition value; value.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
@@ -183,11 +250,22 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         c::Grid::SetColumn(restore, 1); editor.Children().Append(restore);
         std::weak_ptr<Impl> weak = shared_from_this();
         restore.Click([weak, reset](auto const&, auto const&) { if (auto self = weak.lock()) reset(*self); });
-        presenter_controls::SettingRow row; row.Initialize(editor, presenter_controls::kSettingControlWidth + 40);
-        row.SetText(L(key)); row.root.MinHeight(44); row.root.Margin({16. * level, 0, 0, 0});
+        presenter_controls::SettingRow row; row.Initialize(editor);
+        if (compact)
+        {
+            row.SetCompactEditor();
+            row.SetControlAlignment(x::HorizontalAlignment::Right);
+        }
+        row.SetText(L(key)); row.root.MinHeight(52);
+        double indent = 16. * level;
+        for (const auto& [sharedPanel, baseIndent] : sharedRows)
+            if (sharedPanel == panel) { indent += baseIndent; break; }
+        presenter_controls::StyleSettingsSubrow(row.root, false, indent);
+        rowIndents.emplace_back(row.root, indent);
         x::Automation::AutomationProperties::SetName(control, L(key));
         panel.Children().Append(row.root); Track(row.root, field);
         const std::string id = key;
+        focusTargets.try_emplace(id, FocusEntry{control.as<x::FrameworkElement>(), field});
         visibility.push_back([this, row, field, id]() mutable {
             bool enabled = large_icon_settings_rules::Enabled(field, draft, snapshot.hasEdgeColor, snapshot.accent != 0);
             std::wstring help;
@@ -243,20 +321,32 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Field field = Field::Always, int level = 0)
     {
         c::Grid pair; pair.ColumnSpacing(8);
+        const bool gridSpan = [&] {
+            if constexpr (std::is_same_v<T, int>)
+                return member == &LargeIconConfig::columns || member == &LargeIconConfig::rows;
+            else return false;
+        }();
         for (int i = 0; i < 3; ++i)
         {
             c::ColumnDefinition column;
             column.Width(i == 0 ? x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star) :
-                i == 1 ? x::GridLengthHelper::FromValueAndType(70, x::GridUnitType::Pixel) : x::GridLengthHelper::Auto());
+                i == 1 ? x::GridLengthHelper::FromValueAndType(presenter_controls::kSettingNumberWidth, x::GridUnitType::Pixel) : x::GridLengthHelper::Auto());
             pair.ColumnDefinitions().Append(column);
         }
         c::Slider slider; slider.Minimum(min); slider.Maximum(max); slider.StepFrequency(step);
         slider.VerticalAlignment(x::VerticalAlignment::Center);
         c::NumberBox number; number.Minimum(min); number.Maximum(max); number.SmallChange(step);
-        number.SpinButtonPlacementMode(c::NumberBoxSpinButtonPlacementMode::Hidden);
+        number.SpinButtonPlacementMode(c::NumberBoxSpinButtonPlacementMode::Compact);
         c::TextBlock suffix; suffix.Text(unit); suffix.VerticalAlignment(x::VerticalAlignment::Center);
         c::Grid::SetColumn(number, 1); c::Grid::SetColumn(suffix, 2);
         pair.Children().Append(slider); pair.Children().Append(number); pair.Children().Append(suffix);
+        if (gridSpan)
+        {
+            slider.Visibility(x::Visibility::Collapsed);
+            pair.ColumnDefinitions().GetAt(0).Width(x::GridLengthHelper::FromValueAndType(0, x::GridUnitType::Pixel));
+            pair.HorizontalAlignment(x::HorizontalAlignment::Right);
+            number.AcceptsExpression(false);
+        }
         x::Automation::AutomationProperties::SetName(slider, L(key)); x::Automation::AutomationProperties::SetName(number, L(key));
         std::weak_ptr<Impl> weak = shared_from_this();
         const auto change = [weak, member, min, max, step, factor](auto const&, auto const& args) {
@@ -277,12 +367,47 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             number.PlaceholderText(L("largeIcon.mixed"));
             presenter_controls::SyncNumberBoxValue(number, Mixed(member) ? std::numeric_limits<double>::quiet_NaN() : value);
         });
-        Row(panel, key, pair, Reset(member), field, level);
+        Row(panel, key, pair, Reset(member), field, level, gridSpan);
+        RegisterVisibleAlias(key, number, field);
+        RegisterTarget("largeIcon." + FieldName(member), number, field);
     }
     void Toggle(c::StackPanel panel, const char* key, bool LargeIconConfig::* member, Field field, int level)
     {
         c::ToggleSwitch input; input.MinWidth(0); input.HorizontalAlignment(x::HorizontalAlignment::Right);
+        x::Automation::AutomationProperties::SetName(input, L(key));
+        c::Grid editor;
+        editor.HorizontalAlignment(x::HorizontalAlignment::Right);
+        c::StackPanel mixedEditor;
+        mixedEditor.Spacing(4);
+        c::TextBlock mixedLabel;
+        mixedLabel.Text(L("largeIcon.mixed"));
+        mixedLabel.FontSize(12);
+        mixedLabel.HorizontalAlignment(x::HorizontalAlignment::Right);
+        mixedEditor.Children().Append(mixedLabel);
+        c::StackPanel choices;
+        choices.Orientation(c::Orientation::Horizontal);
+        choices.Spacing(presenter_controls::kSettingControlGap);
+        c::Button allOn, allOff;
+        allOn.Content(winrt::box_value(L("largeIcon.allOn")));
+        allOff.Content(winrt::box_value(L("largeIcon.allOff")));
+        x::Automation::AutomationProperties::SetName(allOn, L(key) + L" · " + L("largeIcon.allOn"));
+        x::Automation::AutomationProperties::SetName(allOff, L(key) + L" · " + L("largeIcon.allOff"));
+        choices.Children().Append(allOn); choices.Children().Append(allOff);
+        mixedEditor.Children().Append(choices);
+        editor.Children().Append(input); editor.Children().Append(mixedEditor);
         std::weak_ptr<Impl> weak = shared_from_this();
+        const auto apply = [weak, member](bool value) {
+            if (auto self = weak.lock(); self && !self->syncing)
+            {
+                self->draft.*member = value;
+                self->Mark(member);
+                if (member == &LargeIconConfig::themeColor && value) self->draft.themeGradient = false;
+                if (member == &LargeIconConfig::themeGradient && value) self->draft.themeColor = false;
+                self->Send("commit");
+            }
+        };
+        allOn.Click([apply](const auto&, const auto&) { apply(true); });
+        allOff.Click([apply](const auto&, const auto&) { apply(false); });
         input.Toggled([weak, member, input](auto const&, auto const&) {
             if (auto self = weak.lock(); self && !self->syncing)
             {
@@ -293,8 +418,21 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 self->Send("commit");
             }
         });
-        synchronize.push_back([this, input, member] { input.IsOn(draft.*member); });
-        Row(panel, key, input, Reset(member), field, level);
+        synchronize.push_back([this, input, member, mixedEditor, allOn, allOff, field, id = std::string(key)] {
+            const bool mixed = Mixed(member);
+            const bool restoreSwitchFocus = !mixed &&
+                (allOn.FocusState() != x::FocusState::Unfocused || allOff.FocusState() != x::FocusState::Unfocused);
+            const bool restoreMixedFocus = mixed && input.FocusState() != x::FocusState::Unfocused;
+            input.IsOn(draft.*member);
+            input.Visibility(mixed ? x::Visibility::Collapsed : x::Visibility::Visible);
+            mixedEditor.Visibility(mixed ? x::Visibility::Visible : x::Visibility::Collapsed);
+            const x::FrameworkElement target = mixed ? allOn.as<x::FrameworkElement>() : input.as<x::FrameworkElement>();
+            RegisterTarget(id, target, field);
+            RegisterTarget("largeIcon." + FieldName(member), target, field);
+            if (restoreSwitchFocus) input.Focus(x::FocusState::Programmatic);
+            else if (restoreMixedFocus) allOn.Focus(x::FocusState::Programmatic);
+        });
+        Row(panel, key, editor, Reset(member), field, level, true);
     }
     void Choice(c::StackPanel panel, const char* key, int LargeIconConfig::* member,
         std::initializer_list<std::pair<int, const char*>> options, Field field = Field::Always, int level = 0)
@@ -349,6 +487,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             input.SelectedIndex(mixed || found == values.end() ? -1 : static_cast<int>(found - values.begin()));
         });
         Row(panel, key, input, Reset(member), field, level);
+        RegisterTarget("largeIcon." + FieldName(member), input, field);
     }
     void ColorPicker(c::StackPanel panel, const char* key, unsigned LargeIconConfig::* member, Field field, int level)
     {
@@ -378,7 +517,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             const auto color = Color(draft.*member); picker.Color(color); swatch.Background(m::SolidColorBrush(color));
             wchar_t text[8]; swprintf_s(text, L"#%06X", draft.*member); label.Text(Mixed(member) ? L("largeIcon.mixed") : std::wstring(text));
         });
-        Row(panel, key, button, Reset(member), field, level);
+        Row(panel, key, button, Reset(member), field, level, true);
+        RegisterTarget("largeIcon." + FieldName(member), button, field);
     }
     void Action(c::StackPanel panel, const char* key, const char* label, std::function<void(Impl&)> callback, Field field, int level)
     {
@@ -386,8 +526,22 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         std::weak_ptr<Impl> weak = shared_from_this();
         button.Click([weak, callback](auto const&, auto const&) { if (auto self = weak.lock()) callback(*self); });
         presenter_controls::SettingRow row; row.Initialize(button); row.SetText(L(key));
-        row.SetControlAlignment(x::HorizontalAlignment::Right); row.root.Margin({level * 16., 0, 0, 0});
+        row.SetControlAlignment(x::HorizontalAlignment::Right);
+        bool shared = false;
+        for (const auto& [sharedPanel, baseIndent] : sharedRows)
+            if (sharedPanel == panel)
+            {
+                const double indent = baseIndent + level * 16.;
+                presenter_controls::StyleSettingsSubrow(row.root, false, indent);
+                rowIndents.emplace_back(row.root, indent);
+                shared = true;
+                break;
+            }
+        if (!shared) presenter_controls::StyleSettingsCard(row.root);
         panel.Children().Append(row.root); Track(row.root, field);
+        focusTargets.try_emplace(key, FocusEntry{button, field});
+        if (field == Field::FillImage) RegisterTarget("largeIcon.fillImport", button, field);
+        if (field == Field::ForegroundImage) RegisterTarget("largeIcon.foregroundImport", button, field);
     }
     void ColorShortcuts(c::StackPanel panel, c::ColorPicker picker, std::function<void(unsigned)> selected = {})
     {
@@ -400,13 +554,27 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (snapshot.hasEdgeColor) add("largeIcon.useIconBackground", snapshot.edgeColor);
         if (snapshot.accent) add("largeIcon.useIconTheme", snapshot.accent);
     }
-    c::StackPanel Section(c::StackPanel parent, const char* key, Field field)
+    c::StackPanel Section(c::StackPanel parent, const char* key, Field field, bool collapsible = true)
     {
-        c::StackPanel section; section.Spacing(4);
+        c::StackPanel body; body.Spacing(0);
+        sharedRows.emplace_back(body, 16);
         c::TextBlock title; title.Text(L(key)); title.TextWrapping(x::TextWrapping::Wrap);
-        title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); title.Margin({0,12,0,4});
+        title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        if (collapsible)
+        {
+            c::Expander disclosure;
+            disclosure.Header(title); disclosure.Content(body);
+            disclosure.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+            disclosure.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
+            disclosure.IsExpanded(expansionState.contains(key) && expansionState.at(key));
+            parent.Children().Append(disclosure); Track(disclosure, field);
+            disclosures.emplace_back(key, disclosure);
+            return body;
+        }
+        c::StackPanel section; section.Spacing(4);
+        title.Margin({16, 12, 16, 4});
         section.Children().Append(title);
-        c::StackPanel body; body.Spacing(4); section.Children().Append(body);
+        section.Children().Append(body);
         parent.Children().Append(section); Track(section, field); return body;
     }
     void FillKind(c::StackPanel panel)
@@ -427,9 +595,12 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     void Build()
     {
+        for (const auto& [key, disclosure] : disclosures)
+            expansionState.insert_or_assign(key, disclosure.IsExpanded());
+        disclosures.clear(); sharedRows.clear(); rowIndents.clear(); focusTargets.clear();
         if (edge) edge->Close();
         syncing = true; synchronize.clear(); visibility.clear(); root.Children().Clear(); editors.Children().Clear();
-        root.Spacing(16); editors.Spacing(20);
+        root.Spacing(16); editors.Spacing(24);
         root.HorizontalAlignment(x::HorizontalAlignment::Stretch); editors.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         editorHost.HorizontalAlignment(x::HorizontalAlignment::Stretch); editorHost.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
         status.TextWrapping(x::TextWrapping::Wrap);
@@ -486,7 +657,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Toggle(imageDetails, "largeIcon.localOnly", &LargeIconConfig::localOnly, Field::Steam, 1);
         Action(imageDetails, "largeIcon.refresh", "largeIcon.refresh", [](auto& self) { self.Send("refresh"); }, Field::Steam, 1);
         c::TextBlock fillHeading; fillHeading.Text(L("largeIcon.colorAndFill"));
-        fillHeading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); fillHeading.Margin({0,8,0,4});
+        fillHeading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); fillHeading.Margin({16,12,16,4});
         bg.Children().Append(fillHeading); Track(fillHeading, Field::Custom);
         FillKind(bg);
         ColorPicker(bg, "largeIcon.manualColor", &LargeIconConfig::manualColor, Field::Solid, 0);
@@ -513,13 +684,13 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (auto self = weak.lock(); self && !self->syncing) { self->draft.edgeLight = light; self->Mark(&LargeIconConfig::edgeLight); if (commit) self->Send("commit"); else self->Preview(); }
         });
         edges.Children().Append(edge->Content()); Track(edge->Content(), Field::Edge);
-        auto text = Section(bg, "appearance.text", Field::Custom);
+        auto text = Section(bg, "appearance.text", Field::Custom, false);
         Choice(text, "app.settings.text_color", &LargeIconConfig::componentTheme,
             {{0,"app.settings.light"},{1,"app.settings.dark"}}, Field::Custom);
         auto icon = Group("largeIcon.foreground", Field::Foreground);
-        Choice(icon, "largeIcon.foregroundSource", &LargeIconConfig::foregroundContent, {{0,"largeIcon.original"},{1,"largeIcon.image"}});
+        Choice(icon, "largeIcon.foregroundSource", &LargeIconConfig::foregroundContent, {{0,"largeIcon.original"},{1,"largeIcon.image"}}, Field::Foreground);
         Action(icon, "largeIcon.image", "largeIcon.import", [](auto& self) { self.Send("import"); }, Field::ForegroundImage, 1);
-        Slider(icon, "largeIcon.iconSize", &LargeIconConfig::contentScale, 10, 100, 1, 100, L"%");
+        Slider(icon, "largeIcon.iconSize", &LargeIconConfig::contentScale, 10, 100, 1, 100, L"%", Field::Foreground);
         Slider(icon, "largeIcon.positionX", &LargeIconConfig::iconX, 0, 100, 1, 100, L"%", Field::ForegroundPosition);
         Slider(icon, "largeIcon.positionY", &LargeIconConfig::iconY, 0, 100, 1, 100, L"%", Field::ForegroundPosition);
         auto effects = Group("largeIcon.effectsSection");
@@ -563,6 +734,8 @@ LargeIconPagePresenter::LargeIconPagePresenter(std::function<std::wstring(std::s
 }
 LargeIconPagePresenter::~LargeIconPagePresenter() { Deactivate(); impl_->previews.Close(); }
 c::StackPanel LargeIconPagePresenter::Content() const { return impl_->root; }
+x::FrameworkElement LargeIconPagePresenter::FocusTarget(std::string_view focusId) const
+{ return impl_->FocusTarget(focusId); }
 std::wstring_view LargeIconPagePresenter::NameForKey(std::wstring_view key) const
 { return impl_->active && impl_->snapshot.key == key ? std::wstring_view(impl_->headingName) : std::wstring_view{}; }
 void LargeIconPagePresenter::Activate(std::wstring key)

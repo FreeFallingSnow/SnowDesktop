@@ -2,7 +2,7 @@
 #include "calendar_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "common/l10n.h"
-#include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <winrt/Windows.Globalization.h>
 
@@ -18,7 +18,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     CalendarPageActions actions;
     muxc::StackPanel root, preferences, editor;
     muxc::Border editorCard{nullptr};
-    muxc::ToggleSwitch calendarToggle, allDay;
+    muxc::ToggleSwitch calendarToggle;
+    muxc::CheckBox allDay;
     muxc::ComboBox calendarChoice;
     SettingRow calendarEnabledRow, calendarRow;
     muxc::TextBlock listHeading, error;
@@ -28,7 +29,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     muxc::CalendarDatePicker until, occurrenceDate;
     muxc::CalendarView multipleDates;
     muxc::ComboBox mode, scope, monthDay;
-    muxc::TextBox interval;
+    muxc::NumberBox interval;
     muxc::ComboBox endType;
     muxc::TextBlock ruleSummary;
     muxc::Button editOccurrence;
@@ -48,6 +49,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     calendar::CalendarSeries editingSeries;
     bool editingSeriesMode = false;
     std::string confirmedRule;
+    std::wstring savedDraft;
+    int editingListIndex = -1;
     calendar::DisplayPreferences prefs;
     mux::DispatcherTimer timer;
     std::vector<std::function<void()>> revoke;
@@ -83,6 +86,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         calendarRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         for (const auto& row : {calendarEnabledRow.root, calendarRow.root})
             preferences.Children().Append(row);
+        presenter_controls::UpdateSettingsSubrows(preferences, 0);
         auto schedules = Card(style);
         muxc::StackPanel toolbar;
         toolbar.Orientation(muxc::Orientation::Horizontal); toolbar.Spacing(8);
@@ -107,8 +111,13 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         multipleDates.CalendarIdentifier(L"GregorianCalendar");
         multipleDates.SelectionMode(muxc::CalendarViewSelectionMode::Multiple);
         multipleDates.MaxHeight(320);
-        interval.MaxLength(2);
-        interval.Text(L"1");
+        interval.Minimum(1); interval.Maximum(99);
+        interval.SmallChange(1); interval.LargeChange(10);
+        interval.AcceptsExpression(false);
+        interval.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
+        interval.MaxWidth(300);
+        interval.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        interval.Value(1);
         for (int day = 0; day < 7; ++day)
         {
             muxc::CheckBox checkbox;
@@ -131,6 +140,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         editor.Children().Append(notes);
         muxc::StackPanel buttons; buttons.Orientation(muxc::Orientation::Horizontal); buttons.Spacing(8);
         buttons.Children().Append(save); buttons.Children().Append(cancel); buttons.Children().Append(remove);
+        if (const auto accent = mux::Application::Current().Resources().TryLookup(winrt::box_value(L"AccentButtonStyle")))
+            if (const auto accentStyle = accent.try_as<mux::Style>()) save.Style(accentStyle);
         editor.Children().Append(buttons);
         error.TextWrapping(mux::TextWrapping::Wrap); root.Children().Append(error);
         editorCard.Visibility(mux::Visibility::Collapsed);
@@ -141,14 +152,25 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             auto token = choice.SelectionChanged([this](const auto&, const auto&) { Commit(); });
             revoke.push_back([choice, token] { choice.SelectionChanged(token); });
         }
-        auto token = allDay.Toggled([this](const auto&, const auto&) { UpdateTimeVisibility(); });
-        revoke.push_back([c = allDay, token] { c.Toggled(token); });
+        auto token = allDay.Checked([this](const auto&, const auto&) { UpdateTimeVisibility(); });
+        revoke.push_back([c = allDay, token] { c.Checked(token); });
+        token = allDay.Unchecked([this](const auto&, const auto&) { UpdateTimeVisibility(); });
+        revoke.push_back([c = allDay, token] { c.Unchecked(token); });
+        token = interval.ValueChanged([this](const auto&, const auto&) { UpdateModeVisibility(); });
+        revoke.push_back([c = interval, token] { c.ValueChanged(token); });
         auto modeToken = mode.SelectionChanged([this](const auto&, const auto&) { UpdateModeVisibility(); });
         revoke.push_back([c = mode, modeToken] { c.SelectionChanged(modeToken); });
         auto datesToken = multipleDates.SelectedDatesChanged([this](const auto&, const auto&) { UpdateModeVisibility(); });
         revoke.push_back([c = multipleDates, datesToken] { c.SelectedDatesChanged(datesToken); });
         auto scopeToken = scope.SelectionChanged([this](const auto&, const auto&) {
             if (updating || editingSeries.id.empty()) return;
+            if (!CanReplaceDraft())
+            {
+                updating = true;
+                scope.SelectedIndex(editingSeriesMode ? 1 : 0);
+                updating = false;
+                return;
+            }
             if (scope.SelectedIndex() == 1) EditSeries(editingSeries);
             else if (scope.SelectedIndex() == 0) LoadOccurrence();
         });
@@ -158,6 +180,13 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         Click(editOccurrence, [this] { LoadOccurrence(); });
         auto selection = list.SelectionChanged([this](const auto&, const auto&) {
             if (updating || closed || !active) return;
+            if (!CanReplaceDraft())
+            {
+                updating = true;
+                list.SelectedIndex(editingListIndex);
+                updating = false;
+                return;
+            }
             auto index = list.SelectedIndex();
             if (index >= 0 && static_cast<size_t>(index) < rows.size())
             {
@@ -168,6 +197,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         });
         revoke.push_back([c = list, selection] { c.SelectionChanged(selection); });
         Click(add, [this] {
+            if (!CanReplaceDraft()) return;
             calendar::CalendarEvent event;
             event.date = calendar::CalendarService::CurrentLocalNow().date;
             event.allDay = true; Edit(event);
@@ -249,7 +279,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             reminder.Items().Append(winrt::box_value(label));
         reminder.SelectedIndex(reminderSelection >= 0 ? reminderSelection : 0);
         notes.Header(winrt::box_value(L("settings.calendar.notes")));
-        allDay.Header(winrt::box_value(L("settings.calendar.allDay")));
+        allDay.Content(winrt::box_value(L("settings.calendar.allDay")));
         add.Content(winrt::box_value(L("settings.calendar.add")));
         refresh.Content(winrt::box_value(L("settings.calendar.refresh")));
         save.Content(winrt::box_value(L("settings.calendar.save")));
@@ -283,6 +313,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void Refresh(bool explicitRefresh)
     {
         if (!active || closed || !actions.events || !actions.series || !hasSnapshot) return;
+        if (explicitRefresh && !CanReplaceDraft()) return;
         try
         {
             const auto result = actions.events(generation);
@@ -317,6 +348,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 if (item.id == editingSeries.id) selected = static_cast<int>(rows.size() - 1);
             }
             list.SelectedIndex(selected); updating = false;
+            editingListIndex = selected;
             listHeading.Text(L(rows.empty() ? "settings.calendar.empty" : "settings.calendar.events"));
             if (explicitRefresh)
             {
@@ -333,7 +365,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     void UpdateTimeVisibility()
     {
-        const auto visibility = allDay.IsOn() ? mux::Visibility::Collapsed : mux::Visibility::Visible;
+        const auto visibility = allDay.IsChecked() && allDay.IsChecked().Value() ? mux::Visibility::Collapsed : mux::Visibility::Visible;
         start.Visibility(visibility); end.Visibility(visibility);
     }
     void UpdateModeVisibility()
@@ -389,6 +421,34 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         return picker.SelectedTime() ? static_cast<int>(std::chrono::duration_cast<std::chrono::minutes>(picker.SelectedTime().Value()).count()) : -1;
     }
+    std::wstring DraftKey() const
+    {
+        std::wstring result;
+        const auto append = [&](std::wstring_view text) {
+            result += std::to_wstring(text.size()) + L":";
+            result.append(text);
+        };
+        append(title.Text()); append(notes.Text());
+        append(std::to_wstring(mode.SelectedIndex()));
+        append(std::to_wstring(monthDay.SelectedIndex()));
+        append(std::to_wstring(endType.SelectedIndex()));
+        append(std::to_wstring(reminder.SelectedIndex()));
+        append(interval.Text());
+        append(allDay.IsChecked() && allDay.IsChecked().Value() ? L"1" : L"0");
+        append(std::to_wstring(Minutes(start))); append(std::to_wstring(Minutes(end)));
+        for (const auto picker : {date, until})
+            append(picker.Date() ? winrt::to_hstring(DateString(picker.Date().Value())) : winrt::hstring{});
+        for (const auto selected : multipleDates.SelectedDates()) append(winrt::to_hstring(DateString(selected)));
+        for (const auto& checkbox : weekdays) append(checkbox.IsChecked() && checkbox.IsChecked().Value() ? L"1" : L"0");
+        return result;
+    }
+    bool CanReplaceDraft()
+    {
+        if (editorCard.Visibility() != mux::Visibility::Visible || savedDraft.empty() || DraftKey() == savedDraft)
+            return true;
+        error.Text(L("settings.calendar.unsavedDraft"));
+        return false;
+    }
     void Edit(const calendar::CalendarEvent& event)
     {
         updating = true;
@@ -405,7 +465,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         const auto selectedDate = PickerDate(event.date);
         multipleDates.SelectedDates().Clear();
         multipleDates.SelectedDates().Append(selectedDate);
-        interval.Text(L"1");
+        interval.Value(1);
         const auto info = calendar::CalendarService::GetDateInfo(event.date);
         for (std::size_t index = 0; index < weekdays.size(); ++index)
             weekdays[index].IsChecked(info && info->weekday == static_cast<int>(index + 1));
@@ -417,12 +477,14 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         date.Date(winrt::box_value(selectedDate).as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
         occurrenceDate.Date(winrt::box_value(PickerDate(event.occurrenceDate.empty() ? event.date : event.occurrenceDate))
             .as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
-        allDay.IsOn(event.allDay);
+        allDay.IsChecked(event.allDay);
         start.Time(std::chrono::minutes(event.startMinutes)); end.Time(std::chrono::minutes(event.endMinutes));
         UpdateTimeVisibility();
         notes.Text(winrt::to_hstring(event.notes)); for (size_t i = 0; i < reminderValues.size(); ++i) if (reminderValues[i] == event.reminderMinutes) reminder.SelectedIndex(static_cast<int>(i));
         remove.IsEnabled(!event.id.empty()); error.Text(L""); editorCard.Visibility(mux::Visibility::Visible);
         updating = false; UpdateModeVisibility();
+        editingListIndex = list.SelectedIndex();
+        savedDraft = DraftKey();
     }
     void EditSeries(const calendar::CalendarSeries& item)
     {
@@ -433,7 +495,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         confirmedRule.clear();
         title.Text(winrt::to_hstring(item.event.title));
         notes.Text(winrt::to_hstring(item.event.notes));
-        allDay.IsOn(item.event.allDay);
+        allDay.IsChecked(item.event.allDay);
         start.Time(std::chrono::minutes(item.event.startMinutes));
         end.Time(std::chrono::minutes(item.event.endMinutes));
         for (size_t index = 0; index < reminderValues.size(); ++index)
@@ -448,7 +510,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
             multipleDates.SelectedDates().Append(PickerDate(selected));
         mode.SelectedIndex(item.rule.kind == "dates" ? 1 : item.rule.kind == "weekly" ? 2 : 3);
         scope.SelectedIndex(1);
-        interval.Text(winrt::to_hstring(item.rule.interval));
+        interval.Value(item.rule.interval);
         monthDay.SelectedIndex(item.rule.monthDay);
         for (std::size_t index = 0; index < weekdays.size(); ++index)
         {
@@ -462,9 +524,12 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 .as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
         remove.IsEnabled(true); error.Text(L""); editorCard.Visibility(mux::Visibility::Visible);
         updating = false; UpdateTimeVisibility(); UpdateModeVisibility();
+        editingListIndex = list.SelectedIndex();
+        savedDraft = DraftKey();
     }
     void LoadOccurrence()
     {
+        if (!CanReplaceDraft()) return;
         if (editingSeries.id.empty() || !occurrenceDate.Date() || !actions.occurrence) return;
         const auto original = DateString(occurrenceDate.Date().Value());
         const auto result = actions.occurrence(generation, editingSeries.id + "/" + original);
@@ -476,7 +541,7 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (!actions.mutate) return;
         auto event = editing;
         event.title = winrt::to_string(title.Text());
-        event.notes = winrt::to_string(notes.Text()); event.allDay = allDay.IsOn();
+        event.notes = winrt::to_string(notes.Text()); event.allDay = allDay.IsChecked() && allDay.IsChecked().Value();
         event.startMinutes = event.allDay ? 0 : Minutes(start);
         event.endMinutes = event.allDay ? 0 : Minutes(end);
         const int reminderIndex = reminder.SelectedIndex();
@@ -505,11 +570,9 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 rule.startDate = SelectedDate();
                 rule.endDate = endType.SelectedIndex() == 0 ? std::string{} :
                     until.Date() ? DateString(until.Date().Value()) : std::string{};
-                const auto intervalText = winrt::to_string(interval.Text());
-                const auto parsed = std::from_chars(intervalText.data(),
-                    intervalText.data() + intervalText.size(), rule.interval);
-                if (parsed.ec != std::errc{} || parsed.ptr != intervalText.data() + intervalText.size())
-                    rule.interval = 0;
+                const double intervalValue = interval.Value();
+                rule.interval = std::isfinite(intervalValue) && intervalValue >= 1 && intervalValue <= 99 &&
+                    std::floor(intervalValue) == intervalValue ? static_cast<int>(intervalValue) : 0;
                 if (selectedMode == 2)
                 {
                     for (std::size_t index = 0; index < weekdays.size(); ++index)

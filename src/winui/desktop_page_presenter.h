@@ -48,7 +48,7 @@ struct DesktopPageActions
  *
  * Continuous editors publish Preview while changing and
  * PreviewAndCommit when their pointer/keyboard interaction ends. Category
- * rules deliberately remain Draft until the user presses Apply.
+ * edits use the host's existing immediate preview-and-commit transaction.
  */
 class DesktopPagePresenter final
 {
@@ -69,7 +69,7 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         Content() const noexcept;
-    /** Shared layout spacing editor, hosted on Interface & layout. */
+    /** Shared layout spacing editor, hosted on Pages & displays. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         LayoutSpacingContent() const noexcept;
     /** Icon rendering, typography, and shortcut-arrow controls. */
@@ -86,7 +86,7 @@ public:
 
     /** Return a stable control for search-result navigation and focus. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement FocusTarget(
-        std::string_view focusId) const noexcept;
+        std::string_view focusId, bool reveal = false) const noexcept;
 
     void Activate() noexcept;
     void Deactivate() noexcept;

@@ -20,6 +20,7 @@ public:
     DesktopStylePagePresenter& operator=(const DesktopStylePagePresenter&) = delete;
 
     void SetActions(DockPageActions actions);
+    void SetNavigateCallback(std::function<void(SettingsRoute)> navigate);
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement Content() const;
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     [[nodiscard]] bool NeedsRecommendedAnimations(std::string_view preset) const;

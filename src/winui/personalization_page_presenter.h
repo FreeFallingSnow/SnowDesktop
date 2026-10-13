@@ -79,7 +79,10 @@ public:
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement ThemeManagementContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement DockAppearanceContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement MenuContent() const noexcept;
-    /** Shared widget dimension and layout controls. */
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement TypographyContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement QuickNavigationAppearanceContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement WidgetCommonContent() const noexcept;
+    /** Compatibility alias for TypographyContent; do not mount both. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         WidgetLayoutContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
@@ -92,7 +95,7 @@ public:
     void Activate() noexcept;
     void Deactivate() noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        FocusTarget(std::string_view focusId) const noexcept;
+        FocusTarget(std::string_view focusId, bool reveal = false) const noexcept;
     void Close() noexcept;
 
 private:

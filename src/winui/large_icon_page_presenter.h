@@ -14,6 +14,7 @@ public:
     ~LargeIconPagePresenter();
     winrt::Microsoft::UI::Xaml::Controls::StackPanel Content() const;
     std::wstring_view NameForKey(std::wstring_view key) const;
+    winrt::Microsoft::UI::Xaml::FrameworkElement FocusTarget(std::string_view focusId) const;
     void Activate(std::wstring key);
     void Deactivate();
     void RefreshLocalizedText();

@@ -27,6 +27,8 @@ SnowDesktop's embedded Regular font:
 | `appearance-icon-beautification.svg` | Paint Brush Sparkle 24 Regular + Filled |
 | `desktop.svg` | Desktop 24 Regular + Filled |
 | `desktop-style.svg` | Desktop Edit 24 Regular + Filled |
+| `desktop-layout.svg` | Board 24 Regular + Filled |
+| `collections-folders.svg` | Folder 24 Regular + Filled |
 | `pages.svg` | Table Multiple 24 Regular + Filled |
 | `categories.svg` | Collections 24 Regular + Filled |
 | `dock.svg` | Dock Row 24 Regular + Filled |

@@ -195,6 +195,9 @@ struct WidgetsPagePresenter::Impl
         muxc::Button developmentAction{nullptr};
         std::vector<muxc::Button> advancedActions;
         std::vector<std::function<void()>> revokers;
+        muxc::Expander details{nullptr};
+        muxc::Expander permissions{nullptr};
+        mux::FrameworkElement permissionTarget{nullptr};
     };
 
     explicit Impl(LocalizeCallback callback, const mux::Style& style,
@@ -236,10 +239,10 @@ struct WidgetsPagePresenter::Impl
 
     muxc::AutoSuggestBox searchBox{nullptr};
     muxc::StackPanel filterActions{nullptr};
-    muxcp::ToggleButton allFilterButton{nullptr};
-    muxcp::ToggleButton installedFilterButton{nullptr};
-    muxcp::ToggleButton includedFilterButton{nullptr};
-    muxcp::ToggleButton developmentFilterButton{nullptr};
+    muxc::RadioButton allFilterButton{nullptr};
+    muxc::RadioButton installedFilterButton{nullptr};
+    muxc::RadioButton includedFilterButton{nullptr};
+    muxc::RadioButton developmentFilterButton{nullptr};
     presenter_controls::SettingRow managementRow;
     muxc::StackPanel managementActions{nullptr};
     muxc::Button installFileButton{nullptr};
@@ -299,6 +302,7 @@ struct WidgetsPagePresenter::Impl
     WidgetsPageTaskSnapshot task;
     WidgetsPageFeedbackSnapshot feedback;
     std::wstring query;
+    std::wstring permissionPackage;
     std::wstring developmentWorkspace;
     std::wstring componentCliPath;
     std::wstring developerActionStatus;
@@ -608,15 +612,16 @@ struct WidgetsPagePresenter::Impl
         filterActions.Orientation(muxc::Orientation::Horizontal);
         filterActions.Spacing(8.0);
         filterActions.HorizontalAlignment(mux::HorizontalAlignment::Left);
-        allFilterButton = muxcp::ToggleButton{};
-        installedFilterButton = muxcp::ToggleButton{};
-        includedFilterButton = muxcp::ToggleButton{};
-        developmentFilterButton = muxcp::ToggleButton{};
-        for (const muxcp::ToggleButton& button : {allFilterButton,
+        allFilterButton = muxc::RadioButton{};
+        installedFilterButton = muxc::RadioButton{};
+        includedFilterButton = muxc::RadioButton{};
+        developmentFilterButton = muxc::RadioButton{};
+        for (const muxc::RadioButton& button : {allFilterButton,
                  installedFilterButton, includedFilterButton,
                  developmentFilterButton})
         {
             button.UseSystemFocusVisuals(true);
+            button.GroupName(L"WidgetsPackageFilter");
             button.HorizontalAlignment(mux::HorizontalAlignment::Left);
             filterActions.Children().Append(button);
         }
@@ -700,6 +705,7 @@ struct WidgetsPagePresenter::Impl
         developerWorkspaceCard.content.Children().Append(
             developmentWorkspaceRow.root);
         developmentWorkspacePath = MakeSecondaryText(L"");
+        developmentWorkspacePath.IsTextSelectionEnabled(true);
         developerWorkspaceCard.content.Children().Append(
             developmentWorkspacePath);
 
@@ -857,6 +863,7 @@ struct WidgetsPagePresenter::Impl
                 {
                     return;
                 }
+                permissionPackage.clear();
                 query = sender.Text().c_str();
                 RenderInstalledRows();
                 WidgetsPageRequest request;
@@ -870,28 +877,29 @@ struct WidgetsPagePresenter::Impl
             if (updatingControls || closed || !active)
                 return;
             filter = selected;
+            permissionPackage.clear();
             RefreshFilterItems();
             RenderInstalledRows();
         };
-        allFilterToken = allFilterButton.Click(
+        allFilterToken = allFilterButton.Checked(
             [selectFilter](
                 const winrt::Windows::Foundation::IInspectable&,
                 const mux::RoutedEventArgs&) {
                 selectFilter(PackageFilter::All);
             });
-        installedFilterToken = installedFilterButton.Click(
+        installedFilterToken = installedFilterButton.Checked(
             [selectFilter](
                 const winrt::Windows::Foundation::IInspectable&,
                 const mux::RoutedEventArgs&) {
                 selectFilter(PackageFilter::Installed);
             });
-        includedFilterToken = includedFilterButton.Click(
+        includedFilterToken = includedFilterButton.Checked(
             [selectFilter](
                 const winrt::Windows::Foundation::IInspectable&,
                 const mux::RoutedEventArgs&) {
                 selectFilter(PackageFilter::Included);
             });
-        developmentFilterToken = developmentFilterButton.Click(
+        developmentFilterToken = developmentFilterButton.Checked(
             [selectFilter](
                 const winrt::Windows::Foundation::IInspectable&,
                 const mux::RoutedEventArgs&) {
@@ -1166,6 +1174,8 @@ struct WidgetsPagePresenter::Impl
     [[nodiscard]] bool MatchesFilter(
         const InstalledWidgetPackageSnapshot& package) const
     {
+        if (!permissionPackage.empty() && package.packageId == permissionPackage)
+            return true;
         switch (filter)
         {
         case PackageFilter::Installed:
@@ -1314,6 +1324,8 @@ struct WidgetsPagePresenter::Impl
 
     void RefreshFilterItems()
     {
+        const bool wasUpdating = updatingControls;
+        updatingControls = true;
         const std::size_t installedCount = InstalledPackageCount();
         const std::size_t includedCount = IncludedPackageCount();
         const std::size_t developmentCount = DevelopmentPackageCount();
@@ -1345,6 +1357,7 @@ struct WidgetsPagePresenter::Impl
         SetAutomation(developmentFilterButton,
             FilterText("app.settings.widgets_filter_development",
                 L"Local development", developmentCount));
+        updatingControls = wasUpdating;
     }
 
     [[nodiscard]] const InstalledWidgetPackageSnapshot* FindPackage(
@@ -1892,9 +1905,10 @@ struct WidgetsPagePresenter::Impl
             muxc::CheckBox selected;
             selected.IsChecked(skill.selected);
             selected.IsEnabled(static_cast<bool>(actions.invoke));
-            selected.HorizontalAlignment(mux::HorizontalAlignment::Right);
+            selected.HorizontalAlignment(mux::HorizontalAlignment::Left);
             selected.UseSystemFocusVisuals(true);
             const std::wstring label = AgentSkillTargetLabel(skill.kind);
+            selected.Content(winrt::box_value(label));
             const std::wstring installedVersion = skill.installedRevision == 0
                 ? L"—" : std::to_wstring(skill.installedRevision);
             const std::wstring version = FormatValues(L(
@@ -1923,11 +1937,14 @@ struct WidgetsPagePresenter::Impl
                     Emit(std::move(request));
                 },
                 developerRevokers);
-            presenter_controls::SettingRow row;
-            row.Initialize(selected, 180.0);
-            row.SetControlAlignment(mux::HorizontalAlignment::Right);
-            row.SetText(label, stateAndPath);
-            agentSkillRows.Children().Append(row.root);
+            muxc::StackPanel row;
+            row.Spacing(2);
+            row.Children().Append(selected);
+            auto details = MakeSecondaryText(stateAndPath);
+            details.Margin({28, 0, 0, 0});
+            details.IsTextSelectionEnabled(true);
+            row.Children().Append(details);
+            agentSkillRows.Children().Append(row);
             if (!firstDeveloperOverrideTarget)
                 firstDeveloperOverrideTarget = selected;
         }
@@ -2112,9 +2129,12 @@ struct WidgetsPagePresenter::Impl
     void AddPermissionControls(
         const InstalledWidgetPackageSnapshot& package,
         const muxc::StackPanel& body,
-        std::vector<std::function<void()>>& revokers)
+        std::vector<std::function<void()>>& revokers,
+        muxc::Expander& permissionSection, mux::FrameworkElement& permissionTarget)
     {
         muxc::Expander permissionsExpander;
+        permissionSection = permissionsExpander;
+        permissionTarget = permissionsExpander;
         permissionsExpander.HorizontalAlignment(
             mux::HorizontalAlignment::Stretch);
         permissionsExpander.HorizontalContentAlignment(
@@ -2196,6 +2216,7 @@ struct WidgetsPagePresenter::Impl
                 revokers);
             if (!firstPermissionTarget)
                 firstPermissionTarget = manage;
+            permissionTarget = manage;
             permissionBody.Children().Append(manage);
         }
 
@@ -2668,10 +2689,13 @@ struct WidgetsPagePresenter::Impl
         }
 
         muxc::TextBlock sourceId{nullptr};
+        muxc::Expander permissionSection{nullptr};
+        mux::FrameworkElement permissionTarget{nullptr};
         if (package.valid)
         {
-            AddPermissionControls(package, detailsBody, revokers);
-            AddInstanceControls(package, detailsBody, revokers);
+            // Instance settings and permissions are user tasks, not technical details.
+            AddInstanceControls(package, body, revokers);
+            AddPermissionControls(package, body, revokers, permissionSection, permissionTarget);
             muxc::TextBlock sourceIdText{nullptr};
             AddLegacyPackageActions(package, detailsBody, revokers,
                 sourceIdText, advancedActions);
@@ -2700,9 +2724,10 @@ struct WidgetsPagePresenter::Impl
             detailsBody.Children().Append(uninstall);
         }
 
+        muxc::Expander details{nullptr};
         if (detailsBody.Children().Size() != 0)
         {
-            muxc::Expander details;
+            details = muxc::Expander{};
             details.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
             details.HorizontalContentAlignment(
                 mux::HorizontalAlignment::Stretch);
@@ -2729,7 +2754,7 @@ struct WidgetsPagePresenter::Impl
             package.packageId, row, name, metadata, tags, description,
             version, author, sourceId, enabledAction, addAction,
             developmentAction,
-            std::move(advancedActions), std::move(revokers)});
+            std::move(advancedActions), std::move(revokers), details, permissionSection, permissionTarget});
     }
 
     void RequestUninstall(
@@ -2958,6 +2983,39 @@ struct WidgetsPagePresenter::Impl
             installedRows.Children().Append(MakeSecondaryText(
                 L("app.settings.widgets_filter_empty", L"No components")));
         }
+        if (!permissionPackage.empty()) RevealPackagePermissions(permissionPackage);
+    }
+
+    mux::FrameworkElement RevealPackagePermissions(std::wstring_view packageId)
+    {
+        for (const auto& binding : packageRowBindings)
+        {
+            if (binding.packageId != packageId) continue;
+            if (binding.permissions) binding.permissions.IsExpanded(true);
+            return binding.permissionTarget ? binding.permissionTarget : binding.card;
+        }
+        return nullptr;
+    }
+
+    mux::FrameworkElement FocusPackagePermissions(std::wstring_view packageId)
+    {
+        if (closed || packageId.empty() || !FindPackage(std::wstring(packageId))) return nullptr;
+        const bool hasRow = std::any_of(packageRowBindings.begin(), packageRowBindings.end(),
+            [packageId](const auto& binding) { return binding.packageId == packageId; });
+        const bool filtersChanged = filter != PackageFilter::All || !query.empty();
+        const bool navigationChanged = permissionPackage != packageId ||
+            filtersChanged;
+        if (navigationChanged)
+        {
+            permissionPackage = packageId;
+            filter = PackageFilter::All;
+            query.clear();
+            searchBox.Text(L"");
+            RefreshFilterItems();
+        }
+        // Layout retries must keep the same element so it can finish loading.
+        if (filtersChanged || !hasRow) RenderInstalledRows();
+        return RevealPackagePermissions(packageId);
     }
 
     void RenderManagementControls()
@@ -3425,10 +3483,10 @@ struct WidgetsPagePresenter::Impl
         try
         {
             searchBox.TextChanged(searchChangedToken);
-            allFilterButton.Click(allFilterToken);
-            installedFilterButton.Click(installedFilterToken);
-            includedFilterButton.Click(includedFilterToken);
-            developmentFilterButton.Click(developmentFilterToken);
+            allFilterButton.Checked(allFilterToken);
+            installedFilterButton.Checked(installedFilterToken);
+            includedFilterButton.Checked(includedFilterToken);
+            developmentFilterButton.Checked(developmentFilterToken);
             installFileButton.Click(installFileToken);
             workshopButton.Click(workshopToken);
             selfDevelopButton.Click(selfDevelopToken);
@@ -3536,6 +3594,11 @@ mux::FrameworkElement WidgetsPagePresenter::FocusTarget(
     std::string_view focusId) const noexcept
 {
     return impl_ ? impl_->FocusTarget(focusId) : nullptr;
+}
+
+mux::FrameworkElement WidgetsPagePresenter::FocusPackagePermissions(std::wstring_view packageId)
+{
+    return impl_ ? impl_->FocusPackagePermissions(packageId) : nullptr;
 }
 
 mux::FrameworkElement WidgetsPagePresenter::DeveloperToolsFocusTarget(

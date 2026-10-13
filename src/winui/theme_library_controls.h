@@ -89,15 +89,19 @@ public:
                     revoke_.push_back([combo, token] { combo.SelectionChanged(token); });
                 }
             }
+            saveActions_.ColumnSpacing(presenter_controls::kSettingControlGap);
+            saveActions_.HorizontalAlignment(x::HorizontalAlignment::Right);
+            saveActions_.MaxWidth(520);
+            saveBody_.Children().Append(saveActions_);
             for (auto [command, key] : {std::pair{ThemeLibraryCommand::Update, "themeLibrary.saveTo"}, {ThemeLibraryCommand::SaveAs, "themeLibrary.create"}})
             {
-                c::Button button; button.HorizontalAlignment(x::HorizontalAlignment::Right);
-                button.Content(winrt::box_value(L(key))); saveBody_.Children().Append(button);
+                c::Button button; button.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+                button.Content(winrt::box_value(L(key))); saveActions_.Children().Append(button);
                 const auto token = button.Click([this, command](const auto&, const auto&) { Run(command); });
                 revoke_.push_back([button, token] { button.Click(token); });
                 saveButtons_.push_back({command, key, button});
             }
-            cancel_.HorizontalAlignment(x::HorizontalAlignment::Right); saveBody_.Children().Append(cancel_);
+            cancel_.HorizontalAlignment(x::HorizontalAlignment::Stretch); saveActions_.Children().Append(cancel_);
             const auto cancelToken = cancel_.Click([this](const auto&, const auto&) {
                 if (EditingBound() && boundCancel_ && edit_.theme)
                 {
@@ -293,7 +297,8 @@ public:
             }
             PatchTabs(); LayoutTabs();
         }
-        cancel_.Content(winrt::box_value(L("themeLibrary.cancelEdit")));
+        c::TextBlock cancelText; cancelText.Text(L("themeLibrary.cancelEdit"));
+        cancelText.TextWrapping(x::TextWrapping::Wrap); cancel_.Content(cancelText);
         editButton_.Content(winrt::box_value(L("themeLibrary.edit")));
         if (!transfer_) nameRow_.SetText(L("themeLibrary.name"));
         if (saveTitle_) saveTitle_.Text(L("themeLibrary.save"));
@@ -354,6 +359,7 @@ private:
     c::TextBox name_;
     c::Button editButton_;
     presenter_controls::SettingRow nameRow_, scopeRow_, quickRow_, popupRow_;
+    c::Grid saveActions_;
     std::array<c::CheckBox, 3> scopeChecks_;
     std::vector<c::Expander> disclosures_;
     c::CommandBar commands_;
@@ -560,6 +566,22 @@ private:
             button.control.HorizontalAlignment(x::HorizontalAlignment::Stretch);
             button.control.IsEnabled(!busy_ && (!update || edit_.CanUpdate(library_)));
         }
+        if (!transfer_)
+        {
+            // Keep save/update/cancel as one command group. Hidden actions do
+            // not retain a column, and long theme names wrap inside the group.
+            saveActions_.ColumnDefinitions().Clear();
+            int columnIndex = 0;
+            for (auto const& child : saveActions_.Children())
+            {
+                if (child.Visibility() != x::Visibility::Visible) continue;
+                c::ColumnDefinition column;
+                column.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
+                saveActions_.ColumnDefinitions().Append(column);
+                c::Grid::SetColumn(child.as<x::FrameworkElement>(), columnIndex++);
+            }
+            saveActions_.MaxWidth(180.0 * std::max(1, columnIndex));
+        }
     }
     void CollapseCustom()
     {
@@ -683,7 +705,10 @@ private:
             const auto column = weakOperationsColumn.get();
             const auto controls = weakOperations.get();
             if (!grid || !column || !controls) return;
-            const bool stacked = args.NewSize().Width < presenter_controls::kSettingRowStackThreshold;
+            // Library rows include version selection plus a CommandBar; this
+            // content budget is independent of the compact setting-row policy.
+            constexpr double kLibraryRowInlineWidth = 700.0;
+            const bool stacked = args.NewSize().Width < kLibraryRowInlineWidth;
             column.Width(stacked ? x::GridLengthHelper::FromValueAndType(0, x::GridUnitType::Pixel) : x::GridLengthHelper::Auto());
             grid.ColumnSpacing(stacked ? 0 : 16); grid.RowSpacing(stacked ? 12 : 0);
             c::Grid::SetColumn(controls, stacked ? 0 : 1); c::Grid::SetRow(controls, stacked ? 1 : 0);
@@ -751,11 +776,14 @@ private:
     winrt::fire_and_forget ConfirmBind(std::string id)
     {
         if (closed_ || busy_ || !sharing_ || Subscribed(id)) co_return;
+        const auto selected = themes::Find(library_.themes, id);
+        if (!selected || !root_.XamlRoot()) co_return;
         const auto alive = alive_; const auto generation = generation_;
         c::ContentDialog dialog; dialog.XamlRoot(root_.XamlRoot()); dialog.Title(winrt::box_value(L("themeLibrary.bindWorkshop")));
         dialog.PrimaryButtonText(L("themeLibrary.bindWorkshop")); dialog.CloseButtonText(L("settings.dialog.cancel"));
         dialog.DefaultButton(c::ContentDialogButton::Close);
-        c::StackPanel body; body.Spacing(12); c::TextBlock hint; hint.Text(L("themeLibrary.bindHint")); hint.TextWrapping(x::TextWrapping::Wrap);
+        c::StackPanel body; body.Spacing(12); c::TextBlock hint;
+        hint.Text(Label(*selected) + L"\n" + L("themeLibrary.bindHint")); hint.TextWrapping(x::TextWrapping::Wrap);
         c::TextBox input; body.Children().Append(hint); body.Children().Append(input); dialog.Content(body);
         busy_ = true; PatchButtons(); c::ContentDialogResult result = c::ContentDialogResult::None;
         try { result = co_await dialog.ShowAsync(); } catch (...) { if (!alive->load()) co_return; }
@@ -770,11 +798,13 @@ private:
     winrt::fire_and_forget ConfirmUnbind(std::string id)
     {
         if (closed_ || busy_ || Subscribed(id) || !publishedUrls_.contains(id) || !root_.XamlRoot()) co_return;
+        const auto selected = themes::Find(library_.themes, id);
+        if (!selected) co_return;
         const auto alive = alive_; const auto generation = generation_;
         c::ContentDialog dialog; dialog.XamlRoot(root_.XamlRoot()); dialog.Title(winrt::box_value(L("themeLibrary.unbindWorkshop")));
         dialog.PrimaryButtonText(L("themeLibrary.unbindWorkshop")); dialog.CloseButtonText(L("settings.dialog.cancel"));
         dialog.DefaultButton(c::ContentDialogButton::Close);
-        c::TextBlock hint; hint.Text(L("themeLibrary.unbindHint")); hint.TextWrapping(x::TextWrapping::Wrap); dialog.Content(hint);
+        c::TextBlock hint; hint.Text(Label(*selected) + L"\n" + L("themeLibrary.unbindHint")); hint.TextWrapping(x::TextWrapping::Wrap); dialog.Content(hint);
         busy_ = true; PatchButtons(); c::ContentDialogResult result = c::ContentDialogResult::None;
         try { result = co_await dialog.ShowAsync(); }
         catch (const winrt::hresult_error&) { if (alive->load() && generation == generation_) Feedback({false, {}, {}, L("themeLibrary.operationFailed")}); }

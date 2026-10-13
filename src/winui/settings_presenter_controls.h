@@ -15,6 +15,7 @@
 #include <chrono>
 #include <cmath>
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -29,8 +30,73 @@ namespace muxi = winrt::Microsoft::UI::Xaml::Input;
 namespace muxm = winrt::Microsoft::UI::Xaml::Media;
 
 inline constexpr double kSettingControlWidth = 300.0;
-inline constexpr double kSettingRowStackThreshold = 700.0;
+inline constexpr double kSettingNumberWidth = 96.0;
+inline constexpr double kSettingResetWidth = 32.0;
+inline constexpr double kSettingControlGap = 8.0;
+inline constexpr double kSettingLabelMinWidth = 180.0;
+inline constexpr double kSettingColumnGap = 24.0;
 inline constexpr std::chrono::milliseconds kContinuousPreviewInterval{33};
+
+template <typename Surface>
+inline void StyleSettingsCard(const Surface& surface)
+{
+    surface.Padding({16.0});
+    surface.MinHeight(68.0);
+    surface.CornerRadius({8.0});
+    surface.BorderThickness({1.0});
+    surface.ClearValue(surface.template try_as<muxc::Grid>()
+        ? muxc::Panel::BackgroundProperty() : muxc::Border::BackgroundProperty());
+    surface.ClearValue(Surface::BorderBrushProperty());
+    if (const auto application = mux::Application::Current())
+    {
+        // The XAML style retains ThemeResource expressions, so an element
+        // theme/high-contrast change never leaves a captured light brush.
+        const auto key = surface.template try_as<muxc::Grid>()
+            ? L"SettingsGridCardSurface" : L"SettingsBorderCardSurface";
+        surface.Style(application.Resources().Lookup(winrt::box_value(key)).template as<mux::Style>());
+    }
+}
+
+// Related child rows share their parent's surface. Keep their existing
+// content/handlers and only remove the nested card treatment.
+template <typename Surface>
+inline void StyleSettingsSubrow(const Surface& surface,
+    bool first = false, double indent = 16.0)
+{
+    surface.Padding({16.0 + indent, 8.0, 16.0, 8.0});
+    surface.MinHeight(52.0);
+    surface.CornerRadius({0.0});
+    surface.BorderThickness({0.0, first ? 0.0 : 1.0, 0.0, 0.0});
+    surface.ClearValue(surface.template try_as<muxc::Grid>()
+        ? muxc::Panel::BackgroundProperty() : muxc::Border::BackgroundProperty());
+    surface.ClearValue(Surface::BorderBrushProperty());
+    if (const auto application = mux::Application::Current())
+    {
+        const auto key = surface.template try_as<muxc::Grid>()
+            ? L"SettingsGridSubrowSurface" : L"SettingsBorderSubrowSurface";
+        surface.Style(application.Resources().Lookup(winrt::box_value(key)).template as<mux::Style>());
+    }
+}
+
+inline void UpdateSettingsSubrows(const muxc::StackPanel& panel,
+    double indent = 16.0)
+{
+    bool first = true;
+    panel.Spacing(0.0);
+    for (const auto& child : panel.Children())
+    {
+        const auto element = child.try_as<mux::FrameworkElement>();
+        if (!element || element.Visibility() != mux::Visibility::Visible)
+            continue;
+        if (const auto border = child.try_as<muxc::Border>())
+            StyleSettingsSubrow(border, first, indent);
+        else if (const auto grid = child.try_as<muxc::Grid>())
+            StyleSettingsSubrow(grid, first, indent);
+        else
+            continue;
+        first = false;
+    }
+}
 
 inline bool IsNumberBoxTextEditing(const muxc::NumberBox& number)
 {
@@ -187,10 +253,9 @@ struct CoalescedPreviewTimer
  * Programmatic equivalent of the legacy BeginSettingRow contract.
  *
  * The label/help column stays on the left and a fixed-width editor stays on
- * the right while enough content width is available. Below the responsive
- * threshold the editor moves below the text so localized labels and controls
- * do not compete for the same row. Compact controls keep their requested
- * alignment; full-width editors stretch inside the available editor area.
+ * the right. Compact controls stay paired with their wrapping label. Only
+ * wider editor combinations move below the label when their own width and a
+ * readable label no longer fit; there is no global narrow-window layout.
  */
 struct SettingRow
 {
@@ -200,19 +265,54 @@ struct SettingRow
     muxc::TextBlock help{nullptr};
     muxc::ContentControl controlHost{nullptr};
 
+    struct LayoutOptions
+    {
+        double controlWidth = kSettingControlWidth;
+        bool compact = false;
+        mux::HorizontalAlignment alignment = mux::HorizontalAlignment::Stretch;
+    };
+    std::shared_ptr<LayoutOptions> layout;
+
+    static void Arrange(const muxc::Grid& grid,
+        const muxc::ContentControl& host, const LayoutOptions& options,
+        double width)
+    {
+        const bool automatic = options.compact || options.controlWidth <= 0.0;
+        const double editorWidth = options.controlWidth > 0.0
+            ? options.controlWidth : kSettingControlWidth;
+        const bool stacked = !options.compact && width > 0.0 &&
+            width < editorWidth + kSettingLabelMinWidth + kSettingColumnGap;
+        grid.ColumnDefinitions().GetAt(1).Width(stacked
+            ? mux::GridLengthHelper::FromValueAndType(0.0, mux::GridUnitType::Pixel)
+            : automatic ? mux::GridLengthHelper::Auto()
+            : mux::GridLengthHelper::FromValueAndType(editorWidth, mux::GridUnitType::Pixel));
+        grid.ColumnSpacing(stacked ? 0.0 : kSettingColumnGap);
+        grid.RowSpacing(stacked ? kSettingControlGap : 0.0);
+        muxc::Grid::SetColumn(host, stacked ? 0 : 1);
+        muxc::Grid::SetRow(host, stacked ? 1 : 0);
+        host.HorizontalAlignment(stacked ? mux::HorizontalAlignment::Stretch : options.alignment);
+        host.HorizontalContentAlignment(stacked ? mux::HorizontalAlignment::Stretch : options.alignment);
+    }
+
     void Initialize(
         const mux::UIElement& control,
         double controlWidth = kSettingControlWidth)
     {
         root = muxc::Grid{};
-        root.ColumnSpacing(20.0);
+        root.Resources().Insert(winrt::box_value(L"SnowDesktopSettingRow"), winrt::box_value(true));
+        root.ColumnSpacing(kSettingColumnGap);
+        root.MinHeight(36.0);
         root.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        layout = std::make_shared<LayoutOptions>();
+        layout->controlWidth = controlWidth;
+        layout->compact = static_cast<bool>(control.try_as<muxc::ToggleSwitch>()) ||
+            static_cast<bool>(control.try_as<muxc::Button>());
 
         muxc::ColumnDefinition labelColumn{};
         labelColumn.Width(mux::GridLengthHelper::FromValueAndType(
             1.0, mux::GridUnitType::Star));
         muxc::ColumnDefinition controlColumn{};
-        const bool autoControlWidth = controlWidth <= 0.0;
+        const bool autoControlWidth = controlWidth <= 0.0 || layout->compact;
         controlColumn.Width(autoControlWidth
                 ? mux::GridLengthHelper::Auto()
                 : mux::GridLengthHelper::FromValueAndType(
@@ -254,42 +354,26 @@ struct SettingRow
         // presenters, while its XAML elements remain in the visual tree.
         // Capture weak projected objects rather than `this` so responsive
         // updates remain safe after the builder object goes out of scope.
-        const auto weakControlColumn = winrt::make_weak(controlColumn);
-        const auto weakText = winrt::make_weak(text);
         const auto weakControlHost = winrt::make_weak(controlHost);
         root.SizeChanged(
-            [weakControlColumn, weakText, weakControlHost, controlWidth,
-                autoControlWidth](
+            [weakControlHost, options = layout](
                 const auto& sender,
                 const mux::SizeChangedEventArgs& args) {
                 const auto grid = sender.template try_as<muxc::Grid>();
-                const auto responsiveControlColumn = weakControlColumn.get();
-                const auto responsiveText = weakText.get();
                 const auto responsiveControlHost = weakControlHost.get();
-                if (!grid || !responsiveControlColumn || !responsiveText ||
-                    !responsiveControlHost)
+                if (!grid || !responsiveControlHost)
                 {
                     return;
                 }
 
-                const bool stacked =
-                    args.NewSize().Width < kSettingRowStackThreshold;
-                responsiveControlColumn.Width(stacked
-                        ? mux::GridLengthHelper::FromValueAndType(
-                              0.0, mux::GridUnitType::Pixel)
-                        : autoControlWidth
-                        ? mux::GridLengthHelper::Auto()
-                        : mux::GridLengthHelper::FromValueAndType(
-                              controlWidth, mux::GridUnitType::Pixel));
-                grid.ColumnSpacing(stacked ? 0.0 : 20.0);
-                grid.RowSpacing(stacked ? 10.0 : 0.0);
-                muxc::Grid::SetColumn(responsiveText, 0);
-                muxc::Grid::SetRow(responsiveText, 0);
-                muxc::Grid::SetColumn(responsiveControlHost,
-                    stacked ? 0 : 1);
-                muxc::Grid::SetRow(responsiveControlHost,
-                    stacked ? 1 : 0);
+                Arrange(grid, responsiveControlHost, *options, args.NewSize().Width);
             });
+    }
+
+    void SetCompactEditor(bool compact = true)
+    {
+        layout->compact = compact;
+        Arrange(root, controlHost, *layout, root.ActualWidth());
     }
 
     void SetControlAlignment(mux::HorizontalAlignment alignment)
@@ -298,8 +382,8 @@ struct SettingRow
         // its ContentPresenter aligns a compact child.  Shrink and align the
         // host as well so ToggleSwitch and other compact templates actually
         // meet the right edge shared by full-width editors.
-        controlHost.HorizontalAlignment(alignment);
-        controlHost.HorizontalContentAlignment(alignment);
+        layout->alignment = alignment;
+        Arrange(root, controlHost, *layout, root.ActualWidth());
         if (alignment == mux::HorizontalAlignment::Right)
         {
             // WinUI reserves 154 DIPs for ToggleSwitch by default while its

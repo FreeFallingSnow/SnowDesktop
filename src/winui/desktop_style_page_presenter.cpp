@@ -156,6 +156,12 @@ struct DesktopStylePagePresenter::Impl
         muxc::TextBlock title;
         muxc::StackPanel content;
     };
+    struct RelatedLink
+    {
+        std::string key;
+        std::vector<std::string> focusIds;
+        muxc::HyperlinkButton control;
+    };
     // No asynchronous completion retains the presenter or an editor control.
     struct ConfirmationGate
     {
@@ -165,6 +171,7 @@ struct DesktopStylePagePresenter::Impl
 
     LocalizeCallback localize;
     ApplyPresetCallback applyPreset;
+    std::function<void(SettingsRoute)> navigate;
     DockPageActions actions;
     muxc::StackPanel root;
     muxc::GridView presets;
@@ -190,6 +197,7 @@ struct DesktopStylePagePresenter::Impl
     std::vector<std::unique_ptr<Section>> sections;
     std::vector<std::unique_ptr<Toggle>> toggles;
     std::vector<std::unique_ptr<Choice>> choices;
+    std::vector<RelatedLink> relatedLinks;
     std::vector<std::function<void()>> revoke;
     std::shared_ptr<ConfirmationGate> gate = std::make_shared<ConfirmationGate>();
     GeneralSettings general;
@@ -215,10 +223,6 @@ struct DesktopStylePagePresenter::Impl
     {
         return value.statusBar.enabled;
     }
-    static bool AnimationEnabled(const GeneralSettings& value, const DockSettings&)
-    {
-        return value.dockEnabled && value.animationMode != animation::Disabled;
-    }
     muxc::StackPanel Card(const mux::Style& style)
     {
         muxc::Border border;
@@ -239,6 +243,21 @@ struct DesktopStylePagePresenter::Impl
         const auto content = section->content;
         sections.push_back(std::move(section));
         return content;
+    }
+    void AddRelatedLink(const muxc::StackPanel& parent, std::string key,
+        SettingsRoute route, std::vector<std::string> focusIds)
+    {
+        RelatedLink link;
+        link.key = std::move(key);
+        link.focusIds = std::move(focusIds);
+        link.control.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        const auto control = link.control;
+        const auto token = control.Click([this, route = std::move(route)](const auto&, const auto&) {
+            if (CanEdit() && navigate) navigate(route);
+        });
+        revoke.push_back([control, token] { control.Click(token); });
+        parent.Children().Append(control);
+        relatedLinks.push_back(std::move(link));
     }
     void EmitGeneral(DockPageActions::GeneralEdit edit)
     {
@@ -419,32 +438,34 @@ struct DesktopStylePagePresenter::Impl
         AddChoice(dockCard, "settings.dock.monitor", "", "desktopStyle.dock.monitor", monitorOptions,
             [](const auto&, const auto& value) { return static_cast<int>(value.monitorScope); },
             [this](int index) { EmitDock([index](auto& value) { value.monitorScope = static_cast<DockMonitorScope>(index); }); }, DockEnabled);
-        AddDockToggle(dockCard, "settings.dock.showOnlyWhenSummoned", "settings.dock.showOnlyWhenSummoned.description",
-            "desktopStyle.dock.showOnlyWhenSummoned", &DockSettings::showOnlyWhenSummoned, DockEnabled);
-        AddToggle(dockCard, "app.dock.floating_edge_swipe", {},
-            "desktopStyle.dock.edgeSwipe",
-            [](const auto&, const auto& value) {
-                return dock_settings_rules::IsFloatingEdgeSwipeEnabled(value.showOnlyWhenSummoned, value.floatingEdgeSwipeEnabled);
-            }, [this](bool enabled) {
-                EmitDock([enabled](auto& value) {
-                    value.floatingEdgeSwipeEnabled = enabled;
-                });
-            }, [](const auto& settings, const auto& value) { return settings.dockEnabled && !value.showOnlyWhenSummoned; });
-        AddChoice(dockCard, "settings.dock.edgeRevealGesture", "settings.dock.edgeRevealGesture.description",
-            "desktopStyle.dock.edgeRevealGesture", {"settings.dock.gestureSwipe", "settings.dock.gestureHover"},
-            [](const auto&, const auto& value) { return value.edgeRevealGesture; },
-            [this](int index) { EmitDock([index](auto& value) { value.edgeRevealGesture = index; }); },
-            [](const auto& settings, const auto& value) { return settings.dockEnabled &&
-                dock_settings_rules::IsFloatingEdgeSwipeEnabled(value.showOnlyWhenSummoned, value.floatingEdgeSwipeEnabled); });
-        AddDockToggle(dockCard, "settings.dock.windowPreviews", "settings.dock.windowPreviews.description",
-            "desktopStyle.dock.showWindowPreviews", &DockSettings::showWindowPreviews, DockEnabled);
-        AddDockToggle(dockCard, "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description",
+        const auto barCard = AddSection(style, "settings.nav.statusBar");
+        AddToggle(barCard, "statusBar.enabled", "", "desktopStyle.statusBar.enable", BarEnabled,
+            [this](bool enabled) { EmitGeneral([enabled](auto& value) { value.statusBar.enabled = enabled; }); });
+        AddChoice(barCard, "statusBar.position", "", "desktopStyle.statusBar.position",
+            {"app.dock.bottom", "app.dock.top"},
+            [](const auto& value, const auto&) { return static_cast<int>(value.statusBar.position); },
+            [this](int index) { EmitGeneral([index](auto& value) { value.statusBar.position = static_cast<DockPosition>(index); }); }, BarEnabled);
+        AddChoice(barCard, "settings.dock.monitor", "", "desktopStyle.statusBar.monitor", monitorOptions,
+            [](const auto& value, const auto&) { return static_cast<int>(value.statusBar.monitorScope); },
+            [this](int index) { EmitGeneral([index](auto& value) { value.statusBar.monitorScope = static_cast<DockMonitorScope>(index); }); }, BarEnabled);
+
+        const auto taskbarCard = AddSection(style, "settings.nav.taskbar");
+        AddChoice(taskbarCard, "settings.bars.taskbarMode", "", "desktopStyle.taskbar.displayMode",
+            {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar"},
+            [](const auto&, const auto& value) { return TaskbarDisplayMode(value); },
+            [this](int index) {
+                if (index == 2 && !general.dockEnabled) { Sync(); return; }
+                EmitDock([index](auto& value) { SetTaskbarDisplayMode(value, index); });
+            });
+
+        const auto spaceCard = AddSection(style, "settings.desktopStyle.spaceCoordination");
+        AddDockToggle(spaceCard, "settings.dock.reserveScreenSpace", "settings.dock.reserveScreenSpace.description",
             "desktopStyle.dock.reserveScreenSpace", &DockSettings::reserveScreenSpace,
             [](const auto& settings, const auto& value) {
                 const auto state = ResolveBarSettingsAvailability(settings.dockEnabled, value, settings.statusBar, GetSystemMetrics(SM_CMONITORS));
                 return settings.dockEnabled && !value.showOnlyWhenSummoned && !state.allDockMerged;
             });
-        AddToggle(dockCard, "settings.dock.allowDesktopContentOverlap", "settings.dock.allowDesktopContentOverlap.description",
+        AddToggle(spaceCard, "settings.dock.allowDesktopContentOverlap", "settings.dock.allowDesktopContentOverlap.description",
             "desktopStyle.dock.allowDesktopContentOverlap",
             [](const auto&, const auto& value) {
                 return dock_settings_rules::ShouldReserveDesktopWorkArea(value.showOnlyWhenSummoned, value.allowDesktopContentOverlap);
@@ -458,44 +479,21 @@ struct DesktopStylePagePresenter::Impl
             });
 
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
-        dockCard.Children().Append(mergedHeight->Content());
-        AddDockToggle(dockCard, "settings.bars.homeSize", "settings.bars.homeSize.description",
-            "desktopStyle.dock.lastMonitorUseHomeSize", &DockSettings::lastMonitorUseHomeSize,
-            [](const auto& settings, const auto& value) {
-                const auto state = ResolveBarSettingsAvailability(settings.dockEnabled, value, settings.statusBar, GetSystemMetrics(SM_CMONITORS));
-                return state.dockOnLastMonitor && !state.allDockMerged;
-            });
-        const auto taskbarCard = AddSection(style, "settings.nav.taskbar");
-        AddChoice(taskbarCard, "settings.bars.taskbarMode", "", "desktopStyle.taskbar.displayMode",
-            {"settings.bars.taskbarVisible", "settings.taskbar.autoHide", "settings.dock.suppressTaskbar"},
-            [](const auto&, const auto& value) { return TaskbarDisplayMode(value); },
-            [this](int index) {
-                if (index == 2 && !general.dockEnabled) { Sync(); return; }
-                EmitDock([index](auto& value) { SetTaskbarDisplayMode(value, index); });
-            });
-        AddDockToggle(taskbarCard, "settings.desktopStyle.taskbarAppearance", "settings.desktopStyle.taskbarAppearance.description",
-            "desktopStyle.taskbar.appearance", &DockSettings::systemTaskbarBackdropEnabled);
-
-        const auto barCard = AddSection(style, "settings.nav.statusBar");
-        AddToggle(barCard, "statusBar.enabled", "", "desktopStyle.statusBar.enable", BarEnabled,
-            [this](bool enabled) { EmitGeneral([enabled](auto& value) { value.statusBar.enabled = enabled; }); });
-        AddChoice(barCard, "statusBar.position", "", "desktopStyle.statusBar.position",
-            {"app.dock.bottom", "app.dock.top"},
-            [](const auto& value, const auto&) { return static_cast<int>(value.statusBar.position); },
-            [this](int index) { EmitGeneral([index](auto& value) { value.statusBar.position = static_cast<DockPosition>(index); }); }, BarEnabled);
-        AddChoice(barCard, "settings.dock.monitor", "", "desktopStyle.statusBar.monitor", monitorOptions,
-            [](const auto& value, const auto&) { return static_cast<int>(value.statusBar.monitorScope); },
-            [this](int index) { EmitGeneral([index](auto& value) { value.statusBar.monitorScope = static_cast<DockMonitorScope>(index); }); }, BarEnabled);
-
-        const auto animationCard = AddSection(style, "settings.animation.dock");
-        AddChoice(animationCard, "settings.animation.hover", {}, "desktopStyle.animation.hover",
-            {"settings.animation.option.noMagnification", "settings.animation.option.singleIcon", "settings.animation.option.wave"},
-            [](const auto&, const auto& value) { return animation::NormalizeHoverEffect(value.hoverEffect); },
-            [this](int index) { EmitDock([index](auto& value) { value.hoverEffect = index; }); }, AnimationEnabled);
-        AddChoice(animationCard, "settings.animation.launch", {}, "desktopStyle.animation.launch",
-            {"settings.animation.option.off", "settings.animation.option.bounce", "settings.animation.option.gentleScale"},
-            [](const auto&, const auto& value) { return animation::NormalizeLaunchEffect(value.launchEffect); },
-            [this](int index) { EmitDock([index](auto& value) { value.launchEffect = index; }); }, AnimationEnabled);
+        spaceCard.Children().Append(mergedHeight->Content());
+        const auto related = AddSection(style, "settings.common.relatedSettings");
+        AddRelatedLink(related, "settings.dock.visibilityAndSummon",
+            SettingsRoute::ForPage(SettingsPage::Dock, "dock.showOnlyWhenSummoned"),
+            {"desktopStyle.dock.showOnlyWhenSummoned", "desktopStyle.dock.edgeSwipe", "desktopStyle.dock.edgeRevealGesture"});
+        AddRelatedLink(related, "settings.dock.windowPreviews",
+            SettingsRoute::ForPage(SettingsPage::Dock, "dock.showWindowPreviews"), {"desktopStyle.dock.showWindowPreviews"});
+        AddRelatedLink(related, "settings.bars.homeSize",
+            SettingsRoute::ForPage(SettingsPage::Dock, "dock.lastMonitorUseHomeSize"), {"desktopStyle.dock.lastMonitorUseHomeSize"});
+        AddRelatedLink(related, "settings.desktopStyle.taskbarAppearance",
+            SettingsRoute::ForPage(SettingsPage::Taskbar, "taskbar.theme"), {"desktopStyle.taskbar.appearance"});
+        AddRelatedLink(related, "settings.animation.dock",
+            SettingsRoute::ForPage(SettingsPage::Dock, "animation.hover"), {"desktopStyle.animation.hover", "desktopStyle.animation.launch"});
+        for (const auto& section : sections)
+            presenter_controls::UpdateSettingsSubrows(section->content, 0);
         Localize();
     }
 
@@ -957,6 +955,11 @@ struct DesktopStylePagePresenter::Impl
         changes.Header(winrt::box_value(L("settings.desktopStyle.changes")));
         adjustmentTitle.Text(L("settings.desktopStyle.adjustments"));
         for (const auto& section : sections) section->title.Text(L(section->key));
+        for (const auto& link : relatedLinks)
+        {
+            link.control.Content(winrt::box_value(L(link.key)));
+            muxa::AutomationProperties::SetName(link.control, L(link.key));
+        }
         for (const auto& toggle : toggles)
         {
             toggle->row.SetText(L(toggle->key), toggle->help.empty() ? std::wstring{} : L(toggle->help));
@@ -1061,6 +1064,10 @@ void DesktopStylePagePresenter::ApplySnapshot(const SettingsSnapshot& snapshot)
     if (presetNavigation) impl_->SelectPresetForFocus(snapshot.route.focusId);
 }
 void DesktopStylePagePresenter::RefreshLocalizedText() { impl_->Localize(); }
+void DesktopStylePagePresenter::SetNavigateCallback(std::function<void(SettingsRoute)> navigate)
+{
+    impl_->navigate = std::move(navigate);
+}
 void DesktopStylePagePresenter::Activate(std::string_view focusId)
 {
     if (impl_->closed) return;
@@ -1081,10 +1088,13 @@ void DesktopStylePagePresenter::RegisterFocusTargets(const std::function<void(st
 {
     if (!target || impl_->closed) return;
     target("desktopStyle", impl_->presets);
-    target("desktopStyle.dock.mergedBarHeight", impl_->mergedHeight->FocusTarget());
+    target("desktopStyle.dock.mergedBarHeight", impl_->mergedHeight->Content().Visibility() == mux::Visibility::Visible
+        ? impl_->mergedHeight->FocusTarget().as<mux::FrameworkElement>() : impl_->adjustmentTitle);
     for (const auto preset : kPresets) target("desktopStyle." + std::string(preset), impl_->presets);
     for (const auto& toggle : impl_->toggles) target(toggle->focus, toggle->control);
     for (const auto& choice : impl_->choices) target(choice->focus, choice->control);
+    for (const auto& link : impl_->relatedLinks)
+        for (const auto& id : link.focusIds) target(id, link.control);
 }
 
 } // namespace snowdesktop::winui

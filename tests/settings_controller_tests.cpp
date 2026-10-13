@@ -1,8 +1,10 @@
 #include "settings/settings_controller.h"
 #include "settings/settings_ipc_services.h"
 #include "settings/settings_ipc_values.h"
+#include "settings/settings_search_catalog.h"
 #include "desktop/desktop_style_presets.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <functional>
@@ -280,7 +282,7 @@ void TestRoutes()
             legacyTheme.page == SettingsPage::ContextMenu &&
             legacyWidgetAppearance.page == SettingsPage::AppearanceTheme &&
             edgeHighlight.page == SettingsPage::AppearanceTheme &&
-            legacyTabHeight.page == SettingsPage::AppearanceWidgets &&
+            legacyTabHeight.page == SettingsPage::WidgetBehavior &&
             legacyTabHeight.focusId == "desktop.categoryLayout" &&
             legacyCounts.page == SettingsPage::DesktopCategories &&
             legacyCounts.focusId == "desktop.categoryCounts",
@@ -294,9 +296,9 @@ void TestRoutes()
     const auto transformCursors = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.widgetTransformCursors"));
-    Check(transformCursors.page == SettingsPage::AppearanceWidgets &&
+    Check(transformCursors.page == SettingsPage::Widgets &&
             transformCursors.focusId == "personalization.widgetTransformCursors",
-        "component transform cursor links reach Components and layout");
+        "component transform cursor links reach the component management page");
     const auto popupHover = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.popupHoverOpen"));
@@ -339,6 +341,12 @@ void TestRoutes()
     const SettingsRoute desktopIcons = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
             SettingsPage::Desktop, "desktop.iconSize"));
+    for (const auto focus : {"desktop.fanTitleFontSize", "desktop.titleOverflow"})
+    {
+        const auto iconText = CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::Desktop, focus));
+        Check(iconText.page == SettingsPage::AppearanceDesktopIcons && iconText.focusId == focus,
+            "legacy desktop title settings remain reachable after moving typography to Fonts and icons");
+    }
     const SettingsRoute iconBeautification = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(
             SettingsPage::Desktop, "desktop.iconBeautify.outlineColor"));
@@ -356,8 +364,8 @@ void TestRoutes()
         for (const auto focus : {"desktop.spacing", "desktop.iconSpacing"})
         {
             const auto spacing = CanonicalizeSettingsRoute(SettingsRoute::ForPage(sourcePage, focus));
-            Check(spacing.page == SettingsPage::AppearanceWidgets && spacing.focusId == focus,
-                "layout spacing links reach Interface & layout while retaining their focus target");
+            Check(spacing.page == SettingsPage::DesktopPages && spacing.focusId == focus,
+                "layout spacing links reach Pages and displays while retaining their focus target");
         }
     const SettingsRoute desktopBehavior = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Desktop));
@@ -367,13 +375,112 @@ void TestRoutes()
     Check(desktopIcons.page == SettingsPage::AppearanceDesktopIcons &&
             iconBeautification.page ==
                 SettingsPage::AppearanceIconBeautification &&
-            desktopTabHeight.page == SettingsPage::AppearanceWidgets &&
+            desktopTabHeight.page == SettingsPage::WidgetBehavior &&
             desktopTabHeight.focusId == "desktop.categoryLayout" &&
             categoryRules.page == SettingsPage::DesktopCategories &&
-            legacyCategoryLayout.page == SettingsPage::AppearanceWidgets &&
+            legacyCategoryLayout.page == SettingsPage::WidgetBehavior &&
             pageNavigation.page == SettingsPage::DesktopPages &&
             desktopBehavior.page == SettingsPage::Desktop,
         "legacy focus aliases route appearance, page, category, and behavior tasks to distinct owners");
+
+    struct RelocatedSetting { const char* focus; SettingsPage owner; };
+    const RelocatedSetting relocated[]{
+        {"personalization.font", SettingsPage::AppearanceDesktopIcons},
+        {"personalization.tooltipFontSize", SettingsPage::AppearanceDesktopIcons},
+        {"personalization.cornerRadius", SettingsPage::AppearanceTheme},
+        {"personalization.barHeight", SettingsPage::AppearanceTheme},
+        {"personalization.luaWidgetRowHeight", SettingsPage::Widgets},
+        {"personalization.widgetTransformCursors", SettingsPage::Widgets},
+        {"desktop.spacing", SettingsPage::DesktopPages},
+        {"desktop.iconSpacing", SettingsPage::DesktopPages},
+        {"personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
+        {"quickNav.layout.iconSize", SettingsPage::QuickNavigation},
+        {"quickNav.color.searchBg", SettingsPage::QuickNavigation},
+    };
+    for (const auto& setting : relocated)
+        for (const auto sourcePage : {SettingsPage::Personalization,
+                 SettingsPage::AppearanceWidgets, SettingsPage::AppearanceTheme, setting.owner})
+        {
+            auto source = SettingsRoute::ForPage(sourcePage, setting.focus);
+            source.guideTopic = "appearance";
+            const auto target = CanonicalizeSettingsRoute(source);
+            Check(target.page == setting.owner && target.focusId == setting.focus &&
+                    target.guideTopic == source.guideTopic &&
+                    CanonicalizeSettingsRoute(target) == target,
+                "relocated global fields preserve their IDs and are canonical after one pass");
+        }
+    Check(CanonicalizeSettingsRoute(SettingsRoute::ForPage(SettingsPage::AppearanceWidgets)).page ==
+            SettingsPage::AppearanceTheme,
+        "a removed appearance leaf without a field opens the shared theme");
+    auto object = SettingsRoute::ForWidget(L"clock", "personalization.font");
+    Check(CanonicalizeSettingsRoute(object) == object,
+        "a widget field with a global-looking ID remains scoped to its instance");
+    object = SettingsRoute::ForPage(SettingsPage::LargeIcon, "desktop.spacing");
+    object.itemKey = L"object-item";
+    Check(CanonicalizeSettingsRoute(object) == object,
+        "global aliases cannot redirect an object editor out of its object scope");
+}
+
+void TestReadOnlySearchNavigationAndPackageScope()
+{
+    auto store = std::make_shared<FakeStore>();
+    store->loaded.personalization.backgroundPreset = 1;
+    store->loaded.desktop.iconBeautify.enabled = false;
+    store->loaded.dock.showOnlyWhenSummoned = false;
+    FakeHostActions host;
+    SettingsController controller(store, &host);
+    Check(controller.Initialize().Succeeded(), "read-only navigation test initializes existing values");
+    const auto before = controller.Snapshot();
+    const auto values = settings_ipc::Pack(before->values);
+    const auto domainRevisions = settings_ipc::Pack(before->domainRevisions);
+    SettingsSearchIndexInput catalog;
+    PopulateSettingsSearchCatalog(catalog, [](std::string_view key) {
+        return std::wstring(key.begin(), key.end());
+    }, false, false);
+    for (const auto focus : {"dock.showOnlyWhenSummoned", "desktop.spacing",
+             "desktop.iconBeautify.outlineColor", "personalization.backgroundColor"})
+    {
+        const auto entry = std::find_if(catalog.staticSettings.begin(), catalog.staticSettings.end(),
+            [&](const auto& descriptor) { return descriptor.focusId == focus; });
+        Check(entry != catalog.staticSettings.end(), "a user task has a catalog destination");
+        if (entry == catalog.staticSettings.end()) continue;
+        const auto route = SettingsRoute::ForPage(entry->page, entry->focusId);
+        Check(controller.Open(route).Succeeded() && host.route == route,
+            "opening a search destination dispatches navigation only");
+        const auto current = controller.Snapshot();
+        Check(settings_ipc::Pack(current->values) == values &&
+                settings_ipc::Pack(current->domainRevisions) == domainRevisions &&
+                current->dirtyDomains == SettingsDomain::None &&
+                current->pendingPreviewDomains == SettingsDomain::None &&
+                current->pendingCommitDomains == SettingsDomain::None,
+            "locating a conditional setting does not turn on its parent, select custom, or change stored values");
+    }
+    auto permissions = SettingsRoute::ForPage(SettingsPage::Widgets, "widgets.permissions");
+    permissions.itemKey = L"org.snowdesktop.天气包";
+    Check(permissions.IsValid() && controller.Open(permissions).Succeeded() && host.route == permissions &&
+            CanonicalizeSettingsRoute(permissions) == permissions,
+        "the controller forwards the exact permission package key without changing its scope");
+    const auto routeRevision = controller.Snapshot()->revision;
+    const auto routeCount = host.routeCount;
+    for (const auto page : {SettingsPage::General, SettingsPage::WidgetSettings, SettingsPage::Widgets})
+    {
+        auto invalid = permissions;
+        invalid.page = page;
+        if (page == SettingsPage::Widgets) invalid.focusId = "widgets.installed";
+        if (page == SettingsPage::WidgetSettings) invalid.widgetInstanceId = L"weather-instance";
+        Check(!invalid.IsValid() && !controller.Open(invalid).Succeeded(),
+            "package keys are rejected outside the exact permissions destination");
+    }
+    auto invalid = permissions;
+    invalid.widgetInstanceId = L"weather-instance";
+    Check(!invalid.IsValid() && !controller.Open(invalid).Succeeded() &&
+            controller.Snapshot()->route == permissions && controller.Snapshot()->revision == routeRevision &&
+            host.routeCount == routeCount,
+        "invalid package routes do not publish a replacement or reach the host");
+    Check(controller.CloseSession().Succeeded() && host.previewCount == 0 && host.commitCount == 0 &&
+            store->personalizationSaveCount == 0 && store->dockSaveCount == 0 &&
+            store->navigationSaveCount == 0 && store->generalSaveCount == 0 && store->categorySaveCount == 0,
+        "search navigation and closing an unchanged session never preview, commit, or save configuration");
 }
 
 void TestLoadRouteAndImmutableSnapshots()
@@ -1406,6 +1513,7 @@ int main()
     if (childResult >= 0) return childResult;
     failures += RunSettingsIpcTests();
     TestRoutes();
+    TestReadOnlySearchNavigationAndPackageScope();
     TestLoadRouteAndImmutableSnapshots();
     TestDomainRevisionsTrackChangedDomain();
     TestDesktopStylePresetScope();

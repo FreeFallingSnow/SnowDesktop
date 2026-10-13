@@ -233,7 +233,7 @@ private:
     void RenderRoute(
         bool forcePageCards = false,
         bool scheduleFocus = true);
-    void RenderNavigationSelection();
+    void RenderNavigationSelection(bool revealCurrent);
     void ApplyNavigationIcons();
     void RenderPageHeaderIcon();
     void RenderPageHeading();
@@ -346,7 +346,7 @@ private:
     std::uint64_t searchRequestId_ = 0;
     std::uint64_t progressGeneration_ = 0;
     std::optional<snowdesktop::SettingsRoute> renderedPageRoute_;
-    double dockPageOffset_ = 0, statusPageOffset_ = 0;
+    std::unordered_map<snowdesktop::SettingsPage, double> pageOffsets_;
     double largeIconParentOffset_ = 0;
     bool restoreLargeIconParent_ = false;
     winrt::weak_ref<winrt::Microsoft::UI::Xaml::FrameworkElement> largeIconParentFocus_;

@@ -47,6 +47,7 @@ bool IsDesktopIconAppearanceFocus(std::string_view focusId) noexcept
 {
     return focusId == "desktop.iconSize" ||
         focusId == "desktop.itemFontSize" ||
+        focusId == "desktop.fanTitleFontSize" || focusId == "desktop.titleOverflow" ||
         focusId == "desktop.listFontSize" ||
         focusId == "desktop.fontWeight" ||
         focusId == "desktop.titleLines" || focusId == "desktop.largeFolderTitleLines" || focusId == "desktop.scrollingTitleLines" ||
@@ -83,11 +84,6 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
     if (route.page == SettingsPage::General &&
         (route.focusId.starts_with("general.quickNavigation") || route.focusId == "general.hotkeys"))
         route.page = SettingsPage::QuickNavigation;
-    if (route.page == SettingsPage::QuickNavigation &&
-        (route.focusId == "personalization.quickNavigationTheme" || route.focusId == "personalization.quickNavTheme" ||
-         route.focusId == "quickNav.layout" || route.focusId.starts_with("quickNav.layout.") ||
-         route.focusId.starts_with("quickNav.color.") || route.focusId.starts_with("quickNav.colors.")))
-        route.page = SettingsPage::AppearanceTheme;
     // Preserve old search and host links after relocating behavior controls.
     if ((route.page == SettingsPage::Personalization ||
          route.page == SettingsPage::AppearanceWidgets) &&
@@ -232,6 +228,49 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
         route.page = SettingsPage::Dock;
     if (route.page == SettingsPage::Dock && route.focusId == "dock.suppressSystemTaskbar")
     { route.page = SettingsPage::Taskbar; route.focusId = "taskbar.displayMode"; }
+
+    // Relocate presentation only. Keep stable field IDs for old menus,
+    // search results, host IPC and navigation history.
+    if (route.page != SettingsPage::WidgetSettings && route.page != SettingsPage::LargeIcon)
+    {
+        const std::string_view focus = route.focusId;
+        if (focus == "personalization.quickNavigationTheme" || focus == "personalization.quickNavTheme" ||
+            focus == "quickNav.layout" || focus.starts_with("quickNav.layout.") ||
+            focus.starts_with("quickNav.color.") || focus.starts_with("quickNav.colors."))
+            route.page = SettingsPage::QuickNavigation;
+        else if (focus == "personalization.font" || focus == "personalization.tooltipFontSize")
+            route.page = SettingsPage::AppearanceDesktopIcons;
+        else if (focus == "personalization.cornerRadius" || focus == "personalization.barHeight")
+            route.page = SettingsPage::AppearanceTheme;
+        else if (focus == "personalization.luaWidgetRowHeight" || focus == "personalization.widgetTransformCursors")
+            route.page = SettingsPage::Widgets;
+        else if (focus == "desktop.spacing" || focus == "desktop.iconSpacing")
+            route.page = SettingsPage::DesktopPages;
+        else if (focus == "desktop.categoryLayout" || focus == "desktop.tabHeight" || focus == "personalization.tabHeight")
+        {
+            route.page = SettingsPage::WidgetBehavior;
+            route.focusId = "desktop.categoryLayout";
+        }
+        else if (route.page == SettingsPage::AppearanceWidgets)
+            route.page = SettingsPage::AppearanceTheme;
+    }
+    if (route.page == SettingsPage::DesktopStyle)
+    {
+        const std::pair<std::string_view, std::string_view> moved[] = {
+            {"desktopStyle.dock.showOnlyWhenSummoned", "dock.showOnlyWhenSummoned"},
+            {"desktopStyle.dock.edgeSwipe", "dock.floatingEdgeSwipeEnabled"},
+            {"desktopStyle.dock.edgeRevealGesture", "dock.edgeRevealGesture"},
+            {"desktopStyle.dock.showWindowPreviews", "dock.showWindowPreviews"},
+            {"desktopStyle.dock.lastMonitorUseHomeSize", "dock.lastMonitorUseHomeSize"},
+            {"desktopStyle.animation.hover", "animation.hover"},
+            {"desktopStyle.animation.launch", "animation.launch"},
+        };
+        for (const auto& [oldId, newId] : moved)
+            if (route.focusId == oldId)
+            { route.page = SettingsPage::Dock; route.focusId = newId; break; }
+        if (route.focusId == "desktopStyle.taskbar.appearance")
+        { route.page = SettingsPage::Taskbar; route.focusId = "taskbar.theme"; }
+    }
     return route;
 }
 
@@ -274,7 +313,8 @@ bool SettingsRoute::IsValid() const noexcept
 
     if (page == SettingsPage::LargeIcon)
         return !itemKey.empty() && widgetInstanceId.empty();
-    if (!itemKey.empty()) return false;
+    if (!itemKey.empty())
+        return page == SettingsPage::Widgets && focusId == "widgets.permissions" && widgetInstanceId.empty();
     if (page == SettingsPage::WidgetSettings)
         return !widgetInstanceId.empty();
     return widgetInstanceId.empty();

@@ -1,9 +1,15 @@
 #include "settings/settings_search_index.h"
 #include "settings/settings_search_catalog.h"
+#include "common/json_value.h"
+
+#include <windows.h>
 
 #include <cstdlib>
 #include <algorithm>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
 #include <string>
 
 namespace
@@ -190,10 +196,130 @@ void TestStableRankingAndLimit()
         "result limits preserve the ranked stable prefix");
 }
 
+void TestLocalizedTaskAliasesAndReadOnlyQueries()
+{
+    // Supply translated resource values through the production catalog seam.
+    // Labels remain resource IDs so these user phrases can match only aliases.
+    const auto localize = [](std::string_view key) -> std::wstring {
+        if (key == "settings.search.alias.dockVisibility") return L"自动隐藏 隐藏 Dock auto hide";
+        if (key == "settings.search.alias.monitors") return L"多显示器 副屏 双屏";
+        if (key == "settings.search.alias.grid") return L"网格间距 图标挤在一起";
+        if (key == "settings.search.alias.classification") return L"自动分类 扩展名 文件类型";
+        if (key == "settings.search.alias.quickAppearance") return L"搜索窗口颜色 快捷导航外观";
+        if (key == "settings.search.alias.transformCursor") return L"移动组件指针 缩放组件指针";
+        if (key == "settings.contextMenu.hidePageManagement") return L"隐藏页面管理";
+        return std::wstring(key.begin(), key.end());
+    };
+    SettingsSearchIndexInput input;
+    input.languageTag = "zh-CN";
+    PopulateSettingsSearchCatalog(input, localize, false, false);
+    SettingsSearchIndex index(input);
+    const auto count = index.EntryCount();
+    struct Task { const wchar_t* query; const char* focus; SettingsPage page; };
+    const Task tasks[]{
+        {L"自动隐藏", "dock.showOnlyWhenSummoned", SettingsPage::Dock},
+        {L"AUTO HIDE", "dock.showOnlyWhenSummoned", SettingsPage::Dock},
+        {L"多显示器", "pages.order", SettingsPage::DesktopPages},
+        {L"副屏", "dock.monitor", SettingsPage::Dock},
+        {L"图标挤在一起", "desktop.spacing", SettingsPage::DesktopPages},
+        {L"网格间距", "pages.grid", SettingsPage::DesktopPages},
+        {L"自动分类", "desktop.categoryRules", SettingsPage::DesktopCategories},
+        {L"搜索窗口颜色", "personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
+        {L"移动组件指针", "personalization.widgetTransformCursors", SettingsPage::Widgets},
+        {L"隐藏页面管理", "contextMenu.hidePageManagement", SettingsPage::ContextMenu},
+    };
+    for (const auto& task : tasks)
+    {
+        const auto results = index.Search(task.query);
+        const auto hit = std::find_if(results.begin(), results.end(), [&](const auto& result) {
+            return result.focusId == task.focus;
+        });
+        Check(hit != results.end() && hit->route.page == task.page &&
+                hit->route.focusId == task.focus && hit->route.IsValid(),
+            "a daily phrase or old label locates the canonical setting without changing its stable ID");
+        Check(index.Search(task.query) == results && index.EntryCount() == count && input.languageTag == "zh-CN",
+            "repeated queries are deterministic and do not rebuild or mutate the catalog");
+    }
+    Check(index.Search(L"settings.search.alias.dockVisibility").empty(),
+        "alias resource keys do not become visible search terms");
+    const auto descriptor = std::find_if(input.staticSettings.begin(), input.staticSettings.end(),
+        [](const auto& entry) { return entry.focusId == "dock.showOnlyWhenSummoned"; });
+    Check(descriptor != input.staticSettings.end() && descriptor->keywords ==
+            std::vector<std::wstring>{L"自动隐藏 隐藏 Dock auto hide"},
+        "search queries leave localized input metadata unchanged");
+
+    SettingsSearchIndexInput english;
+    english.languageTag = "en-US";
+    PopulateSettingsSearchCatalog(english, [](std::string_view key) -> std::wstring {
+        if (key == "settings.search.alias.dockVisibility") return L"automatically hide docking bar";
+        return std::wstring(key.begin(), key.end());
+    }, false, false);
+    index.Rebuild(english);
+    Check(index.Search(L"自动隐藏").empty() && index.Search(L"automatically hide").size() == 1 &&
+            index.LanguageTag() == "en-US",
+        "changing language replaces alias vocabulary rather than mixing translations");
+    const auto missingAlias = std::find_if(english.staticSettings.begin(), english.staticSettings.end(),
+        [](const auto& entry) { return entry.focusId == "desktop.spacing"; });
+    Check(missingAlias != english.staticSettings.end() && missingAlias->keywords.empty(),
+        "a missing alias translation is skipped instead of exposing an implementation key");
+}
+
+void TestShippedTaskVocabulary(const std::filesystem::path& projectRoot)
+{
+    struct Task { const char* language; const wchar_t* query; const char* focus; SettingsPage page; };
+    const Task tasks[]{
+        {"zh-CN", L"Dock自动隐藏", "dock.showOnlyWhenSummoned", SettingsPage::Dock},
+        {"zh-CN", L"多显示器布局", "pages.order", SettingsPage::DesktopPages},
+        {"zh-CN", L"搜索框颜色", "personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
+        {"zh-CN", L"组件缩放指针", "personalization.widgetTransformCursors", SettingsPage::Widgets},
+        {"zh-CN", L"分类与规则", "desktop.categoryRules", SettingsPage::DesktopCategories},
+        {"zh-CN", L"类型标签圆角", "quickNav.layout.searchRadius", SettingsPage::QuickNavigation},
+        {"zh-CN", L"任务缩略图", "dock.showWindowPreviews", SettingsPage::Dock},
+        {"zh-CN", L"默认保护", "dock.fullscreenPolicy", SettingsPage::Dock},
+        {"en-US", L"automatically hide Dock", "dock.showOnlyWhenSummoned", SettingsPage::Dock},
+        {"en-US", L"multi monitor layout", "pages.order", SettingsPage::DesktopPages},
+        {"en-US", L"search panel color", "personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
+        {"en-US", L"Type chip corner radius", "quickNav.layout.searchRadius", SettingsPage::QuickNavigation},
+        {"en-US", L"Task thumbnails", "dock.showWindowPreviews", SettingsPage::Dock},
+    };
+    for (const char* language : {"zh-CN", "en-US"})
+    {
+        std::ifstream file(projectRoot / "lang" / (std::string(language) + ".json"), std::ios::binary);
+        Check(file.good(), "the shipped language catalog must be readable");
+        std::ostringstream contents; contents << file.rdbuf();
+        JsonValue catalog;
+        Check(ParseJson(contents.str(), catalog) && catalog.IsObject(), "the shipped language catalog must parse");
+        SettingsSearchIndexInput input;
+        input.languageTag = language;
+        PopulateSettingsSearchCatalog(input, [&catalog](std::string_view key) -> std::wstring {
+            const auto* entry = catalog.Find(key);
+            if (!entry || !entry->IsString()) return {};
+            const auto& text = entry->string;
+            const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                text.data(), static_cast<int>(text.size()), nullptr, 0);
+            if (length <= 0) return {};
+            std::wstring wide(static_cast<std::size_t>(length), L'\0');
+            MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+                text.data(), static_cast<int>(text.size()), wide.data(), length);
+            return wide;
+        }, false, false);
+        SettingsSearchIndex index(input);
+        for (const auto& task : tasks)
+        {
+            if (std::string_view(task.language) != language) continue;
+            const auto hits = index.Search(task.query);
+            Check(std::any_of(hits.begin(), hits.end(), [&task](const auto& hit) {
+                return hit.route.page == task.page && hit.route.focusId == task.focus;
+            }), "a real user task resolves with the actual shipped resource values");
+        }
+    }
+}
+
 } // namespace
 
-int main()
+int main(int argc, char* argv[])
 {
+    if (argc != 2) { std::cerr << "usage: SnowDesktopSettingsSearchIndexTests <project-root>\n"; return 2; }
     SettingsSearchIndexInput catalog;
     PopulateSettingsSearchCatalog(catalog,[](std::string_view key) {return std::wstring(key.begin(),key.end());},false,false);
     const auto find = [&](std::string_view id) {return std::find_if(catalog.staticSettings.begin(),catalog.staticSettings.end(),[&](const auto& descriptor) {return descriptor.focusId == id;});};
@@ -211,13 +337,25 @@ int main()
     for (const auto focus : {"personalization.font", "personalization.tooltipFontSize"})
     {
         const auto entry = find(focus);
-        Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::AppearanceWidgets,
-            "font search results open their independent cards on Interface & layout");
+        Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::AppearanceDesktopIcons,
+            "font search results open the Fonts and icons page");
     }
-    Check(find("general.quickNavigation")->page == SettingsPage::QuickNavigation && find("personalization.quickNavigationTheme")->page == SettingsPage::AppearanceTheme,"the shared catalog preserves the theme location and routes navigation behavior to its page");
+    Check(find("general.quickNavigation")->page == SettingsPage::QuickNavigation && find("personalization.quickNavigationTheme")->page == SettingsPage::QuickNavigation,"the shared catalog brings navigation behavior and appearance to one page");
     Check(find("quickNav.layout.iconSize") != catalog.staticSettings.end() && find("quickNav.color.searchBg") != catalog.staticSettings.end(),"advanced navigation fields are indexed individually");
-    Check(find("quickNav.layout.iconSize")->page == SettingsPage::AppearanceTheme && find("quickNav.color.searchBg")->page == SettingsPage::AppearanceTheme,
-        "navigation dimensions and colors belong to the original appearance theme page");
+    Check(find("quickNav.layout.iconSize")->page == SettingsPage::QuickNavigation && find("quickNav.color.searchBg")->page == SettingsPage::QuickNavigation,
+        "navigation dimensions and colors belong to the functional navigation page");
+    for (const auto& descriptor : catalog.staticSettings)
+    {
+        const auto route = SettingsRoute::ForPage(descriptor.page, descriptor.focusId);
+        Check(route == CanonicalizeSettingsRoute(route) && descriptor.page != SettingsPage::AppearanceWidgets,
+            "all catalog destinations are already canonical and avoid the retired appearance leaf");
+    }
+    for (const auto focus : {"desktop.spacing", "pages.order", "pages.grid"})
+    {
+        const auto entry = find(focus);
+        Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::DesktopPages,
+            "page and spacing search tasks share the Pages and displays destination");
+    }
     Check(find("quickNav.prefixes")->page == SettingsPage::QuickNavigation &&
             find("quickNav.defaultCollapsed") == catalog.staticSettings.end() &&
             find("quickNav.view") == catalog.staticSettings.end(),
@@ -249,6 +387,8 @@ int main()
     TestWidgetFields();
     TestLanguageRebuildAndUnicodeMatching();
     TestStableRankingAndLimit();
+    TestLocalizedTaskAliasesAndReadOnlyQueries();
+    TestShippedTaskVocabulary(std::filesystem::path(argv[1]));
 
     if (failures != 0)
     {

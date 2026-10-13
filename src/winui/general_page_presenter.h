@@ -151,6 +151,8 @@ public:
     /** Re-query runtime-only state that is not persisted in SettingsSnapshot. */
     void RefreshRuntimeState() noexcept;
     void RegisterFocusTargets(const FocusRegistrar& registrar) const;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
+        FocusTarget(std::string_view focusId) const noexcept;
 
     void ApplyOnboardingStatus(const HomeAboutStatusPatch& patch);
     void Activate(std::string_view focusId = {}) noexcept;

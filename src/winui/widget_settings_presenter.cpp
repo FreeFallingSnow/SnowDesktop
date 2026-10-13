@@ -11,6 +11,7 @@
 #include "edge_light_editor.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
+#include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Windows.System.h>
@@ -468,6 +469,11 @@ struct WidgetSettingsPresenter::Impl
     muxc::Button restoreScriptDefault{nullptr};
     muxc::TextBlock scriptSettingsTitle{nullptr};
     muxc::StackPanel fieldsHost{nullptr};
+    SettingsCard ungroupedCard;
+    SettingsCard relatedCard;
+    presenter_controls::SettingRow permissionsRow;
+    muxc::Button permissionsButton;
+    winrt::event_token permissionsClicked{};
     SettingsCard resetCard;
     presenter_controls::SettingRow resetRow;
     muxc::Button reset{nullptr};
@@ -475,6 +481,9 @@ struct WidgetSettingsPresenter::Impl
     std::vector<std::unique_ptr<WidgetFieldControl>> fields;
     std::vector<WidgetGroupControl> groups;
     std::unordered_map<std::string, WidgetFieldControl*> fieldsByKey;
+    // Only the condition currently preventing access contributes a parent.
+    // This is navigation metadata from the accepted snapshot, not a value edit.
+    std::unordered_map<std::string, std::string> focusParents;
     std::unordered_map<std::string, muxc::StackPanel> groupPanels;
     std::unordered_map<std::string, bool> rememberedGroupExpansion;
     std::unordered_map<std::string, PendingTransientPreview>
@@ -487,6 +496,7 @@ struct WidgetSettingsPresenter::Impl
     std::string defaultPresetId;
     wr::WidgetHostAppearanceState currentHostAppearance;
     std::wstring widgetId;
+    std::string packageId;
     std::string widgetName;
     std::uint64_t generation = 0;
     std::uint64_t revision = 0;
@@ -548,6 +558,8 @@ struct WidgetSettingsPresenter::Impl
         title.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
         title.TextWrapping(mux::TextWrapping::Wrap);
+        muxa::AutomationProperties::SetHeadingLevel(title,
+            muxa::Peers::AutomationHeadingLevel::Level2);
         return title;
     }
 
@@ -582,7 +594,7 @@ struct WidgetSettingsPresenter::Impl
         control.number.Maximum(maximum);
         control.number.SmallChange(step);
         control.number.LargeChange(step * 5.0);
-        control.number.Width(92.0);
+        control.number.Width(presenter_controls::kSettingNumberWidth);
         control.number.SpinButtonPlacementMode(
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
         control.number.ValidationMode(
@@ -673,6 +685,15 @@ struct WidgetSettingsPresenter::Impl
     {
         root = muxc::StackPanel{};
         root.Spacing(8.0);
+
+        // Instance content comes first; authored field/group order is retained
+        // by RebuildFields. Appearance remains a separate conditional section.
+        scriptSettingsTitle = MakeSectionTitle();
+        scriptSettingsTitle.Margin({4.0, 8.0, 4.0, 0.0});
+        root.Children().Append(scriptSettingsTitle);
+        fieldsHost = muxc::StackPanel{};
+        fieldsHost.Spacing(8.0);
+        root.Children().Append(fieldsHost);
 
         InitializeCard(appearanceCard);
         appearanceTitle = MakeSectionTitle();
@@ -857,12 +878,18 @@ struct WidgetSettingsPresenter::Impl
             restoreScriptDefaultRow.root);
         root.Children().Append(stylePreviewCard.root);
 
-        scriptSettingsTitle = MakeSectionTitle();
-        scriptSettingsTitle.Margin({4.0, 8.0, 4.0, 0.0});
-        root.Children().Append(scriptSettingsTitle);
-        fieldsHost = muxc::StackPanel{};
-        fieldsHost.Spacing(8.0);
-        root.Children().Append(fieldsHost);
+        InitializeCard(relatedCard);
+        permissionsClicked = permissionsButton.Click([this](const auto&, const auto&) {
+            if (!CanMutate() || packageId.empty() || !callbacks.openPackagePermissions)
+                return;
+            const auto result = FlushPendingEdits();
+            if (!result.Succeeded()) return;
+            callbacks.openPackagePermissions(ToWide(packageId));
+        });
+        permissionsRow.Initialize(permissionsButton);
+        relatedCard.content.Children().Append(permissionsRow.root);
+        relatedCard.root.Visibility(mux::Visibility::Collapsed);
+        root.Children().Append(relatedCard.root);
 
         InitializeCard(resetCard);
         reset = muxc::Button{};
@@ -1128,9 +1155,8 @@ struct WidgetSettingsPresenter::Impl
             WidgetGroupControl group;
             group.schema = schema;
             group.root = muxc::Border{};
-            if (cardStyle) group.root.Style(cardStyle);
             group.content = muxc::StackPanel{};
-            group.content.Spacing(8.0);
+            group.content.Spacing(0.0);
 
             if (schema.collapsible)
             {
@@ -1146,6 +1172,8 @@ struct WidgetSettingsPresenter::Impl
                 title.FontWeight(
                     winrt::Windows::UI::Text::FontWeights::SemiBold());
                 title.TextWrapping(mux::TextWrapping::Wrap);
+                muxa::AutomationProperties::SetHeadingLevel(title,
+                    muxa::Peers::AutomationHeadingLevel::Level2);
                 header.Children().Append(title);
                 if (!schema.description.empty())
                 {
@@ -1167,13 +1195,18 @@ struct WidgetSettingsPresenter::Impl
             }
             else
             {
+                if (cardStyle) group.root.Style(cardStyle);
+                group.root.Padding({0, 0, 0, 0});
                 muxc::StackPanel container;
-                container.Spacing(8.0);
+                container.Spacing(0.0);
                 muxc::TextBlock title;
                 title.Text(ToText(schema.label));
                 title.FontWeight(
                     winrt::Windows::UI::Text::FontWeights::SemiBold());
                 title.TextWrapping(mux::TextWrapping::Wrap);
+                title.Margin({16, 16, 16, 8});
+                muxa::AutomationProperties::SetHeadingLevel(title,
+                    muxa::Peers::AutomationHeadingLevel::Level2);
                 container.Children().Append(title);
                 if (!schema.description.empty())
                 {
@@ -1181,6 +1214,7 @@ struct WidgetSettingsPresenter::Impl
                     description.Text(ToText(schema.description));
                     description.Opacity(0.72);
                     description.TextWrapping(mux::TextWrapping::Wrap);
+                    description.Margin({16, 0, 16, 8});
                     container.Children().Append(description);
                 }
                 container.Children().Append(group.content);
@@ -1196,7 +1230,7 @@ struct WidgetSettingsPresenter::Impl
     void InitializeFieldCard(WidgetFieldControl& field)
     {
         field.root = muxc::Border{};
-        if (cardStyle) field.root.Style(cardStyle);
+        presenter_controls::StyleSettingsSubrow(field.root, false, 0);
         field.content = muxc::StackPanel{};
         field.content.Spacing(7.0);
         field.editorRow = muxc::Grid{};
@@ -1235,13 +1269,12 @@ struct WidgetSettingsPresenter::Impl
                 });
         }
         field.row.Initialize(field.editorRow);
+        field.row.SetCompactEditor(compactEditor);
         if (compactEditor)
             field.row.SetControlAlignment(mux::HorizontalAlignment::Right);
         field.row.SetText(
             ToWide(field.schema.label),
             ToWide(field.schema.description));
-        field.row.label.FontWeight(
-            winrt::Windows::UI::Text::FontWeights::SemiBold());
         field.content.Children().Append(field.row.root);
         field.root.Child(field.content);
         muxa::AutomationProperties::SetName(
@@ -1493,7 +1526,7 @@ struct WidgetSettingsPresenter::Impl
         field.number.Maximum(maximum);
         field.number.SmallChange(step);
         field.number.LargeChange(step * 5.0);
-        field.number.Width(96.0);
+        field.number.Width(presenter_controls::kSettingNumberWidth);
         field.number.SpinButtonPlacementMode(
             muxc::NumberBoxSpinButtonPlacementMode::Compact);
         field.number.ValidationMode(
@@ -1828,8 +1861,9 @@ struct WidgetSettingsPresenter::Impl
         fieldsByKey.clear();
         RebuildGroups(snapshot, preserveExpansion);
 
-        auto ungrouped = muxc::StackPanel{};
-        ungrouped.Spacing(8.0);
+        InitializeCard(ungroupedCard);
+        ungroupedCard.root.Padding({0, 0, 0, 0});
+        ungroupedCard.content.Spacing(0.0);
         bool hasUngrouped = false;
         for (const auto& state : snapshot.fields)
         {
@@ -1840,14 +1874,14 @@ struct WidgetSettingsPresenter::Impl
                 parent->second.Children().Append(field->root);
             else
             {
-                ungrouped.Children().Append(field->root);
+                ungroupedCard.content.Children().Append(field->root);
                 hasUngrouped = true;
             }
             fieldsByKey.emplace(state.schema.key, pointer);
             fields.push_back(std::move(field));
         }
         if (hasUngrouped)
-            fieldsHost.Children().Append(ungrouped);
+            fieldsHost.Children().Append(ungroupedCard.root);
         // Match the legacy editor: fields without a group always
         // precede authored groups, and groups retain their declaration order.
         for (auto& group : groups)
@@ -2007,6 +2041,7 @@ struct WidgetSettingsPresenter::Impl
         const bool nameChanged = newIdentity || widgetName != snapshot.widgetName;
         widgetId = snapshot.widgetId;
         widgetName = snapshot.widgetName;
+        packageId = snapshot.packageId;
         generation = snapshot.generation;
         revision = snapshot.revision;
         hasSnapshot = true;
@@ -2040,6 +2075,7 @@ struct WidgetSettingsPresenter::Impl
             ? mux::Visibility::Collapsed : mux::Visibility::Visible);
         backgroundOpacity.row.SetText(L(gradientEnabled
             ? "panelGradient.barStartOpacity" : "app.settings.bg_opacity", L"Background opacity"));
+        appearanceSections.UpdateRows();
     }
 
     void PatchAppearance(const wr::WidgetSettingsSnapshot& snapshot)
@@ -2064,6 +2100,8 @@ struct WidgetSettingsPresenter::Impl
         resetCard.root.Visibility(snapshot.fields.empty()
             ? mux::Visibility::Collapsed
             : mux::Visibility::Visible);
+        relatedCard.root.Visibility(!packageId.empty() && callbacks.openPackagePermissions
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
 
         followGlobal.IsOn(snapshot.hostAppearance.followPersonalization);
         int selectedTheme = -1;
@@ -2160,12 +2198,49 @@ struct WidgetSettingsPresenter::Impl
         restoreScriptDefaultRow.root.Visibility(defaultPresetId.empty()
             ? mux::Visibility::Collapsed
             : mux::Visibility::Visible);
+        appearanceSections.UpdateRows();
     }
 
     void PatchFields(const wr::WidgetSettingsSnapshot& snapshot)
     {
+        std::unordered_map<std::string_view, const wr::WidgetSettingFieldState*> states;
+        states.reserve(snapshot.fields.size());
+        for (const auto& state : snapshot.fields)
+            states.emplace(state.schema.key, &state);
+        const auto conditionMatches = [&states](const wr::WidgetSettingCondition& condition) {
+            const auto source = states.find(condition.key);
+            if (source == states.end()) return false;
+            auto expected = condition.values;
+            // Match ResolveWidgetSettingFieldStates, including range snapping.
+            // Opaque fields contribute configured state, never their contents.
+            if (source->second->schema.Kind() == wr::WidgetSettingKind::Range)
+                for (auto& value : expected)
+                {
+                    double parsed = source->second->schema.minimum;
+                    if (wr::ParseFiniteSettingNumber(value, parsed))
+                        value = wr::FormatWidgetSettingNumber(wr::SnapRangeSettingValue(
+                            parsed, source->second->schema.minimum,
+                            source->second->schema.maximum, source->second->schema.step));
+                }
+            return wr::EvaluateSettingCondition(condition.operation,
+                wr::WidgetSettingConditionValues(*source->second), expected);
+        };
+        focusParents.clear();
         for (const auto& state : snapshot.fields)
         {
+            // Visibility blocks access first. If enabledWhen is satisfied,
+            // dependsOn can still be the condition disabling the same field.
+            std::string parent;
+            if (!state.visible && state.schema.showWhen)
+                parent = state.schema.showWhen->key;
+            else if (!state.enabled)
+            {
+                if (state.schema.enabledWhen && !conditionMatches(*state.schema.enabledWhen))
+                    parent = state.schema.enabledWhen->key;
+                else if (!state.schema.dependsOn.empty())
+                    parent = state.schema.dependsOn;
+            }
+            if (!parent.empty()) focusParents.emplace(state.schema.key, std::move(parent));
             const auto found = fieldsByKey.find(state.schema.key);
             if (found != fieldsByKey.end())
                 PatchField(*found->second, state);
@@ -2180,7 +2255,23 @@ struct WidgetSettingsPresenter::Impl
             group.root.Visibility(anyVisible
                 ? mux::Visibility::Visible
                 : mux::Visibility::Collapsed);
+            // A native Expander already contributes the outer content inset.
+            presenter_controls::UpdateSettingsSubrows(
+                group.content, group.schema.collapsible ? 0.0 : 16.0);
         }
+        presenter_controls::UpdateSettingsSubrows(ungroupedCard.content, 0.0);
+        const bool visibleUngrouped = std::any_of(fields.begin(), fields.end(),
+            [this](const auto& field) {
+                return field->visible && (field->schema.group.empty() ||
+                    !groupPanels.contains(field->schema.group));
+            });
+        ungroupedCard.root.Visibility(visibleUngrouped
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        const bool anyVisible = std::any_of(fields.begin(), fields.end(),
+            [](const auto& field) { return field->visible; });
+        fieldsHost.Visibility(anyVisible
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        scriptSettingsTitle.Visibility(fieldsHost.Visibility());
     }
 
     void PatchField(
@@ -3111,20 +3202,26 @@ struct WidgetSettingsPresenter::Impl
             L("appearance.darkText", L"Dark text")));
 
         stylePreviewTitle.Text(
-            L("app.settings.style_preview", L"Style preview"));
+            L("widgetSettings.presets", L"Component presets"));
         presetRow.SetText(
-            L("app.settings.current_preview", L"Current preview"));
+            L("widgetSettings.preset", L"Preset"));
         restoreScriptDefaultRow.SetText(
-            L("app.settings.preview_default", L"Preview default"));
+            L("widgetSettings.restorePreset", L"Restore the component's default preset"));
         const auto restoreScriptDefaultText = L(
-            "app.settings.restore_script_default",
-            L"Restore script default");
+            "app.settings.restore_default", L"Restore default");
         restoreScriptDefault.Content(
             winrt::box_value(restoreScriptDefaultText));
         scriptSettingsTitle.Text(
-            L("app.settings.script_settings", L"Script settings"));
+            L("widgetSettings.content", L"Content and behavior"));
         resetRow.SetText(
-            L("app.settings.set_as_default", L"Set as default"));
+            L("widgetSettings.restoreParameters", L"Restore default component parameters"),
+            L("widgetSettings.restoreParametersHint", L"Restore this instance's ordinary parameters, including hidden ones. Keep secrets, authorized files and folders, object references, and appearance."));
+        permissionsRow.SetText(
+            L("widgetSettings.packagePermissions", L"Component permissions"),
+            L("widgetSettings.packagePermissionsHint", L"Permission changes affect all instances of this component package."));
+        permissionsButton.Content(winrt::box_value(
+            L("app.settings.widgets_manage_permissions", L"Manage permissions")));
+        muxa::AutomationProperties::SetName(permissionsButton, permissionsRow.label.Text());
         const auto resetText = L(
             "app.settings.restore_default_settings",
             L"Restore default settings");
@@ -3400,24 +3497,62 @@ struct WidgetSettingsPresenter::Impl
     }
 
     mux::FrameworkElement FocusTarget(
-        std::string_view key) const noexcept
+        std::string_view key, bool reveal) const noexcept
     {
-        const auto found = fieldsByKey.find(std::string(key));
-        if (found == fieldsByKey.end()) return nullptr;
-        const WidgetFieldControl& field = *found->second;
-        if (field.text) return field.text;
-        if (field.password) return field.password;
-        if (field.toggle) return field.toggle;
-        if (field.slider) return field.slider;
-        if (field.colorEditor) return field.colorEditor->button;
-        if (field.select) return field.select;
-        if (field.multiSelect) return field.multiSelect;
-        if (field.date) return field.date;
-        if (field.time) return field.time;
-        if (field.search) return field.search;
-        if (field.choose) return field.choose;
-        if (field.clear) return field.clear;
-        return field.root;
+        try
+        {
+            const auto found = fieldsByKey.find(std::string(key));
+            if (found == fieldsByKey.end()) return nullptr;
+            const WidgetFieldControl* candidate = found->second;
+            std::unordered_set<std::string_view> visited;
+            while ((!candidate->visible || !candidate->enabled) &&
+                visited.emplace(candidate->schema.key).second)
+            {
+                const auto parent = focusParents.find(candidate->schema.key);
+                if (parent == focusParents.end()) break;
+                const auto control = fieldsByKey.find(parent->second);
+                if (control == fieldsByKey.end() ||
+                    visited.contains(control->second->schema.key)) break;
+                candidate = control->second;
+            }
+            const WidgetFieldControl& field = *candidate;
+            const auto group = std::find_if(groups.begin(), groups.end(),
+                [&field](const auto& candidate) {
+                    return candidate.schema.id == field.schema.group;
+                });
+            if (group != groups.end() &&
+                group->root.Visibility() == mux::Visibility::Visible)
+            {
+                // Reveal the authored container before the shell waits for
+                // layout. Revealing a group never changes its field values.
+                if (reveal && group->expander) group->expander.IsExpanded(true);
+                if (!field.visible)
+                    return group->expander
+                        ? group->expander.as<mux::FrameworkElement>()
+                        : group->root.as<mux::FrameworkElement>();
+            }
+            if (!field.visible)
+                return fieldsHost.Visibility() == mux::Visibility::Visible
+                    ? scriptSettingsTitle.as<mux::FrameworkElement>()
+                    : root.as<mux::FrameworkElement>();
+            // No reachable editable controller (for example, an invalid or
+            // cyclic authored dependency): still reveal the visible field row.
+            if (!field.enabled) return field.root;
+            if (field.text) return field.text;
+            if (field.password) return field.password;
+            if (field.toggle) return field.toggle;
+            if (field.slider) return field.slider;
+            if (field.colorEditor) return field.colorEditor->button;
+            if (field.select) return field.select;
+            if (field.multiSelect) return field.multiSelect;
+            if (field.date) return field.date;
+            if (field.time) return field.time;
+            if (field.search) return field.search;
+            if (field.choose) return field.choose;
+            if (field.clear) return field.clear;
+            return field.root;
+        }
+        catch (...) { return nullptr; }
     }
 
     void Close() noexcept
@@ -3464,6 +3599,8 @@ struct WidgetSettingsPresenter::Impl
                 restoreScriptDefault.Click(restoreScriptDefaultClicked);
             if (reset && HasToken(resetClicked))
                 reset.Click(resetClicked);
+            if (permissionsButton && HasToken(permissionsClicked))
+                permissionsButton.Click(permissionsClicked);
             const auto unhookScalar = [](AppearanceScalarControl& scalar) {
                 if (scalar.idleCommitTimer)
                 {
@@ -3541,6 +3678,9 @@ void WidgetSettingsPresenter::SetCallbacks(
 {
     if (!impl_ || impl_->closed) return;
     impl_->callbacks = std::move(callbacks);
+    impl_->relatedCard.root.Visibility(
+        impl_->hasSnapshot && !impl_->packageId.empty() && impl_->callbacks.openPackagePermissions
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
     impl_->ReportDiagnostics();
 }
 
@@ -3624,9 +3764,9 @@ WidgetSettingsPresenter::FlushPendingEdits()
 }
 
 mux::FrameworkElement WidgetSettingsPresenter::FocusTarget(
-    std::string_view settingKey) const noexcept
+    std::string_view settingKey, bool reveal) const noexcept
 {
-    return impl_ ? impl_->FocusTarget(settingKey) : nullptr;
+    return impl_ ? impl_->FocusTarget(settingKey, reveal) : nullptr;
 }
 
 std::wstring_view WidgetSettingsPresenter::WidgetId() const noexcept

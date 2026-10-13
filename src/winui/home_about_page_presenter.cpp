@@ -94,6 +94,7 @@ struct HomeAboutPagePresenter::Impl
     mux::Style navigationCardStyle{nullptr};
     muxc::StackPanel aboutRoot{nullptr};
     muxc::StackPanel debugRoot{nullptr};
+    muxc::Expander credits{nullptr};
 
     Section introductionSection;
     Section authorSection;
@@ -331,6 +332,30 @@ struct HomeAboutPagePresenter::Impl
             L"TranslucentTB (modified portions)", L"(GPL-3.0-only)",
             L"Copyright (c) TranslucentTB contributors",
             L"Modified for SnowDesktop from upstream commit 322e2b7");
+
+        // Version/update and support are the frequent About-page tasks.
+        // Keep legal notices available in one explicitly named disclosure.
+        aboutRoot.Children().Clear();
+        for (const auto& section : {versionSection.root, introductionSection.root,
+                 projectSection.root, communitySection.root, authorSection.root,
+                 profileSection.root, copyrightSection.root})
+            aboutRoot.Children().Append(section);
+        muxc::StackPanel creditGroups;
+        creditGroups.Spacing(24);
+        for (const auto& section : {thirdPartySection.root, dataSection.root,
+                 fontSection.root, referenceSection.root})
+        {
+            section.Padding({0, 0, 0, 0});
+            section.BorderThickness({0, 0, 0, 0});
+            section.Background(nullptr);
+            creditGroups.Children().Append(section);
+        }
+        credits = muxc::Expander{};
+        credits.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        credits.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        credits.IsExpanded(false);
+        credits.Content(creditGroups);
+        aboutRoot.Children().Append(credits);
 
         debugRoot = muxc::StackPanel{};
         debugRoot.Spacing(8.0);
@@ -586,6 +611,7 @@ struct HomeAboutPagePresenter::Impl
     {
         if (closed)
             return;
+        credits.Header(winrt::box_value(L("settings.about.licensesAndCredits", L"Third-party notices and credits")));
 
         SetSectionTitle(introductionSection,
             "app.settings.about_snowdesktop", L"About SnowDesktop");
@@ -742,11 +768,16 @@ struct HomeAboutPagePresenter::Impl
     {
         if (page == SettingsPage::About)
         {
-            if (focusId == "about.profile") return links[0].button;
-            if (focusId == "about.project") return links[4].button;
-            if (focusId == "about.website") return links[6].button;
-            if (focusId == "about.community") return links[7].button;
-            if (focusId == "about.thirdparty") return links[8].button;
+            const auto link = [&](HomeAboutLink target) -> mux::FrameworkElement {
+                for (const auto& entry : links)
+                    if (entry.target == target) return entry.button;
+                return versionButton;
+            };
+            if (focusId == "about.profile") return link(HomeAboutLink::Bilibili);
+            if (focusId == "about.project") return link(HomeAboutLink::SourceRepository);
+            if (focusId == "about.website") return link(HomeAboutLink::OfficialWebsite);
+            if (focusId == "about.community") return link(HomeAboutLink::QqGroup);
+            if (focusId == "about.thirdparty") return link(HomeAboutLink::EverythingSdk);
             return versionButton;
         }
         if (page == SettingsPage::Debug)

@@ -130,6 +130,7 @@ struct HotkeySettingRow
     {
         recorder.Root().HorizontalAlignment(mux::HorizontalAlignment::Right);
         row.Initialize(recorder.Root());
+        row.SetCompactEditor();
         row.SetControlAlignment(mux::HorizontalAlignment::Right);
     }
 };
@@ -268,11 +269,11 @@ struct GeneralPagePresenter::Impl
     void BuildControls()
     {
         root = muxc::StackPanel{};
-        root.Spacing(8.0);
+        root.Spacing(24.0);
         desktopRoot = muxc::StackPanel{};
-        desktopRoot.Spacing(8.0);
+        desktopRoot.Spacing(24.0);
         pageNavigationRoot = muxc::StackPanel{};
-        pageNavigationRoot.Spacing(8.0);
+        pageNavigationRoot.Spacing(24.0);
         dockShortcutRoot = muxc::StackPanel{};
         dockShortcutRoot.Spacing(8.0);
 
@@ -535,6 +536,14 @@ struct GeneralPagePresenter::Impl
         floatingDockHotkeyRow.Initialize(floatingDockHotkey);
         dockShortcutRoot.Children().Append(
             floatingDockHotkeyRow.row.root);
+        // Indent only the dependent label; editor trailing edges remain shared
+        // with each parent switch, including the two page-navigation shortcuts.
+        for (const auto& row : {softwareDesktopHotkeyRow.row.root,
+                 quickNavigationHotkeyRow.row.root,
+                 previousPageHotkeyRow.row.root, nextPageHotkeyRow.row.root,
+                 desktopPassthroughHotkeyRow.row.root,
+                 floatingDockHotkeyRow.row.root})
+            row.Margin({16.0, 0.0, 0.0, 0.0});
     }
 
     template <typename Edit>
@@ -1459,6 +1468,11 @@ void GeneralPagePresenter::RegisterFocusTargets(
             "general.floatingDock.hotkey"});
     registerAliases(impl_->doubleClickHideToggle,
         {"desktop.doubleClickHide", "general.doubleClickHide"});
+}
+
+mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId) const noexcept
+{
+    return impl_ && impl_->quickOptions ? impl_->quickOptions->FocusTarget(focusId, true) : nullptr;
 }
 
 void GeneralPagePresenter::ApplyOnboardingStatus(const HomeAboutStatusPatch& patch)
