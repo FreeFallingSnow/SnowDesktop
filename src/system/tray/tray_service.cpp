@@ -66,6 +66,7 @@ struct Service::Impl
     mutable std::mutex mutex;
     Snapshot snapshot;
     ChangeNotifications changes;
+    hook_registration::Statistics registrationStatistics;
     void Changed() { ++snapshot.revision; changes.Publish(); }
     std::shared_ptr<Connection> connection;
     std::map<std::string, Geometry> geometries;
@@ -172,7 +173,7 @@ struct Service::Impl
         result->signal = CreateEventW(nullptr, FALSE, FALSE, ObjectName(pid, L"Signal").c_str());
         if (!result->signal) { error = GetLastError(); return {}; }
         error = AttachCollector(result->window, state, result->module, stage,
-            [] { return deployment::GetTaskbarHookPath(); });
+            [] { return deployment::GetTaskbarHookPath(); }, {}, &registrationStatistics);
         if (error) return {};
         stage = L"collectorReady";
         HANDLE handles[]{stop, result->explorer, result->signal};
@@ -237,7 +238,9 @@ struct Service::Impl
             if (error != reportedError || reportedStage != stage)
             {
                 wchar_t message[256]{};
-                swprintf_s(message, L"Tray connection stage=%s error=%lu pid=%lu", stage, error, GetCurrentProcessId());
+                swprintf_s(message, L"Tray connection stage=%s error=%lu pid=%lu registrations=%llu successful=%llu failed=%llu",
+                    stage, error, GetCurrentProcessId(), registrationStatistics.attempts,
+                    registrationStatistics.successes, registrationStatistics.failures);
                 WriteDiagnosticLogEntry(message);
                 reportedError = error; reportedStage = stage;
             }

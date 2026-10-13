@@ -12,6 +12,7 @@
 #include "taskbar_hook/taskbar_connection.h"
 #include "taskbar_hook/taskbar_symbol_resolver.h"
 #include "diagnostics/diagnostic_log.h"
+#include "platform/operation_feedback.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -497,6 +498,24 @@ public:
         if (primaryTaskbar)
             GetWindowThreadProcessId(primaryTaskbar, &explorerProcessId);
 
+        // TAP can fail after the native attach acknowledged. Surface that
+        // asynchronous failure even when the settings page is not open.
+        if (hookEnabled && appearanceEnabled && state_->enabled && state_->appearanceEnabled &&
+            state_->status == snowdesktop::taskbar_hook::kStatusFailed &&
+            state_->ownerProcessId == GetCurrentProcessId() &&
+            state_->explorerProcessId == explorerProcessId &&
+            (!appearanceFailureReported_ || reportedFailureExplorer_ != explorerProcessId))
+        {
+            const std::wstring diagnostic = L"[TaskbarAppearance] failed; explorerPid=" + std::to_wstring(explorerProcessId) +
+                L" stage=" + std::to_wstring(state_->diagnosticStage) + L" error=" + std::to_wstring(state_->lastError);
+            WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Error);
+            appearanceFailureReported_ = true; reportedFailureExplorer_ = explorerProcessId;
+            snowdesktop::operation_feedback::Report({"app.settings.taskbar_connect_failed", {},
+                static_cast<DWORD>(state_->lastError), true});
+        }
+        if (!hookEnabled || !appearanceEnabled || state_->status == snowdesktop::taskbar_hook::kStatusApplied)
+            appearanceFailureReported_ = false;
+
         InterlockedIncrement(&state_->generation); // odd: write in progress
         state_->enabled = hookEnabled ? TRUE : FALSE;
         state_->defaultEnabled = defaultEnabled ? TRUE : FALSE;
@@ -822,17 +841,7 @@ private:
             if (selectedHookPath_.empty())
             {
                 const DWORD error = GetLastError();
-                // A temporarily busy publisher may still use a pre-resume DLL. Loading
-                // their exact resident image is safe; Connect requires a fresh
-                // host acknowledgement, so incompatible/retired code fails.
-                if (error == ERROR_BUSY)
-                    selectedHookPath_ = snowdesktop::deployment::GetResidentTaskbarHookPath(
-                        expectedExplorerProcessId,
-                        reinterpret_cast<std::uintptr_t>(GetPropW(taskbar,
-                            snowdesktop::taskbar_hook::kHookOwnerProperty)));
-                if (selectedHookPath_.empty())
-                    return Fail(expectedExplorerProcessId, error ? error : ERROR_FILE_NOT_FOUND);
-                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] publication busy; reconnecting active resident DLL; new DLL code deferred until Explorer exits naturally");
+                return Fail(expectedExplorerProcessId, error ? error : ERROR_FILE_NOT_FOUND);
             }
         }
         if (!std::filesystem::is_regular_file(selectedHookPath_))
@@ -905,6 +914,8 @@ private:
     DWORD injectedExplorerProcessId_ = 0;
     std::wstring selectedHookPath_;
     bool residentRuntimeLogged_ = false;
+    bool appearanceFailureReported_ = false;
+    DWORD reportedFailureExplorer_ = 0;
     ULONGLONG lastSymbolAttemptTick_ = 0;
 };
 

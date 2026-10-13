@@ -72,6 +72,7 @@ constexpr CLSID kTapSiteClsid = {
 constexpr UINT_PTR kTaskbarSubclassId = 0x53445442;
 constexpr UINT_PTR kHookOwnerSubclassId = 0x5344484f;
 LRESULT CALLBACK HookOwnerSubclass(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+void StartTaskbarTapIfNeeded();
 
 HMODULE g_module = nullptr;
 HANDLE g_mapping = nullptr;
@@ -1613,6 +1614,8 @@ LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
                 SetHookStatus(kStatusFailed, static_cast<DWORD>(winrt::to_hresult()));
             }
             ReplayHookStatus();
+            if (!classic && g_sharedState->appearanceEnabled)
+                StartTaskbarTapIfNeeded();
             return lParam;
         }
         catch (...)

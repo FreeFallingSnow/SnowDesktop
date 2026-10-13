@@ -29,6 +29,7 @@ public:
     void Stop() noexcept;
     HWND Window() const noexcept { return window_; }
     hook_registration::Statistics Statistics() const;
+    std::size_t HookCount() const;
 private:
     static LRESULT CALLBACK WindowProc(HWND, UINT, WPARAM, LPARAM);
     LRESULT Apply(HWND source, bool cloak) noexcept;
@@ -43,5 +44,6 @@ private:
     bool started_ = false;
     hook_registration::Retry retry_;
     hook_registration::Statistics statistics_;
+    std::size_t activeHooks_ = 0;
 };
 }

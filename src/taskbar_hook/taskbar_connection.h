@@ -107,11 +107,22 @@ inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
         const DWORD thread = GetWindowThreadProcessId(window, &owner);
         if (!thread || owner != processId) return ERROR_INVALID_WINDOW_HANDLE;
         const auto entryAbi = reinterpret_cast<const DWORD*>(GetProcAddress(module, "SnowDesktopHookEntryAbi"));
+        const HANDLE previousEntryOwner = GetPropW(window, hook_entry::kOwnerProperty);
+        const bool entry = entryAbi && *entryAbi == hook_entry::kAbi;
         if (entryAbi && *entryAbi == hook_entry::kAbi &&
             !SetPropW(window, hook_entry::kOwnerProperty, ULongToHandle(hostProcessId))) return GetLastError();
         if (stage) *stage = ConnectionStage::RegisterHook;
         hook = SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread);
-        if (!hook) return GetLastError();
+        if (!hook)
+        {
+            const DWORD error = GetLastError();
+            if (entry && GetPropW(window, hook_entry::kOwnerProperty) == ULongToHandle(hostProcessId))
+            {
+                if (previousEntryOwner) SetPropW(window, hook_entry::kOwnerProperty, previousEntryOwner);
+                else RemovePropW(window, hook_entry::kOwnerProperty);
+            }
+            return error;
+        }
         // Window-thread delivery is synchronous; clearing only our transient
         // acknowledgement cannot release the existing owner or native hooks.
         RemovePropW(window, kHookConnectionProperty);

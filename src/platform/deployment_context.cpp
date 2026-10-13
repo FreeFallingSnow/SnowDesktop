@@ -386,6 +386,16 @@ std::filesystem::path GetLegacyLocalAppDataRoot()
     return result;
 }
 
+std::filesystem::path GetStableHookEntryRoot()
+{
+    // Every channel and portable data directory uses the same registered
+    // image paths for this user. Feature implementations stay in their own
+    // leased data stores and are selected by the host's process catalog.
+    const auto root = GetLegacyLocalAppDataRoot();
+    if (root.empty()) { SetLastError(ERROR_PATH_NOT_FOUND); return {}; }
+    return root / L"HookEntry";
+}
+
 bool IsReparsePoint(const std::filesystem::path& path)
 {
     const DWORD attributes = GetFileAttributesW(path.c_str());
@@ -754,7 +764,8 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename,
         {
             const auto entry = snowdesktop::deployment::GetRuntimeFilePath(dock32
                 ? L"SnowDesktopHookEntry32.dll" : L"SnowDesktopHookEntry.dll");
-            const auto root = std::filesystem::path(GetDataDirectoryPath()) / L"ShellHook" / L"shared";
+            const auto root = GetStableHookEntryRoot();
+            if (root.empty()) return {};
             return snowdesktop::hook_entry::Prepare(root, entry, payload, shared);
         }
         return shared.wstring();
@@ -1023,12 +1034,18 @@ std::wstring GetTaskbarHookPath()
     if (deployedPath.empty()) deployedPath = GetInjectableRuntimeFilePath(kTaskbarHookFilename);
     if (deployedPath.empty() && GetLastError() == ERROR_BUSY)
     {
+        std::wstring resident;
         const HWND taskbar = FindWindowW(L"Shell_TrayWnd", nullptr);
         DWORD process = 0;
         if (taskbar && GetWindowThreadProcessId(taskbar, &process))
-            deployedPath = GetResidentTaskbarHookPath(process,
+            resident = GetResidentTaskbarHookPath(process,
                 reinterpret_cast<std::uintptr_t>(GetPropW(taskbar,
                     snowdesktop::taskbar_hook::kHookOwnerProperty)));
+        if (!resident.empty())
+        {
+            deployedPath = hook_entry::Prepare(GetStableHookEntryRoot(),
+                GetRuntimeFilePath(L"SnowDesktopHookEntry.dll"), hook_entry::Payload::Taskbar, resident);
+        }
         if (!deployedPath.empty())
         {
             WriteDiagnosticLogEntry(L"[HookRuntimeDeployment] publication busy; using active resident DLL; new DLL code deferred until Explorer exits naturally");

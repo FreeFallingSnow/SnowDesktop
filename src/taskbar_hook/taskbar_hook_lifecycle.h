@@ -14,8 +14,8 @@ inline constexpr wchar_t kHookOwnerProperty[] = L"SnowDesktop.Taskbar.HookOwner.
 inline constexpr wchar_t kHookHostProcessProperty[] = L"SnowDesktop.Taskbar.HookHostProcess.v1";
 inline constexpr wchar_t kHookConnectionProperty[] = L"SnowDesktop.Taskbar.HookConnection.v1";
 inline constexpr wchar_t kConnectHookMessageName[] = L"SnowDesktop.Taskbar.ConnectHook.v1";
-inline constexpr wchar_t kResumeHookMessageName[] = L"SnowDesktop.Taskbar.ResumeHook.v1";
-inline constexpr wchar_t kHookResumeProtocolProperty[] = L"SnowDesktop.Taskbar.ResumeProtocol.v1";
+inline constexpr wchar_t kResumeHookMessageName[] = L"SnowDesktop.Taskbar.ResumeHook.v2";
+inline constexpr wchar_t kHookResumeProtocolProperty[] = L"SnowDesktop.Taskbar.ResumeProtocol.v2";
 inline constexpr wchar_t kRetireHookMessageName[] = L"SnowDesktop.Taskbar.RetireHook.v1";
 inline std::atomic_bool hookInstanceRetired{false};
 inline std::atomic<DWORD> taskViewMonitorThread{0};

@@ -63,7 +63,7 @@ LRESULT CloakDispatcher::Apply(HWND source, bool cloak) noexcept
     {
         std::lock_guard lock(mutex_);
         ++statistics_.attempts; statistics_.lastThread = thread; statistics_.lastError = error;
-        if (hook) { ++statistics_.successes; retry_.Reset(); }
+        if (hook) { ++statistics_.successes; ++activeHooks_; retry_.Reset(); }
         else { ++statistics_.failures; retry_.Failed(error, GetTickCount64()); }
     }
     if (!hook) return HRESULT_FROM_WIN32(error);
@@ -73,11 +73,16 @@ LRESULT CloakDispatcher::Apply(HWND source, bool cloak) noexcept
         static_cast<LPARAM>(reinterpret_cast<UINT_PTR>(owner.token)), SMTO_ABORTIFHUNG, 120, &ignored) != 0;
     const DWORD sendError = GetLastError();
     api_.remove(hook);
+    { std::lock_guard lock(mutex_); --activeHooks_; }
     return sent ? S_OK : HRESULT_FROM_WIN32(sendError ? sendError : ERROR_TIMEOUT);
 }
 hook_registration::Statistics CloakDispatcher::Statistics() const
 {
     std::lock_guard lock(mutex_); return statistics_;
+}
+std::size_t CloakDispatcher::HookCount() const
+{
+    std::lock_guard lock(mutex_); return activeHooks_;
 }
 void CloakDispatcher::Stop() noexcept
 {

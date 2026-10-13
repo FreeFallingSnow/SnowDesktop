@@ -79,6 +79,7 @@ public:
     HWND CloakWindow() const noexcept { return dispatcher_.Window(); }
     hook_registration::Statistics RegistrationStatistics() const noexcept { return statistics_; }
     hook_registration::Statistics CloakStatistics() const { return dispatcher_.Statistics(); }
+    std::size_t CloakHookCount() const { return dispatcher_.HookCount(); }
 
     void Stop() noexcept
     {

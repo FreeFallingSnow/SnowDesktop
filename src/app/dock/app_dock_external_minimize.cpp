@@ -51,6 +51,21 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
     std::sort(windows.begin(), windows.end(), std::less<HWND>{});
     windows.erase(std::unique(windows.begin(), windows.end()), windows.end());
     dockExternalMinimize_->UpdateTargets(windows);
+    const auto registrations = dockExternalMinimize_->RegistrationStatistics();
+    const auto cloakRegistrations = dockExternalMinimize_->CloakStatistics();
+    const auto active = dockExternalMinimize_->HookCount();
+    const auto activeCloak = dockExternalMinimize_->CloakHookCount();
+    static std::uint64_t reportedAttempts = 0, reportedCloakAttempts = 0;
+    static std::size_t reportedActive = 0;
+    if (reportedAttempts != registrations.attempts || reportedCloakAttempts != cloakRegistrations.attempts || reportedActive != active)
+    {
+        wchar_t message[320]{};
+        swprintf_s(message, L"[DockHookRegistration] nativeActiveCBT=%zu cloakActive=%zu attempts=%llu failures=%llu lastError=%lu cloakAttempts=%llu cloakFailures=%llu",
+            active, activeCloak, registrations.attempts, registrations.failures, registrations.lastError,
+            cloakRegistrations.attempts, cloakRegistrations.failures);
+        WriteDiagnosticLogEntry(message, registrations.lastError ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
+        reportedAttempts = registrations.attempts; reportedCloakAttempts = cloakRegistrations.attempts; reportedActive = active;
+    }
 }
 
 bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)

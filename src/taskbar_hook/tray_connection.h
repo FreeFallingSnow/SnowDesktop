@@ -2,6 +2,7 @@
 
 #include "tray_protocol.h"
 #include <string>
+#include "../platform/hook_registration_retry.h"
 
 namespace snowdesktop::tray
 {
@@ -15,7 +16,8 @@ struct HookConnectionApi
 // resident property alone is never sufficient to declare collection attached.
 template<typename ResolvePath>
 DWORD AttachCollector(HWND window, SharedState& state, HMODULE& module,
-    const wchar_t*& stage, ResolvePath&& path, HookConnectionApi api = {})
+    const wchar_t*& stage, ResolvePath&& path, HookConnectionApi api = {},
+    hook_registration::Statistics* statistics = nullptr)
 {
     const auto epoch = static_cast<WPARAM>(Read(state.epoch));
     DWORD targetProcess = 0;
@@ -41,7 +43,13 @@ DWORD AttachCollector(HWND window, SharedState& state, HMODULE& module,
     if (!procedure) return ERROR_PROC_NOT_FOUND;
     stage = L"installHook";
     const HHOOK hook = api.install(WH_CALLWNDPROC, procedure, module, targetThread);
-    if (!hook) return GetLastError();
+    const DWORD registrationError = hook ? ERROR_SUCCESS : (GetLastError() ? GetLastError() : ERROR_GEN_FAILURE);
+    if (statistics)
+    {
+        ++statistics->attempts; statistics->lastThread = targetThread; statistics->lastError = registrationError;
+        if (hook) ++statistics->successes; else ++statistics->failures;
+    }
+    if (!hook) return registrationError;
     DWORD_PTR ignored = 0;
     stage = L"attachMessage";
     const UINT message = RegisterWindowMessageW(kAttachMessage);
