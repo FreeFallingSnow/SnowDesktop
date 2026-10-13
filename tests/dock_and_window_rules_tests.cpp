@@ -2156,6 +2156,38 @@ int main(int argc, char** argv)
             Check(registrations == 1 && placements == 2 && stable.Bounds().right == 72,
                 "moving a reserved Dock to another edge reuses its registration and commits one new geometry");
         }
+        {
+            // Replay Shell losing its registrations while keeping the same
+            // monitor and native window bounds. No real Explorer/work area is
+            // touched; only the SHAppBarMessage boundary is substituted.
+            std::vector<DWORD> restartMessages;
+            snowdesktop::StatusBarAppBar restarted([&](DWORD message, APPBARDATA&) -> UINT_PTR {
+                restartMessages.push_back(message);
+                return TRUE;
+            });
+            const HWND endpoint = reinterpret_cast<HWND>(static_cast<UINT_PTR>(3));
+            const RECT monitor{0, 0, 1920, 1080};
+            Check(restarted.Place(endpoint, WM_APP + 1, ABE_BOTTOM, 64, monitor),
+                "the merged strip establishes its reservation before Explorer restarts");
+            const RECT previousBounds = restarted.Bounds();
+            restartMessages.clear();
+            restarted.ExplorerRestarted();
+            Check(!restarted.Registered() && restartMessages.empty(),
+                "Explorer replacement invalidates the registration without removing a new generation's bar");
+            const RECT unconstrained = restarted.RestoreWorkArea({0, 0, 1920, 1016});
+            Check(unconstrained.bottom == 1016,
+                "a lost AppBar cannot claim ownership of the replacement Explorer's work area");
+            const bool restored = restarted.Place(endpoint, WM_APP + 1, ABE_BOTTOM, 64, monitor);
+            const RECT restoredBounds = restarted.Bounds();
+            Check(restored && restarted.Registered() && EqualRect(&previousBounds, &restoredBounds),
+                "the merged strip recovers its unchanged geometry in the new Explorer");
+            Check(restartMessages == std::vector<DWORD>{ABM_NEW, ABM_QUERYPOS, ABM_SETPOS},
+                "unchanged bounds still require one new Shell registration and position commit");
+            restartMessages.clear();
+            Check(restarted.Place(endpoint, WM_APP + 1, ABE_BOTTOM, 64, monitor) &&
+                    restartMessages == std::vector<DWORD>{ABM_QUERYPOS},
+                "a recovered strip settles without repeatedly registering or committing its position");
+        }
         snowdesktop::StatusBarAppBar reservation([&](DWORD message, APPBARDATA& data) -> UINT_PTR {
             messages.push_back(message);
             if (message == ABM_QUERYPOS) data.rc.left = -1880;

@@ -497,6 +497,7 @@ struct StatusBar::Impl
             const int thickness = mergedDockHeight > 0 ? mergedDockHeight : static_cast<int>(std::lround(
                 (vertical ? 48.f : 32.f) * owner.settings.scale * dpi / 96.f));
             bool placed = false;
+            const bool restoringRegistration = reserveSpace && !appbar.Registered();
             if (reserveSpace)
             {
                 placed = appbar.Place(hwnd, kAppBar, edge, thickness, info.rcMonitor);
@@ -558,7 +559,10 @@ struct StatusBar::Impl
                 backdrop.SetVisible(!fullscreen && appearance.glassEnabled && !HighContrast());
                 if (!fullscreen) Show();
             }
-            if (moved && owner.dockChanged) owner.dockChanged(true);
+            // Explorer can approve the same bounds after losing all AppBars.
+            // Refresh Dock policy even without a physical move so a retained
+            // host does not keep a frame gated by the old registration.
+            if ((moved || restoringRegistration) && owner.dockChanged) owner.dockChanged(true);
         }
         void BuildItems(bool trayOnly)
         {

@@ -199,6 +199,19 @@ void DesktopApp::RegisterOleDropTarget()
 
 void DesktopApp::ResetDesktopWindowResources()
 {
+    // Dock hosts are application-owned top-level windows. Recreating the
+    // Explorer-owned overlay must not retire their monitor-local reveal state
+    // or reset the shared strip to hidden. Device recovery and exit still
+    // release every Dock window and its composition resources.
+    // WM_DESTROY can arrive before TaskbarCreated marks the replacement.
+    DWORD currentExplorerProcessId = 0;
+    GetWindowThreadProcessId(FindWindowW(L"Shell_TrayWnd", nullptr),
+        &currentExplorerProcessId);
+    const bool replacingExplorer = explorerDesktopRecreatePending_ ||
+        (desktopHostExplorerProcessId_ &&
+            currentExplorerProcessId != desktopHostExplorerProcessId_);
+    const bool preserveDockHosts = replacingExplorer &&
+        !exitRequested_ && !graphicsDeviceRecovery_.Pending();
     if (widgetAccessibilityProvider_ && hwnd_)
         widgetAccessibilityProvider_->DetachWindow(hwnd_);
     EndDesktopPassthrough(false);
@@ -269,7 +282,8 @@ void DesktopApp::ResetDesktopWindowResources()
     DestroyDragHintWindow();
     DestroyDragPreviewWindow();
     DestroyFloatingPopupWindow();
-    DestroyFloatingDockWindow();
+    if (!preserveDockHosts)
+        DestroyFloatingDockWindow();
     DestroyQuickNavigationWindow();
     if (inputHwnd_ && IsWindow(inputHwnd_))
         DestroyWindow(inputHwnd_);
