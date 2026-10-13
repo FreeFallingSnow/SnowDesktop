@@ -2,6 +2,7 @@
 
 #include <windows.h>
 #include <dwmapi.h>
+#include "dock_cloak_dispatcher.h"
 
 namespace snowdesktop::dock_source_cloak
 {
@@ -150,9 +151,12 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed)
     RemovePropW(source, ResultProperty);
     DWORD_PTR ignored = 0;
     SetLastError(0);
-    const bool sent = SendMessageTimeoutW(source, message, cloak ? 1 : 0,
-        static_cast<LPARAM>(reinterpret_cast<UINT_PTR>(owner.token)),
-        SMTO_ABORTIFHUNG, 120, &ignored) != 0;
+    const HWND dispatcher = reinterpret_cast<HWND>(GetPropW(source, dock_minimize::kCloakDispatcherProperty));
+    const bool sent = dispatcher
+        ? SendMessageTimeoutW(dispatcher, dock_minimize::CloakDispatchMessage(),
+            reinterpret_cast<WPARAM>(source), cloak ? 1 : 0, SMTO_ABORTIFHUNG, 180, &ignored) != 0
+        : SendMessageTimeoutW(source, message, cloak ? 1 : 0,
+            static_cast<LPARAM>(reinterpret_cast<UINT_PTR>(owner.token)), SMTO_ABORTIFHUNG, 120, &ignored) != 0;
     const DWORD error = GetLastError();
     if (SameOwner(source, owner) && GetPropW(source, AckProperty) == owner.token)
     {
@@ -161,6 +165,9 @@ inline HRESULT ApplyCloak(HWND source, Owner owner, BOOL cloak, bool& confirmed)
         RemovePropW(source, ResultProperty);
         return hr;
     }
+    if (dispatcher && sent && FAILED(static_cast<HRESULT>(ignored)) &&
+        static_cast<HRESULT>(ignored) != HRESULT_FROM_WIN32(ERROR_TIMEOUT))
+        return static_cast<HRESULT>(ignored);
     // A timed-out sent message may still complete. Retain the lease so cleanup
     // can release a late cloak instead of abandoning an invisible application.
     confirmed = false;

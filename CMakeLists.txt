@@ -376,6 +376,8 @@ set(SNOWDESKTOP_SOURCES
     src/platform/hook_entry_deployment.h
     src/platform/hook_entry_protocol.h
     src/platform/hook_registration_retry.h
+    src/dock/dock_cloak_dispatcher.cpp
+    src/dock/dock_cloak_dispatcher.h
     src/platform/shell_overlay_window.h
     src/icons/shortcut_icon_resource.cpp
     src/icons/shortcut_icon_resource.h
@@ -1314,6 +1316,28 @@ if (BUILD_TESTING)
         COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopTaskbarHook>"
         LABELS core integration tray)
     add_dependencies(SnowDesktopTrayResidentTests SnowDesktopTaskbarHook)
+
+    foreach(marker 1 2)
+        add_library(SnowDesktopHookEntryFixture${marker} SHARED tests/platform/hook_entry_fixture.cpp)
+        target_compile_features(SnowDesktopHookEntryFixture${marker} PRIVATE cxx_std_20)
+        target_compile_definitions(SnowDesktopHookEntryFixture${marker} PRIVATE HOOK_ENTRY_FIXTURE_MARKER=${marker} UNICODE _UNICODE)
+        target_compile_options(SnowDesktopHookEntryFixture${marker} PRIVATE /W4 /EHsc /utf-8)
+        target_link_libraries(SnowDesktopHookEntryFixture${marker} PRIVATE user32)
+        set_property(TARGET SnowDesktopHookEntryFixture${marker} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+        set_target_properties(SnowDesktopHookEntryFixture${marker} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests")
+    endforeach()
+    snowdesktop_add_test(
+        SnowDesktopHookEntryTests
+        hook_stable_entry
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/platform/hook_entry_tests.cpp src/platform/hook_entry_deployment.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32 bcrypt
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopHookEntry>"
+            "$<TARGET_FILE:SnowDesktopHookEntryFixture1>" "$<TARGET_FILE:SnowDesktopHookEntryFixture2>"
+        LABELS core integration deployment)
+    add_dependencies(SnowDesktopHookEntryTests SnowDesktopHookEntry SnowDesktopHookEntryFixture1 SnowDesktopHookEntryFixture2)
 
     snowdesktop_add_test(
         SnowDesktopShellOverlayWindowTests
@@ -2500,7 +2524,7 @@ if (BUILD_TESTING)
         SnowDesktopDockExternalMinimizeTests
         dock_external_minimize
         NATIVE_WINDOW_COMPATIBILITY
-        SOURCES tests/dock/dock_external_minimize_tests.cpp src/dock/dock_external_minimize.cpp
+        SOURCES tests/dock/dock_external_minimize_tests.cpp src/dock/dock_external_minimize.cpp src/dock/dock_cloak_dispatcher.cpp
             src/dock/dock_window_transition.cpp src/ui/render/ui_animation_scheduler.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES d2d1 d3d11 dxgi dcomp dwmapi ole32 user32 gdi32
@@ -2508,6 +2532,16 @@ if (BUILD_TESTING)
         LABELS integration core dock window)
     add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimizeHook)
     add_dependencies(SnowDesktopDockExternalMinimizeTests SnowDesktopDockMinimize32)
+    snowdesktop_add_test(
+        SnowDesktopDockHookResourceTests
+        dock_hook_resources
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/dock/dock_hook_resource_tests.cpp src/dock/dock_cloak_dispatcher.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32 dwmapi
+        COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopDockMinimizeHook>"
+        LABELS integration core dock window)
+    add_dependencies(SnowDesktopDockHookResourceTests SnowDesktopDockMinimizeHook)
     snowdesktop_add_test(
         SnowDesktopDockGenieRenderTests
         dock_genie_render

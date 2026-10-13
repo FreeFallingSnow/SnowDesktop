@@ -35,12 +35,16 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
         GetPropW(receiver, snowdesktop::dock_minimize::kOwnerProperty) == ULongToHandle(ownerId))
     {
         const DWORD revision = HandleToULong(GetPropW(receiver, snowdesktop::dock_minimize::kRevisionProperty));
-        if (revision != lastRevision)
+        if (revision != lastRevision || hooks.HasPendingRetries())
         {
             lastRevision = revision;
             for (HWND window : readyWindows)
+            {
                 if (GetPropW(window, snowdesktop::dock_minimize::kReadyProperty) == receiver)
                     RemovePropW(window, snowdesktop::dock_minimize::kReadyProperty);
+                if (GetPropW(window, snowdesktop::dock_minimize::kCloakDispatcherProperty) == hooks.CloakWindow())
+                    RemovePropW(window, snowdesktop::dock_minimize::kCloakDispatcherProperty);
+            }
             readyWindows.clear();
             struct Context { HWND receiver; std::vector<DWORD> threads; std::vector<HWND> windows; } context{receiver, {}, {}};
             EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
@@ -61,6 +65,7 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             {
                 if (hooks.HasThread(GetWindowThreadProcessId(window, nullptr)) &&
                     GetPropW(window, snowdesktop::dock_minimize::kTargetProperty) == receiver &&
+                    SetPropW(window, snowdesktop::dock_minimize::kCloakDispatcherProperty, hooks.CloakWindow()) &&
                     SetPropW(window, snowdesktop::dock_minimize::kReadyProperty, receiver))
                     readyWindows.push_back(window);
             }
@@ -73,10 +78,14 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int)
             DispatchMessageW(&message);
         }
     }
-    hooks.Stop();
     for (HWND window : readyWindows)
+    {
         if (GetPropW(window, snowdesktop::dock_minimize::kReadyProperty) == receiver)
             RemovePropW(window, snowdesktop::dock_minimize::kReadyProperty);
+        if (GetPropW(window, snowdesktop::dock_minimize::kCloakDispatcherProperty) == hooks.CloakWindow())
+            RemovePropW(window, snowdesktop::dock_minimize::kCloakDispatcherProperty);
+    }
+    hooks.Stop();
     CloseHandle(owner);
     return 0;
 }

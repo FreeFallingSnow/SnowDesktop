@@ -630,7 +630,7 @@ int wmain(int argc, wchar_t** argv)
         SetPropW(fixture, kReadyProperty, otherReceiver);
         Check(monitor.Start(receiver, dll.wstring(), {}, {}), "new host starts while stale target remains");
         monitor.UpdateTargets(targets);
-        Check(monitor.OwnsTarget(fixture) && !GetPropW(fixture, kReadyProperty),
+        Check(monitor.OwnsTarget(fixture) && GetPropW(fixture, kReadyProperty) != otherReceiver,
             "stale owner and readiness markers are reclaimed for an existing window");
         monitor.Stop();
         DestroyWindow(otherReceiver);
