@@ -7,9 +7,19 @@
 #include <array>
 #include <span>
 #include <string>
+#include <algorithm>
+#include <vector>
 
 namespace snowdesktop::taskbar_hook
 {
+inline void RemoveStaleTaskbarWindows(std::vector<HWND>& taskbars, DWORD explorer) noexcept
+{
+    std::erase_if(taskbars, [explorer](HWND window) {
+        DWORD process = 0;
+        return !GetWindowThreadProcessId(window, &process) || !explorer || process != explorer;
+    });
+}
+
 enum class ConnectionStage { None, Deployment, LoadModule, Export, RegisterHook, DeliverMessage, Acknowledge };
 inline const wchar_t* ConnectionStageName(ConnectionStage stage) noexcept
 {

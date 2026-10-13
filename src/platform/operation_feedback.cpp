@@ -47,11 +47,31 @@ void Show(const Failure& failure)
 {
     if (failure.error == ERROR_CANCELLED || failure.error == static_cast<DWORD>(E_ABORT) ||
         failure.error == static_cast<DWORD>(HRESULT_FROM_WIN32(ERROR_CANCELLED))) return;
-    const auto message = Describe(failure);
-    WriteDiagnosticLogEntry(message.c_str(), failure.warning
-        ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Error);
-    MessageBoxW(nullptr, message.c_str(), L"SnowDesktop", MB_OK |
-        (failure.warning ? MB_ICONWARNING : MB_ICONERROR) | MB_SETFOREGROUND);
+    PresentIfCurrent(failure, [&] {
+        const auto message = Describe(failure);
+        WriteDiagnosticLogEntry(message.c_str(), failure.warning
+            ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Error);
+        if (failure.stillRelevant)
+        {
+            TASKDIALOGCONFIG dialog{sizeof(dialog)};
+            dialog.dwFlags = TDF_CALLBACK_TIMER | TDF_ALLOW_DIALOG_CANCELLATION;
+            dialog.pszWindowTitle = L"SnowDesktop";
+            dialog.pszMainIcon = failure.warning ? TD_WARNING_ICON : TD_ERROR_ICON;
+            dialog.pszContent = message.c_str();
+            dialog.dwCommonButtons = TDCBF_OK_BUTTON;
+            dialog.lpCallbackData = reinterpret_cast<LONG_PTR>(&failure);
+            dialog.pfCallback = [](HWND window, UINT notification, WPARAM, LPARAM, LONG_PTR data) -> HRESULT {
+                const auto& current = *reinterpret_cast<const Failure*>(data);
+                if (notification == TDN_TIMER && !ShouldPresent(current))
+                    SendMessageW(window, TDM_CLICK_BUTTON, IDOK, 0);
+                return S_OK;
+            };
+            if (SUCCEEDED(TaskDialogIndirect(&dialog, nullptr, nullptr, nullptr))) return;
+            if (!ShouldPresent(failure)) return;
+        }
+        MessageBoxW(nullptr, message.c_str(), L"SnowDesktop", MB_OK |
+            (failure.warning ? MB_ICONWARNING : MB_ICONERROR) | MB_SETFOREGROUND);
+    });
 }
 
 RecoveryChoice ChooseRecovery(HWND owner, const Failure& failure, const wchar_t* continueLabel)

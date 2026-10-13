@@ -10,6 +10,7 @@
 #include "taskbar_hook/taskbar_hook_protocol.h"
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_connection.h"
+#include "taskbar_hook/taskbar_failure_feedback.h"
 #include "taskbar_hook/taskbar_symbol_resolver.h"
 #include "diagnostics/diagnostic_log.h"
 #include "platform/operation_feedback.h"
@@ -504,14 +505,18 @@ public:
             state_->status == snowdesktop::taskbar_hook::kStatusFailed &&
             state_->ownerProcessId == GetCurrentProcessId() &&
             state_->explorerProcessId == explorerProcessId &&
-            (!appearanceFailureReported_ || reportedFailureExplorer_ != explorerProcessId))
+            (!appearanceFailureReported_ || reportedFailureExplorer_ != explorerProcessId ||
+                reportedFailureError_ != static_cast<DWORD>(state_->lastError)))
         {
             const std::wstring diagnostic = L"[TaskbarAppearance] failed; explorerPid=" + std::to_wstring(explorerProcessId) +
                 L" stage=" + std::to_wstring(state_->diagnosticStage) + L" error=" + std::to_wstring(state_->lastError);
             WriteDiagnosticLogEntry(diagnostic.c_str(), DiagnosticLogLevel::Error);
             appearanceFailureReported_ = true; reportedFailureExplorer_ = explorerProcessId;
+            reportedFailureError_ = static_cast<DWORD>(state_->lastError);
+            const snowdesktop::taskbar_hook::AppearanceFailureKey failure{
+                GetCurrentProcessId(), explorerProcessId, reportedFailureError_};
             snowdesktop::operation_feedback::Report({"app.settings.taskbar_connect_failed", {},
-                static_cast<DWORD>(state_->lastError), true});
+                reportedFailureError_, true, [failure] { return failure.IsCurrent(); }});
         }
         if (!hookEnabled || !appearanceEnabled || state_->status == snowdesktop::taskbar_hook::kStatusApplied)
             appearanceFailureReported_ = false;
@@ -614,6 +619,9 @@ public:
                     taskbars.end())
                 taskbars.push_back(target.taskbar);
         }
+        // Cached/reparented taskbars may disappear between refreshes, and
+        // private test windows can share their class names in another process.
+        snowdesktop::taskbar_hook::RemoveStaleTaskbarWindows(taskbars, explorerProcessId);
         for (HWND taskbar : taskbars)
         {
             if (hookEnabled)
@@ -664,14 +672,14 @@ public:
             return true;
         if (injectionInFlight_.load(std::memory_order_acquire))
             return false;
-        constexpr ULONGLONG kFailedInjectionRetryDelayMs = 10000;
         if ((!alreadyInjected || retryAppearance) && !resolveSymbols &&
             state_->explorerProcessId == explorerProcessId &&
-            now - lastInjectionAttemptTick_ < kFailedInjectionRetryDelayMs)
+            now - lastInjectionAttemptTick_ < injectionRetryDelayMs_)
             return false;
 
         state_->explorerProcessId = explorerProcessId;
         lastInjectionAttemptTick_ = now;
+        injectionRetryDelayMs_ = 10000;
         if (resolveSymbols)
         {
             symbolAttemptProcessId_ = explorerProcessId;
@@ -896,6 +904,15 @@ private:
         std::lock_guard lock(mutex_);
         if (state_ && state_->explorerProcessId == expectedExplorerProcessId)
         {
+            if (error == ERROR_INVALID_WINDOW_HANDLE || error == ERROR_PROCESS_ABORTED)
+            {
+                // A destroyed target is a topology change, not a TAP result.
+                // Let the next refresh reconnect current windows promptly.
+                injectionRetryDelayMs_ = 250;
+                InterlockedExchange(&state_->lastError, ERROR_SUCCESS);
+                InterlockedExchange(&state_->status, snowdesktop::taskbar_hook::kStatusIdle);
+                return false;
+            }
             InterlockedExchange(&state_->lastError, static_cast<LONG>(error));
             InterlockedExchange(&state_->status,
                 snowdesktop::taskbar_hook::kStatusFailed);
@@ -910,12 +927,14 @@ private:
     std::thread injectionThread_;
     std::atomic<bool> injectionInFlight_{ false };
     ULONGLONG lastInjectionAttemptTick_ = 0;
+    ULONGLONG injectionRetryDelayMs_ = 10000;
     DWORD symbolAttemptProcessId_ = 0;
     DWORD injectedExplorerProcessId_ = 0;
     std::wstring selectedHookPath_;
     bool residentRuntimeLogged_ = false;
     bool appearanceFailureReported_ = false;
     DWORD reportedFailureExplorer_ = 0;
+    DWORD reportedFailureError_ = 0;
     ULONGLONG lastSymbolAttemptTick_ = 0;
 };
 

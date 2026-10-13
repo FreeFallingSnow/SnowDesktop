@@ -1,4 +1,5 @@
 #include "platform/operation_feedback.h"
+#include "taskbar_hook/taskbar_failure_feedback.h"
 #include "shell/shell_file_operation_progress.h"
 #include "shell/shell_file_operation_worker.h"
 #include "drag_drop/external_drop_resources.h"
@@ -57,6 +58,8 @@ std::filesystem::path CreateTemporaryDirectory()
 }
 
 std::string ReadContents(const std::filesystem::path& path);
+
+#include "platform/recoverable_feedback_tests.inc"
 
 // A failed first file must be reported even when a later file succeeds.
 void TestFileFailureFeedback()
@@ -644,6 +647,7 @@ int wmain(int argc, wchar_t** argv)
             // CopyFile and progress-result classification use only isolated
             // local files, so unavailable network providers are irrelevant.
             TestFileFailureFeedback();
+            TestRecoverableFailurePresentation();
             std::cout << "local file-operation feedback tests passed\n";
             return 0;
         }

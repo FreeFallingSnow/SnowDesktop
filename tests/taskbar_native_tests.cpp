@@ -264,6 +264,16 @@ int RunNativeTaskbarTests()
         nullptr, nullptr, instance, nullptr);
     check(window != nullptr, "create isolated taskbar window");
     if (!window) return failures;
+    HWND vanished = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC",
+        L"Destroyed cached target", WS_POPUP, -32000, -32000, 16, 16,
+        nullptr, nullptr, instance, nullptr);
+    check(vanished && DestroyWindow(vanished), "destroy an actual cached-window fixture before reconnect");
+    std::vector<HWND> currentTargets{window, vanished, nullptr};
+    RemoveStaleTaskbarWindows(currentTargets, GetCurrentProcessId());
+    check(currentTargets == std::vector<HWND>{window},
+        "reconnect discards destroyed cached handles before registering any Hook");
+    RemoveStaleTaskbarWindows(currentTargets, GetCurrentProcessId() + 1);
+    check(currentTargets.empty(), "reconnect rejects windows outside the selected Explorer process");
     ShowWindow(window, SW_SHOWNOACTIVATE);
     SharedState shared;
     shared.ownerProcessId = GetCurrentProcessId();

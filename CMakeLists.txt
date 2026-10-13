@@ -376,6 +376,7 @@ set(SNOWDESKTOP_SOURCES
     src/platform/hook_entry_deployment.h
     src/platform/hook_entry_protocol.h
     src/platform/hook_registration_retry.h
+    src/taskbar_hook/taskbar_failure_feedback.h
     src/dock/dock_cloak_dispatcher.cpp
     src/dock/dock_cloak_dispatcher.h
     src/platform/shell_overlay_window.h
