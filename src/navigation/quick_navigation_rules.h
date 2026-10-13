@@ -438,6 +438,14 @@ inline int TabDragTarget(
     return target;
 }
 
+constexpr int TabDropSlotLeft(
+    size_t sourceTab, size_t targetTab, int targetLeft,
+    int draggedWidth, int targetWidth)
+{
+    // Moving right places the dragged tab after the shifted target tab.
+    return targetLeft + (targetTab > sourceTab ? targetWidth - draggedWidth : 0);
+}
+
 constexpr bool ShouldCloseOnDeactivate(
     bool activatedWithinInteractionSurface)
 {

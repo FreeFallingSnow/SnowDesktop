@@ -791,6 +791,20 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             quickNavTabDragIndex_ < tabWidths.size())
         {
             int dragTw = tabWidths[quickNavTabDragIndex_];
+            if (dragTargetTab >= 2 && static_cast<size_t>(dragTargetTab) < tabWidths.size())
+            {
+                const size_t targetTab = static_cast<size_t>(dragTargetTab);
+                const int slotLeft = snowdesktop::quick_navigation_rules::TabDropSlotLeft(
+                    quickNavTabDragIndex_, targetTab, calcTabPosX(targetTab),
+                    dragTw, tabWidths[targetTab]);
+                const RECT slotRect = MakeRect(slotLeft, tabs.top + tabInsetY,
+                    slotLeft + dragTw, tabs.bottom - tabInsetY);
+                DrawD2DRoundedRectangle(ctx.Get(), slotRect,
+                    static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)),
+                    ToD2DColor(t.tabDragIndicator, 0.08f),
+                    ToD2DColor(t.tabDragIndicator, 0.90f),
+                    static_cast<float>(QuickNavScale(2)));
+            }
             int posX = calcTabPosX(quickNavTabDragIndex_) + quickNavTabDragDeltaX_;
             RECT tabRect = MakeRect(posX, tabs.top + tabInsetY, posX + dragTw, tabs.bottom - tabInsetY);
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
@@ -805,14 +819,6 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             DrawD2DTextEllipsis(ctx.Get(), label, textRect, quickNavTabTextFormat_.Get(),
                 ToD2DColor(t.tabDragFloatText),
                 DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-
-            if (dragTargetTab >= 2 && static_cast<size_t>(dragTargetTab) <= collectionIndices.size() + 1)
-            {
-                int insertX = calcTabPosX(static_cast<size_t>(dragTargetTab));
-                RECT ind = MakeRect(insertX - gap / 2, tabs.top + QuickNavScale(4),
-                    insertX - gap / 2 + QuickNavScale(2), tabs.bottom - QuickNavScale(4));
-                DrawD2DSeparator(ctx.Get(), ind, ToD2DColor(t.tabDragIndicator));
-            }
         }
 
         ctx->PopAxisAlignedClip();

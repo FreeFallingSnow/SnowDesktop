@@ -497,6 +497,17 @@ void TestTabDragWhileScrolling()
     Check(rules::TabDragTarget(3, 450, centers) == 3 &&
         rules::TabDragTarget(3, 450, scrolledCenters) == 4,
         "scrolling beneath a stationary floating tab must update the drop target");
+
+    // Unequal label widths move the rightward landing slot away from the
+    // target's old left edge. The preview must match the reordered empty space.
+    Check(rules::TabDropSlotLeft(2, 4, 300, 80, 160) == 380 &&
+        rules::TabDropSlotLeft(2, 4, 300, 160, 80) == 220,
+        "rightward drop frames must match the empty slot for wider and narrower target tabs");
+    Check(rules::TabDropSlotLeft(4, 2, 300, 80, 160) == 300 &&
+        rules::TabDropSlotLeft(3, 3, 300, 80, 80) == 300,
+        "leftward and unchanged drop frames must start at the destination's original edge");
+    Check(rules::TabDropSlotLeft(2, 4, 270, 80, 160) == 350,
+        "the drop frame must scroll with the destination slot rather than the floating tab");
 }
 
 void TestAnimationRules()
