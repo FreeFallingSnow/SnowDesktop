@@ -4,6 +4,8 @@
 #include "tray_menu_placement.h"
 #include "tray_modern_bootstrap.h"
 #include "taskbar_hook/taskbar_symbol_resolver.h"
+#include "taskbar_hook/tray_connection.h"
+#include "platform/hook_registration_retry.h"
 #include "data/data_paths.h"
 #include <future>
 #include <map>
@@ -169,20 +171,9 @@ struct Service::Impl
         stage = L"createSignal";
         result->signal = CreateEventW(nullptr, FALSE, FALSE, ObjectName(pid, L"Signal").c_str());
         if (!result->signal) { error = GetLastError(); return {}; }
-        stage = L"loadHook";
-        result->module = LoadLibraryExW(deployment::GetTaskbarHookPath().c_str(), nullptr, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
-        if (!result->module || !result->signal) { error = GetLastError(); return {}; }
-        stage = L"installHook";
-        const auto proc = reinterpret_cast<HOOKPROC>(GetProcAddress(result->module, "SnowDesktopTrayHookProc"));
-        HHOOK hook = proc ? SetWindowsHookExW(WH_CALLWNDPROC, proc, result->module, thread) : nullptr;
-        if (!hook) { error = GetLastError(); return {}; }
-        DWORD_PTR ignored = 0;
-        stage = L"attachMessage";
-        const bool delivered = SendMessageTimeoutW(result->window, RegisterWindowMessageW(kAttachMessage),
-            pid, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 1000, &ignored) != 0;
-        if (!delivered) error = GetLastError();
-        UnhookWindowsHookEx(hook);
-        if (!delivered) return {};
+        error = AttachCollector(result->window, state, result->module, stage,
+            [] { return deployment::GetTaskbarHookPath(); });
+        if (error) return {};
         stage = L"collectorReady";
         HANDLE handles[]{stop, result->explorer, result->signal};
         const auto deadline = GetTickCount64() + 3000;
@@ -230,8 +221,16 @@ struct Service::Impl
         bool symbolsRequested = false;
         DWORD reportedError = MAXDWORD;
         std::wstring reportedStage;
+        hook_registration::Retry registrationRetry;
+        DWORD retryExplorer = 0;
         while (!token.stop_requested())
         {
+            DWORD currentExplorer = 0;
+            GetWindowThreadProcessId(GetShellWindow(), &currentExplorer);
+            if (currentExplorer != retryExplorer)
+            { registrationRetry.Reset(); retryExplorer = currentExplorer; }
+            if (!registrationRetry.Ready(GetTickCount64()))
+            { WaitForSingleObject(stop, static_cast<DWORD>((std::min)(registrationRetry.Remaining(GetTickCount64()), ULONGLONG{250}))); continue; }
             DWORD error = 0;
             const wchar_t* stage = L"start";
             auto current = Connect(error, stage);
@@ -248,7 +247,8 @@ struct Service::Impl
                 snapshot.error = error; snapshot.icons.clear(); Changed();
                 connection = current; geometries.clear(); CancelFocus(); menuPlacement.Cancel();
             }
-            if (!current) { WaitForSingleObject(stop, 2000); continue; }
+            if (!current) { registrationRetry.Failed(error, GetTickCount64()); continue; }
+            registrationRetry.Reset();
             if (!symbolsRequested)
             {
                 symbolsRequested = true;

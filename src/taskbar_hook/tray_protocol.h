@@ -19,6 +19,8 @@ inline constexpr DWORD kBootstrapIcon = 0x53440001;
 // copy/conversion of a nonnull handle must preserve the previous image.
 inline constexpr DWORD kClearIcon = 0x80000000u;
 inline constexpr wchar_t kAttachMessage[] = L"SnowDesktop.Tray.Attach.v2";
+inline constexpr wchar_t kResumeMessage[] = L"SnowDesktop.Tray.Resume.v2";
+inline constexpr wchar_t kResidentProperty[] = L"SnowDesktop.Tray.Resident.v2";
 inline constexpr wchar_t kDetachMessage[] = L"SnowDesktop.Tray.Detach.v2";
 inline constexpr wchar_t kReregisterMessage[] = L"SnowDesktop.Tray.Reregister.v2";
 inline std::wstring ObjectName(DWORD owner, const wchar_t* suffix)
