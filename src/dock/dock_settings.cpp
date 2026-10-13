@@ -822,7 +822,7 @@ private:
             if (selectedHookPath_.empty())
             {
                 const DWORD error = GetLastError();
-                // Migrate pre-resume DLLs without adding a fifth path. Loading
+                // A temporarily busy publisher may still use a pre-resume DLL. Loading
                 // their exact resident image is safe; Connect requires a fresh
                 // host acknowledgement, so incompatible/retired code fails.
                 if (error == ERROR_BUSY)
@@ -832,7 +832,7 @@ private:
                             snowdesktop::taskbar_hook::kHookOwnerProperty)));
                 if (selectedHookPath_.empty())
                     return Fail(expectedExplorerProcessId, error ? error : ERROR_FILE_NOT_FOUND);
-                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] bounded pool full; reconnecting active resident DLL; new DLL code deferred until Explorer exits naturally");
+                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] publication busy; reconnecting active resident DLL; new DLL code deferred until Explorer exits naturally");
             }
         }
         if (!std::filesystem::is_regular_file(selectedHookPath_))
@@ -849,7 +849,7 @@ private:
             injectionCancelEvent_, [this] {
                 if (selectedHookPath_ != snowdesktop::deployment::GetTaskbarHookPath())
                 { SetLastError(ERROR_SUCCESS); return std::wstring{}; }
-                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] instance did not acknowledge; selecting another bounded slot");
+                WriteDiagnosticLogEntry(L"[TaskbarHookConnection] instance did not acknowledge; selecting another reusable slot");
                 return snowdesktop::deployment::GetIsolatedTaskbarHookPath();
             }, &stage);
         if (explorerProcess)

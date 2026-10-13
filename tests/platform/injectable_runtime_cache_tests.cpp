@@ -89,21 +89,53 @@ int main()
     {
         std::vector<std::unique_ptr<InjectableRuntimeCache>> hosts;
         std::vector<std::filesystem::path> paths;
-        for (unsigned version = 0; version < InjectableRuntimeCache::kSlotCount; ++version)
+        constexpr unsigned versions = 24;
+        for (unsigned version = 0; version < versions; ++version)
         {
             Write(source, ("retained-" + std::to_string(version)).c_str());
             hosts.push_back(std::make_unique<InjectableRuntimeCache>(root / L"retained"));
             paths.push_back(hosts.back()->Deploy(source));
-            check(!paths.back().empty(), "each retained version obtains an available bounded slot");
+            check(!paths.back().empty(), "24 simultaneously retained versions obtain distinct reusable slots");
+            if (version >= InjectableRuntimeCache::kInitialSlotCount)
+                check(hosts.back()->Expanded(), "an occupied initial pool expands instead of rejecting another version");
         }
         Write(source, "one too many");
         InjectableRuntimeCache next(root / L"retained");
-        check(next.Deploy(source).empty() && next.LastError() == ERROR_BUSY,
-            "all retained slots refuse another version instead of falling back to an unbounded path");
+        const auto extra = next.Deploy(source);
+        check(!extra.empty() && extra.parent_path().filename() == L"slot-24" && next.Expanded(),
+            "the pool expands beyond 24 busy versions without a hard slot-count failure");
+        check(next.Deploy(source) == extra && !next.Expanded(),
+            "repeated requests for the new bytes reuse the overflow slot without further growth");
         check(InjectableRuntimeCache::Digest(paths.front()) != InjectableRuntimeCache::Digest(source),
             "pool exhaustion preserves the previously leased bytes");
         hosts.clear();
+        Write(source, "new bytes after old hosts close");
         check(next.Deploy(source) == paths.front(), "closing owners makes the original slot reusable");
+    }
+    {
+        const auto pool = root / L"concurrent-expansion";
+        std::vector<std::unique_ptr<InjectableRuntimeCache>> owners;
+        for (unsigned i = 0; i < InjectableRuntimeCache::kInitialSlotCount; ++i)
+        {
+            Write(source, ("occupied-" + std::to_string(i)).c_str());
+            owners.push_back(std::make_unique<InjectableRuntimeCache>(pool));
+            check(!owners.back()->Deploy(source).empty(), "retain the initial pool before competing expansion");
+        }
+        Write(source, "concurrent overflow");
+        const auto directory = pool / L"slots-v1" / L"Hook.dll";
+        const auto malformed = directory / L"slot-04";
+        std::filesystem::create_directories(malformed);
+        Write(malformed / L"Hook.dll", "concurrent overflow");
+        std::filesystem::create_directories(directory / L"slot-42949672960");
+        std::filesystem::path a, b;
+        std::thread publisherA([&] { InjectableRuntimeCache host(pool); a = host.Deploy(source); });
+        std::thread publisherB([&] { InjectableRuntimeCache host(pool); b = host.Deploy(source); });
+        publisherA.join(); publisherB.join();
+        check(!a.empty() && a == b && a.parent_path().filename() == L"slot-4",
+            "competing publishers allocate one canonical fifth slot and ignore malformed or overflowing numbers");
+        InjectableRuntimeCache later(pool);
+        check(later.Deploy(source) == a && !later.Expanded(),
+            "a new host discovers and reuses the expanded pool");
     }
     {
         InjectableRuntimeCache host(root / L"isolated");
@@ -150,27 +182,37 @@ int main()
         const auto pool = root / L"resident-pool";
         std::vector<HMODULE> images;
         std::vector<std::filesystem::path> paths;
-        for (unsigned version = 0; version < InjectableRuntimeCache::kSlotCount; ++version)
+        std::vector<std::wstring> originalHashes;
+        constexpr unsigned mappedVersions = 12;
+        for (unsigned version = 0; version < mappedVersions; ++version)
         {
             check(CopyFileW((std::filesystem::path(system) / L"version.dll").c_str(),
                 imageSource.c_str(), FALSE), "stage real images for full mapped pool regression");
             { std::ofstream overlay(imageSource, std::ios::binary | std::ios::app); overlay.put(static_cast<char>(version)); }
             InjectableRuntimeCache host(pool);
             paths.push_back(host.Deploy(imageSource));
+            originalHashes.push_back(InjectableRuntimeCache::Digest(paths.back()));
             const HMODULE image = paths.back().empty() ? nullptr :
                 LoadLibraryExW(paths.back().c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
-            check(image != nullptr, "each bounded slot retains a real mapped image after its host exits");
+            check(image != nullptr, "12 real DLL images remain mapped after their originating hosts exit");
             images.push_back(image);
         }
         { std::ofstream overlay(imageSource, std::ios::binary | std::ios::app); overlay.put('x'); }
         InjectableRuntimeCache next(pool);
-        check(next.Deploy(imageSource).empty() && next.LastError() == ERROR_BUSY,
-            "a fifth image reproduces full mapped-pool exhaustion without touching Explorer");
+        const auto expanded = next.Deploy(imageSource);
+        check(!expanded.empty() && expanded.parent_path().filename() == L"slot-12" && next.Expanded(),
+            "a thirteenth image deploys past a pool of 12 mapped DLLs without touching any mapped bytes");
+        for (std::size_t i = 0; i < paths.size(); ++i)
+            check(InjectableRuntimeCache::Digest(paths[i]) == originalHashes[i],
+                "expansion preserves every previously mapped DLL byte for byte");
+        const HMODULE newest = expanded.empty() ? nullptr : LoadLibraryExW(expanded.c_str(), nullptr,
+            DONT_RESOLVE_DLL_REFERENCES);
+        check(newest != nullptr, "the expanded slot contains a valid loadable new DLL");
         const auto resident = InjectableRuntimeCache::ResidentModulePath(pool, L"Resident.dll",
-            GetCurrentProcessId(), reinterpret_cast<std::uintptr_t>(images.back()));
-        check(!resident.empty() && resident == paths.back() &&
-            InjectableRuntimeCache::Digest(resident) != InjectableRuntimeCache::Digest(imageSource),
-            "full pool resolves only the explicitly selected resident image and does not pretend it is the new build");
+            GetCurrentProcessId(), reinterpret_cast<std::uintptr_t>(newest));
+        check(!resident.empty() && resident == expanded &&
+            InjectableRuntimeCache::Digest(resident) == InjectableRuntimeCache::Digest(imageSource),
+            "resident lookup recognizes the thirteenth slot rather than scanning only four");
         check(InjectableRuntimeCache::ResidentModulePath(root / L"foreign-pool", L"Resident.dll",
             GetCurrentProcessId(), reinterpret_cast<std::uintptr_t>(images.back())).empty(),
             "resident lookup cannot adopt modules outside this deployment's bounded pool");
@@ -178,6 +220,8 @@ int main()
             GetCurrentProcessId(), reinterpret_cast<std::uintptr_t>(images.back())).empty(),
             "resident lookup rejects a different DLL identity");
         for (HMODULE image : images) if (image) FreeLibrary(image);
+        if (newest) FreeLibrary(newest);
+        { std::ofstream overlay(imageSource, std::ios::binary | std::ios::app); overlay.put('y'); }
         check(next.Deploy(imageSource) == paths.front(),
             "release of mapped images allows a later build to reuse the original path");
     }

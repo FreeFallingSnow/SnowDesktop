@@ -4,18 +4,21 @@
 #include <bcrypt.h>
 #include <tlhelp32.h>
 #include <array>
+#include <algorithm>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
 #include <map>
+#include <limits>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
 namespace snowdesktop::deployment
 {
-// Bound the set of DLL paths presented to Windows, including across rebuilds.
-// A slot is immutable while leased or mapped; inactive slots can be reused.
+// Reuse DLL paths across rebuilds. A slot is immutable while leased or mapped;
+// the pool expands only when every existing path is still unavailable.
 class InjectableRuntimeCache final
 {
     struct Lease
@@ -24,8 +27,10 @@ class InjectableRuntimeCache final
         ~Lease() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
     };
 public:
-    static constexpr unsigned kSlotCount = 4;
+    static constexpr unsigned kInitialSlotCount = 4;
     DWORD LastError() const noexcept { return lastError_; }
+    std::size_t CandidateSlotCount() const noexcept { return slotCount_; }
+    bool Expanded() const noexcept { return expanded_; }
     explicit InjectableRuntimeCache(std::filesystem::path root) : root_(std::move(root)) {}
     InjectableRuntimeCache(const InjectableRuntimeCache&) = delete;
     InjectableRuntimeCache& operator=(const InjectableRuntimeCache&) = delete;
@@ -44,7 +49,9 @@ public:
             do
             {
                 if (reinterpret_cast<std::uintptr_t>(entry.hModule) != module) continue;
-                for (unsigned slot = 0; slot < kSlotCount; ++slot)
+                std::uint32_t slot = 0;
+                const std::filesystem::path image(entry.szExePath);
+                if (SlotNumber(image.parent_path().filename().wstring(), slot))
                 {
                     const auto candidate = directory / (L"slot-" + std::to_wstring(slot)) / filename;
                     if (_wcsicmp(entry.szExePath, candidate.c_str()) == 0) path = entry.szExePath;
@@ -94,6 +101,8 @@ public:
     std::filesystem::path Deploy(const std::filesystem::path& source,
         const std::filesystem::path& excluded = {})
     {
+        slotCount_ = 0;
+        expanded_ = false;
         std::error_code error;
         if (root_.empty() || Reparse(root_.parent_path()) || Reparse(root_) ||
             !std::filesystem::is_regular_file(source, error) || error)
@@ -123,6 +132,10 @@ public:
         } while (GetTickCount64() < deadline);
         if (publisher.value == INVALID_HANDLE_VALUE) return Fail(ERROR_BUSY);
 
+        std::vector<std::uint32_t> slots;
+        if (!ListSlots(directory, slots, error)) return Fail(static_cast<DWORD>(error.value()));
+        slotCount_ = slots.size();
+
         const auto retain = [&](const std::filesystem::path& target) -> std::filesystem::path {
             if (!leases_.contains(target))
             {
@@ -136,7 +149,7 @@ public:
             SetLastError(ERROR_SUCCESS);
             return target;
         };
-        for (unsigned slot = 0; slot < kSlotCount; ++slot)
+        for (const auto slot : slots)
         {
             const auto parent = directory / (L"slot-" + std::to_wstring(slot));
             const auto target = parent / source.filename();
@@ -144,31 +157,107 @@ public:
                 Reparse(parent / L".owner.lock")) continue;
             if (Digest(target) == digest) return retain(target);
         }
-        for (unsigned slot = 0; slot < kSlotCount; ++slot)
+        DWORD publicationError = ERROR_SUCCESS;
+        const auto publish = [&](std::uint32_t slot) -> std::filesystem::path
         {
             const auto parent = directory / (L"slot-" + std::to_wstring(slot));
             const auto target = parent / source.filename();
             if (target == excluded || Reparse(parent) || Reparse(target) ||
-                Reparse(parent / L".owner.lock")) continue;
+                Reparse(parent / L".owner.lock")) return {};
             error.clear();
             std::filesystem::create_directories(parent, error);
-            if (error || Reparse(parent)) continue;
+            if (error) { publicationError = static_cast<DWORD>(error.value()); return {}; }
+            if (Reparse(parent)) return {};
             Lease writer;
             writer.value = CreateFileW((parent / L".owner.lock").c_str(), GENERIC_READ | GENERIC_WRITE,
                 0, nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_HIDDEN, nullptr);
-            if (writer.value == INVALID_HANDLE_VALUE) continue;
+            if (writer.value == INVALID_HANDLE_VALUE)
+            {
+                const DWORD code = GetLastError();
+                if (code != ERROR_SHARING_VIOLATION && code != ERROR_LOCK_VIOLATION)
+                    publicationError = code;
+                return {};
+            }
             // CopyFile refuses to overwrite a mapped image, even after its
             // originating host has released the lease. Never rename/delete a
             // mapped target to bypass that protection.
-            if (!CopyFileW(source.c_str(), target.c_str(), FALSE) || Digest(target) != digest) continue;
+            if (!CopyFileW(source.c_str(), target.c_str(), FALSE))
+            {
+                const DWORD code = GetLastError();
+                // Access denied on an existing image is also how Windows
+                // refuses to overwrite a mapped DLL. Missing destinations,
+                // disk failures and source errors must not grow empty slots.
+                if (code != ERROR_SHARING_VIOLATION && code != ERROR_LOCK_VIOLATION &&
+                    !(code == ERROR_ACCESS_DENIED && std::filesystem::is_regular_file(target, error)))
+                    publicationError = code;
+                return {};
+            }
+            if (Digest(target) != digest) { publicationError = ERROR_INVALID_DATA; return {}; }
             CloseHandle(writer.value);
             writer.value = INVALID_HANDLE_VALUE;
-            return retain(target);
+            const auto retained = retain(target);
+            if (retained.empty()) publicationError = LastError();
+            return retained;
+        };
+        for (const auto slot : slots)
+        {
+            const auto target = publish(slot);
+            if (!target.empty()) return target;
+            if (publicationError) return Fail(publicationError);
         }
-        return Fail(ERROR_BUSY);
+        // Four is the initial pool size, not a failure threshold. Allocate the
+        // first unused canonical number under the same publication lease. A
+        // later host sees it and reuses its content or its released path.
+        std::uint32_t next = 0;
+        for (const auto slot : slots)
+        {
+            if (slot != next) break;
+            if (next == (std::numeric_limits<std::uint32_t>::max)())
+                return Fail(ERROR_ARITHMETIC_OVERFLOW);
+            ++next;
+        }
+        ++slotCount_;
+        const auto expanded = publish(next);
+        if (!expanded.empty()) { expanded_ = true; return expanded; }
+        return Fail(publicationError ? publicationError : ERROR_BUSY);
     }
 
 private:
+    static bool SlotNumber(const std::wstring& name, std::uint32_t& result) noexcept
+    {
+        constexpr std::wstring_view prefix = L"slot-";
+        if (!name.starts_with(prefix) || name.size() == prefix.size() ||
+            (name.size() > prefix.size() + 1 && name[prefix.size()] == L'0')) return false;
+        std::uint32_t number = 0;
+        for (std::size_t i = prefix.size(); i < name.size(); ++i)
+        {
+            const wchar_t digit = name[i];
+            if (digit < L'0' || digit > L'9' || number >
+                ((std::numeric_limits<std::uint32_t>::max)() - static_cast<unsigned>(digit - L'0')) / 10)
+                return false;
+            number = number * 10 + static_cast<unsigned>(digit - L'0');
+        }
+        result = number;
+        return true;
+    }
+    static bool ListSlots(const std::filesystem::path& directory,
+        std::vector<std::uint32_t>& slots, std::error_code& error)
+    {
+        for (unsigned i = 0; i < kInitialSlotCount; ++i) slots.push_back(i);
+        std::filesystem::directory_iterator iterator(directory, error);
+        if (error) return false;
+        const std::filesystem::directory_iterator end;
+        for (; iterator != end; iterator.increment(error))
+        {
+            if (error) return false;
+            std::uint32_t number = 0;
+            if (SlotNumber(iterator->path().filename().wstring(), number)) slots.push_back(number);
+        }
+        if (error) return false;
+        std::sort(slots.begin(), slots.end());
+        slots.erase(std::unique(slots.begin(), slots.end()), slots.end());
+        return true;
+    }
     std::filesystem::path Fail(DWORD error) noexcept
     {
         lastError_ = error;
@@ -182,6 +271,8 @@ private:
     }
     std::filesystem::path root_;
     DWORD lastError_ = ERROR_SUCCESS;
+    std::size_t slotCount_ = 0;
+    bool expanded_ = false;
     std::map<std::filesystem::path, std::unique_ptr<Lease>> leases_;
 };
 }

@@ -727,11 +727,17 @@ std::wstring DeployInjectableRuntimeCopy(const wchar_t* filename,
             return data / L"ShellHook" / L"shared";
         }());
         const auto shared = cache.Deploy(source, excluded);
+        if (!shared.empty() && cache.Expanded())
+        {
+            const std::wstring message = L"[HookRuntimeDeployment] pool-expanded candidateSlots=" +
+                std::to_wstring(cache.CandidateSlotCount()) + L" path=" + shared.wstring();
+            WriteDiagnosticLogEntry(message.c_str());
+        }
         if (shared.empty())
         {
             const DWORD code = cache.LastError();
             const std::wstring message = L"[HookRuntimeDeployment] error=" + std::to_wstring(code) +
-                L" slots=" + std::to_wstring(snowdesktop::deployment::InjectableRuntimeCache::kSlotCount) +
+                L" candidateSlots=" + std::to_wstring(cache.CandidateSlotCount()) +
                 L" source=" + source.wstring();
             WriteDiagnosticLogEntry(message.c_str());
             SetLastError(code);
@@ -998,7 +1004,7 @@ std::wstring GetTaskbarHookPath()
     static std::mutex mutex;
     std::lock_guard lock(mutex);
     static std::wstring deployedPath;
-    // A busy pool is recoverable once its owners close. Do not cache failure.
+    // Publication contention/errors are recoverable. Do not cache failure.
     if (deployedPath.empty()) deployedPath = GetInjectableRuntimeFilePath(kTaskbarHookFilename);
     if (deployedPath.empty() && GetLastError() == ERROR_BUSY)
     {
@@ -1010,7 +1016,7 @@ std::wstring GetTaskbarHookPath()
                     snowdesktop::taskbar_hook::kHookOwnerProperty)));
         if (!deployedPath.empty())
         {
-            WriteDiagnosticLogEntry(L"[HookRuntimeDeployment] bounded pool full; using active resident DLL; new DLL code deferred until Explorer exits naturally");
+            WriteDiagnosticLogEntry(L"[HookRuntimeDeployment] publication busy; using active resident DLL; new DLL code deferred until Explorer exits naturally");
             SetLastError(ERROR_SUCCESS);
         }
         else SetLastError(ERROR_BUSY);
