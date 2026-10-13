@@ -140,6 +140,12 @@ public:
         add("mode", "select", "显示方式", "Display mode", mode); // l10n-allow: isolated bilingual preview fixture, not production UI text.
         add("count", "int", "显示数量", "Item count", count); // l10n-allow: isolated bilingual preview fixture, not production UI text.
         value.fields.back().schema.group = "details";
+        wr::WidgetSettingPresetSchema preset;
+        preset.id = "standard";
+        preset.label = english ? "Standard" : "标准"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+        preset.isDefault = true;
+        preset.values.emplace("title", title);
+        value.presets.push_back(std::move(preset));
     }
     void SetEventCallbacks(SnapshotChangedCallback, SearchCompletedCallback) override {}
     wr::WidgetSettingsLoadResult Load(std::wstring) override { return {wr::WidgetSettingMutationStatus::Unchanged, value, {}, {}}; }
@@ -281,9 +287,12 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     layout.capture = [] { PageLayoutSnapshot snapshot; snapshot.revision = 1; snapshot.editable = true; snapshot.monitorCount = 2;
         snapshot.pages = {{L"example-1", L"Work / 工作", 12, 8, 10, 2}, {L"example-2", L"Projects / 项目", 10, 7, 5, 1}}; return snapshot; }; // l10n-allow: isolated bilingual preview fixture, not production UI text.
     shell->SetPageLayoutPageActions(std::move(layout));
-    shell->SetLargeIconSettingsAction([](LargeIconSettingsRequest request) {
+    shell->SetLargeIconSettingsAction([expanded, disabled](LargeIconSettingsRequest request) {
         LargeIconSettingsSnapshot snapshot; snapshot.key = request.key; snapshot.name = L"Example / 示例"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
-        snapshot.available = snapshot.editable = snapshot.succeeded = true; snapshot.session = snapshot.revision = 1;
+        snapshot.available = snapshot.editable = !disabled; snapshot.succeeded = true;
+        snapshot.itemCount = expanded ? 3 : 1;
+        if (disabled) snapshot.error = "largeIcon.locked";
+        snapshot.session = snapshot.revision = 1;
         snapshot.maxColumns = snapshot.maxRows = 4; return snapshot;
     });
     bool loaded = false;

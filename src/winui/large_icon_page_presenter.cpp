@@ -30,9 +30,9 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     LargeIconConfig draft;
     LargeIconConfig savedDraft;
     std::vector<std::string> fields;
-    c::StackPanel root, editors;
+    c::StackPanel root, editors, feedback;
     c::ContentControl editorHost;
-    c::TextBlock status;
+    c::InfoBar status;
     x::DispatcherTimer timer;
     presenter_controls::CoalescedPreviewTimer<LargeIconConfig> previews;
     std::shared_ptr<PanelGradientEditor> gradient;
@@ -100,8 +100,10 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         syncing = true;
         headingName = snapshot.itemCount > 1 ? L("largeIcon.batchName") : snapshot.name;
-        status.Text(L(snapshot.error));
-        status.Visibility(snapshot.error.empty() ? x::Visibility::Collapsed : x::Visibility::Visible);
+        status.Message(L(snapshot.error));
+        status.IsOpen(!snapshot.error.empty());
+        feedback.Visibility(snapshot.error.empty() && snapshot.itemCount <= 1
+            ? x::Visibility::Collapsed : x::Visibility::Visible);
         editorHost.IsEnabled(snapshot.available && snapshot.editable && snapshot.error != "largeIcon.stale");
         for (auto& fn : synchronize) fn();
         for (auto& fn : visibility) fn();
@@ -197,7 +199,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (!snapshot.available || !snapshot.editable)
         {
             unavailable();
-            return status;
+            return status.IsOpen() ? status.as<x::FrameworkElement>() : root.as<x::FrameworkElement>();
         }
         auto entry = focusTargets.find(std::string(id));
         if (entry == focusTargets.end()) return nullptr;
@@ -682,18 +684,20 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             expansionState.insert_or_assign(key, disclosure.IsExpanded());
         disclosures.clear(); sharedRows.clear(); rowIndents.clear(); focusTargets.clear();
         if (edge) edge->Close();
-        syncing = true; synchronize.clear(); visibility.clear(); root.Children().Clear(); editors.Children().Clear();
-        root.Spacing(16); editors.Spacing(24);
+        syncing = true; synchronize.clear(); visibility.clear(); root.Children().Clear(); editors.Children().Clear(); feedback.Children().Clear();
+        root.Spacing(24); editors.Spacing(24); feedback.Spacing(8);
         root.HorizontalAlignment(x::HorizontalAlignment::Stretch); editors.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         editorHost.HorizontalAlignment(x::HorizontalAlignment::Stretch); editorHost.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
-        status.TextWrapping(x::TextWrapping::Wrap);
-        root.Children().Append(status); editorHost.Content(editors); root.Children().Append(editorHost);
+        feedback.Children().Append(status);
+        root.Children().Append(feedback); editorHost.Content(editors); root.Children().Append(editorHost);
         if (snapshot.itemCount > 1)
         {
             c::TextBlock hint; auto text = L("largeIcon.batchHint");
             if (const auto position = text.find(L"{count}"); position != std::wstring::npos)
                 text.replace(position, 7, std::to_wstring(snapshot.itemCount));
-            hint.Text(text); hint.TextWrapping(x::TextWrapping::Wrap); root.Children().InsertAt(0, hint);
+            hint.Text(text); hint.TextWrapping(x::TextWrapping::Wrap);
+            c::Border batchCard; batchCard.Style(style); batchCard.Child(hint);
+            feedback.Children().InsertAt(0, batchCard);
         }
         auto bg = Group("largeIcon.backgroundSection");
         Choice(bg, "largeIcon.backgroundStyle", &LargeIconConfig::backgroundStyle,
@@ -804,6 +808,12 @@ LargeIconPagePresenter::LargeIconPagePresenter(std::function<std::wstring(std::s
 {
     impl_->localize = std::move(localize); impl_->style = style; impl_->action = std::move(action);
     impl_->nameChanged = std::move(nameChanged);
+    impl_->status.Severity(c::InfoBarSeverity::Error);
+    impl_->status.IsClosable(false);
+    impl_->status.IsOpen(false);
+    impl_->status.IsTabStop(true);
+    impl_->status.UseSystemFocusVisuals(true);
+    presenter_controls::BindInfoBarVisibility(impl_->status);
     std::weak_ptr<Impl> weak = impl_;
     impl_->previews.Initialize([weak](const LargeIconConfig&) {
         if (auto self = weak.lock(); self && self->active && self->snapshot.editable) self->Send("preview");

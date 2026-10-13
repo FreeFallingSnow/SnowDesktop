@@ -870,8 +870,12 @@ struct WidgetSettingsPresenter::Impl
         root.Children().Append(appearanceCard.root);
 
         InitializeCard(stylePreviewCard);
+        stylePreviewCard.root.Style(nullptr);
+        stylePreviewCard.root.Child(nullptr);
         stylePreviewTitle = MakeSectionTitle();
-        stylePreviewCard.content.Children().Append(stylePreviewTitle);
+        (void)presenter_controls::InitializeSettingsGroup(
+            stylePreviewCard.root, stylePreviewTitle, stylePreviewCard.content, cardStyle);
+        stylePreviewCard.content.Spacing(0.0);
         presetCombo = muxc::ComboBox{};
         presetCombo.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         presetCombo.MaxWidth(520.0);
@@ -892,10 +896,12 @@ struct WidgetSettingsPresenter::Impl
             mux::HorizontalAlignment::Right);
         stylePreviewCard.content.Children().Append(
             restoreScriptDefaultRow.root);
+        presenter_controls::UpdateSettingsSubrows(stylePreviewCard.content, 0.0);
         root.Children().Append(stylePreviewCard.root);
 
         InitializeCard(relatedCard);
         relatedCard.root.Style(nullptr);
+        relatedCard.root.Child(nullptr);
         relatedTitle.TextWrapping(mux::TextWrapping::Wrap);
         relatedTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         (void)presenter_controls::InitializeSettingsGroup(
