@@ -160,7 +160,8 @@ struct DesktopStylePagePresenter::Impl
     {
         std::string key;
         std::vector<std::string> focusIds;
-        muxc::HyperlinkButton control;
+        muxc::Button control;
+        presenter_controls::SettingRow row;
     };
     // No asynchronous completion retains the presenter or an editor control.
     struct ConfirmationGate
@@ -242,7 +243,7 @@ struct DesktopStylePagePresenter::Impl
         const auto surface = presenter_controls::InitializeSettingsGroup(
             group, section->title, section->content, style);
         if (std::string_view(key) == "settings.common.relatedSettings")
-            surface.Padding({8, 8, 8, 8});
+            surface.Padding({0, 0, 0, 0});
         root.Children().Append(group);
         const auto content = section->content;
         sections.push_back(std::move(section));
@@ -254,13 +255,15 @@ struct DesktopStylePagePresenter::Impl
         RelatedLink link;
         link.key = std::move(key);
         link.focusIds = std::move(focusIds);
-        link.control.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        link.row.Initialize(link.control, 0.0);
+        link.row.SetControlAlignment(mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(link.row.root, parent.Children().Size() == 0, 0.0);
         const auto control = link.control;
         const auto token = control.Click([this, route = std::move(route)](const auto&, const auto&) {
             if (CanEdit() && navigate) navigate(route);
         });
         revoke.push_back([control, token] { control.Click(token); });
-        parent.Children().Append(control);
+        parent.Children().Append(link.row.root);
         relatedLinks.push_back(std::move(link));
     }
     void EmitGeneral(DockPageActions::GeneralEdit edit)
@@ -959,9 +962,10 @@ struct DesktopStylePagePresenter::Impl
         changes.Header(winrt::box_value(L("settings.desktopStyle.changes")));
         adjustmentTitle.Text(L("settings.desktopStyle.adjustments"));
         for (const auto& section : sections) section->title.Text(L(section->key));
-        for (const auto& link : relatedLinks)
+        for (auto& link : relatedLinks)
         {
-            link.control.Content(winrt::box_value(L(link.key)));
+            link.row.SetText(L(link.key));
+            link.control.Content(winrt::box_value(L("start.openSettings")));
             muxa::AutomationProperties::SetName(link.control, L(link.key));
         }
         for (const auto& toggle : toggles)

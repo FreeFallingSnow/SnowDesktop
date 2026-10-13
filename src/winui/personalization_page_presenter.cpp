@@ -199,6 +199,7 @@ struct PersonalizationPagePresenter::Impl
     muxc::TextBlock dockLinkTitle, dockLinkDescription;
     muxc::TextBlock quickLinkTitle, quickLinkDescription;
     muxc::Button collectionFooterLink{nullptr}, collectionThemeLink{nullptr};
+    SettingRow collectionFooterRow, collectionThemeRow;
     muxc::TextBlock collectionFooterLinkTitle, collectionFooterLinkDescription;
     muxc::TextBlock collectionThemeLinkTitle, collectionThemeLinkDescription;
     muxc::TextBlock collectionRelatedTitle;
@@ -724,20 +725,22 @@ struct PersonalizationPagePresenter::Impl
         presenter_controls::UpdateSettingsSubrows(collectionTitleCard.content, 0.0);
         presenter_controls::UpdateSettingsSubrows(behaviorCard.content, 0.0);
         presenter_controls::StyleSettingsSubrow(popupHoverDelayMs.row.root, false, 16.0);
-        muxc::StackPanel collectionRelated;
-        collectionRelated.Spacing(2.0);
+        muxc::Border collectionRelated;
+        muxc::StackPanel collectionRelatedRows;
         collectionRelatedTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
         collectionRelatedTitle.TextWrapping(mux::TextWrapping::Wrap);
-        collectionRelatedTitle.Margin({0.0, 0.0, 0.0, 6.0});
         muxa::AutomationProperties::SetHeadingLevel(collectionRelatedTitle,
             muxa::Peers::AutomationHeadingLevel::Level2);
-        collectionRelated.Children().Append(collectionRelatedTitle);
-        InitializeNavigationCard(collectionFooterLink, collectionFooterLinkTitle,
-            collectionFooterLinkDescription, collectionRelated);
-        InitializeNavigationCard(collectionThemeLink, collectionThemeLinkTitle,
-            collectionThemeLinkDescription, collectionRelated);
-        collectionFooterLinkDescription.Visibility(mux::Visibility::Collapsed);
-        collectionThemeLinkDescription.Visibility(mux::Visibility::Collapsed);
+        presenter_controls::InitializeSettingsGroup(collectionRelated, collectionRelatedTitle, collectionRelatedRows, cardStyle);
+        collectionFooterLink = muxc::Button{};
+        collectionThemeLink = muxc::Button{};
+        collectionFooterRow.Initialize(collectionFooterLink, 0.0);
+        collectionThemeRow.Initialize(collectionThemeLink, 0.0);
+        collectionFooterLinkTitle = collectionFooterRow.label;
+        collectionThemeLinkTitle = collectionThemeRow.label;
+        collectionRelatedRows.Children().Append(collectionFooterRow.root);
+        collectionRelatedRows.Children().Append(collectionThemeRow.root);
+        presenter_controls::UpdateSettingsSubrows(collectionRelatedRows, 0.0);
         widgetBehaviorRoot.Children().Append(collectionRelated);
         InitializeNavigationCard(dockLink, dockLinkTitle, dockLinkDescription);
         InitializeNavigationCard(statusBarLink, statusBarLinkTitle, statusBarLinkDescription);
@@ -1628,6 +1631,8 @@ struct PersonalizationPagePresenter::Impl
         collectionRelatedTitle.Text(L("settings.common.relatedSettings", L"Related settings"));
         collectionFooterLinkTitle.Text(L("settings.widgetBehavior.footerHeight", L"Global component footer height"));
         collectionThemeLinkTitle.Text(L("settings.widgetBehavior.popupTheme", L"Shared popup theme"));
+        collectionFooterLink.Content(winrt::box_value(L("start.openSettings", L"Open related settings")));
+        collectionThemeLink.Content(winrt::box_value(L("start.openSettings", L"Open related settings")));
         muxa::AutomationProperties::SetName(collectionFooterLink, collectionFooterLinkTitle.Text());
         muxa::AutomationProperties::SetName(collectionThemeLink, collectionThemeLinkTitle.Text());
 

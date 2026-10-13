@@ -472,6 +472,7 @@ struct WidgetSettingsPresenter::Impl
     muxc::StackPanel fieldsHost{nullptr};
     SettingsCard ungroupedCard;
     SettingsCard relatedCard;
+    muxc::TextBlock relatedTitle;
     presenter_controls::SettingRow permissionsRow;
     muxc::Button permissionsButton;
     winrt::event_token permissionsClicked{};
@@ -894,6 +895,12 @@ struct WidgetSettingsPresenter::Impl
         root.Children().Append(stylePreviewCard.root);
 
         InitializeCard(relatedCard);
+        relatedCard.root.Style(nullptr);
+        relatedTitle.TextWrapping(mux::TextWrapping::Wrap);
+        relatedTitle.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        (void)presenter_controls::InitializeSettingsGroup(
+            relatedCard.root, relatedTitle, relatedCard.content, cardStyle);
+        relatedCard.content.Spacing(0.0);
         permissionsClicked = permissionsButton.Click([this](const auto&, const auto&) {
             if (!CanMutate() || packageId.empty() || !callbacks.openPackagePermissions)
                 return;
@@ -902,6 +909,8 @@ struct WidgetSettingsPresenter::Impl
             callbacks.openPackagePermissions(ToWide(packageId));
         });
         permissionsRow.Initialize(permissionsButton);
+        presenter_controls::StyleSettingsSubrow(permissionsRow.root, true, 0.0);
+        permissionsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         relatedCard.content.Children().Append(permissionsRow.root);
         relatedCard.root.Visibility(mux::Visibility::Collapsed);
         root.Children().Append(relatedCard.root);
@@ -3262,6 +3271,7 @@ struct WidgetSettingsPresenter::Impl
         permissionsRow.SetText(
             L("widgetSettings.packagePermissions", L"Component permissions"),
             L("widgetSettings.packagePermissionsHint", L"Permission changes affect all instances of this component package."));
+        relatedTitle.Text(L("settings.common.relatedSettings", L"Related settings"));
         permissionsButton.Content(winrt::box_value(
             L("app.settings.widgets_manage_permissions", L"Manage permissions")));
         muxa::AutomationProperties::SetName(permissionsButton, permissionsRow.label.Text());

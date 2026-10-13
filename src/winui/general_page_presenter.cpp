@@ -268,7 +268,7 @@ struct GeneralPagePresenter::Impl
     void BuildControls()
     {
         root = muxc::StackPanel{};
-        root.Spacing(24.0);
+        root.Spacing(8.0);
         desktopRoot = muxc::StackPanel{};
         desktopRoot.Spacing(24.0);
         pageNavigationRoot = muxc::StackPanel{};
@@ -280,7 +280,16 @@ struct GeneralPagePresenter::Impl
         root.Children().Append(onboarding->Content());
         InitializeCard(startupCard, cardStyle, root);
         if (const auto guide = onboarding->Content().try_as<muxc::Expander>())
+        {
             guide.CornerRadius({4, 4, 4, 4});
+            guide.MinHeight(68.0);
+            guide.Style(mux::Markup::XamlReader::Load(LR"(<Style
+ xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" TargetType="Expander">
+ <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}"/>
+ </Style>)").as<mux::Style>());
+            if (const auto title = guide.Header().try_as<muxc::TextBlock>())
+                title.FontWeight(winrt::Windows::UI::Text::FontWeights::Normal());
+        }
         autoStartToggle = muxc::ToggleSwitch{};
         autoStartToggle.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
@@ -369,8 +378,10 @@ struct GeneralPagePresenter::Impl
         advancedFeatureRow.Initialize(advancedFeatureControls, 0.0);
         advancedFeatureRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
+        // The shared surface supplies 16 DIP padding and a 1 DIP border.
+        advancedFeatureRow.root.MinHeight(34.0);
         advancedFeaturesCard.title = advancedFeatureRow.label;
-        advancedFeaturesCard.title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        advancedFeaturesCard.title.FontWeight(winrt::Windows::UI::Text::FontWeights::Normal());
         advancedFeatureExpander.Header(advancedFeatureRow.root);
         muxc::StackPanel featureBody;
         featureBody.Spacing(4.0);
@@ -475,14 +486,7 @@ struct GeneralPagePresenter::Impl
         if (root.Children().IndexOf(advancedFeaturesCard.root, advancedFeaturesIndex))
         {
             root.Children().RemoveAt(advancedFeaturesIndex);
-            uint32_t languageIndex = 0;
-            if (root.Children().IndexOf(languageCard.root, languageIndex))
-                root.Children().RemoveAt(languageIndex);
-            muxc::StackPanel generalCards;
-            generalCards.Spacing(8);
-            generalCards.Children().Append(languageCard.root);
-            generalCards.Children().Append(advancedFeaturesCard.root);
-            root.Children().Append(generalCards);
+            root.Children().Append(advancedFeaturesCard.root);
         }
 
         quickRoot = muxc::StackPanel{}; quickRoot.Spacing(8);
@@ -562,6 +566,9 @@ struct GeneralPagePresenter::Impl
         for (const auto& row : {softwareDesktopHotkeyRow.row.root, quickNavigationHotkeyRow.row.root,
                  previousPageHotkeyRow.row.root, nextPageHotkeyRow.row.root, desktopPassthroughHotkeyRow.row.root})
             presenter_controls::StyleSettingsSubrow(row, false, 16.0);
+        // Match the native disclosure's 68 DIP header, including the card border.
+        autoStartRow.root.MinHeight(66.0);
+        languageRow.root.MinHeight(66.0);
         startupOwnershipNotice.Margin({16, 0, 16, 8});
     }
 
@@ -988,6 +995,7 @@ struct GeneralPagePresenter::Impl
         onboarding->RefreshLocalizedText();
         quickOptions->RefreshText();
         SetCardText(startupCard, "settings.general.startup");
+        startupCard.title.Visibility(mux::Visibility::Collapsed);
         SetCardText(advancedFeaturesCard,
             "settings.general.advancedFeatures");
         SetCardText(desktopBehaviorCard, "settings.desktop.behavior");

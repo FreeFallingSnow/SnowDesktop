@@ -20,8 +20,10 @@ struct StatusBarPagePresenter::Impl
     std::unique_ptr<MergedBarHeightEditor> mergedHeight;
     BarSettingsAvailability availability;
     int monitorCount = 0;
-    muxc::TextBlock mergedNotice;
-    muxc::HyperlinkButton dockAppearanceLink;
+    muxc::TextBlock relatedTitle;
+    muxc::Button dockAppearanceLink;
+    muxc::Border relatedAppearance;
+    SettingRow relatedAppearanceRow;
     muxc::Border independentAppearance;
     muxc::ContentControl independentHost;
     muxc::StackPanel independentBody;
@@ -228,8 +230,14 @@ struct StatusBarPagePresenter::Impl
         root.Children().Append(controlCenterSection);
         root.Children().Append(infoSection);
         root.Children().Append(appearanceRoot);
-        appearanceRoot.Children().Append(mergedNotice);
-        appearanceRoot.Children().Append(dockAppearanceLink);
+        muxc::StackPanel relatedContent;
+        Title(relatedTitle);
+        presenter_controls::InitializeSettingsGroup(relatedAppearance, relatedTitle, relatedContent, style);
+        relatedAppearanceRow.Initialize(dockAppearanceLink, 0.0);
+        relatedAppearanceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        relatedContent.Children().Append(relatedAppearanceRow.root);
+        presenter_controls::UpdateSettingsSubrows(relatedContent, 0.0);
+        appearanceRoot.Children().Append(relatedAppearance);
         appearanceRoot.Children().Append(independentAppearance);
         leftItems.Spacing(2); infoItems.Spacing(2);
         leftSection.Content(leftItems); infoSection.Content(infoItems);
@@ -290,8 +298,6 @@ struct StatusBarPagePresenter::Impl
         revoke.push_back([control = inputPanel, inputSelection] { control.SelectionChanged(inputSelection); });
         independentAppearance.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         independentBody.Spacing(8);
-        mergedNotice.TextWrapping(mux::TextWrapping::Wrap);
-        dockAppearanceLink.HorizontalAlignment(mux::HorizontalAlignment::Left);
         const auto appearanceLinkToken = dockAppearanceLink.Click([this](const auto&, const auto&) {
             if (active && navigate) navigate(SettingsRoute::ForPage(SettingsPage::Dock, "personalization.dockAppearance"));
         });
@@ -380,9 +386,8 @@ struct StatusBarPagePresenter::Impl
     void SyncAppearanceContext()
     {
         const bool showStandaloneNotice = availability.anyMerged && !centralizedAppearance;
-        mergedNotice.Visibility(showStandaloneNotice ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        dockAppearanceLink.Visibility(showStandaloneNotice ? mux::Visibility::Visible : mux::Visibility::Collapsed);
-        mergedNotice.Text(L(availability.allStatusMerged ? "settings.bars.inheritedAppearance" : "settings.bars.partialAppearance"));
+        relatedAppearance.Visibility(showStandaloneNotice ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        relatedAppearanceRow.SetText(L("settings.bars.openDockAppearance"), L("statusBar.theme.mergedHint"));
         defaultTheme.row.SetText(L("app.settings.theme"), centralizedAppearance && availability.anyMerged
             ? L("statusBar.theme.mergedHint") : L"");
         mux::Automation::AutomationProperties::SetHelpText(defaultTheme.combo, defaultTheme.row.help.Text());
@@ -468,7 +473,8 @@ struct StatusBarPagePresenter::Impl
         mux::Automation::AutomationProperties::SetName(scaleNumber, L("statusBar.scale"));
         edgeRow.SetText(L("statusBar.position")); monitorsRow.SetText(L("settings.dock.monitor"));
         scaleRow.SetText(L("statusBar.scale"));
-        dockAppearanceLink.Content(winrt::box_value(L("settings.bars.openDockAppearance")));
+        relatedTitle.Text(L("settings.common.relatedSettings"));
+        dockAppearanceLink.Content(winrt::box_value(L("start.openSettings")));
         mergedHeight->RefreshLocalizedText();
         defaultThemeTitle.Text(L(centralizedAppearance ? "settings.nav.statusBar" : "statusBar.defaultAppearance"));
         rulesTitle.Text(L("settings.taskbar.scenarioOverrides"));

@@ -22,7 +22,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     muxc::CheckBox allDay;
     muxc::ComboBox calendarChoice;
     SettingRow calendarEnabledRow, calendarRow;
-    muxc::TextBlock listHeading, error;
+    muxc::TextBlock listHeading;
+    muxc::InfoBar scheduleFeedback;
     muxc::ListView list;
     muxc::TextBox title, notes;
     muxc::CalendarDatePicker date;
@@ -105,6 +106,11 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         schedulesSection.Spacing(8);
         root.Children().Append(schedulesSection);
         schedulesSection.Children().Append(schedulesHeader.root);
+        scheduleFeedback.Severity(muxc::InfoBarSeverity::Warning);
+        scheduleFeedback.IsClosable(false);
+        scheduleFeedback.IsOpen(false);
+        presenter_controls::BindInfoBarVisibility(scheduleFeedback);
+        schedulesSection.Children().Append(scheduleFeedback);
         muxc::Border schedulesSurface;
         auto schedules = Card(style, &schedulesSurface);
         root.Children().RemoveAtEnd();
@@ -165,8 +171,6 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
         if (const auto accent = mux::Application::Current().Resources().TryLookup(winrt::box_value(L"AccentButtonStyle")))
             if (const auto accentStyle = accent.try_as<mux::Style>()) save.Style(accentStyle);
         editor.Children().Append(buttons);
-        error.TextWrapping(mux::TextWrapping::Wrap);
-        error.Visibility(mux::Visibility::Collapsed); root.Children().Append(error);
         editorCard.Visibility(mux::Visibility::Collapsed);
         auto ctoken = calendarToggle.Toggled([this](const auto&, const auto&) { Commit(); });
         revoke.push_back([c = calendarToggle, ctoken] { c.Toggled(ctoken); });
@@ -403,8 +407,8 @@ struct CalendarPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     void SetError(const std::wstring& message)
     {
-        error.Text(message);
-        error.Visibility(message.empty() ? mux::Visibility::Collapsed : mux::Visibility::Visible);
+        scheduleFeedback.Message(message);
+        scheduleFeedback.IsOpen(!message.empty());
     }
 
     void UpdateModeVisibility()

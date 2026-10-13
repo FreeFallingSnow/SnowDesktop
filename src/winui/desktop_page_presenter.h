@@ -91,6 +91,9 @@ public:
         SettingsFocusPrerequisite* prerequisite = nullptr) const noexcept;
 
     void Activate() noexcept;
+    /** Track category-page visits independently of other pages sharing this
+     * presenter. Changing pages hides the add form without discarding drafts. */
+    void SetCategoryPageActive(bool active) noexcept;
     void Deactivate() noexcept;
     void Close() noexcept;
 

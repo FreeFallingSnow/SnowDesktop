@@ -30,7 +30,13 @@ public:
         root_.Spacing(8);
         if (transfer_)
         {
-            filters_.ColumnSpacing(8); filters_.RowSpacing(8);
+            c::StackPanel filters;
+            filters.Orientation(c::Orientation::Horizontal);
+            filters.Spacing(12);
+            filterLabel_.VerticalAlignment(x::VerticalAlignment::Center);
+            filterChoice_.Width(180);
+            filters.Children().Append(filterLabel_);
+            filters.Children().Append(filterChoice_);
             c::Grid toolbar;
             toolbar.ColumnSpacing(8);
             c::ColumnDefinition filterColumn, commandColumn;
@@ -40,29 +46,30 @@ public:
             toolbar.ColumnDefinitions().Append(commandColumn);
             commands_.HorizontalAlignment(x::HorizontalAlignment::Right);
             commands_.VerticalAlignment(x::VerticalAlignment::Top);
-            commands_.MaxWidth(180);
+            commands_.MaxWidth(240);
             commands_.IsDynamicOverflowEnabled(true);
             c::Grid::SetColumn(commands_, 1);
-            toolbar.Children().Append(filters_);
+            toolbar.Children().Append(filters);
             toolbar.Children().Append(commands_);
+            const auto weakCommands = winrt::make_weak(commands_);
+            const auto layoutToken = toolbar.SizeChanged([weakCommands](const auto&, const x::SizeChangedEventArgs& args) {
+                if (const auto commands = weakCommands.get())
+                    commands.MaxWidth(std::max(48.0, static_cast<double>(args.NewSize().Width) - 300.0));
+            });
+            revoke_.push_back([toolbar, layoutToken] { toolbar.SizeChanged(layoutToken); });
             c::Border toolbarSurface;
             if (cardStyle_) toolbarSurface.Style(cardStyle_);
             else presenter_controls::StyleSettingsCard(toolbarSurface);
             toolbarSurface.Child(toolbar);
             root_.Children().Append(toolbarSurface);
-            for (std::size_t i = 0; i < tabs_.size(); ++i)
-            {
-                auto button = tabs_[i]; button.UseSystemFocusVisuals(true);
-                button.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-                filters_.Children().Append(button);
-                const auto token = button.Click([this, i](const auto&, const auto&) {
-                    if (syncing_) return;
-                    filter_ = static_cast<FilterTab>(i); PatchTabs(); RefreshChoices();
-                });
-                revoke_.push_back([button, token] { button.Click(token); });
-            }
-            const auto token = filters_.SizeChanged([this](const auto&, const auto&) { LayoutTabs(); });
-            revoke_.push_back([control = filters_, token] { control.SizeChanged(token); });
+            const auto token = filterChoice_.SelectionChanged([this](const auto&, const auto&) {
+                if (syncing_ || closed_ || busy_) return;
+                const int index = filterChoice_.SelectedIndex();
+                if (index < 0 || index > 6) return;
+                filter_ = static_cast<FilterTab>(index);
+                RefreshChoices();
+            });
+            revoke_.push_back([control = filterChoice_, token] { control.SelectionChanged(token); });
             entries_.Spacing(8); root_.Children().Append(entries_);
             empty_.TextWrapping(x::TextWrapping::Wrap); root_.Children().Append(empty_);
         }
@@ -70,8 +77,8 @@ public:
         commands_.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
         if (transfer_)
         {
-            AddCommand(ThemeLibraryCommand::OpenWorkshop, "themeLibrary.openWorkshop");
             AddCommand(ThemeLibraryCommand::Import, "themeLibrary.import");
+            AddCommand(ThemeLibraryCommand::OpenWorkshop, "themeLibrary.openWorkshop");
             AddCommand(ThemeLibraryCommand::SyncSubscriptions, "themeLibrary.sync");
         }
         else
@@ -314,12 +321,13 @@ public:
             empty_.Text(L("themeLibrary.empty"));
             constexpr const char* keys[]{"themeLibrary.all", "themeLibrary.global", "themeLibrary.dock", "themeLibrary.statusBar",
                 "themeLibrary.taskbar", "themeLibrary.quickPanel", "themeLibrary.popup"};
-            for (std::size_t i = 0; i < tabs_.size(); ++i)
-            {
-                c::TextBlock text; text.Text(L(keys[i])); text.TextWrapping(x::TextWrapping::Wrap);
-                tabs_[i].Content(text);
-            }
-            PatchTabs(); LayoutTabs();
+            const bool previous = syncing_; syncing_ = true;
+            filterLabel_.Text(L("themeLibrary.type"));
+            x::Automation::AutomationProperties::SetName(filterChoice_, filterLabel_.Text());
+            filterChoice_.Items().Clear();
+            for (const auto* key : keys) filterChoice_.Items().Append(winrt::box_value(L(key)));
+            filterChoice_.SelectedIndex(static_cast<int>(filter_));
+            syncing_ = previous;
         }
         c::TextBlock cancelText; cancelText.Text(L("themeLibrary.cancelEdit"));
         cancelText.TextWrapping(x::TextWrapping::Wrap); cancel_.Content(cancelText);
@@ -370,8 +378,8 @@ private:
     struct CardCommand { ThemeLibraryCommand command; std::string id; c::AppBarButton control; };
     std::vector<CardCommand> cardCommands_;
     std::vector<std::function<void()>> cardRevoke_;
-    c::Grid filters_;
-    std::array<c::Primitives::ToggleButton, 7> tabs_;
+    c::TextBlock filterLabel_;
+    c::ComboBox filterChoice_;
     FilterTab filter_ = FilterTab::All;
     c::TextBlock empty_;
     c::Button cancel_;
@@ -534,7 +542,7 @@ private:
     }
     void PatchButtons()
     {
-        if (transfer_) { for (auto tab : tabs_) tab.IsEnabled(!busy_); }
+        if (transfer_) filterChoice_.IsEnabled(!busy_);
         else
         {
             const bool visible = CustomSelected();
@@ -612,21 +620,13 @@ private:
         AppearanceSections::CollapseWithin(saveRoot_);
         for (auto content : customContent_) AppearanceSections::CollapseWithin(content);
     }
-    void PatchTabs()
+    static c::AppBarButton BoxedCommandButton()
     {
-        for (std::size_t i = 0; i < tabs_.size(); ++i) tabs_[i].IsChecked(i == static_cast<std::size_t>(filter_));
-    }
-    void LayoutTabs()
-    {
-        const int count = std::clamp(static_cast<int>(filters_.ActualWidth() / 140), 1, 7);
-        if (filters_.ColumnDefinitions().Size() == static_cast<unsigned>(count)) return;
-        filters_.ColumnDefinitions().Clear(); filters_.RowDefinitions().Clear();
-        for (int i = 0; i < count; ++i) filters_.ColumnDefinitions().Append(c::ColumnDefinition{});
-        for (std::size_t i = 0; i < tabs_.size(); ++i)
-        {
-            if (i % count == 0) { c::RowDefinition row; row.Height(x::GridLengthHelper::Auto()); filters_.RowDefinitions().Append(row); }
-            c::Grid::SetRow(tabs_[i], static_cast<int>(i) / count); c::Grid::SetColumn(tabs_[i], static_cast<int>(i) % count);
-        }
+        return x::Markup::XamlReader::Load(LR"(<AppBarButton
+            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            Background="{ThemeResource ControlFillColorDefaultBrush}"
+            BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}"
+            BorderThickness="1" CornerRadius="4" Margin="4,0" />)").as<c::AppBarButton>();
     }
     x::UIElement Entry(const themes::Theme& theme)
     {
@@ -641,7 +641,6 @@ private:
             L(theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup");
         if (theme.kind == themes::Kind::Global && themes::FullScope(theme.scopes))
             tags += L" · " + L("themeLibrary.dock") + L" · " + L("themeLibrary.statusBar") + L" · " + L("themeLibrary.taskbar");
-        line(tags);
         bool installed = false;
         for (const auto& [item, origin] : library_.workshop) { (void)item; if (origin.ids.contains(theme.id)) installed = true; }
         c::ComboBox version{nullptr};
@@ -664,7 +663,7 @@ private:
                 cardRevoke_.push_back([version, token] { version.SelectionChanged(token); });
             }
         }
-        line(L(installed ? "themeLibrary.installedSource" : "themeLibrary.localSource"));
+        line(tags + L" · " + L(installed ? "themeLibrary.installedSource" : "themeLibrary.localSource"));
         for (auto [id, key] : {std::pair{theme.quickPanel, "themeLibrary.quickPanel"}, {theme.popup, "themeLibrary.popup"}})
             if (!id.empty()) if (auto child = themes::Resolve(library_.themes, id)) line(L(key) + L"：" + std::wstring(winrt::to_hstring(child->name).c_str()));
         c::CommandBar actions; actions.DefaultLabelPosition(c::CommandBarDefaultLabelPosition::Right);
@@ -686,10 +685,12 @@ private:
             {ThemeLibraryCommand::UnbindWorkshop, "themeLibrary.unbindWorkshop"},
             {ThemeLibraryCommand::Remove, "themeLibrary.remove"}})
         {
-            c::AppBarButton button; button.Label(L(key));
+            auto button = command == ThemeLibraryCommand::Preview ? BoxedCommandButton() : c::AppBarButton{};
+            button.Label(L(key));
             (command == ThemeLibraryCommand::ChooseCover || command == ThemeLibraryCommand::ChooseBackground ||
                 command == ThemeLibraryCommand::Regenerate || command == ThemeLibraryCommand::Remove ||
-                command == ThemeLibraryCommand::CopyLocal || command == ThemeLibraryCommand::BindWorkshop || command == ThemeLibraryCommand::UnbindWorkshop ?
+                command == ThemeLibraryCommand::CopyLocal || command == ThemeLibraryCommand::BindWorkshop || command == ThemeLibraryCommand::UnbindWorkshop ||
+                command == ThemeLibraryCommand::Export || command == ThemeLibraryCommand::Share ?
                 actions.SecondaryCommands() : actions.PrimaryCommands()).Append(button);
             const auto id = theme.id;
             const auto token = button.Click([this, command, id](const auto&, const auto&) {
@@ -748,7 +749,8 @@ private:
     }
     void AddCommand(ThemeLibraryCommand command, const char* key, bool secondary = false)
     {
-        c::AppBarButton button; button.Label(L(key));
+        auto button = transfer_ ? BoxedCommandButton() : c::AppBarButton{};
+        button.Label(L(key));
         (secondary ? commands_.SecondaryCommands() : commands_.PrimaryCommands()).Append(button);
         const auto token = button.Click([this, command](const auto&, const auto&) {
             if (command == ThemeLibraryCommand::OpenWorkshop)

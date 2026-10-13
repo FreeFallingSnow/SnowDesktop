@@ -278,8 +278,8 @@ struct WidgetsPagePresenter::Impl
     muxc::Button openDevelopmentFolderButton{nullptr};
     muxc::TextBlock developmentWorkspacePath{nullptr};
     muxc::StackPanel cliRows{nullptr};
-    muxc::HyperlinkButton publishWorkspaceButton{nullptr};
-    muxc::TextBlock publishWorkspaceLabel{nullptr};
+    presenter_controls::SettingRow publishWorkspaceRow;
+    muxc::Button publishWorkspaceButton{nullptr};
     muxc::TextBlock iconReferenceTitle{nullptr};
     muxc::Expander fluentIconsExpander{nullptr};
     muxc::Expander fontAwesomeIconsExpander{nullptr};
@@ -753,39 +753,18 @@ struct WidgetsPagePresenter::Impl
         developerCliCard.content.Children().Append(cliRows);
 
         InitializeCard(developerPublishCard, cardStyle, developerRoot);
-        publishWorkspaceButton = muxc::HyperlinkButton{};
+        publishWorkspaceButton = muxc::Button{};
         publishWorkspaceButton.UseSystemFocusVisuals(true);
-        presenter_controls::ConfigureSettingsHeadingLink(publishWorkspaceButton);
         publishWorkspaceButton.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
         publishWorkspaceButton.VerticalAlignment(mux::VerticalAlignment::Center);
         publishWorkspaceButton.VerticalContentAlignment(mux::VerticalAlignment::Center);
-        publishWorkspaceLabel = muxc::TextBlock{};
-        const double headingFontSize = publishWorkspaceButton.FontSize();
-        for (const auto& text : {developerPublishCard.title, publishWorkspaceLabel})
-        {
-            text.FontFamily(publishWorkspaceButton.FontFamily());
-            text.FontSize(headingFontSize);
-            text.LineStackingStrategy(mux::LineStackingStrategy::BlockLineHeight);
-            text.LineHeight(headingFontSize * 1.4);
-            text.VerticalAlignment(mux::VerticalAlignment::Center);
-            text.Margin({0, 0, 0, 0});
-            text.Padding({0, 0, 0, 0});
-        }
-        publishWorkspaceButton.Content(publishWorkspaceLabel);
-        muxc::Grid publishHeading;
-        publishHeading.ColumnSpacing(16);
-        muxc::ColumnDefinition publishTitleColumn, publishActionColumn;
-        publishTitleColumn.Width({1, mux::GridUnitType::Star});
-        publishActionColumn.Width({1, mux::GridUnitType::Auto});
-        publishHeading.ColumnDefinitions().Append(publishTitleColumn);
-        publishHeading.ColumnDefinitions().Append(publishActionColumn);
-        developerPublishCard.heading.Children().RemoveAt(0);
-        developerPublishCard.title.VerticalAlignment(mux::VerticalAlignment::Center);
-        publishHeading.Children().Append(developerPublishCard.title);
-        muxc::Grid::SetColumn(publishWorkspaceButton, 1);
-        publishHeading.Children().Append(publishWorkspaceButton);
-        developerPublishCard.heading.Children().InsertAt(0, publishHeading);
+        publishWorkspaceRow.Initialize(publishWorkspaceButton);
+        publishWorkspaceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        developerPublishCard.heading.Children().Clear();
+        developerPublishCard.heading.Visibility(mux::Visibility::Collapsed);
+        developerPublishCard.title = publishWorkspaceRow.label;
+        developerPublishCard.content.Children().Append(publishWorkspaceRow.root);
 
         InitializeCard(developerReferenceCard, cardStyle, developerRoot);
         iconReferenceTitle = muxc::TextBlock{};
@@ -3274,8 +3253,8 @@ struct WidgetsPagePresenter::Impl
         openDevelopmentFolderButton.Content(winrt::box_value(L(
             "app.settings.widgets_open_development_folder",
             L"Open Development Components Folder")));
-        publishWorkspaceLabel.Text(L(
-            "app.settings.widgets_publish_steam", L"Publish to Steam"));
+        publishWorkspaceButton.Content(winrt::box_value(L(
+            "app.settings.widgets_publish_steam", L"Publish to Steam")));
         copyAllErrorsButton.Content(winrt::box_value(L(
             "app.settings.copy_all", L"Copy All")));
         clearAllErrorsButton.Content(winrt::box_value(L(

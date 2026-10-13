@@ -228,6 +228,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         ThemeLibraryResult result;
         if (request.command != ThemeLibraryCommand::Refresh) return result;
         result.succeeded = true;
+        result.workshopAvailable = true;
+        result.sharingAvailable = true;
         for (int index = 0; index < 4; ++index)
         {
             themes::Theme theme; theme.id = "preview-theme-" + std::to_string(index);
@@ -305,6 +307,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         snapshot.initialized = snapshot.sessionActive = true;
         snapshot.values.general.dockEnabled = !disabled;
         snapshot.values.general.statusBar.enabled = !disabled;
+        if (expanded && !custom)
+            snapshot.values.general.statusBar.position = snapshot.values.dock.position;
         snapshot.values.general.widgetDeveloperToolsEnabled = true;
         snapshot.values.dock.fullscreenExceptions = {
             {L"C:\\Preview\\Presentation.exe", DockFullscreenPolicy::Allow},
@@ -344,6 +348,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         {
             WidgetsPageSnapshot packages; packages.generation = 1; packages.revision = revision;
             packages.workshopAvailable = true;
+            packages.developerPublisherAvailable = true;
             packages.developmentWorkspace = L"C:\\Preview\\Components";
             packages.componentCliPath = L"C:\\Preview\\SnowDesktop\\snowwidget.exe";
             WidgetAgentSkillTargetSnapshot skill; skill.id = "shared";
@@ -453,6 +458,41 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             manifest << key << '\t' << image << '\t' << width << '\t' << height << '\t' << scroll.VerticalOffset() << '\t' << maximum << '\n';
             manifest.flush(); rows.flush();
             if (offset >= maximum) break;
+        }
+        if (page == SettingsPage::DesktopCategories && focusId.empty())
+        {
+            c::Expander editor{nullptr};
+            c::HyperlinkButton addLink{nullptr};
+            const winrt::hstring addText{_LW("app.settings.add_category")};
+            Walk(cards, [&](const x::DependencyObject& node) {
+                if (const auto section = node.try_as<c::Expander>(); section)
+                    if (const auto heading = section.Header().try_as<c::TextBlock>(); heading && heading.Text() == addText)
+                        editor = section;
+                if (const auto link = node.try_as<c::HyperlinkButton>(); link &&
+                    winrt::unbox_value_or<winrt::hstring>(link.Content(), winrt::hstring{}) == addText)
+                    addLink = link;
+            });
+            if (!editor || !addLink || editor.Visibility() != x::Visibility::Collapsed)
+                throw std::runtime_error("new category editor must be hidden on entry");
+            const auto peer = x::Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(addLink);
+            if (!peer) throw std::runtime_error("add category link automation peer is missing");
+            peer.GetPattern(x::Automation::Peers::PatternInterface::Invoke)
+                .as<x::Automation::Provider::IInvokeProvider>().Invoke();
+            Settle(shell.as<x::FrameworkElement>());
+            if (editor.Visibility() != x::Visibility::Visible || !editor.IsExpanded())
+                throw std::runtime_error("add category link did not reveal the editor");
+            for (const auto destination : {SettingsPage::General, SettingsPage::DesktopCategories})
+            {
+                snapshot.revision = ++revision;
+                snapshot.domainRevisions = {revision, revision, revision, revision, revision, revision, revision};
+                snapshot.route = SettingsRoute::ForPage(destination);
+                if (!shell->ApplySnapshot(snapshot)) throw std::runtime_error("category revisit route refused");
+                Settle(shell.as<x::FrameworkElement>());
+            }
+            if (editor.Visibility() != x::Visibility::Collapsed || editor.IsExpanded())
+                throw std::runtime_error("new category editor must hide after leaving and returning");
+            std::ofstream(output / L"category-lifecycle.tsv", std::ios::app)
+                << "hidden-on-entry\tlink-revealed\thidden-on-reentry\n";
         }
     }
     shell->Close(); host.runtime.Detach(); shell = nullptr;

@@ -420,7 +420,7 @@ struct DockPagePresenter::Impl
     ContinuousControl mergedIconScale;
     ContinuousControl frequentItemCount;
 
-    muxc::HyperlinkButton taskbarSettingsLink{nullptr};
+    muxc::Button taskbarSettingsLink{nullptr};
     muxc::Button restartExplorerButton{nullptr};
     muxc::ComboBox taskbarThemeCombo{nullptr};
     muxc::ComboBox taskbarContentThemeCombo{nullptr};
@@ -769,7 +769,7 @@ struct DockPagePresenter::Impl
         });
         taskbarSuppressRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         taskbarCard.content.Children().Append(taskbarSuppressRow.root);
-        taskbarSettingsLink = muxc::HyperlinkButton{};
+        taskbarSettingsLink = muxc::Button{};
         taskbarSettingsLink.UseSystemFocusVisuals(true);
         taskbarSettingsRow.Initialize(taskbarSettingsLink);
         taskbarSettingsRow.SetControlAlignment(mux::HorizontalAlignment::Right);

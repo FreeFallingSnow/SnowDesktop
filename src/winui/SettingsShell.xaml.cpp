@@ -2529,6 +2529,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     pageRoute.guideTopic.clear();
     if (!sessionActive_)
     {
+        if (desktopPage_)
+            desktopPage_->SetCategoryPageActive(false);
         PageCards().Children().Clear();
         focusTargets_.clear();
         renderedPageRoute_.reset();
@@ -2540,6 +2542,9 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     {
         return;
     }
+
+    if (desktopPage_)
+        desktopPage_->SetCategoryPageActive(pageRoute.page == SettingsPage::DesktopCategories);
 
     const auto usesGeneralPresenter = [](SettingsPage page) {
         return page == SettingsPage::QuickNavigation || page == SettingsPage::General ||
@@ -2760,6 +2765,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         {
             PageCards().Children().Append(
                 personalizationPage_->ThemeContent());
+            PageCards().Children().Append(personalizationPage_->QuickNavigationAppearanceContent());
             if (dockPage_)
             {
                 dockPage_->SetSupplementalContent(personalizationPage_->DockAppearanceContent(), nullptr, nullptr);
@@ -2778,7 +2784,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 });
                 statusBarPage_->Activate();
             }
-            PageCards().Children().Append(personalizationPage_->QuickNavigationAppearanceContent());
             registerPersonalizationFocus({
                 "personalization.theme",
                 "personalization.globalTheme",
@@ -2852,14 +2857,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 });
             pageLayoutPage_->Activate();
             generalPage_->Activate();
-            muxc::Button display;
-            display.Style(Resources().Lookup(winrt::box_value(L"SettingsShellCardButtonStyle")).as<mux::Style>());
-            display.Content(winrt::box_value(Localize("app.menu.display_settings")));
-            display.Click([](const auto&,const auto&) -> winrt::fire_and_forget {
-                try { co_await winrt::Windows::System::Launcher::LaunchUriAsync(winrt::Windows::Foundation::Uri{L"ms-settings:display"}); }
-                catch (...) {}
-            });
-            PageCards().Children().Append(display);
         }
         break;
     case SettingsPage::LargeIcon:

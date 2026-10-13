@@ -690,6 +690,7 @@ struct DesktopPagePresenter::Impl
     bool hasSnapshot = false;
     bool updatingControls = false;
     bool active = false;
+    bool categoryPageActive = false;
     bool closed = false;
 
     winrt::event_token shortcutArrowToken{};
@@ -1100,6 +1101,7 @@ struct DesktopPagePresenter::Impl
         addCategorySection.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         addCategorySection.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
         addCategorySection.IsExpanded(false);
+        addCategorySection.Visibility(mux::Visibility::Collapsed);
         addCategorySection.Header(addCategoryHeading);
         muxc::StackPanel addCategoryBody;
         addCategoryBody.Spacing(12);
@@ -1317,9 +1319,26 @@ struct DesktopPagePresenter::Impl
             [this](const auto&, const auto&) { AddCategoryRule(); });
         revealAddCategoryToken = revealAddCategory.Click([this](const auto&, const auto&) {
             if (closed || !active) return;
-            addCategorySection.IsExpanded(true);
+            RevealAddCategoryEditor();
             if (navigate) navigate(SettingsRoute::ForPage(SettingsPage::DesktopCategories, "desktop.category.add"));
         });
+    }
+
+    void RevealAddCategoryEditor() const noexcept
+    {
+        if (closed) return;
+        addCategorySection.Visibility(mux::Visibility::Visible);
+        addCategorySection.IsExpanded(true);
+    }
+
+    void SetCategoryPageActive(bool value) noexcept
+    {
+        if (closed || categoryPageActive == value) return;
+        categoryPageActive = value;
+        // A page visit controls disclosure only. Keep the unsaved form and
+        // pending host acknowledgement intact when leaving this page.
+        addCategorySection.IsExpanded(false);
+        addCategorySection.Visibility(mux::Visibility::Collapsed);
     }
 
     std::wstring RuleLabel(const CategoryRule& rule) const
@@ -2166,7 +2185,7 @@ struct DesktopPagePresenter::Impl
                                     : mux::FrameworkElement{ruleRows.front()->section};
         if (id == "desktop.category.add")
         {
-            if (reveal) addCategorySection.IsExpanded(true);
+            if (reveal) RevealAddCategoryEditor();
             return newCategoryLabel;
         }
         return nullptr;
@@ -2315,9 +2334,16 @@ void DesktopPagePresenter::Activate() noexcept
         impl_->active = true;
 }
 
+void DesktopPagePresenter::SetCategoryPageActive(bool active) noexcept
+{
+    if (impl_) impl_->SetCategoryPageActive(active);
+}
+
 void DesktopPagePresenter::Deactivate() noexcept
 {
-    if (!impl_ || impl_->closed || !impl_->active) return;
+    if (!impl_ || impl_->closed) return;
+    impl_->SetCategoryPageActive(false);
+    if (!impl_->active) return;
     impl_->CommitOpenColorEditors();
     impl_->CommitContinuousEdits();
     impl_->active = false;
