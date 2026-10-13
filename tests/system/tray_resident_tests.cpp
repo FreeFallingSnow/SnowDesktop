@@ -95,6 +95,7 @@ int wmain(int argc, wchar_t** argv)
             UnmapViewOfFile(state); state = nullptr;
             CloseHandle(mapping); mapping = nullptr;
             passed = passed && WaitFor([&] {
+                SetLastError(ERROR_SUCCESS);
                 HANDLE candidate = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
                     0, sizeof(SharedState), ObjectName(host, L"State").c_str());
                 if (!candidate) return false;
