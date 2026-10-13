@@ -2044,7 +2044,7 @@ void TestBalancedPopupColumns()
     const auto measure = [&](std::size_t count, int columns, int controlsHeight) {
         const int rows = popup::RequiredRowCount(count, columns);
         return std::pair{
-            metrics.paddingX * 2 + columns * metrics.cellWidth + (columns - 1) * metrics.gapX,
+            popup::ResolveFixedGridFrameWidth(metrics, columns),
             metrics.headerHeight + controlsHeight + rows * metrics.cellHeight +
                 (rows - 1) * metrics.gapY + metrics.bottomPadding};
     };
@@ -2070,34 +2070,32 @@ void TestBalancedPopupColumns()
         "uniform high-DPI scaling preserves the chosen popup proportions");
 }
 
-void TestPopupGridPadding()
+void TestWholeColumnPopupWidth()
 {
     namespace popup = snowdesktop::collection_popup_layout;
-    // Search controls reserve 320 cu while this page's three tracks need only
-    // 296 cu including popup padding. The spare width must not collect at right.
+    // The reported page needs a 296 cu three-column frame, not a 320 cu frame
+    // with centered tracks. Search and category controls must follow that width.
     for (const float scale : {0.75f, 1.0f, 1.25f, 2.0f})
     {
         const auto metrics = popup::ResolveMetrics(
             popup::ScaleDimension(80, scale), popup::ScaleDimension(106, scale),
             popup::ScaleDimension(74, scale), popup::ScaleDimension(100, scale), scale);
-        for (const int roundingPixel : {0, 1})
+        for (const int columns : {3, 4})
         {
-            const int frameWidth = popup::ScaleDimension(320, scale) + roundingPixel;
+            const int frameWidth = popup::ResolveFixedGridFrameWidth(metrics, columns);
             const RECT viewport{-600 + metrics.paddingX, -200,
                 -600 + frameWidth - metrics.paddingX, 200};
-            const int columns = popup::ResolveFixedGridColumnCount(
-                metrics, static_cast<int>(viewport.right - viewport.left));
             const RECT first = popup::ResolveFixedGridItemRect(metrics, viewport, 0);
             const RECT last = popup::ResolveFixedGridItemRect(metrics, viewport, columns - 1);
             const RECT nextRow = popup::ResolveFixedGridItemRect(metrics, viewport, columns, 17);
-            Check(columns == 3 &&
-                    std::abs((first.left - viewport.left) - (viewport.right - last.right)) <= 1 &&
-                    first.left >= viewport.left && last.right <= viewport.right,
-                "minimum control widths keep equal popup grid padding at both edges");
+            Check(popup::ResolveFixedGridColumnCount(metrics,
+                        static_cast<int>(viewport.right - viewport.left)) == columns &&
+                    first.left == viewport.left && last.right == viewport.right,
+                "three- and four-column frames have exactly the normal popup padding at both edges");
             Check(nextRow.left == first.left && nextRow.right == first.right &&
                     nextRow.top == first.top + metrics.cellHeight + metrics.gapY - 17 &&
                     popup::RequiredRowCount(3, columns) == 2,
-                "centered popup tracks align across rows while preserving scrolling and the two-row floor");
+                "whole popup tracks align across rows while preserving scrolling and the two-row floor");
         }
     }
     const auto metrics = popup::ResolveMetrics(92, 116, 84, 108, 1.0f);
@@ -2106,6 +2104,11 @@ void TestPopupGridPadding()
     const RECT last = popup::ResolveFixedGridItemRect(metrics, exact, 2);
     Check(first.left == exact.left && last.right == exact.right,
         "whole-track popup widths retain their existing symmetric baseline insets");
+    const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+    Check(snowdesktop::test::CheckSourceBoundaries(root, {
+        {"src/app/popup/app_popup_geometry.cpp", "RECT DesktopApp::GetCollectionPopupRect(",
+            "snowdesktop::collection_popup_layout::Metrics", {"ScaleDimension(320"}}
+    }), "grid popup frame sizing must not regain a control-width floor between complete columns");
 }
 }
 
@@ -2142,7 +2145,7 @@ int main()
     TestListDetailRules();
     TestPopupChromeScaling();
     TestBalancedPopupColumns();
-    TestPopupGridPadding();
+    TestWholeColumnPopupWidth();
     if (failures != 0)
     {
         std::cerr << failures

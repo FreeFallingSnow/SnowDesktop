@@ -234,18 +234,22 @@ inline int ResolveFixedGridColumnCount(const Metrics& metrics, int viewportWidth
         1, kMaximumColumns);
 }
 
-// Controls can widen the frame beyond a whole number of fixed grid tracks.
-// Split that remainder between both edges instead of leaving it all at the right.
+// The frame follows whole grid tracks; controls adapt to its width.
+inline int ResolveFixedGridFrameWidth(const Metrics& metrics, int columns)
+{
+    columns = std::clamp(columns, 1, kMaximumColumns);
+    return metrics.paddingX * 2 + columns * metrics.cellWidth +
+        (columns - 1) * metrics.gapX;
+}
+
 inline RECT ResolveFixedGridItemRect(const Metrics& metrics, const RECT& viewport,
     std::size_t index, int scrollOffset = 0)
 {
     const int width = std::max(1, static_cast<int>(viewport.right - viewport.left));
     const int columns = ResolveFixedGridColumnCount(metrics, width);
-    const int gridWidth = columns * metrics.cellWidth + (columns - 1) * metrics.gapX;
-    const int inset = std::max(0, width - gridWidth) / 2;
     const int column = static_cast<int>(index % static_cast<std::size_t>(columns));
     const int row = static_cast<int>(index / static_cast<std::size_t>(columns));
-    const LONG left = viewport.left + inset + column * (metrics.cellWidth + metrics.gapX);
+    const LONG left = viewport.left + column * (metrics.cellWidth + metrics.gapX);
     const LONG top = viewport.top + row * (metrics.cellHeight + metrics.gapY) - scrollOffset;
     return {left, top, left + metrics.cellWidth, top + metrics.cellHeight};
 }

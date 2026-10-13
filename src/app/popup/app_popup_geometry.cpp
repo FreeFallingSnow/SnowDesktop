@@ -106,8 +106,7 @@ RECT DesktopApp::GetCategorizedPopupFrame(const RECT& popup) const
         frame.right = right + inset;
         return frame;
     }
-    // Preserve the first label's inset on both sides of the actual popup.
-    // Its minimum width can leave a partial grid track at the trailing edge.
+    // Controls follow the same symmetric insets as the outer grid labels.
     const RECT firstTitle = GetItemTextRect(
         RECT{left, 0, left + metrics.cellWidth, metrics.cellHeight}, false);
     frame.left = firstTitle.left - inset;
@@ -472,7 +471,6 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     RECT work = page ? page->workArea : layoutWorkArea_;
     const int workWidth = std::max(1, static_cast<int>(work.right - work.left));
     const int workHeight = std::max(1, static_cast<int>(work.bottom - work.top));
-    const int cellW = metrics.cellWidth;
     const int cellH = metrics.cellHeight;
     const int availableWidth = std::max(
         1, workWidth - metrics.edgeMargin * 2);
@@ -480,9 +478,8 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
         metrics.maximumWidth, availableWidth);
     const int popupContentWidth = std::max(
         1, maxWidth - metrics.paddingX * 2);
-    const int maxColumns = std::max(1,
-        (popupContentWidth + metrics.gapX) /
-        std::max(1, cellW + metrics.gapX));
+    const int maxColumns = snowdesktop::collection_popup_layout::
+        ResolveFixedGridColumnCount(metrics, popupContentWidth);
     const bool listMode = UsesCollectionPopupList(widget);
     int columns = listMode
         ? 1
@@ -549,12 +546,8 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     auto popupWidthForColumns = [&](int columnCount) {
         if (listMode)
             return maxWidth;
-        if (UsesCategorizedPopupControls(widget))
-            return std::min(maxWidth, std::max(metrics.paddingX * 2 + columnCount * cellW +
-                std::max(0, columnCount - 1) * metrics.gapX,
-                snowdesktop::collection_popup_layout::ScaleDimension(320, metrics.scale)));
-        return metrics.paddingX * 2 + columnCount * cellW +
-            std::max(0, columnCount - 1) * metrics.gapX;
+        return snowdesktop::collection_popup_layout::
+            ResolveFixedGridFrameWidth(metrics, columnCount);
     };
     auto popupHeightForRows = [&](int rowCount, int columnCount) {
         if (groupView)
@@ -593,8 +586,8 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             itemCount, maxColumns, maxHeight, [&](int candidate) {
                 const int candidateWidth = std::min(
                     popupWidthForColumns(candidate), availableWidth);
-                // A minimum control width can expose additional grid tracks.
-                // Measure those same tracks that painting and hit testing use.
+                // Measure the tracks that painting and hit testing use after
+                // applying the screen work-area limit.
                 const int renderedColumns = groupView ? candidate : columnsForWidth(candidateWidth);
                 const int candidateRows = snowdesktop::collection_popup_layout::
                     RequiredRowCount(itemCount, renderedColumns);
