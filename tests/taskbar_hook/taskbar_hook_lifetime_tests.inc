@@ -294,6 +294,18 @@ int RunLifetimeChild(const std::filesystem::path& root,
         }
     }
     if (!observeActivation(true)) return fail("activation observation must remain live after the reconnect burst");
+    // Legacy v2 owners have the same shared-state ABI but lack the readiness
+    // fix. Advertising only their old property must force fresh attachment.
+    RemovePropW(window, kHookResumeProtocolProperty);
+    SetPropW(window, L"SnowDesktop.Taskbar.ResumeProtocol.v2",
+        reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(kSharedStateVersion)));
+    const DWORD legacyResume = ResumeTaskbarThreads(windows, GetCurrentProcessId(),
+        restartedOwner.value.dwProcessId, nullptr);
+    RemovePropW(window, L"SnowDesktop.Taskbar.ResumeProtocol.v2");
+    SetPropW(window, kHookResumeProtocolProperty,
+        reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(kSharedStateVersion)));
+    if (legacyResume != ERROR_NOT_SUPPORTED || GetPropW(window, kHookOwnerProperty) != recovery)
+        return fail("a legacy single-pass initializer must not satisfy the new host's resident connection");
     SetPropW(window, kHookResumeProtocolProperty,
         reinterpret_cast<HANDLE>(static_cast<std::uintptr_t>(kSharedStateVersion + 1)));
     if (ResumeTaskbarThreads(windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId,
