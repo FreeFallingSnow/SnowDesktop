@@ -40,6 +40,7 @@ struct StatusBarSettings
     bool timeNotificationRightAligned = false;
     bool clock = true, tray = true, network = true, volume = true, battery = true;
     bool controlCenter = true;
+    bool batteryPercentage = false;
     bool inputMethod = true;
     bool inputMethodSystemPanel = false;
     bool cpu = false, memory = false, gpu = false, traffic = false;
@@ -85,6 +86,7 @@ template<class Visitor> void VisitStatusBarFlags(Visitor visit)
     visit("volume", &StatusBarSettings::volume);
     visit("battery", &StatusBarSettings::battery);
     visit("controlCenter", &StatusBarSettings::controlCenter);
+    visit("batteryPercentage", &StatusBarSettings::batteryPercentage);
     visit("cpu", &StatusBarSettings::cpu);
     visit("memory", &StatusBarSettings::memory);
     visit("gpu", &StatusBarSettings::gpu);

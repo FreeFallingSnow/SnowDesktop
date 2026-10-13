@@ -34,6 +34,8 @@ public:
             filters.Orientation(c::Orientation::Horizontal);
             filters.Spacing(12);
             filterLabel_.VerticalAlignment(x::VerticalAlignment::Center);
+            filters.VerticalAlignment(x::VerticalAlignment::Center);
+            filterChoice_.VerticalAlignment(x::VerticalAlignment::Center);
             filterChoice_.Width(180);
             filters.Children().Append(filterLabel_);
             filters.Children().Append(filterChoice_);
@@ -45,7 +47,7 @@ public:
             toolbar.ColumnDefinitions().Append(filterColumn);
             toolbar.ColumnDefinitions().Append(commandColumn);
             commands_.HorizontalAlignment(x::HorizontalAlignment::Right);
-            commands_.VerticalAlignment(x::VerticalAlignment::Top);
+            commands_.VerticalAlignment(x::VerticalAlignment::Center);
             commands_.MaxWidth(240);
             commands_.IsDynamicOverflowEnabled(true);
             c::Grid::SetColumn(commands_, 1);
@@ -173,10 +175,11 @@ public:
     x::FrameworkElement Choice() const { return transfer_ ? x::FrameworkElement{entries_} : x::FrameworkElement{choice_}; }
     x::UIElement SelectionContent()
     {
-        c::Grid row; row.ColumnSpacing(8);
+        c::Grid row;
         c::ColumnDefinition selector, action; action.Width(x::GridLengthHelper::Auto());
         row.ColumnDefinitions().Append(selector); row.ColumnDefinitions().Append(action);
         c::Grid::SetColumn(editButton_, 1); row.Children().Append(choice_); row.Children().Append(editButton_);
+        editButton_.Margin({8, 0, 0, 0});
         const auto token = editButton_.Click([this](const auto&, const auto&) {
             BeginEdit();
         });

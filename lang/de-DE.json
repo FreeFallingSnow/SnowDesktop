@@ -2271,8 +2271,8 @@
   "appearance.rimWidthHelp": "Grundbreite der Reflexion; Mindestdicke und Dickenvariation in den erweiterten Optionen bestimmen die tatsächliche Dicke.",
   "settings.nav.group.widgetsAndCategories": "Widgets & Kategorien",
   "settings.nav.group.other": "Sonstiges",
-  "settings.widgetBehavior.title": "Sammlungen und Ordner",
-  "settings.widgetBehavior.description": "Legen Sie fest, wie Widgets geöffnet werden, wo die Titelleiste von Sammlungen erscheint und ob Gruppenregisterkarten die Anzahl der Dateien anzeigen.",
+  "settings.widgetBehavior.title": "Widget-Einstellungen",
+  "settings.widgetBehavior.description": "Allgemeine Widget-Interaktionen, Titelleisten, Registerkarten und das Öffnen von Popups einstellen.",
   "settings.animation.openDock.description": "Passen Sie die Vergrößerung beim Zeigen auf das Dock sowie Start- und Fensteranimationen an.",
   "app.settings.widgets_permission_location_read": "Systemstandort lesen",
   "quickNav.title": "Schnellnavigation",
@@ -2694,5 +2694,11 @@
   "settings.search.prerequisite.enable": "Um diese Option anzupassen, aktivieren Sie zuerst „{0}“.",
   "settings.search.prerequisite.unavailable": "Diese Option kann unter den aktuellen Bedingungen nicht angepasst werden.",
   "settings.search.alias.globalAppearance": "Schriftarten und Symbole Globales Erscheinungsbild",
-  "statusBar.theme.mergedHint": "Mit dem Dock zusammengeführte Statusleisten verwenden dessen Darstellung."
+  "statusBar.theme.mergedHint": "Mit dem Dock zusammengeführte Statusleisten verwenden dessen Darstellung.",
+  "settings.calendar.originalDate": "Ursprüngliches Termindatum",
+  "statusBar.batteryPercentage": "Akkuladung in Prozent anzeigen",
+  "settings.widgetBehavior.tabSwitching": "Registerkarten wechseln",
+  "settings.widgetBehavior.groupTabHover": "Gruppenregisterkarten beim Darüberfahren wechseln",
+  "settings.widgetBehavior.categoryTabHover": "Kategorieregisterkarten beim Darüberfahren wechseln",
+  "settings.widgetBehavior.tabHoverDelay": "Verzögerung beim Darüberfahren"
 }

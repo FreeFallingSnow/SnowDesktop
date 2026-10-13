@@ -14,6 +14,7 @@
 #include <atomic>
 #include <cwchar>
 #include <cwctype>
+#include <limits>
 #include <utility>
 
 namespace snowdesktop::winui
@@ -112,6 +113,32 @@ void SetAutomation(
     muxa::AutomationProperties::SetHelpText(element, std::wstring(help));
 }
 
+void SetCenteredButtonText(const muxc::ContentControl& button, std::wstring text)
+{
+    muxc::TextBlock label;
+    label.Text(std::move(text));
+    label.TextWrapping(mux::TextWrapping::Wrap);
+    label.TextAlignment(mux::TextAlignment::Center);
+    button.Content(label);
+}
+
+void UpdatePackageDescriptionLayout(const muxc::Grid& details)
+{
+    const auto tags = details.Children().GetAt(0).as<muxc::StackPanel>();
+    const auto description = details.Children().GetAt(1).as<muxc::TextBlock>();
+    const bool hasTags = tags.Visibility() == mux::Visibility::Visible;
+    const bool hasDescription = description.Visibility() == mux::Visibility::Visible;
+    const bool stacked = hasTags && hasDescription &&
+        details.ActualWidth() > 0 && details.ActualWidth() < 520.0;
+    details.Visibility(hasTags || hasDescription
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+    details.RowSpacing(stacked ? 8.0 : 0.0);
+    muxc::Grid::SetColumnSpan(tags, stacked ? 2 : 1);
+    muxc::Grid::SetRow(description, stacked ? 1 : 0);
+    muxc::Grid::SetColumn(description, hasTags && !stacked ? 1 : 0);
+    muxc::Grid::SetColumnSpan(description, hasTags && !stacked ? 1 : 2);
+}
+
 void ApplyAccentButtonStyle(const muxc::Button& button) noexcept
 {
     try
@@ -203,6 +230,7 @@ struct WidgetsPagePresenter::Impl
         muxc::TextBlock metadata{nullptr};
         muxc::StackPanel tags{nullptr};
         muxc::TextBlock description{nullptr};
+        muxc::Grid descriptionRow{nullptr};
         muxc::TextBlock version{nullptr};
         muxc::TextBlock author{nullptr};
         muxc::TextBlock sourceId{nullptr};
@@ -258,10 +286,11 @@ struct WidgetsPagePresenter::Impl
     muxc::RadioButton installedFilterButton{nullptr};
     muxc::RadioButton includedFilterButton{nullptr};
     muxc::RadioButton developmentFilterButton{nullptr};
-    muxc::CommandBar managementActions{nullptr};
-    muxc::AppBarButton installFileButton{nullptr};
-    muxc::AppBarButton workshopButton{nullptr};
-    muxc::AppBarToggleButton selfDevelopButton{nullptr};
+    muxc::Grid managementToolbar{nullptr};
+    muxc::Grid managementActions{nullptr};
+    muxc::Button installFileButton{nullptr};
+    muxc::Button workshopButton{nullptr};
+    muxcp::ToggleButton selfDevelopButton{nullptr};
     muxc::StackPanel taskPanel{nullptr};
     muxc::ProgressRing taskRing{nullptr};
     muxc::ProgressBar taskProgress{nullptr};
@@ -346,6 +375,7 @@ struct WidgetsPagePresenter::Impl
     winrt::event_token includedFilterToken{};
     winrt::event_token developmentFilterToken{};
     winrt::event_token installFileToken{};
+    winrt::event_token managementToolbarSizeToken{};
     winrt::event_token workshopToken{};
     winrt::event_token selfDevelopToken{};
     winrt::event_token cancelTaskToken{};
@@ -591,25 +621,33 @@ struct WidgetsPagePresenter::Impl
         presenter_controls::BindInfoBarVisibility(feedbackBar);
         root.Children().Append(feedbackBar);
 
-        managementActions = muxc::CommandBar{};
+        managementActions = muxc::Grid{};
         managementActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        managementActions.HorizontalContentAlignment(mux::HorizontalAlignment::Right);
-        managementActions.VerticalContentAlignment(mux::VerticalAlignment::Center);
-        managementActions.DefaultLabelPosition(muxc::CommandBarDefaultLabelPosition::Right);
-        managementActions.IsDynamicOverflowEnabled(true);
-        managementActions.MaxWidth(48.0);
+        managementActions.VerticalAlignment(mux::VerticalAlignment::Center);
+        managementActions.ColumnSpacing(8.0);
 
-        installFileButton = muxc::AppBarButton{};
-        installFileButton.UseSystemFocusVisuals(true);
-        managementActions.PrimaryCommands().Append(installFileButton);
-
-        workshopButton = muxc::AppBarButton{};
-        workshopButton.UseSystemFocusVisuals(true);
-        managementActions.PrimaryCommands().Append(workshopButton);
-
-        selfDevelopButton = muxc::AppBarToggleButton{};
-        selfDevelopButton.UseSystemFocusVisuals(true);
-        managementActions.PrimaryCommands().Append(selfDevelopButton);
+        installFileButton = muxc::Button{};
+        workshopButton = muxc::Button{};
+        selfDevelopButton = muxcp::ToggleButton{};
+        int commandColumn = 0;
+        for (const muxc::Control& button : {
+                 installFileButton.as<muxc::Control>(),
+                 workshopButton.as<muxc::Control>(),
+                 selfDevelopButton.as<muxc::Control>()})
+        {
+            button.UseSystemFocusVisuals(true);
+            button.MinHeight(32.0);
+            button.MinWidth(96.0);
+            button.MaxWidth(160.0);
+            button.Padding({12, 4, 12, 4});
+            button.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+            button.VerticalContentAlignment(mux::VerticalAlignment::Center);
+            muxc::ColumnDefinition column;
+            column.Width(mux::GridLengthHelper::Auto());
+            managementActions.ColumnDefinitions().Append(column);
+            muxc::Grid::SetColumn(button, commandColumn++);
+            managementActions.Children().Append(button);
+        }
 
         muxc::StackPanel installedSection;
         installedSection.Spacing(8);
@@ -617,31 +655,32 @@ struct WidgetsPagePresenter::Impl
         InitializeCard(filterCard, cardStyle, installedSection);
 
         searchBox = muxc::AutoSuggestBox{};
-        searchBox.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        searchBox.HorizontalAlignment(mux::HorizontalAlignment::Left);
+        searchBox.Width(240.0);
         searchBox.MinWidth(200.0);
         searchBox.VerticalAlignment(mux::VerticalAlignment::Center);
         searchBox.IsSuggestionListOpen(false);
         searchBox.UseSystemFocusVisuals(true);
-        muxc::Grid managementToolbar;
+        managementToolbar = muxc::Grid{};
         managementToolbar.ColumnSpacing(8.0);
         muxc::ColumnDefinition searchColumn, commandsColumn;
         searchColumn.Width({1, mux::GridUnitType::Star});
         commandsColumn.Width({1, mux::GridUnitType::Auto});
         managementToolbar.ColumnDefinitions().Append(searchColumn);
         managementToolbar.ColumnDefinitions().Append(commandsColumn);
+        for (int row = 0; row < 2; ++row)
+        {
+            muxc::RowDefinition definition;
+            definition.Height(mux::GridLengthHelper::Auto());
+            managementToolbar.RowDefinitions().Append(definition);
+        }
         managementToolbar.Children().Append(searchBox);
         muxc::Grid::SetColumn(managementActions, 1);
         managementToolbar.Children().Append(managementActions);
-        const auto weakCommands = winrt::make_weak(managementActions);
-        managementToolbar.SizeChanged([weakCommands](const auto&, const mux::SizeChangedEventArgs& args) {
-            if (const auto commands = weakCommands.get())
-            {
-                // The Auto column must not give commands unlimited width and
-                // squeeze the search field. Keep native overflow inside the row.
-                commands.MaxWidth(std::max(48.0,
-                    static_cast<double>(args.NewSize().Width) - 208.0));
-            }
-        });
+        managementToolbarSizeToken = managementToolbar.SizeChanged(
+            [this](const auto&, const mux::SizeChangedEventArgs&) {
+                UpdateManagementToolbarLayout();
+            });
         filterCard.content.Children().Append(managementToolbar);
 
         filterActions = muxc::StackPanel{};
@@ -2495,6 +2534,27 @@ struct WidgetsPagePresenter::Impl
         description.Visibility(package.description.empty()
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);
+        description.VerticalAlignment(mux::VerticalAlignment::Center);
+        muxc::Grid descriptionRow;
+        descriptionRow.ColumnSpacing(12.0);
+        muxc::ColumnDefinition tagsColumn, descriptionColumn;
+        tagsColumn.Width(mux::GridLengthHelper::Auto());
+        descriptionRow.ColumnDefinitions().Append(tagsColumn);
+        descriptionRow.ColumnDefinitions().Append(descriptionColumn);
+        for (int index = 0; index < 2; ++index)
+        {
+            muxc::RowDefinition definition;
+            definition.Height(mux::GridLengthHelper::Auto());
+            descriptionRow.RowDefinitions().Append(definition);
+        }
+        descriptionRow.Children().Append(tags);
+        descriptionRow.Children().Append(description);
+        UpdatePackageDescriptionLayout(descriptionRow);
+        const auto weakDescriptionRow = winrt::make_weak(descriptionRow);
+        descriptionRow.SizeChanged([weakDescriptionRow](const auto&, const mux::SizeChangedEventArgs&) {
+            if (const auto current = weakDescriptionRow.get())
+                UpdatePackageDescriptionLayout(current);
+        });
         muxc::Grid identity;
         identity.ColumnSpacing(12);
         muxc::ColumnDefinition identityName, identityState;
@@ -2510,8 +2570,7 @@ struct WidgetsPagePresenter::Impl
         summaryRow.text.Children().Append(identity);
         muxc::StackPanel summary; summary.Spacing(8);
         summary.Children().Append(summaryRow.root);
-        summary.Children().Append(tags);
-        summary.Children().Append(description);
+        summary.Children().Append(descriptionRow);
         muxc::Border summaryCard; summaryCard.Padding({16, 16, 16, 16}); summaryCard.Child(summary);
         body.Children().Append(summaryCard);
 
@@ -2762,7 +2821,7 @@ struct WidgetsPagePresenter::Impl
             firstIncludedPackageTarget = row;
         targetRows.Children().Append(row);
         packageRowBindings.push_back(PackageRowBinding{
-            package.packageId, row, name, metadata, tags, description,
+            package.packageId, row, name, metadata, tags, description, descriptionRow,
             version, author, sourceId, enabledAction, addAction,
             developmentAction,
             std::move(advancedActions), std::move(revokers), details, permissionSection, permissionTarget});
@@ -2867,6 +2926,7 @@ struct WidgetsPagePresenter::Impl
         binding.description.Visibility(package.description.empty()
                 ? mux::Visibility::Collapsed
                 : mux::Visibility::Visible);
+        UpdatePackageDescriptionLayout(binding.descriptionRow);
         binding.version.Text(
             L("app.settings.version", L"Version") + L": " +
             package.version);
@@ -3029,6 +3089,34 @@ struct WidgetsPagePresenter::Impl
         return RevealPackagePermissions(packageId);
     }
 
+    void UpdateManagementToolbarLayout()
+    {
+        const double width = managementToolbar.ActualWidth();
+        if (width <= 0.0) return;
+        // Preserve all three commands at ordinary sizes. At the supported
+        // smaller window width they move together below the compact search.
+        const bool stacked = width < 744.0;
+        managementToolbar.RowSpacing(stacked ? 8.0 : 0.0);
+        managementToolbar.ColumnDefinitions().GetAt(1).Width(stacked
+            ? mux::GridLength{0, mux::GridUnitType::Pixel}
+            : mux::GridLengthHelper::Auto());
+        muxc::Grid::SetColumn(managementActions, stacked ? 0 : 1);
+        muxc::Grid::SetColumnSpan(managementActions, stacked ? 2 : 1);
+        muxc::Grid::SetRow(managementActions, stacked ? 1 : 0);
+        managementActions.HorizontalAlignment(stacked
+            ? mux::HorizontalAlignment::Stretch : mux::HorizontalAlignment::Right);
+        for (std::uint32_t index = 0; index < managementActions.Children().Size(); ++index)
+        {
+            const auto button = managementActions.Children().GetAt(index).as<muxc::Control>();
+            const bool visible = button.Visibility() == mux::Visibility::Visible;
+            managementActions.ColumnDefinitions().GetAt(index).Width(!visible
+                ? mux::GridLength{0, mux::GridUnitType::Pixel}
+                : stacked ? mux::GridLength{1, mux::GridUnitType::Star}
+                          : mux::GridLengthHelper::Auto());
+            button.MaxWidth(stacked ? std::numeric_limits<double>::infinity() : 160.0);
+        }
+    }
+
     void RenderManagementControls()
     {
         installFileButton.IsEnabled(static_cast<bool>(actions.invoke));
@@ -3043,6 +3131,7 @@ struct WidgetsPagePresenter::Impl
         selfDevelopButton.IsEnabled(
             static_cast<bool>(actions.setDeveloperToolsEnabled));
         selfDevelopButton.IsChecked(developerOverridesVisible);
+        UpdateManagementToolbarLayout();
     }
 
     void RenderTask()
@@ -3233,13 +3322,13 @@ struct WidgetsPagePresenter::Impl
         searchBox.PlaceholderText(L("app.settings.widgets_search_hint",
             L"Search components"));
         RefreshFilterItems();
-        installFileButton.Label(L(
+        SetCenteredButtonText(installFileButton, L(
             "app.settings.widgets_install_package",
             L"Install from File..."));
-        workshopButton.Label(L(
+        SetCenteredButtonText(workshopButton, L(
             "app.settings.widgets_open_steam_workshop",
             L"Open Workshop"));
-        selfDevelopButton.Label(L(
+        SetCenteredButtonText(selfDevelopButton, L(
             "app.settings.widgets_self_develop", L"Develop Your Own"));
         cancelTaskButton.Content(winrt::box_value(L(
             "settings.progress.cancel", L"Cancel")));
@@ -3368,17 +3457,13 @@ struct WidgetsPagePresenter::Impl
         if (focusId == "widgets.search")
             return searchBox;
         if (focusId == "widgets.install")
-            return installFileButton.IsInOverflow() ? managementActions.as<mux::FrameworkElement>()
-                : installFileButton.as<mux::FrameworkElement>();
+            return installFileButton;
         if (focusId == "widgets.workshop")
-            return workshopButton.IsInOverflow() ? managementActions.as<mux::FrameworkElement>()
-                : workshopButton.as<mux::FrameworkElement>();
+            return workshopButton;
         if (focusId == "widgets.developer")
-            return selfDevelopButton.IsInOverflow() ? managementActions.as<mux::FrameworkElement>()
-                : selfDevelopButton.as<mux::FrameworkElement>();
+            return selfDevelopButton;
         if (focusId == "widgets.sources")
-            return workshopButton.IsInOverflow() ? managementActions.as<mux::FrameworkElement>()
-                : workshopButton.as<mux::FrameworkElement>();
+            return workshopButton;
         if (focusId == "widgets.permissions")
             return firstPermissionTarget
                 ? firstPermissionTarget
@@ -3487,6 +3572,7 @@ struct WidgetsPagePresenter::Impl
         Revoke(debugRevokers);
         try
         {
+            managementToolbar.SizeChanged(managementToolbarSizeToken);
             searchBox.TextChanged(searchChangedToken);
             allFilterButton.Checked(allFilterToken);
             installedFilterButton.Checked(installedFilterToken);

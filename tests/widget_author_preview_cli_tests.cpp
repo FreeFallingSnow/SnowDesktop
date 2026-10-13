@@ -2127,6 +2127,23 @@ void TestStatusBarPreview(const std::filesystem::path& snowwidget,
             }
         Check(powerDifferences > 10 && chargeLevelDifferences > 4 && greenPixels > 5 && lowRedPixels > 5 && unavailable.pixels != normal.pixels,
             "battery levels, green charging bolt, low warning and unknown states reach native pixels without percentage text");
+        const auto percentage = read(L"percentage"), percentageZero = read(L"percentage-zero"),
+            percentageFull = read(L"percentage-full"), percentageCharging = read(L"percentage-charging");
+        // The percentage occupies the trailing end of the expanded group.
+        // This region excludes the shifted battery outline and charging fill.
+        const RECT percentageText{bounds.right - 40 * scale, bounds.top + 3 * scale,
+            bounds.right - 16 * scale, bounds.bottom - 3 * scale};
+        Check(CountDifferingPixels(percentageZero, percentageFull, percentageText) > 5 &&
+                CountDifferingPixels(percentage, percentageCharging, percentageText) == 0,
+            "zero and full percentages paint distinct digits while charging preserves the same numeric text");
+        const auto percentageUnknown = read(L"percentage-unknown"), percentageUnavailable = read(L"percentage-unavailable");
+        Check(percentageUnknown.pixels == percentageUnavailable.pixels && percentageUnknown.pixels != percentage.pixels,
+            "unknown and unavailable batteries both collapse the battery and percentage without an empty slot");
+        const auto percentageNarrow = PanelPixels(read(L"percentage-narrow")),
+            percentageScaled = PanelPixels(read(L"percentage-scaled"));
+        Check(percentageNarrow.right - percentageNarrow.left == 640 * scale &&
+                percentageScaled.bottom - percentageScaled.top == 48 * scale,
+            "enabled percentages preserve native narrow-screen and scaled-bar geometry");
         const RECT network{bounds.right - 96 * scale, bounds.top + 3 * scale,
             bounds.right - 72 * scale, bounds.bottom - 3 * scale};
         const auto wifiOff = read(L"wifi-off"), offline = read(L"offline");

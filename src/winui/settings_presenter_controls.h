@@ -115,7 +115,11 @@ inline void UpdateSettingsSubrows(const muxc::StackPanel& panel,
         if (!element || element.Visibility() != mux::Visibility::Visible)
             continue;
         if (const auto border = child.try_as<muxc::Border>())
-            StyleSettingsSubrow(border, first, indent);
+        {
+            if (border.Resources().HasKey(winrt::box_value(L"SnowDesktopSettingsDisclosureRow")))
+                border.BorderThickness({0, first ? 0.0 : 1.0, 0, 0});
+            else StyleSettingsSubrow(border, first, indent);
+        }
         else if (const auto grid = child.try_as<muxc::Grid>())
             StyleSettingsSubrow(grid, first, indent);
         else if (const auto group = child.try_as<muxc::StackPanel>(); group &&
@@ -171,6 +175,7 @@ inline void StyleInlineSettingsExpander(const muxc::Expander& expander)
     expander.Background(transparent);
     expander.BorderBrush(transparent);
     expander.BorderThickness({0, 0, 0, 0});
+    expander.CornerRadius({0});
     expander.Resources().Insert(winrt::box_value(L"ExpanderHeaderBorderThickness"),
         winrt::box_value(mux::Thickness{0, 0, 0, 0}));
     for (const auto key : {L"ExpanderHeaderBackground", L"ExpanderHeaderBorderBrush",
@@ -188,6 +193,43 @@ inline void StyleInlineSettingsExpander(const muxc::Expander& expander)
         };
         flatten(flatten, disclosure);
     });
+}
+
+// A straight divider belongs to the parent card, outside the native Expander
+// template. Mirroring visibility keeps conditional sections from leaving gaps.
+inline muxc::Border SettingsDisclosureRow(const muxc::Expander& expander, bool first = false)
+{
+    StyleInlineSettingsExpander(expander);
+    muxc::Border row;
+    StyleSettingsSubrow(row, first, 0);
+    row.Padding({0});
+    row.MinHeight(0);
+    row.Resources().Insert(winrt::box_value(L"SnowDesktopSettingsDisclosureRow"), winrt::box_value(true));
+    row.Child(expander);
+    row.Visibility(expander.Visibility());
+    const auto weak = winrt::make_weak(row);
+    (void)expander.RegisterPropertyChangedCallback(mux::UIElement::VisibilityProperty(),
+        [weak](const mux::DependencyObject& sender, const mux::DependencyProperty&) {
+            if (const auto surface = weak.get()) surface.Visibility(sender.as<muxc::Expander>().Visibility());
+        });
+    return row;
+}
+
+// Appearance editors contain transparent layout panels around their sections.
+// Join only those sections; their field layouts and nested editors stay intact.
+inline void JoinSettingsSections(const muxc::StackPanel& panel)
+{
+    panel.Spacing(0);
+    for (uint32_t index = 0; index < panel.Children().Size(); ++index)
+    {
+        const auto child = panel.Children().GetAt(index);
+        if (const auto expander = child.try_as<muxc::Expander>())
+        {
+            panel.Children().RemoveAt(index);
+            panel.Children().InsertAt(index, SettingsDisclosureRow(expander));
+        }
+        else if (const auto nested = child.try_as<muxc::StackPanel>()) JoinSettingsSections(nested);
+    }
 }
 
 inline bool IsNumberBoxTextEditing(const muxc::NumberBox& number)
@@ -478,6 +520,11 @@ struct SettingRow
 
     void SetControlAlignment(mux::HorizontalAlignment alignment)
     {
+        // Choice editors share the standard column width across settings pages.
+        // Compact buttons and toggles still use their natural width at its edge.
+        if (alignment == mux::HorizontalAlignment::Right &&
+            controlHost.Content().try_as<muxc::ComboBox>())
+            alignment = mux::HorizontalAlignment::Stretch;
         // ContentControl can still occupy the full editor column even when
         // its ContentPresenter aligns a compact child.  Shrink and align the
         // host as well so ToggleSwitch and other compact templates actually

@@ -1095,8 +1095,12 @@ struct DesktopPagePresenter::Impl
         };
         addCategoryHeading = makeSubsectionHeading();
         categoryRulePanel = muxc::StackPanel{};
-        categoryRulePanel.Spacing(8.0);
-        categoryRulesCard.content.Children().Append(categoryRulePanel);
+        categoryRulePanel.Spacing(0.0);
+        muxc::Border categorySurface;
+        presenter_controls::StyleSettingsCard(categorySurface);
+        categorySurface.Padding({0});
+        categorySurface.Child(categoryRulePanel);
+        categoryRulesCard.content.Children().Append(categorySurface);
         addCategorySection = muxc::Expander{};
         addCategorySection.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         addCategorySection.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
@@ -1481,6 +1485,9 @@ struct DesktopPagePresenter::Impl
             row->restoreExtensions = muxc::Button{};
             row->enabledValue = rule.enabled;
             row->enabled.MinWidth(88.0);
+            row->remove.MinWidth(88.0);
+            row->remove.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+            row->enabled.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
             row->enabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
             row->enabled.VerticalAlignment(mux::VerticalAlignment::Center);
             row->nameActions = muxc::Grid{};
@@ -1550,7 +1557,8 @@ struct DesktopPagePresenter::Impl
                     header.Width(std::max(0.0, args.NewSize().Width - 80.0));
             });
             row->section.Content(row->content);
-            row->root.Child(row->section);
+            row->section.Padding({0});
+            row->root = presenter_controls::SettingsDisclosureRow(row->section, ruleRows.empty());
             categoryRulePanel.Children().Append(row->root);
 
             RuleRow* const raw = row.get();

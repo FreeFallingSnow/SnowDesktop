@@ -2,6 +2,9 @@
 
 #include "settings_route.h"
 
+#include <Windows.h>
+
+#include <algorithm>
 #include <utility>
 #include <cstdint>
 
@@ -59,3 +62,39 @@ private:
     PostOpenAction postOpenAction_ = PostOpenAction::None;
 };
 }
+
+namespace snowdesktop::settings_window_placement
+{
+// All rectangles and sizes are physical screen pixels. A work area can have
+// a negative origin and excludes the taskbar and registered desktop AppBars.
+inline bool HasArea(const RECT& area) noexcept
+{
+    return area.right > area.left && area.bottom > area.top;
+}
+
+inline SIZE FitSize(SIZE requested, const RECT& work) noexcept
+{
+    if (!HasArea(work)) return requested;
+    return {
+        std::clamp(requested.cx, 1L, work.right - work.left),
+        std::clamp(requested.cy, 1L, work.bottom - work.top)};
+}
+
+inline RECT Constrain(RECT requested, const RECT& work) noexcept
+{
+    if (!HasArea(work)) return requested;
+    const auto size = FitSize(
+        {requested.right - requested.left, requested.bottom - requested.top}, work);
+    const LONG left = std::clamp(requested.left, work.left, work.right - size.cx);
+    const LONG top = std::clamp(requested.top, work.top, work.bottom - size.cy);
+    return {left, top, left + size.cx, top + size.cy};
+}
+
+inline RECT Center(SIZE requested, const RECT& work) noexcept
+{
+    const auto size = FitSize(requested, work);
+    const LONG left = work.left + (work.right - work.left - size.cx) / 2;
+    const LONG top = work.top + (work.bottom - work.top - size.cy) / 2;
+    return {left, top, left + size.cx, top + size.cy};
+}
+} // namespace snowdesktop::settings_window_placement

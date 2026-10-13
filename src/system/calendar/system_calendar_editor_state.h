@@ -1,6 +1,8 @@
 #pragma once
 #include "calendar_service.h"
+#include <algorithm>
 #include <array>
+#include <cstdio>
 #include <string_view>
 
 namespace snowdesktop
@@ -17,6 +19,62 @@ struct SystemCalendarEditorActions
     std::function<calendar::MutationResult(const std::string&, int)> removeSeries;
 };
 inline constexpr std::array<int,7> SystemCalendarReminderMinutes{-1,0,5,15,30,60,1440};
+// Pick an actual occurrence, not merely the rule's lower date bound. Keep an
+// existing original date when returning from a moved occurrence to its series.
+inline std::optional<std::string> CalendarEditorOccurrenceDate(
+    const calendar::CalendarSeries& series, const std::string& preferred = {})
+{
+    using calendar::CalendarService;
+    const auto& rule = series.rule;
+    if (rule.kind != "dates" && (!CalendarService::GetDateInfo(rule.startDate) ||
+        rule.interval < 1 || rule.interval > 99)) return {};
+    if (rule.kind == "weekly" && (rule.weekdays.empty() ||
+        std::any_of(rule.weekdays.begin(), rule.weekdays.end(), [](int day) { return day < 1 || day > 7; }))) return {};
+    if (rule.kind == "monthly" && (rule.monthDay < 0 || rule.monthDay > 31)) return {};
+    const auto available = [&](const std::string& date) {
+        if (!CalendarService::MatchesRule(rule, date)) return false;
+        const auto found = series.exceptions.find(date);
+        return found == series.exceptions.end() || !found->second.canceled;
+    };
+    if (!preferred.empty() && available(preferred)) return preferred;
+    if (rule.kind == "dates")
+    {
+        for (const auto& date : rule.dates) if (available(date)) return date;
+        return {};
+    }
+    const auto start = CalendarService::GetDateInfo(rule.startDate);
+    if (!start || rule.interval < 1 || rule.interval > 99) return {};
+    if (rule.kind == "weekly")
+    {
+        // Monday-anchored intervals must agree with CalendarService::Matches.
+        const int offset = (start->weekday + 5) % 7;
+        for (int week = 0;; week += rule.interval)
+        {
+            for (int day = week == 0 ? offset : 0; day < 7; ++day)
+            {
+                const auto date = CalendarService::AddDays(rule.startDate, week * 7 + day - offset);
+                if (!date || (!rule.endDate.empty() && *date > rule.endDate)) return {};
+                if (available(*date)) return date;
+            }
+        }
+    }
+    if (rule.kind == "monthly")
+    {
+        for (int month = (start->year - 1) * 12 + start->month - 1;
+             month < 9999 * 12; month += rule.interval)
+        {
+            char first[16]{};
+            std::snprintf(first, sizeof(first), "%04d-%02d-01", month / 12 + 1, month % 12 + 1);
+            const auto info = CalendarService::GetDateInfo(first);
+            if (!info || (!rule.endDate.empty() && std::string(first) > rule.endDate)) return {};
+            const int day = rule.monthDay == 0 ? info->daysInMonth : rule.monthDay;
+            if (day < 1 || day > info->daysInMonth) continue;
+            const auto date = CalendarService::AddDays(first, day - 1);
+            if (date && available(*date)) return date;
+        }
+    }
+    return {};
+}
 inline std::optional<int> ParseCalendarEditorTime(std::wstring_view value)
 {
     if(value.size()!=5||value[2]!=L':')return {};

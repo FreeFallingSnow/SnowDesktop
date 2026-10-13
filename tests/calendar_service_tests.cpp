@@ -38,6 +38,58 @@ void Write(
         std::ios::binary | std::ios::trunc);
     file << text;
 }
+void CheckCalendarEditorOccurrenceSelection()
+{
+    using snowdesktop::CalendarEditorOccurrenceDate;
+    using snowdesktop::calendar::CalendarSeries;
+    CalendarSeries dates;
+    dates.rule.kind = "dates";
+    dates.rule.dates = {"2026-10-01", "2026-10-03", "2026-10-06"};
+    dates.exceptions["2026-10-01"].canceled = true;
+    dates.exceptions["2026-10-03"].event.date = "2026-10-04";
+    Expect(CalendarEditorOccurrenceDate(dates) == "2026-10-03",
+        "editor skips canceled dates and selects the original date of a moved occurrence");
+    Expect(CalendarEditorOccurrenceDate(dates, "2026-10-06") == "2026-10-06" &&
+        CalendarEditorOccurrenceDate(dates, "2026-10-01") == "2026-10-03",
+        "editor preserves a selected live occurrence and replaces a canceled one");
+    dates.exceptions["2026-10-03"].canceled = true;
+    dates.exceptions["2026-10-06"].canceled = true;
+    Expect(!CalendarEditorOccurrenceDate(dates),
+        "a series with all explicit dates canceled has no default occurrence");
+
+    CalendarSeries weekly;
+    weekly.rule.kind = "weekly";
+    weekly.rule.startDate = "2026-10-06"; // Tuesday, after the selected Monday.
+    weekly.rule.interval = 2;
+    weekly.rule.weekdays = {2};
+    Expect(CalendarEditorOccurrenceDate(weekly) == "2026-10-19",
+        "editor honors the anchored week interval when the start date is not an occurrence");
+    weekly.exceptions["2026-10-19"].canceled = true;
+    Expect(CalendarEditorOccurrenceDate(weekly) == "2026-11-02",
+        "editor moves to the next active week after a canceled occurrence");
+    weekly.rule.endDate = "2026-11-01";
+    Expect(!CalendarEditorOccurrenceDate(weekly),
+        "editor cannot choose an occurrence beyond the inclusive series end");
+    weekly.rule.interval = 0;
+    Expect(!CalendarEditorOccurrenceDate(weekly, "2026-11-02"),
+        "editor rejects an invalid interval before checking a preferred occurrence");
+
+    CalendarSeries monthly;
+    monthly.rule.kind = "monthly";
+    monthly.rule.startDate = "2026-04-01";
+    monthly.rule.monthDay = 31;
+    Expect(CalendarEditorOccurrenceDate(monthly) == "2026-05-31",
+        "editor skips short months for a monthly day 31 series");
+    monthly.rule.endDate = "2026-05-30";
+    Expect(!CalendarEditorOccurrenceDate(monthly),
+        "editor leaves occurrence selection empty when the date range contains no occurrence");
+    monthly.rule.startDate = "2024-02-01";
+    monthly.rule.endDate.clear();
+    monthly.rule.monthDay = 0;
+    Expect(CalendarEditorOccurrenceDate(monthly) == "2024-02-29",
+        "editor selects the correct final day in leap February");
+}
+
 void CheckNativeCalendarEditor(const std::filesystem::path& root)
 {
     using snowdesktop::SystemCalendarEditorState;
@@ -404,6 +456,7 @@ int wmain(int argc, wchar_t* argv[])
     std::filesystem::remove_all(root, error);
     std::filesystem::create_directories(root);
     CheckNativeCalendarEditor(root);
+    CheckCalendarEditorOccurrenceSelection();
     CheckSeries(root);
     CheckOccurrenceReminderEdits(root);
 

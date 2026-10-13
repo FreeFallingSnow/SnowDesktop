@@ -107,7 +107,7 @@ int main()
 
     // A configured dwell must govern both readiness and opening, including
     // values on either side of the former fixed 600 ms threshold.
-    for (const DWORD delay : {100u, 1200u, 3000u})
+    for (const DWORD delay : {100u, 250u, 1200u, 3000u})
     {
         PopupHoverController hover;
         hover.Track(L"dock:custom-delay", 100);
@@ -118,6 +118,37 @@ int main()
                 hover.Consume(100 + delay, delay) &&
                 !hover.Consume(100 + delay + 1, delay),
             "a configured hover delay opens exactly once at its threshold");
+    }
+
+    // Passive tabs share the production stable-identity controller with popup
+    // openers, but only an uninterrupted visit to the same current target counts.
+    {
+        PopupHoverController hover;
+        hover.Track(L"group-tab:page-a:group-a:member-b", 100);
+        hover.Track(L"group-tab:page-a:group-a:member-b", 200);
+        Check(!hover.Consume(349, 250) && hover.Consume(350, 250) &&
+                !hover.Consume(600, 250),
+            "moving within one tab preserves dwell and switches at most once");
+        hover.Track(L"category-tab:page-a:group-a:source-b:category-c", 610);
+        Check(!hover.IsReady(859, 250), "another tab starts a full new dwell");
+        hover.Track(L"category-tab:page-a:group-a:source-d:category-c", 850);
+        Check(!hover.IsReady(1099, 250) && hover.IsReady(1100, 250),
+            "the same category ID under another source does not inherit its dwell");
+        hover.Reset();
+        Check(!hover.Consume(1400, 250),
+            "leaving or changing page cancels a pending tab activation");
+        hover.Track(L"group-tab:page-a:group-a:member-b", 1500);
+        hover.SuppressUntilLeave();
+        Check(!hover.Consume(2000, 250),
+            "clicks, capture, menus, rename and drag blocking suppress pending dwell");
+        hover.Reset();
+        hover.Track(L"group-tab:popup-2:group-a:member-b", 2100);
+        Check(!hover.Consume(2349, 250) && hover.Consume(2350, 250),
+            "reentry on a new surface requires another complete dwell");
+        hover.Reset();
+        hover.Track(L"category-tab:clock-wrap", 0xffffff80u);
+        Check(!hover.Consume(0x79u, 250) && hover.Consume(0x7au, 250),
+            "tab hover delay remains correct across DWORD tick wrap");
     }
 
     // Drag dwell uses the same production close dispatcher, but must retain

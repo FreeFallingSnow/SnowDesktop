@@ -235,8 +235,7 @@ private:
         sections_.border.Children().Append(edge_->Content());
         sync_.push_back([this] { edge_->Content().Visibility(value_.widgetEdgeHighlightEnabled ? x::Visibility::Visible : x::Visibility::Collapsed); });
         if (inlineSurface_)
-            for (const auto& disclosure : sections_.disclosures)
-                presenter_controls::StyleInlineSettingsExpander(disclosure);
+            presenter_controls::JoinSettingsSections(root_);
         Sync();
     }
 };

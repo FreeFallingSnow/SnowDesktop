@@ -18,6 +18,7 @@
 #include <winrt/Microsoft.UI.Xaml.Media.Animation.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Windows.Storage.Streams.h>
+#include <winrt/Windows.Globalization.h>
 
 namespace snowdesktop::winui
 {
@@ -81,6 +82,26 @@ bool IsPreviewElementVisible(const x::FrameworkElement& element)
         node = x::Media::VisualTreeHelper::GetParent(node);
     }
     return true;
+}
+
+template<class Control> Control PreviewControl(const x::DependencyObject& root, std::wstring_view id)
+{
+    Control found{nullptr};
+    Walk(root, [&](const x::DependencyObject& node) {
+        if (const auto element = node.try_as<x::FrameworkElement>(); element &&
+            x::Automation::AutomationProperties::GetAutomationId(element) == id)
+            found = element.try_as<Control>();
+    });
+    if (!found) throw std::runtime_error("missing preview control: " + winrt::to_string(id));
+    return found;
+}
+
+void InvokePreview(const x::FrameworkElement& element)
+{
+    const auto peer = x::Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(element);
+    if (!peer) throw std::runtime_error("missing preview automation peer");
+    peer.GetPattern(x::Automation::Peers::PatternInterface::Invoke)
+        .as<x::Automation::Provider::IInvokeProvider>().Invoke();
 }
 
 unsigned ExpandGradientDetails(const x::DependencyObject& cards, const x::FrameworkElement& shell)
@@ -186,7 +207,7 @@ constexpr SettingsPage pages[] = {
 
 void Export(const std::filesystem::path& output, std::string_view selected, bool dark,
     const std::string& locale, int width, int height, bool expanded, bool custom, bool disabled,
-    bool scenarioRules, const std::string& focusId)
+    bool scenarioRules, const std::string& focusId, std::string_view calendarScenario)
 {
     Locale::Instance().Init((std::filesystem::path(GetExecutableDirectoryPath()) / L"lang").c_str());
     if (!Locale::Instance().HasLanguage(locale)) throw std::runtime_error("preview locale is not installed");
@@ -280,8 +301,43 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         }
         return result;
     };
-    calendarActions.series = [](std::uint64_t) -> std::optional<std::vector<calendar::CalendarSeries>> {
-        return std::vector<calendar::CalendarSeries>{};
+    std::vector<calendar::CalendarSeries> previewSeries;
+    for (const std::string kind : {"dates", "weekly", "monthly"})
+    {
+        calendar::CalendarSeries series;
+        series.id = "preview-" + kind; series.revision = 1;
+        series.event.title = kind + " / Preview";
+        series.event.startMinutes = 600; series.event.endMinutes = 660; series.event.reminderMinutes = 15;
+        series.rule.kind = kind; series.rule.startDate = "2026-10-06";
+        if (kind == "dates")
+        {
+            series.rule.dates = {"2026-10-01", "2026-10-03", "2026-11-06"};
+            series.rule.startDate = series.rule.dates.front(); series.rule.endDate = series.rule.dates.back();
+        }
+        else if (kind == "weekly")
+        { series.rule.interval = 2; series.rule.weekdays = {2}; series.rule.endDate = "2026-11-16"; }
+        else
+        { series.rule.startDate = "2026-04-01"; series.rule.monthDay = 31; series.rule.endDate = "2027-04-30"; }
+        series.event.date = series.rule.startDate;
+        previewSeries.push_back(std::move(series));
+    }
+    calendarActions.series = [previewSeries](std::uint64_t) -> std::optional<std::vector<calendar::CalendarSeries>> {
+        return previewSeries;
+    };
+    calendarActions.occurrence = [previewSeries](std::uint64_t, const std::string& id) -> std::optional<calendar::CalendarEvent> {
+        const auto slash = id.find('/');
+        if (slash == std::string::npos) return {};
+        for (const auto& series : previewSeries)
+        {
+            const auto original = id.substr(slash + 1);
+            if (series.id != id.substr(0, slash) || !calendar::CalendarService::MatchesRule(series.rule, original)) continue;
+            auto event = series.event;
+            event.id = id; event.revision = 1; event.seriesId = series.id; event.occurrenceDate = original;
+            event.date = original == "2026-10-03" ? "2026-10-04" : original;
+            event.occurrenceOverride = event.date != original;
+            return event;
+        }
+        return {};
     };
     shell->SetCalendarPageActions(std::move(calendarActions));
     PageLayoutPageActions layout;
@@ -317,6 +373,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         snapshot.initialized = snapshot.sessionActive = true;
         snapshot.values.general.dockEnabled = !disabled;
         snapshot.values.general.statusBar.enabled = !disabled;
+        snapshot.values.general.statusBar.batteryPercentage = expanded;
+        snapshot.values.personalization.groupTabHoverSwitch = expanded;
+        snapshot.values.personalization.categoryTabHoverSwitch = expanded;
+        snapshot.values.personalization.popupHoverOpen = expanded;
         if (expanded && !custom)
         {
             snapshot.values.general.statusBar.position = snapshot.values.dock.position;
@@ -408,7 +468,90 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         }
         Settle(shell.as<x::FrameworkElement>());
         const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
-        if (page == SettingsPage::Calendar && custom)
+        if (page == SettingsPage::WidgetBehavior && expanded)
+        {
+            unsigned delays = 0;
+            Walk(cards, [&](const x::DependencyObject& node) {
+                const auto slider = node.try_as<c::Slider>();
+                if (!slider) return;
+                const auto label = x::Automation::AutomationProperties::GetName(slider);
+                if (label != _LW("settings.widgetBehavior.tabHoverDelay") &&
+                    label != _LW("app.settings.popup_hover_delay")) return;
+                ++delays;
+                if (slider.Value() != 250.0 || slider.StepFrequency() != 50.0)
+                    throw std::runtime_error("hover default was rounded away from 250 ms");
+            });
+            if (delays != 2) throw std::runtime_error("hover delay editors are not mounted");
+            std::ofstream(output / L"hover-delays.tsv") << "tabs\tpopup\n250\t250\n";
+        }
+        if (page == SettingsPage::DesktopPages)
+        {
+            c::ListView list{nullptr}; c::TextBox name{nullptr};
+            c::NumberBox columns{nullptr}, gridRows{nullptr}; c::Button cancel{nullptr};
+            Walk(cards, [&](const x::DependencyObject& node) {
+                const auto element = node.try_as<x::FrameworkElement>();
+                if (!element) return;
+                const auto label = x::Automation::AutomationProperties::GetName(element);
+                if (label == _LW("settings.pages.manage")) list = node.try_as<c::ListView>();
+                if (label == _LW("settings.pages.name")) if (auto box = node.try_as<c::TextBox>()) name = box;
+                if (label == _LW("settings.pages.columns")) if (auto box = node.try_as<c::NumberBox>()) columns = box;
+                if (label == _LW("settings.pages.rows")) if (auto box = node.try_as<c::NumberBox>()) gridRows = box;
+                if (const auto button = node.try_as<c::Button>(); button &&
+                    winrt::unbox_value_or<winrt::hstring>(button.Content(), winrt::hstring{}) == _LW("app.settings.cancel")) cancel = button;
+            });
+            if (!list || !name || !columns || !gridRows || !cancel || list.Items().Size() < 2)
+                throw std::runtime_error("page editor fixture incomplete");
+            for (const int index : {1, 0, 1})
+            {
+                list.SelectedIndex(index); Settle(shell.as<x::FrameworkElement>());
+                if (!list.IsEnabled() || !columns.IsEnabled() || !gridRows.IsEnabled())
+                    throw std::runtime_error("selecting a page incorrectly entered rename state");
+            }
+            const auto original = name.Text();
+            name.Text(original + L" edited"); Settle(shell.as<x::FrameworkElement>());
+            if (list.IsEnabled() || columns.IsEnabled() || gridRows.IsEnabled())
+                throw std::runtime_error("unsaved rename did not protect selected page");
+            name.Text(original); Settle(shell.as<x::FrameworkElement>());
+            if (!list.IsEnabled() || !columns.IsEnabled() || !gridRows.IsEnabled())
+                throw std::runtime_error("restoring original name did not unlock grid");
+            name.Text(original + L" draft"); Settle(shell.as<x::FrameworkElement>());
+            InvokePreview(cancel); Settle(shell.as<x::FrameworkElement>());
+            if (name.Text() != original || !columns.IsEnabled() || !gridRows.IsEnabled())
+                throw std::runtime_error("cancel rename did not restore grid editing");
+            std::ofstream(output / L"page-selection.tsv") << "selection\tedit\trevert\tcancel\npassed\tpassed\tpassed\tpassed\n";
+        }
+        if (page == SettingsPage::Calendar && !calendarScenario.empty())
+        {
+            const auto list = PreviewControl<c::ListView>(cards, L"CalendarSchedules");
+            const int index = calendarScenario == "calendar-weekly" ? 4 : calendarScenario == "calendar-monthly" ? 5 : 3;
+            list.SelectedIndex(index); Settle(shell.as<x::FrameworkElement>());
+            const auto mode = PreviewControl<c::ComboBox>(cards, L"CalendarDateMode");
+            if (mode.SelectedIndex() != index - 2) throw std::runtime_error("calendar series mode mismatch");
+            if (calendarScenario == "calendar-dates" &&
+                PreviewControl<c::CalendarView>(cards, L"CalendarMultipleDates").SelectedDates().Size() != 3)
+                throw std::runtime_error("multiple-date selection was not restored");
+            auto occurrence = PreviewControl<c::CalendarDatePicker>(cards, L"CalendarOccurrenceDate");
+            if (!occurrence.Date()) throw std::runtime_error("series has no selectable occurrence");
+            winrt::Windows::Globalization::Calendar original;
+            original.SetDateTime(occurrence.Date().Value());
+            if ((index == 4 && (original.Month() != 10 || original.Day() != 19)) ||
+                (index == 5 && (original.Month() != 5 || original.Day() != 31)))
+                throw std::runtime_error("series editor selected a non-occurrence date");
+            if (calendarScenario == "calendar-occurrence")
+            {
+                original.Day(3);
+                occurrence.Date(winrt::box_value(original.GetDateTime()).as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
+                InvokePreview(PreviewControl<c::Button>(cards, L"CalendarEditOccurrence"));
+                Settle(shell.as<x::FrameworkElement>());
+                const auto scope = PreviewControl<c::ComboBox>(cards, L"CalendarScope");
+                const auto actual = PreviewControl<c::CalendarDatePicker>(cards, L"CalendarDate");
+                original.SetDateTime(actual.Date().Value());
+                if (scope.SelectedIndex() != 0 || original.Day() != 4)
+                    throw std::runtime_error("moved occurrence did not keep its original identity");
+            }
+            std::ofstream(output / L"calendar-mode.tsv") << calendarScenario << "\tpassed\n";
+        }
+        else if (page == SettingsPage::Calendar && custom)
         {
             Walk(cards, [](const x::DependencyObject& node) {
                 if (const auto list = node.try_as<c::ListView>(); list && list.Items().Size() > 0)
@@ -544,11 +687,13 @@ std::optional<int> TryRunSettingsVisualPreview()
         if (width < 840 || width > 2400 || height < 520 || height > 1800) throw std::runtime_error("unsupported preview size");
         const std::wstring_view theme(args[4]), state(args[8]);
         if (theme != L"light" && theme != L"dark") throw std::runtime_error("preview supports light or dark XAML surfaces");
-        if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled" && state != L"scenarios") throw std::runtime_error("invalid disclosure state");
+        const bool calendarState = state == L"calendar-dates" || state == L"calendar-weekly" ||
+            state == L"calendar-monthly" || state == L"calendar-occurrence";
+        if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled" && state != L"scenarios" && !calendarState) throw std::runtime_error("invalid disclosure state");
         Export(output, winrt::to_string(args[3]), theme == L"dark", winrt::to_string(args[5]), width, height,
             state == L"expanded" || state == L"custom" || state == L"scenarios",
             state == L"custom" || state == L"scenarios", state == L"disabled", state == L"scenarios",
-            count == 10 ? winrt::to_string(args[9]) : std::string{});
+            count == 10 ? winrt::to_string(args[9]) : std::string{}, calendarState ? winrt::to_string(state) : std::string{});
         std::ofstream(output / L"result.txt") << "passed\nIsolated production XAML, example data; no desktop material or interaction acceptance.\n";
         return 0;
     }

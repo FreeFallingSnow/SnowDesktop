@@ -2,6 +2,7 @@
 #include "app/menus/sort_menu.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "ui/menu/right_click_contract.h"
+#include "categorized_popup_scope.h"
 
 // Collection/file-group dwell activation and popup tab switching.
 
@@ -17,7 +18,9 @@ void DesktopApp::CancelPopupHover(bool suppressUntilLeave)
 void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
 {
     UpdatePopupCloseOnMouseLeave(point);
-    if (!personalizationSettings_.popupHoverOpen)
+    if (!personalizationSettings_.popupHoverOpen &&
+        !personalizationSettings_.groupTabHoverSwitch &&
+        !personalizationSettings_.categoryTabHoverSwitch)
     {
         CancelPopupHover();
         return;
@@ -37,10 +40,129 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
         return;
     }
     if (quickNavigationOpen_ || !luaWidgetPanelRequest_.widgetId.empty() ||
-        IsPointInUsageGuide(point) || IsPointOccludedByOpenPopup(point))
+        IsPointInUsageGuide(point))
     {
         CancelPopupHover();
         return;
+    }
+
+    // Timer delivery must use the current native hit surface, not a stored
+    // coordinate beneath another window. The dispatcher also samples this,
+    // but keep the activation boundary safe for other callers.
+    if (allowOpen && !TryGetDesktopHoverPointFromCursor(point))
+    {
+        CancelPopupHover();
+        return;
+    }
+    const auto armHoverTimer = [this] {
+        if (popupHoverController_.Pending() && !popupHoverTimerArmed_ && hwnd_)
+            popupHoverTimerArmed_ = SetTimer(hwnd_, kPopupHoverTimerId,
+                kPopupHoverPollIntervalMs, nullptr) != 0;
+    };
+    const auto trackTab = [this, point, allowOpen, &armHoverTimer](
+        ScrollingItemWidget* view, bool inPopup) {
+        if (!view) return false;
+        DesktopWidget* owner = view->GetWidgetData();
+        if (!owner) return false;
+        DesktopWidget* targetData = owner;
+        std::wstring targetId;
+        std::wstring activeId = owner->activeCategoryId;
+        bool groupTab = false;
+        auto* collectionGroup = dynamic_cast<CollectionGroup*>(view);
+        auto* fileGroup = dynamic_cast<FileGroup*>(view);
+        if (collectionGroup)
+        {
+            groupTab = true;
+            targetId = collectionGroup->CategoryIdAtPoint(point);
+            activeId = collectionGroup->GetActiveCollectionId();
+        }
+        else if (fileGroup)
+        {
+            targetId = fileGroup->SourceIdAtPoint(point);
+            groupTab = !targetId.empty();
+            if (groupTab) activeId = fileGroup->GetActiveSourceId();
+            else
+            {
+                auto* source = fileGroup->GetActiveSourceContainer();
+                targetData = source ? source->GetWidgetData() : nullptr;
+                if (!targetData) return false;
+                targetId = fileGroup->CategoryIdAtPoint(point);
+                activeId = targetData->activeCategoryId;
+            }
+        }
+        else if (owner->type == DesktopWidgetType::FileCategories ||
+            owner->type == DesktopWidgetType::FolderMapping)
+            targetId = view->CategoryIdAtPoint(point);
+        if (targetId.empty() || targetId == activeId ||
+            !(groupTab ? personalizationSettings_.groupTabHoverSwitch :
+                personalizationSettings_.categoryTabHoverSwitch))
+            return false;
+        if (groupTab && std::find(owner->childWidgetIds.begin(),
+                owner->childWidgetIds.end(), targetId) == owner->childWidgetIds.end())
+            return false;
+
+        // Only IDs, never labels or pointers, survive between samples. Include
+        // the parent/source and active member so rebuilding a group or changing
+        // its source cannot spend another tab's accumulated dwell time.
+        std::wstring token = groupTab ? L"group-tab" : L"category-tab";
+        const auto appendId = [&token](const std::wstring& id) {
+            token += L":" + std::to_wstring(id.size()) + L":" + id;
+        };
+        appendId(owner->id);
+        appendId(targetData->id);
+        appendId(owner->gridCell.pageId);
+        appendId(owner->activeCategoryId);
+        appendId(activeId);
+        appendId(targetId);
+        token += L":" + std::to_wstring(pageMutationRevision_) +
+            L":" + std::to_wstring(pageOffset_) + (inPopup ? L":popup:" : L":desktop:") +
+            std::to_wstring(inPopup ? floatingPopupMouseHookGeneration_ : 0);
+        const DWORD now = GetTickCount();
+        const DWORD delayMs = static_cast<DWORD>(NormalizeTabHoverDelayMs(
+            personalizationSettings_.tabHoverDelayMs));
+        popupHoverController_.Track(token, now);
+        if (!allowOpen || !popupHoverController_.Consume(now, delayMs))
+        {
+            armHoverTimer();
+            return true;
+        }
+        CancelPopupHover(true);
+        targetData->activeCategoryId = targetId;
+        targetData->scrollOffset = 0;
+        owner->scrollOffset = 0;
+        if (collectionGroup) collectionGroup->InvalidateFilterCache();
+        else if (fileGroup) fileGroup->InvalidateHostedView();
+        else if (auto* categories = dynamic_cast<FileCategories*>(view))
+            categories->InvalidateCategoryCache();
+        else if (auto* folder = dynamic_cast<FolderMapping*>(view))
+            folder->InvalidateFilterCache();
+        else view->InvalidateSlots();
+        if (inPopup)
+        {
+            popupScrollOffset_ = 0;
+            ResetCollectionPopupAnimationCache();
+        }
+        SaveLayoutSlots();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
+        InvalidateFloatingDockWindow(true);
+        return true;
+    };
+    if (IsPointOccludedByOpenPopup(point))
+    {
+        if (IsCollectionPopupInteractive())
+        {
+            const auto* widget = GetOpenPopupWidget();
+            auto* view = GetCategorizedPopupView();
+            if (widget && view)
+            {
+                CategorizedPopupScope scope(view,
+                    GetCategorizedPopupFrame(GetCollectionPopupRect(*widget)));
+                if (trackTab(view, true)) return;
+            }
+        }
+        CancelPopupHover();
+        return; // Popup surfaces always occlude desktop tabs and openers.
     }
 
     // Keep stable source identities across model rebuilds; indices are resolved
@@ -54,7 +176,8 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
     {
         DockEntryItem* item = dock->ContainsInteractivePoint(point)
             ? dock->EntryAtPoint(point) : nullptr;
-        if (item && item->GetEntryIndex() < dockEntries_.size())
+        if (personalizationSettings_.popupHoverOpen &&
+            item && item->GetEntryIndex() < dockEntries_.size())
         {
             const size_t index = item->GetEntryIndex();
             const DockEntry& entry = dockEntries_[index];
@@ -89,8 +212,11 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
             if (!container) continue;
             const WidgetHit hit = container->HitTestWidget(point);
             if (hit == WidgetHit::None) continue;
+            if ((hit == WidgetHit::CategoryTab || hit == WidgetHit::SourceTab) &&
+                trackTab(dynamic_cast<ScrollingItemWidget*>(container), false)) return;
             const DesktopWidget* widget = container->GetWidgetData();
-            if (widget && widget->type == DesktopWidgetType::Collection &&
+            if (personalizationSettings_.popupHoverOpen &&
+                widget && widget->type == DesktopWidgetType::Collection &&
                 hit == WidgetHit::CollectionOpenBtn)
             {
                 widgetIndex = FindWidgetIndexById(widget->id);
@@ -134,9 +260,7 @@ void DesktopApp::UpdatePopupHover(POINT point, bool allowOpen)
             });
         return;
     }
-    if (popupHoverController_.Pending() && !popupHoverTimerArmed_ && hwnd_)
-        popupHoverTimerArmed_ = SetTimer(hwnd_, kPopupHoverTimerId,
-            kPopupHoverPollIntervalMs, nullptr) != 0;
+    armHoverTimer();
 }
 
 void DesktopApp::TraceCollectionPopupDwell(

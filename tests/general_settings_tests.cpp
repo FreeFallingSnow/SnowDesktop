@@ -20,6 +20,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <limits>
 #include <utility>
 #include <thread>
 #include <functional>
@@ -1280,12 +1281,18 @@ int main(int argc, char** argv)
     Check(savedAppearance.widgetTransformCursors,
         "new profiles retain move and resize pointer feedback by default");
     savedAppearance.widgetTransformCursors = false;
+    Check(!savedAppearance.groupTabHoverSwitch && !savedAppearance.categoryTabHoverSwitch &&
+            savedAppearance.tabHoverDelayMs == 250.0f,
+        "group and category hover switching are opt-in with a 250 ms delay");
+    savedAppearance.groupTabHoverSwitch = true;
+    savedAppearance.categoryTabHoverSwitch = false;
+    savedAppearance.tabHoverDelayMs = 750.0f;
     Check(!savedAppearance.popupHoverOpen,
         "popup hover opening defaults off for new profiles");
     Check(!savedAppearance.popupCloseOnMouseLeave,
         "new profiles keep popups open when the pointer leaves by default");
-    Check(savedAppearance.popupHoverDelayMs == 600.0f,
-        "new profiles retain the original 600 ms hover delay");
+    Check(savedAppearance.popupHoverDelayMs == 250.0f,
+        "new profiles use a 250 ms popup hover delay");
     savedAppearance.popupHoverOpen = true;
     savedAppearance.popupCloseOnMouseLeave = true;
     savedAppearance.popupHoverDelayMs = 1200.0f;
@@ -1314,6 +1321,9 @@ int main(int argc, char** argv)
             loadedAppearance.showGroupTabCounts &&
             loadedAppearance.scrollableTitleBarOnTop &&
             !loadedAppearance.widgetTransformCursors &&
+            loadedAppearance.groupTabHoverSwitch &&
+            !loadedAppearance.categoryTabHoverSwitch &&
+            loadedAppearance.tabHoverDelayMs == 750.0f &&
             loadedAppearance.popupHoverOpen &&
             loadedAppearance.popupCloseOnMouseLeave &&
             loadedAppearance.popupHoverDelayMs == 1200.0f &&
@@ -1332,6 +1342,9 @@ int main(int argc, char** argv)
             appearance.showGroupTabCounts = enabled;
             appearance.scrollableTitleBarOnTop = enabled;
             appearance.widgetTransformCursors = enabled;
+            appearance.groupTabHoverSwitch = enabled;
+            appearance.categoryTabHoverSwitch = !enabled;
+            appearance.tabHoverDelayMs = 250.0f;
             appearance.popupHoverOpen = enabled;
             appearance.popupCloseOnMouseLeave = enabled;
             appearance.popupHoverDelayMs = 1400.0f;
@@ -1342,6 +1355,9 @@ int main(int argc, char** argv)
                     loadedAppearance.showGroupTabCounts == enabled &&
                     loadedAppearance.scrollableTitleBarOnTop == enabled &&
                     loadedAppearance.widgetTransformCursors == enabled &&
+                    loadedAppearance.groupTabHoverSwitch == enabled &&
+                    loadedAppearance.categoryTabHoverSwitch == !enabled &&
+                    loadedAppearance.tabHoverDelayMs == 250.0f &&
                     loadedAppearance.popupHoverOpen == enabled &&
                     loadedAppearance.popupCloseOnMouseLeave == enabled &&
                     loadedAppearance.popupHoverDelayMs == 1400.0f &&
@@ -1441,6 +1457,9 @@ int main(int argc, char** argv)
     migratedGlass.showGroupTabCounts = true;
     migratedGlass.scrollableTitleBarOnTop = true;
     migratedGlass.widgetTransformCursors = false;
+    migratedGlass.groupTabHoverSwitch = true;
+    migratedGlass.categoryTabHoverSwitch = true;
+    migratedGlass.tabHoverDelayMs = 2200.0f;
     migratedGlass.popupHoverOpen = true;
     migratedGlass.popupCloseOnMouseLeave = true;
     migratedGlass.popupHoverDelayMs = 2200.0f;
@@ -1449,9 +1468,12 @@ int main(int argc, char** argv)
             !migratedGlass.showGroupTabCounts &&
             !migratedGlass.scrollableTitleBarOnTop &&
             migratedGlass.widgetTransformCursors &&
+            !migratedGlass.groupTabHoverSwitch &&
+            !migratedGlass.categoryTabHoverSwitch &&
+            migratedGlass.tabHoverDelayMs == 250.0f &&
             !migratedGlass.popupHoverOpen &&
             !migratedGlass.popupCloseOnMouseLeave &&
-            migratedGlass.popupHoverDelayMs == 600.0f &&
+            migratedGlass.popupHoverDelayMs == 250.0f &&
             migratedGlass.widgetEdgeHighlightEnabled &&
             migratedGlass.widgetEdgeHighlightWidth ==
                 kDefaultEdgeHighlightWidth &&
@@ -1464,27 +1486,36 @@ int main(int argc, char** argv)
     // delay into an immediate popup or a practically infinite wait.
     for (const auto& [serialized, expected] : {
             std::pair{"-100", 100.0f}, std::pair{"99999", 3000.0f},
-            std::pair{"1e300", 3000.0f}, std::pair{"\"invalid\"", 600.0f},
-            std::pair{"450.4", 450.0f}})
+            std::pair{"1e300", 3000.0f}, std::pair{"\"invalid\"", 250.0f},
+            std::pair{"450.4", 450.0f}, std::pair{"600", 600.0f},
+            std::pair{"250", 250.0f}})
     {
         {
             std::ofstream fixture(personalizationPath, std::ios::binary | std::ios::trunc);
-            fixture << "{\"popupHoverDelayMs\":" << serialized << "}";
+            fixture << "{\"popupHoverDelayMs\":" << serialized
+                    << ",\"tabHoverDelayMs\":" << serialized << "}";
         }
         Check(LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
-                loadedAppearance.popupHoverDelayMs == expected,
-            "persisted hover delay is bounded and invalid values use the default");
+                loadedAppearance.popupHoverDelayMs == expected &&
+                loadedAppearance.tabHoverDelayMs == expected,
+            "persisted hover delays preserve saved values and bound invalid input");
     }
     for (const auto& [requested, expected] : {
             std::pair{-1.0f, 100.0f}, std::pair{9999.0f, 3000.0f}})
     {
         auto appearance = savedAppearance;
         appearance.popupHoverDelayMs = requested;
+        appearance.tabHoverDelayMs = requested;
         Check(SavePersonalization(personalizationPath.c_str(), appearance) &&
                 LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
-                loadedAppearance.popupHoverDelayMs == expected,
-            "saved hover delay respects the supported range");
+                loadedAppearance.popupHoverDelayMs == expected &&
+                loadedAppearance.tabHoverDelayMs == expected,
+            "saved hover delays respect the supported range");
     }
+    Check(NormalizeTabHoverDelayMs(std::numeric_limits<double>::quiet_NaN()) == 250.0f &&
+            NormalizeTabHoverDelayMs(std::numeric_limits<double>::infinity()) == 250.0f &&
+            NormalizePopupHoverDelayMs(std::numeric_limits<double>::quiet_NaN()) == 250.0f,
+        "non-finite hover delays fall back to the configured default");
     {
         std::ofstream legacyOpaque(
             personalizationPath, std::ios::binary | std::ios::trunc);

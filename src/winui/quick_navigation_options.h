@@ -37,6 +37,7 @@ public:
             ConfigureGroupReset(resetLayout,"quickNav.layout");
             resetLayout.Click([this](auto&&,auto&&) {commit_([](auto& value) {value.layout = QuickNavigationLayout{};});});
             auto layoutHeader = Header("quickNav.layout",resetLayout);
+            presenter_controls::StyleSettingsSubrow(layoutHeader, false, 0);
             root_.Children().Append(layoutHeader); focus_.emplace("quickNav.layout",layoutHeader);
             using Layout = QuickNavigationLayout;
             auto panel = LayoutGroup("quickNav.layout.panel", {&Layout::expandedWidth,&Layout::collapsedWidth,&Layout::maximumHeight,&Layout::padding,&Layout::cornerRadius});
@@ -85,7 +86,7 @@ public:
                     commit_([id = values_.engines[static_cast<size_t>(index)].id](auto& value) {value.defaultEngine = id;});
             });
             AddRow(management, "quickNav.defaultEngine", defaultEngine_, [](auto& value) {if (!value.engines.empty()) value.defaultEngine = std::any_of(value.engines.begin(), value.engines.end(), [](const auto& engine) {return engine.id == "bing";}) ? "bing" : value.engines.front().id;});
-            presenter_controls::StyleSettingsCard(rowStorage_.back()->root);
+            presenter_controls::StyleSettingsSubrow(rowStorage_.back()->root, true, 0);
             management.Children().Append(engineRows_);
 
             addEngine_.Click([this](auto&&, auto&&) {
@@ -106,7 +107,19 @@ public:
             resetEngines.Click([this](auto&&,auto&&) {commit_([](auto& value) {value.engines = NavigationSettings{}.engines; value.defaultEngine = "bing";});});
             engineActions.Children().Append(addEngine_); engineActions.Children().Append(resetEngines);
             auto managementHeading = Header("quickNav.engines.manage", engineActions);
-            management.Children().InsertAt(0, managementHeading);
+            Panel managementBody;
+            managementBody.Spacing(0);
+            while (management.Children().Size())
+            {
+                const auto child = management.Children().GetAt(0);
+                management.Children().RemoveAt(0);
+                managementBody.Children().Append(child);
+            }
+            winrt::Microsoft::UI::Xaml::Controls::Border surface;
+            presenter_controls::StyleSettingsCard(surface);
+            surface.Padding({0}); surface.Child(managementBody);
+            management.Children().Append(managementHeading);
+            management.Children().Append(surface);
             focus_.emplace("quickNav.engines",management);
             focus_.emplace("quickNav.engines.manage",management);
         }
@@ -297,7 +310,7 @@ private:
     {
         std::map<std::string,bool> expanded;
         for (const auto& [id, expander] : engineExpanders_) expanded[id] = expander.IsExpanded();
-        engineExpanders_.clear(); engineRows_.Children().Clear(); defaultEngine_.Items().Clear(); engineRows_.Spacing(8);
+        engineExpanders_.clear(); engineRows_.Children().Clear(); defaultEngine_.Items().Clear(); engineRows_.Spacing(0);
         for (const auto& engine : values_.engines)
         {
             defaultEngine_.Items().Append(winrt::box_value(winrt::to_hstring(engine.name)));
@@ -353,7 +366,8 @@ private:
             presenter_controls::UpdateSettingsSubrows(group,0.0);
             expander.Header(heading);
             expander.Content(group); expander.IsExpanded(expanded[id] || expandedEngine_ == id);
-            engineExpanders_.emplace_back(id,expander); engineRows_.Children().Append(expander);
+            engineExpanders_.emplace_back(id,expander);
+            engineRows_.Children().Append(presenter_controls::SettingsDisclosureRow(expander));
         }
         expandedEngine_.clear();
     }

@@ -1,6 +1,7 @@
 #include "pch.h"
 
 #include "settings_window_host.h"
+#include "settings/settings_window_open_rules.h"
 #include "settings/settings_search_catalog.h"
 #include "settings/bar_settings_rules.h"
 #include "data/data_paths.h"
@@ -29,6 +30,7 @@
 #include <shobjidl.h>
 #include <dwmapi.h>
 #include <psapi.h>
+#include <shellscalingapi.h>
 
 #include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Microsoft.UI.Windowing.h>
@@ -101,6 +103,39 @@ bool TrimProcessWorkingSet() noexcept
     // settings visits do not evict active desktop, Dock, or widget pages.
     return SetProcessWorkingSetSize(GetCurrentProcess(),
                static_cast<SIZE_T>(-1), static_cast<SIZE_T>(-1)) != FALSE;
+}
+
+RECT SettingsWindowWorkArea(HMONITOR monitor) noexcept
+{
+    MONITORINFO info{sizeof(info)};
+    if (monitor && GetMonitorInfoW(monitor, &info) &&
+        settings_window_placement::HasArea(info.rcWork))
+    {
+        return info.rcWork;
+    }
+    RECT work{};
+    if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0) &&
+        settings_window_placement::HasArea(work))
+    {
+        return work;
+    }
+    return {0, 0, (std::max)(1, GetSystemMetrics(SM_CXSCREEN)),
+        (std::max)(1, GetSystemMetrics(SM_CYSCREEN))};
+}
+
+void ConstrainSettingsWindow(HWND window) noexcept
+{
+    // Windows owns maximized frame sizing. Only recover normal bounds;
+    // changing position must not change the settings window's Z-order.
+    if (!window || IsIconic(window) || IsZoomed(window)) return;
+    RECT bounds{};
+    if (!GetWindowRect(window, &bounds)) return;
+    const auto target = settings_window_placement::Constrain(bounds,
+        SettingsWindowWorkArea(MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST)));
+    if (EqualRect(&bounds, &target)) return;
+    SetWindowPos(window, nullptr, target.left, target.top,
+        target.right - target.left, target.bottom - target.top,
+        SWP_NOACTIVATE | SWP_NOZORDER);
 }
 
 bool ActivateSettingsWindow(HWND window) noexcept
@@ -3228,6 +3263,10 @@ struct SettingsWindowHost::Impl
                 info->ptMinTrackSize.x = minimumClientWidth;
                 info->ptMinTrackSize.y = minimumClientHeight;
             }
+            const auto minimum = settings_window_placement::FitSize(
+                {info->ptMinTrackSize.x, info->ptMinTrackSize.y},
+                SettingsWindowWorkArea(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)));
+            info->ptMinTrackSize = {minimum.cx, minimum.cy};
             return 0;
         }
         case WM_DPICHANGED:
@@ -3235,15 +3274,21 @@ struct SettingsWindowHost::Impl
             const auto* suggested = reinterpret_cast<RECT*>(lParam);
             if (suggested)
             {
-                SetWindowPos(hwnd, nullptr, suggested->left, suggested->top,
-                    suggested->right - suggested->left,
-                    suggested->bottom - suggested->top,
+                const auto target = IsZoomed(hwnd) ? *suggested :
+                    settings_window_placement::Constrain(*suggested,
+                        SettingsWindowWorkArea(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST)));
+                SetWindowPos(hwnd, nullptr, target.left, target.top,
+                    target.right - target.left,
+                    target.bottom - target.top,
                     SWP_NOACTIVATE | SWP_NOZORDER);
             }
             self->QueueIntegratedTitleBarInsetsUpdate();
             break;
         }
         case WM_SETTINGCHANGE:
+            if (wParam == SPI_SETWORKAREA)
+                ConstrainSettingsWindow(hwnd);
+            [[fallthrough]];
         case WM_THEMECHANGED:
         case WM_SYSCOLORCHANGE:
         case WM_DWMCOLORIZATIONCOLORCHANGED:
@@ -3251,6 +3296,9 @@ struct SettingsWindowHost::Impl
             self->ApplyIntegratedTitleBarButtonColors();
             self->QueueSystemBackdropUpdate();
             self->QueueIntegratedTitleBarInsetsUpdate();
+            break;
+        case WM_DISPLAYCHANGE:
+            ConstrainSettingsWindow(hwnd);
             break;
         case WM_NCDESTROY:
             self->CancelWorkingSetTrim();
@@ -3299,21 +3347,28 @@ struct SettingsWindowHost::Impl
 
     [[nodiscard]] bool CreateHostWindow()
     {
-        const UINT dpi = GetDpiForSystem();
+        POINT anchor{};
+        (void)GetCursorPos(&anchor);
+        const HMONITOR monitor = MonitorFromPoint(anchor, MONITOR_DEFAULTTONEAREST);
+        const RECT work = SettingsWindowWorkArea(monitor);
+        UINT dpiX = 0, dpiY = 0;
+        const UINT systemDpi = GetDpiForSystem();
+        const UINT dpi = SUCCEEDED(GetDpiForMonitor(monitor, MDT_EFFECTIVE_DPI, &dpiX, &dpiY)) && dpiX != 0
+            ? dpiX : systemDpi != 0 ? systemDpi : 96;
         RECT bounds{0, 0,
             MulDiv(kDefaultClientWidth, static_cast<int>(dpi), 96),
             MulDiv(kDefaultClientHeight, static_cast<int>(dpi), 96)};
         AdjustWindowRectExForDpi(&bounds, WS_OVERLAPPEDWINDOW, FALSE,
             WS_EX_APPWINDOW, dpi);
-        const int width = bounds.right - bounds.left;
-        const int height = bounds.bottom - bounds.top;
-        const int x = std::max(0, (GetSystemMetrics(SM_CXSCREEN) - width) / 2);
-        const int y = std::max(0, (GetSystemMetrics(SM_CYSCREEN) - height) / 2);
+        const auto placement = settings_window_placement::Center(
+            {bounds.right - bounds.left, bounds.bottom - bounds.top}, work);
 
         window = CreateWindowExW(WS_EX_APPWINDOW,
             kSettingsWindowClassName, options.windowTitle.c_str(),
             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
-            x, y, width, height, nullptr, nullptr, instance, this);
+            placement.left, placement.top,
+            placement.right - placement.left, placement.bottom - placement.top,
+            nullptr, nullptr, instance, this);
         if (!window)
         {
             SetError(FormatWin32Error(
@@ -3849,6 +3904,7 @@ bool SettingsWindowHost::Open(const SettingsRoute& route)
         ShowWindow(impl_->window, SW_RESTORE);
     else
         ShowWindow(impl_->window, SW_SHOWNORMAL);
+    ConstrainSettingsWindow(impl_->window);
     (void)ActivateSettingsWindow(impl_->window);
 
     if (!IsWindowVisible(impl_->window))

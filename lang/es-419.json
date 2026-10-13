@@ -2271,8 +2271,8 @@
   "appearance.rimWidthHelp": "Ancho base del reflejo; el grosor mínimo y la variación de las opciones avanzadas determinan su grosor final.",
   "settings.nav.group.widgetsAndCategories": "Widgets y categorías",
   "settings.nav.group.other": "Otros",
-  "settings.widgetBehavior.title": "Colecciones y carpetas",
-  "settings.widgetBehavior.description": "Configura cómo se abren los widgets, dónde aparece la barra de título de las colecciones y si las pestañas de grupo muestran la cantidad de archivos.",
+  "settings.widgetBehavior.title": "Preferencias de widgets",
+  "settings.widgetBehavior.description": "Configura las interacciones comunes, las barras de título, las pestañas y la apertura de ventanas emergentes.",
   "settings.animation.openDock.description": "Ajusta la ampliación al pasar el cursor por el Dock y las animaciones de inicio y de ventanas.",
   "app.settings.widgets_permission_location_read": "Leer ubicación del sistema",
   "quickNav.title": "Navegación rápida",
@@ -2694,5 +2694,11 @@
   "settings.search.prerequisite.enable": "Para ajustar esta opción, primero activa “{0}”.",
   "settings.search.prerequisite.unavailable": "Esta opción no se puede ajustar en las condiciones actuales.",
   "settings.search.alias.globalAppearance": "Fuentes e iconos Apariencia global",
-  "statusBar.theme.mergedHint": "Las barras de estado combinadas con el Dock usan su apariencia."
+  "statusBar.theme.mergedHint": "Las barras de estado combinadas con el Dock usan su apariencia.",
+  "settings.calendar.originalDate": "Fecha original de la ocurrencia",
+  "statusBar.batteryPercentage": "Mostrar porcentaje de batería",
+  "settings.widgetBehavior.tabSwitching": "Cambio de pestañas",
+  "settings.widgetBehavior.groupTabHover": "Cambiar pestañas de grupo al pasar el cursor",
+  "settings.widgetBehavior.categoryTabHover": "Cambiar pestañas de categoría al pasar el cursor",
+  "settings.widgetBehavior.tabHoverDelay": "Retraso al pasar el cursor por pestañas"
 }

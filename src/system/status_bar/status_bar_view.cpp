@@ -322,7 +322,10 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         StatusBarNetworkTooltip(snapshot.network->connections, networkTip) : networkTip;
     control.controlTips[1] = StatusBarVolumeTooltip(snapshot.audioDevice, audio);
     if (hasBattery)
+    {
         control.controlTips[2] = std::wstring(_LW(battery.label)) + L"  " + Percent(power->batteryPercent);
+        if (s.batteryPercentage) control.batteryPercentageText = Percent(power->batteryPercent);
+    }
     return items;
 }
 
@@ -336,7 +339,8 @@ bool SameStatusBarContent(const std::vector<StatusBarItem>& left, const std::vec
             a.icon->height == b.icon->height && a.icon->pixels == b.icon->pixels;
         return a.text == b.text && a.glyph == b.glyph && a.controlGlyphs == b.controlGlyphs &&
             a.batteryTone == b.batteryTone && a.batteryLevel == b.batteryLevel && a.batteryPluggedIn == b.batteryPluggedIn &&
-            a.flipGlyph == b.flipGlyph && a.inputIcon == b.inputIcon;
+            a.flipGlyph == b.flipGlyph && a.inputIcon == b.inputIcon &&
+            a.batteryPercentageText == b.batteryPercentageText;
     });
 }
 HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, std::vector<StatusBarItem>& items,
@@ -381,8 +385,22 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
         format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
         const float padding = 12.f * scale;
+        // Keep the whole control group stable while the percentage changes.
+        // Measure with the actual font and DPI instead of reserving a digit count.
+        float percentageWidth = 0;
+        if (std::any_of(items.begin(), items.end(), [](const auto& item) { return !item.batteryPercentageText.empty(); }))
+        {
+            ComPtr<IDWriteTextLayout> percentageLayout;
+            DWRITE_TEXT_METRICS percentageMetrics{};
+            if (FAILED(text->CreateTextLayout(L"100%", 4, format.Get(), 2000.f,
+                    static_cast<float>(h), &percentageLayout)) ||
+                FAILED(percentageLayout->GetMetrics(&percentageMetrics))) return E_FAIL;
+            percentageWidth = percentageMetrics.widthIncludingTrailingWhitespace + 4.f * scale;
+        }
         const auto extentOf = [&](const StatusBarItem& item) {
-            if (item.key == "controlCenter" && item.controlGlyphs[2].empty()) return 56.f * scale;
+            if (item.key == "controlCenter")
+                return (item.controlGlyphs[2].empty() ? 56.f : 84.f) * scale +
+                    (item.batteryPercentageText.empty() ? 0.f : percentageWidth);
             if (const float fixed = StatusBarFixedWidth(item.key); fixed > 0) return fixed * scale;
             if (item.icon || item.inputIcon || item.text.empty()) return 28.f * scale;
             auto reserved = item.key == "clock" ? StatusBarClockDisplay(item.text, twoLineClock) : item.text;
@@ -620,6 +638,10 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
                         }
                         brush->SetColor(color);
                     }
+                    if (!item.batteryPercentageText.empty())
+                        DrawCenteredBarText(context, text, format.Get(), item.batteryPercentageText,
+                            D2D1::RectF(rect.left + 84.f * scale, rect.top, rect.right - 4.f * scale, rect.bottom),
+                            brush.Get(), true);
                 }
                 else if (!item.glyph.empty() && iconFormat)
                 {

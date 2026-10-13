@@ -80,6 +80,30 @@ void TestPermissionAndRelocatedRoutesCodec()
 
 void TestCodec()
 {
+    {
+        snowdesktop::StatusBarSettings statusBar;
+        Check(!statusBar.batteryPercentage, "new profiles keep battery percentage hidden");
+        JsonValue legacy;
+        Check(ParseJson("{\"enabled\":true}", legacy), "legacy status bar JSON parses");
+        statusBar.batteryPercentage = true;
+        Check(snowdesktop::DecodeStatusBarSettings(legacy, statusBar) && !statusBar.batteryPercentage,
+            "existing profiles without the new flag retain compact control-center icons");
+        for (const bool enabled : {false, true})
+        {
+            statusBar.batteryPercentage = enabled;
+            JsonValue stored;
+            snowdesktop::StatusBarSettings decoded;
+            Check(ParseJson(snowdesktop::EncodeStatusBarSettings(statusBar), stored) &&
+                    snowdesktop::DecodeStatusBarSettings(stored, decoded) && decoded == statusBar &&
+                    Unpack<snowdesktop::StatusBarSettings>(Pack(decoded)) == statusBar,
+                "battery percentage survives storage and IPC in both states without changing other settings");
+        }
+        const auto before = statusBar;
+        JsonValue invalid;
+        Check(ParseJson("{\"batteryPercentage\":1}", invalid) &&
+                !snowdesktop::DecodeStatusBarSettings(invalid, statusBar) && statusBar == before,
+            "invalid percentage preference cannot partially overwrite the current settings");
+    }
     snowdesktop::PageLayoutSnapshot pages;
     pages.revision = 123;
     pages.monitorCount = 1;
@@ -323,6 +347,9 @@ void TestCodec()
     settings.values.personalization.popupHoverOpen = true;
     settings.values.personalization.popupCloseOnMouseLeave = true;
     settings.values.personalization.popupHoverDelayMs = 1700.0f;
+    settings.values.personalization.groupTabHoverSwitch = true;
+    settings.values.personalization.categoryTabHoverSwitch = true;
+    settings.values.personalization.tabHoverDelayMs = 250.0f;
     settings.values.personalization.showCategoryTabCounts = false;
     settings.values.personalization.panelGradient.angle = 213;
     settings.values.personalization.panelGradient.stops.insert(
@@ -390,6 +417,10 @@ void TestCodec()
         "group tab counts cross the settings process boundary independently from category counts");
     Check(!restored.values.personalization.widgetTransformCursors,
         "disabling component transform cursors survives the settings process boundary despite the enabled default");
+    Check(restored.values.personalization.groupTabHoverSwitch &&
+            restored.values.personalization.categoryTabHoverSwitch &&
+            restored.values.personalization.tabHoverDelayMs == 250.0f,
+        "independent group/category hover switches and their shared delay cross the settings process boundary");
     for (const int style : {5, 6})
     {
         auto menuSettings = settings;
@@ -545,9 +576,9 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 25 omitted the no-window scene rule.
+        // Version 33 omitted battery percentage and delayed tab-hover preferences.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{25},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{33},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
@@ -556,7 +587,7 @@ void TestRetiredUpdateProtocol()
         const auto deadline = GetTickCount64() + 2000;
         while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
         Check(!channel.Connected(),
-            "settings peers without the no-window rule disconnect before dispatch");
+            "settings peers without the new display preferences disconnect before dispatch");
     }
     CloseHandle(uiWrite);
     CloseHandle(uiRead);

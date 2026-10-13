@@ -264,6 +264,9 @@ void ApplyAppearancePreset(PersonalizationSettings& settings, int presetId)
     preset.luaWidgetContentRowHeight = settings.luaWidgetContentRowHeight;
     preset.showCategoryTabCounts = settings.showCategoryTabCounts;
     preset.showGroupTabCounts = settings.showGroupTabCounts;
+    preset.groupTabHoverSwitch = settings.groupTabHoverSwitch;
+    preset.categoryTabHoverSwitch = settings.categoryTabHoverSwitch;
+    preset.tabHoverDelayMs = settings.tabHoverDelayMs;
     preset.popupHoverOpen = settings.popupHoverOpen;
     preset.popupHoverDelayMs = settings.popupHoverDelayMs;
     preset.popupCloseOnMouseLeave = settings.popupCloseOnMouseLeave;
@@ -495,6 +498,14 @@ bool LoadPersonalization(
     ReadBoolField(text, "scrollableTitleBarOnTop", s.scrollableTitleBarOnTop);
     s.widgetTransformCursors = true;
     ReadBoolField(text, "widgetTransformCursors", s.widgetTransformCursors);
+    s.groupTabHoverSwitch = false;
+    ReadBoolField(text, "groupTabHoverSwitch", s.groupTabHoverSwitch);
+    s.categoryTabHoverSwitch = false;
+    ReadBoolField(text, "categoryTabHoverSwitch", s.categoryTabHoverSwitch);
+    s.tabHoverDelayMs = kDefaultTabHoverDelayMs;
+    if (documentParsed)
+        if (const auto* delay = document.Find("tabHoverDelayMs"); delay && delay->IsNumber())
+            s.tabHoverDelayMs = NormalizeTabHoverDelayMs(delay->number);
     s.popupHoverOpen = false;
     ReadBoolField(text, "popupHoverOpen", s.popupHoverOpen);
     s.popupCloseOnMouseLeave = false;
@@ -606,6 +617,12 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << (s.showCategoryTabCounts ? "true" : "false") << ",\n";
     file << "  \"showGroupTabCounts\": "
          << (s.showGroupTabCounts ? "true" : "false") << ",\n";
+    file << "  \"groupTabHoverSwitch\": "
+         << (s.groupTabHoverSwitch ? "true" : "false") << ",\n";
+    file << "  \"categoryTabHoverSwitch\": "
+         << (s.categoryTabHoverSwitch ? "true" : "false") << ",\n";
+    file << "  \"tabHoverDelayMs\": "
+         << NormalizeTabHoverDelayMs(s.tabHoverDelayMs) << ",\n";
     file << "  \"popupHoverOpen\": "
          << (s.popupHoverOpen ? "true" : "false") << ",\n";
     file << "  \"popupHoverDelayMs\": "

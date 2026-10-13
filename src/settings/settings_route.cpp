@@ -38,6 +38,9 @@ bool IsWidgetBehaviorFocus(std::string_view focusId) noexcept
 {
     return focusId == "personalization.scrollableTitleBarOnTop" ||
         focusId == "personalization.popupHoverOpen" ||
+        focusId == "personalization.groupTabHoverSwitch" ||
+        focusId == "personalization.categoryTabHoverSwitch" ||
+        focusId == "personalization.tabHoverDelayMs" ||
         focusId == "personalization.popupHoverDelayMs" ||
         focusId == "personalization.popupCloseOnMouseLeave" ||
         focusId == "personalization.showGroupTabCounts";
@@ -242,7 +245,7 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
         else if (focus == "personalization.luaWidgetRowHeight")
             route.page = SettingsPage::AppearanceDesktopIcons;
         else if (focus == "personalization.widgetTransformCursors")
-            route.page = SettingsPage::Widgets;
+            route.page = SettingsPage::WidgetBehavior;
         else if (focus == "desktop.spacing" || focus == "desktop.iconSpacing")
             route.page = SettingsPage::AppearanceDesktopIcons;
         else if (focus == "desktop.categoryLayout" || focus == "desktop.tabHeight" || focus == "personalization.tabHeight")

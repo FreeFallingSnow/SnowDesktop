@@ -2271,8 +2271,8 @@
   "appearance.rimWidthHelp": "反射の基準幅です。高度な設定の最小の厚さと変化量によって実際の厚さが決まります。",
   "settings.nav.group.widgetsAndCategories": "ウィジェットと分類",
   "settings.nav.group.other": "その他",
-  "settings.widgetBehavior.title": "コレクションとフォルダー",
-  "settings.widgetBehavior.description": "ウィジェットの開き方、収納ウィジェットのタイトルバーの位置、グループタブのファイル数表示を設定します。",
+  "settings.widgetBehavior.title": "ウィジェットの環境設定",
+  "settings.widgetBehavior.description": "ウィジェット共通の操作、タイトルバーとタブ、ポップアップの展開動作を設定します。",
   "settings.animation.openDock.description": "Dock のホバー時の拡大、起動アニメーション、ウィンドウアニメーションを調整します。",
   "app.settings.widgets_permission_location_read": "システム位置情報の読み取り",
   "quickNav.title": "クイックナビゲーション",
@@ -2694,5 +2694,11 @@
   "settings.search.prerequisite.enable": "この項目を調整するには、先に「{0}」をオンにしてください。",
   "settings.search.prerequisite.unavailable": "現在の条件では、この項目を調整できません。",
   "settings.search.alias.globalAppearance": "フォントとアイコン 全体の外観",
-  "statusBar.theme.mergedHint": "Dock と結合されたステータスバーは Dock の外観を使用します。"
+  "statusBar.theme.mergedHint": "Dock と結合されたステータスバーは Dock の外観を使用します。",
+  "settings.calendar.originalDate": "元の予定日",
+  "statusBar.batteryPercentage": "バッテリー残量をパーセントで表示",
+  "settings.widgetBehavior.tabSwitching": "タブの切り替え",
+  "settings.widgetBehavior.groupTabHover": "ホバーでグループタブを切り替える",
+  "settings.widgetBehavior.categoryTabHover": "ホバーでカテゴリタブを切り替える",
+  "settings.widgetBehavior.tabHoverDelay": "タブのホバー待ち時間"
 }

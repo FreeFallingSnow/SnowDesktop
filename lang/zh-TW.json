@@ -2271,8 +2271,8 @@
   "appearance.rimWidthHelp": "反光帶的基準厚度；實際厚度由進階選項中的最低厚度和變化幅度共同決定。",
   "settings.nav.group.widgetsAndCategories": "元件與分類",
   "settings.nav.group.other": "其他",
-  "settings.widgetBehavior.title": "集合與資料夾",
-  "settings.widgetBehavior.description": "設定元件的開啟方式、收納元件標題列位置，以及群組標籤是否顯示檔案數量。",
+  "settings.widgetBehavior.title": "元件偏好",
+  "settings.widgetBehavior.description": "設定元件的通用互動、標題列與標籤，以及彈出視窗展開行為。",
   "settings.animation.openDock.description": "調整 Dock 的懸停縮放、啟動動畫與視窗動畫。",
   "app.settings.widgets_permission_location_read": "讀取系統位置",
   "quickNav.title": "快捷導覽",
@@ -2694,5 +2694,11 @@
   "settings.search.prerequisite.enable": "若要調整此項，請先開啟「{0}」。",
   "settings.search.prerequisite.unavailable": "此項在目前條件下無法調整。",
   "settings.search.alias.globalAppearance": "字型與圖示 全域外觀",
-  "statusBar.theme.mergedHint": "與 Dock 合併的狀態列使用 Dock 外觀。"
+  "statusBar.theme.mergedHint": "與 Dock 合併的狀態列使用 Dock 外觀。",
+  "settings.calendar.originalDate": "原定發生日期",
+  "statusBar.batteryPercentage": "顯示電量百分比",
+  "settings.widgetBehavior.tabSwitching": "標籤切換",
+  "settings.widgetBehavior.groupTabHover": "懸停切換群組標籤",
+  "settings.widgetBehavior.categoryTabHover": "懸停切換分類標籤",
+  "settings.widgetBehavior.tabHoverDelay": "標籤懸停延遲"
 }

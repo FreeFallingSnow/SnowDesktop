@@ -2271,8 +2271,8 @@
   "appearance.rimWidthHelp": "반사의 기준 폭입니다. 고급 옵션의 최소 두께와 변화량이 실제 두께를 결정합니다.",
   "settings.nav.group.widgetsAndCategories": "위젯 및 분류",
   "settings.nav.group.other": "기타",
-  "settings.widgetBehavior.title": "컬렉션 및 폴더",
-  "settings.widgetBehavior.description": "위젯을 여는 방식, 수납 위젯의 제목 표시줄 위치, 그룹 탭의 파일 수 표시 여부를 설정합니다.",
+  "settings.widgetBehavior.title": "위젯 환경설정",
+  "settings.widgetBehavior.description": "위젯의 공통 상호작용, 제목 표시줄과 탭, 팝업 확장 동작을 설정합니다.",
   "settings.animation.openDock.description": "Dock에 마우스를 올렸을 때의 확대와 실행 및 창 애니메이션을 조정합니다.",
   "app.settings.widgets_permission_location_read": "시스템 위치 읽기",
   "quickNav.title": "빠른 탐색",
@@ -2694,5 +2694,11 @@
   "settings.search.prerequisite.enable": "이 항목을 조정하려면 먼저 “{0}”을(를) 켜세요.",
   "settings.search.prerequisite.unavailable": "현재 조건에서는 이 항목을 조정할 수 없습니다.",
   "settings.search.alias.globalAppearance": "글꼴 및 아이콘 전체 모양",
-  "statusBar.theme.mergedHint": "Dock과 결합된 상태 표시줄은 Dock의 모양을 사용합니다."
+  "statusBar.theme.mergedHint": "Dock과 결합된 상태 표시줄은 Dock의 모양을 사용합니다.",
+  "settings.calendar.originalDate": "원래 일정 날짜",
+  "statusBar.batteryPercentage": "배터리 잔량 백분율 표시",
+  "settings.widgetBehavior.tabSwitching": "탭 전환",
+  "settings.widgetBehavior.groupTabHover": "마우스를 올려 그룹 탭 전환",
+  "settings.widgetBehavior.categoryTabHover": "마우스를 올려 분류 탭 전환",
+  "settings.widgetBehavior.tabHoverDelay": "탭 호버 지연"
 }

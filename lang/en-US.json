@@ -2271,8 +2271,8 @@
   "appearance.rimWidthHelp": "Base reflection width; advanced minimum thickness and variation determine its final profile.",
   "settings.nav.group.widgetsAndCategories": "Widgets & categories",
   "settings.nav.group.other": "Other",
-  "settings.widgetBehavior.title": "Collections and folders",
-  "settings.widgetBehavior.description": "Choose how widgets open, where collection title bars appear, and whether group tabs show file counts.",
+  "settings.widgetBehavior.title": "Widget preferences",
+  "settings.widgetBehavior.description": "Choose common widget interactions, title bars and tabs, and popup expansion behavior.",
   "settings.animation.openDock.description": "Adjust Dock hover magnification, launch animations, and window animations.",
   "app.settings.widgets_permission_location_read": "Read system location",
   "quickNav.title": "Quick navigation",
@@ -2694,5 +2694,11 @@
   "settings.search.prerequisite.enable": "To adjust this option, first turn on “{0}”.",
   "settings.search.prerequisite.unavailable": "This option cannot be adjusted under the current conditions.",
   "settings.search.alias.globalAppearance": "Fonts and icons Global appearance",
-  "statusBar.theme.mergedHint": "Merged status bars use the Dock appearance."
+  "statusBar.theme.mergedHint": "Merged status bars use the Dock appearance.",
+  "settings.calendar.originalDate": "Original occurrence date",
+  "statusBar.batteryPercentage": "Show battery percentage",
+  "settings.widgetBehavior.tabSwitching": "Tab switching",
+  "settings.widgetBehavior.groupTabHover": "Switch group tabs on hover",
+  "settings.widgetBehavior.categoryTabHover": "Switch category tabs on hover",
+  "settings.widgetBehavior.tabHoverDelay": "Tab hover delay"
 }

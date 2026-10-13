@@ -29,6 +29,7 @@ struct StatusBarItem
     bool batteryPluggedIn = false;
     std::optional<status_bar_input_method::ProfileIcon> inputIcon;
     RECT contentBounds{}; // Full scrolled tray cell; bounds is its visible hit target.
+    std::wstring batteryPercentageText;
 };
 
 // Data boundary only: no HWND, sampling, Explorer or device operations.

@@ -720,7 +720,9 @@ struct DockPagePresenter::Impl
         exceptionManagement.Children().Append(fullscreenExceptionsRow.root);
         exceptionManagement.Children().Append(fullscreenExceptionListHost);
         fullscreenExceptionsExpander.Content(exceptionManagement);
-        fullscreenCard.content.Children().Append(fullscreenExceptionsExpander);
+        fullscreenExceptionsExpander.Padding({0});
+        fullscreenCard.content.Children().Append(
+            presenter_controls::SettingsDisclosureRow(fullscreenExceptionsExpander));
         edgeSwipeCard.content.Children().Append(showOnlyWhenSummonedRow.root);
         edgeSwipeCard.content.Children().Append(shortcutsHost);
         edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
@@ -775,8 +777,8 @@ struct DockPagePresenter::Impl
         taskbarSettingsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         taskbarCard.content.Children().Append(taskbarSettingsRow.root);
 
-        InitializeCard(taskbarAppearanceCard, nullptr, taskbarRoot);
-        taskbarAppearanceCard.content.Spacing(8.0);
+        InitializeCard(taskbarAppearanceCard, cardStyle, taskbarRoot);
+        taskbarAppearanceCard.content.Spacing(0);
         taskbarThemeCombo = NewCombo();
         taskbarThemes = std::make_unique<ThemeLibraryControls>(localize, "taskbar", false, taskbarThemeCombo, 10, 8);
         taskbarContentThemeCombo = NewCombo();
@@ -784,19 +786,16 @@ struct DockPagePresenter::Impl
         taskbarContentThemeRow.Initialize(taskbarContentThemeCombo);
         taskbarBaseRows.Children().Append(taskbarThemeRow.root);
         taskbarBaseRows.Children().Append(taskbarContentThemeRow.root);
-        muxc::Border taskbarBaseGroup;
-        presenter_controls::InitializeSettingsGroup(
-            taskbarBaseGroup, nullptr, taskbarBaseRows, cardStyle);
         taskbarRuntimeStatus = muxc::InfoBar{};
         taskbarRuntimeStatus.IsClosable(false);
         taskbarRuntimeStatus.IsOpen(false);
         presenter_controls::BindInfoBarVisibility(taskbarRuntimeStatus);
-        taskbarAppearanceCard.content.Children().Append(taskbarBaseGroup);
+        taskbarAppearanceCard.content.Children().Append(taskbarBaseRows);
         taskbarAppearanceCard.content.Children().Append(taskbarThemes->Content());
         taskbarAppearanceCard.content.Children().Append(taskbarRuntimeStatus);
 
         taskbarCustomAppearance = muxc::StackPanel{};
-        taskbarCustomAppearance.Spacing(8.0);
+        taskbarCustomAppearance.Spacing(0);
         taskbarCustomTitle = muxc::TextBlock{};
         taskbarCustomTitle.FontWeight(
             winrt::Windows::UI::Text::FontWeights::SemiBold());
@@ -827,11 +826,14 @@ struct DockPagePresenter::Impl
         taskbarGradient.sections.material.Children().Append(taskbarBlurRadius.root);
         taskbarGradient.sections.material.Children().Append(taskbarAcrylicRow.root);
         taskbarCustomAppearance.Children().Append(taskbarThemes->SaveContent());
+        presenter_controls::JoinSettingsSections(taskbarCustomAppearance);
         taskbarThemes->SetCustomContent({taskbarCustomAppearance});
         taskbarAppearanceCard.content.Children().Append(
             taskbarCustomAppearance);
 
         InitializeCard(taskbarRulesCard, nullptr, taskbarAppearanceCard.content, true);
+        taskbarRulesCard.root.Child(nullptr);
+        taskbarRulesCard.root.Child(presenter_controls::SettingsDisclosureRow(taskbarRulesCard.section));
         taskbarRulesCard.content.Spacing(0.0);
         taskbarRulesHint = NewHint();
         InitializeDynamicRule(shellUiRule,
@@ -1014,9 +1016,7 @@ struct DockPagePresenter::Impl
         SystemTaskbarDynamicRule DockSettings::* member = nullptr)
     {
         control.sections.Initialize(parent, true, false, false);
-        if (member)
-            for (const auto& disclosure : control.sections.disclosures)
-                presenter_controls::StyleInlineSettingsExpander(disclosure);
+        presenter_controls::JoinSettingsSections(parent);
         control.borderEditor = PanelAppearanceEditor::Create(
             [this](auto key) { return L(key, L""); },
             [this, member](const PersonalizationSettings& value, bool commit) {
@@ -1132,6 +1132,7 @@ struct DockPagePresenter::Impl
         control.gradient.sections.material.Children().Append(control.blurRadius.root);
         control.gradient.sections.material.Children().Append(control.acrylicRow.root);
         control.customAppearance.Children().Append(control.savedThemes->SaveContent());
+        presenter_controls::JoinSettingsSections(control.customAppearance);
         control.savedThemes->SetCustomContent({control.customAppearance});
         control.appearanceDetails.Children().Append(control.customAppearance);
         control.details.Children().Append(control.appearanceDetails);

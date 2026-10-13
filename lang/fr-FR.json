@@ -2271,8 +2271,8 @@
   "appearance.rimWidthHelp": "Largeur de base du reflet ; l’épaisseur minimale et la variation des options avancées déterminent son épaisseur finale.",
   "settings.nav.group.widgetsAndCategories": "Widgets et catégories",
   "settings.nav.group.other": "Autres",
-  "settings.widgetBehavior.title": "Collections et dossiers",
-  "settings.widgetBehavior.description": "Choisissez comment les widgets s’ouvrent, où apparaît la barre de titre des collections et si les onglets de groupe affichent le nombre de fichiers.",
+  "settings.widgetBehavior.title": "Préférences des widgets",
+  "settings.widgetBehavior.description": "Configurez les interactions communes, les barres de titre, les onglets et le déploiement des fenêtres contextuelles.",
   "settings.animation.openDock.description": "Réglez l’agrandissement au survol du Dock ainsi que les animations de lancement et de fenêtres.",
   "app.settings.widgets_permission_location_read": "Lire la position du système",
   "quickNav.title": "Navigation rapide",
@@ -2694,5 +2694,11 @@
   "settings.search.prerequisite.enable": "Pour modifier cette option, activez d’abord « {0} ».",
   "settings.search.prerequisite.unavailable": "Cette option ne peut pas être modifiée dans les conditions actuelles.",
   "settings.search.alias.globalAppearance": "Polices et icônes Apparence globale",
-  "statusBar.theme.mergedHint": "Les barres d’état fusionnées avec le Dock utilisent son apparence."
+  "statusBar.theme.mergedHint": "Les barres d’état fusionnées avec le Dock utilisent son apparence.",
+  "settings.calendar.originalDate": "Date initiale de l'occurrence",
+  "statusBar.batteryPercentage": "Afficher le pourcentage de batterie",
+  "settings.widgetBehavior.tabSwitching": "Changement d'onglet",
+  "settings.widgetBehavior.groupTabHover": "Changer les onglets de groupe au survol",
+  "settings.widgetBehavior.categoryTabHover": "Changer les onglets de catégorie au survol",
+  "settings.widgetBehavior.tabHoverDelay": "Délai de survol des onglets"
 }

@@ -5,6 +5,7 @@
 #include "platform/usage_guide.h"
 #include "settings/settings_page_catalog.h"
 #include "settings_focus_feedback.h"
+#include "settings_presenter_controls.h"
 #if __has_include("SettingsShell.g.cpp")
 #include "SettingsShell.g.cpp"
 #endif
@@ -389,8 +390,8 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.nav.group.data", L"Data"},
     LocalizedFallback{"settings.nav.group.other", L"Other"},
     LocalizedFallback{"settings.nav.group.widgetsAndCategories", L"Widgets & categories"},
-    LocalizedFallback{"settings.widgetBehavior.title", L"Widget behavior"},
-    LocalizedFallback{"settings.widgetBehavior.description", L"Choose how widgets open, where collection title bars appear, and whether group tabs show file counts."},
+    LocalizedFallback{"settings.widgetBehavior.title", L"Widget preferences"},
+    LocalizedFallback{"settings.widgetBehavior.description", L"Choose common widget interactions, title bars and tabs, and popup expansion behavior."},
     LocalizedFallback{"settings.nav.categories", L"Categories & rules"},
     LocalizedFallback{"settings.nav.dock", L"Dock"},
     LocalizedFallback{"settings.nav.taskbar", L"Windows taskbar"},
@@ -769,7 +770,6 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         }
         break;
     case SettingsPage::Widgets:
-        ensurePersonalization();
         ensureWidgets();
         break;
     case SettingsPage::DeveloperTools:
@@ -2557,7 +2557,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             page == SettingsPage::ThemeManager || page == SettingsPage::AppearanceTheme ||
             page == SettingsPage::AppearanceWidgets || page == SettingsPage::WidgetBehavior ||
             page == SettingsPage::ContextMenu || page == SettingsPage::Dock ||
-            page == SettingsPage::QuickNavigation || page == SettingsPage::Widgets ||
+            page == SettingsPage::QuickNavigation ||
             page == SettingsPage::AppearanceDesktopIcons;
     };
     const auto usesDesktopPresenter = [](SettingsPage page) {
@@ -2813,12 +2813,17 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
     case SettingsPage::WidgetBehavior:
         if (personalizationPage_)
         {
+            PageCards().Children().Append(personalizationPage_->WidgetCommonContent());
             PageCards().Children().Append(
                 personalizationPage_->WidgetBehaviorContent());
             registerPersonalizationFocus({
+                "personalization.widgetTransformCursors",
                 "personalization.scrollableTitleBarOnTop",
                 "personalization.showGroupTabCounts",
                 "personalization.popupHoverOpen",
+                "personalization.groupTabHoverSwitch",
+                "personalization.categoryTabHoverSwitch",
+                "personalization.tabHoverDelayMs",
                 "personalization.popupHoverDelayMs",
                 "personalization.popupCloseOnMouseLeave"});
             personalizationPage_->Activate();
@@ -3021,12 +3026,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                     widgetsPage_->FocusTarget(focusId));
             }
         }
-        if (personalizationPage_)
-        {
-            PageCards().Children().Append(personalizationPage_->WidgetCommonContent());
-            registerPersonalizationFocus({"personalization.widgetTransformCursors"});
-            personalizationPage_->Activate();
-        }
         break;
     case SettingsPage::WidgetSettings:
         if (widgetSettingsPage_ &&
@@ -3119,6 +3118,56 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         break;
     default:
         break;
+    }
+    // Cross-page relationships follow the actual owners of each preference.
+    // Object-specific and conditional links remain in their presenters.
+    struct RelatedSetting { std::string_view label; SettingsPage page; const char* focus; };
+    std::vector<RelatedSetting> related;
+    switch (pageRoute.page)
+    {
+    case SettingsPage::DesktopPages:
+        related.push_back({"app.settings.layout_spacing", SettingsPage::AppearanceDesktopIcons, "desktop.iconSpacing"}); break;
+    case SettingsPage::DesktopCategories:
+        related.push_back({"app.settings.tab_height", SettingsPage::AppearanceDesktopIcons, "desktop.categoryLayout"});
+        related.push_back({"settings.widgetBehavior.categoryTabHover", SettingsPage::WidgetBehavior, "personalization.categoryTabHoverSwitch"}); break;
+    case SettingsPage::AppearanceTheme:
+    case SettingsPage::Personalization:
+        related.push_back({snowdesktop::SettingsPageTitleKey(SettingsPage::ThemeManager), SettingsPage::ThemeManager, "personalization.savedThemes"});
+        related.push_back({snowdesktop::SettingsPageTitleKey(SettingsPage::AppearanceDesktopIcons), SettingsPage::AppearanceDesktopIcons, ""}); break;
+    case SettingsPage::AppearanceDesktopIcons:
+        related.push_back({snowdesktop::SettingsPageTitleKey(SettingsPage::AppearanceIconBeautification), SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify"}); break;
+    case SettingsPage::AppearanceIconBeautification:
+        related.push_back({"app.settings.icon_size", SettingsPage::AppearanceDesktopIcons, "desktop.iconSize"}); break;
+    case SettingsPage::Widgets:
+        related.push_back({"settings.widgetBehavior.title", SettingsPage::WidgetBehavior, ""}); break;
+    case SettingsPage::Calendar:
+        related.push_back({"statusBar.clockPanel", SettingsPage::StatusBar, "statusBar.clockPanel"}); break;
+    default: break;
+    }
+    if (!related.empty())
+    {
+        namespace controls = snowdesktop::winui::presenter_controls;
+        muxc::Border group;
+        muxc::TextBlock heading;
+        heading.Text(Localize("settings.common.relatedSettings"));
+        heading.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold());
+        muxc::StackPanel rows;
+        const auto style = Resources().Lookup(winrt::box_value(L"SettingsShellCardStyle")).as<mux::Style>();
+        controls::InitializeSettingsGroup(group, heading, rows, style);
+        for (const auto& entry : related)
+        {
+            muxc::Button button;
+            button.Content(winrt::box_value(Localize("start.openSettings")));
+            controls::SettingRow row;
+            row.Initialize(button); row.SetText(Localize(entry.label));
+            const auto route = SettingsRoute::ForPage(entry.page, entry.focus);
+            button.Click([weak = get_weak(), route](const auto&, const auto&) {
+                if (const auto self = weak.get()) (void)self->Navigate(route, true);
+            });
+            rows.Children().Append(row.root);
+        }
+        controls::UpdateSettingsSubrows(rows, 0);
+        PageCards().Children().Append(group);
     }
     renderedPageRoute_ = std::move(pageRoute);
 }

@@ -1795,6 +1795,7 @@ void DesktopApp::MapPagesToMonitors()
  */
 void DesktopApp::ApplyPageMapping()
 {
+    CancelPopupHover();
     if (gridPages_.empty()) { lastMonitorPageId_.clear(); return; }
 
     // 首屏兜底：若 savedPageIds_ 为空，确保至少有一个首屏页

@@ -2271,8 +2271,8 @@
   "appearance.rimWidthHelp": "反光带的基准厚度；实际厚度由高级选项中的最低厚度和变化幅度共同决定。",
   "settings.nav.group.widgetsAndCategories": "组件与分类",
   "settings.nav.group.other": "其他",
-  "settings.widgetBehavior.title": "集合与文件夹",
-  "settings.widgetBehavior.description": "设置组件的打开方式、收纳组件标题栏位置，以及组标签是否显示文件数量。",
+  "settings.widgetBehavior.title": "组件偏好",
+  "settings.widgetBehavior.description": "设置组件的通用交互、标题栏与标签，以及弹窗展开行为。",
   "settings.animation.openDock.description": "调整 Dock 的悬停缩放、启动动画和窗口动画。",
   "app.settings.widgets_permission_location_read": "读取系统位置",
   "quickNav.title": "快捷导航",
@@ -2694,5 +2694,11 @@
   "settings.search.prerequisite.enable": "要调整此项，请先打开“{0}”。",
   "settings.search.prerequisite.unavailable": "此项在当前条件下不可调整。",
   "settings.search.alias.globalAppearance": "字体与图标 全局外观",
-  "statusBar.theme.mergedHint": "与 Dock 合并的状态栏使用 Dock 外观。"
+  "statusBar.theme.mergedHint": "与 Dock 合并的状态栏使用 Dock 外观。",
+  "settings.calendar.originalDate": "原定发生日期",
+  "statusBar.batteryPercentage": "显示电量百分比",
+  "settings.widgetBehavior.tabSwitching": "标签切换",
+  "settings.widgetBehavior.groupTabHover": "悬停切换组标签",
+  "settings.widgetBehavior.categoryTabHover": "悬停切换分类标签",
+  "settings.widgetBehavior.tabHoverDelay": "标签悬停延迟"
 }

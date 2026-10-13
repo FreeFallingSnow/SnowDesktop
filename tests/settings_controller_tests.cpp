@@ -296,9 +296,9 @@ void TestRoutes()
     const auto transformCursors = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.widgetTransformCursors"));
-    Check(transformCursors.page == SettingsPage::Widgets &&
+    Check(transformCursors.page == SettingsPage::WidgetBehavior &&
             transformCursors.focusId == "personalization.widgetTransformCursors",
-        "component transform cursor links reach the component management page");
+        "component transform cursor links reach the widget preferences page");
     const auto popupHover = CanonicalizeSettingsRoute(
         SettingsRoute::ForPage(SettingsPage::Personalization,
             "personalization.popupHoverOpen"));
@@ -390,7 +390,7 @@ void TestRoutes()
         {"personalization.cornerRadius", SettingsPage::AppearanceDesktopIcons},
         {"personalization.barHeight", SettingsPage::AppearanceDesktopIcons},
         {"personalization.luaWidgetRowHeight", SettingsPage::AppearanceDesktopIcons},
-        {"personalization.widgetTransformCursors", SettingsPage::Widgets},
+        {"personalization.widgetTransformCursors", SettingsPage::WidgetBehavior},
         {"desktop.spacing", SettingsPage::AppearanceDesktopIcons},
         {"desktop.iconSpacing", SettingsPage::AppearanceDesktopIcons},
         {"personalization.quickNavigationTheme", SettingsPage::QuickNavigation},

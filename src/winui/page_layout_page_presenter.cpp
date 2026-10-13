@@ -330,8 +330,13 @@ struct PageLayoutPagePresenter::Impl
             [this](const auto&, const auto&) { DeletePage(); });
         nameChangedToken = nameBox.TextChanged([this](const auto&, const auto&) {
             if (closed || updating) return;
-            if (!nameDirty) nameEditRevision = snapshot.revision;
-            nameDirty = true;
+            // TextChanged can arrive after a programmatic selection refresh
+            // has released updating. Only a different name is an unsaved edit.
+            const auto page = SelectedPage();
+            const std::wstring text = nameBox.Text().c_str();
+            const bool edited = page && text != page->name;
+            if (edited && !nameDirty) nameEditRevision = snapshot.revision;
+            nameDirty = edited;
             UpdateInteractionState();
         });
         saveNameToken = saveNameButton.Click([this](const auto&, const auto&) { SaveName(); });

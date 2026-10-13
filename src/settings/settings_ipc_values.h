@@ -25,7 +25,8 @@ SD_IPC_FIELDS(PersonalizationSettings,
     v.widgetBorderWidth, v.widgetEdgeHighlightEnabled, v.widgetEdgeHighlightWidth, v.widgetEdgeHighlightStrength, v.edgeLight,
     v.gradientEndA, v.barHeight, v.scrollableTitleBarOnTop, v.widgetTransformCursors, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
     v.showCategoryTabCounts, v.showGroupTabCounts, v.popupHoverOpen, v.popupHoverDelayMs, v.popupCloseOnMouseLeave, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
-    v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient);
+    v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient,
+    v.groupTabHoverSwitch, v.categoryTabHoverSwitch, v.tabHoverDelayMs);
 SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(StatusBarAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,
@@ -62,7 +63,7 @@ SD_IPC_FIELDS(StatusBarSettings,
     v.pinnedTrayItems, v.trayOrder, v.menu, v.quickSearch, v.taskView,
     v.clockSystemPanel, v.controlCenterSystemPanel, v.inputMethodSystemPanel, v.leftOrder, v.rightOrder,
     v.legacyShellUi, v.maximizedWindow, v.legacyVisibleWindow, v.noWindow, v.inputMethod,
-    v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned);
+    v.quickControlOrder, v.hiddenQuickControls, v.clockShowSeconds, v.timeNotificationRightAligned, v.batteryPercentage);
 SD_IPC_FIELDS(app_fonts::Selection, v.package, v.family);
 SD_IPC_FIELDS(GeneralSettings,
     v.autoStartEnabled, v.softwareDesktopEnabled, v.demoModeEnabled, v.doubleClickHideDesktop,
