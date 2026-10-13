@@ -26,7 +26,7 @@ inline float ResolveChromeScale(float pageScale)
 
 inline float ResolveTitleFontSize(float scale)
 {
-    return 18.0f * ResolveChromeScale(scale);
+    return 16.0f * ResolveChromeScale(scale);
 }
 
 inline float ResolveControlFontSize(float scale)
@@ -69,7 +69,6 @@ struct HeaderVerticalBounds
     int titleBottom = 44;
     int sortButtonTop = 14;
     int sortButtonBottom = 48;
-    int sortLabelOffsetY = 2;
 };
 
 inline int ScaleDimension(float value, float scale)
@@ -91,7 +90,6 @@ inline HeaderVerticalBounds ResolveHeaderVerticalBounds(float scale)
     result.sortButtonTop = result.titleTop +
         (result.titleBottom - result.titleTop - sortButtonHeight) / 2;
     result.sortButtonBottom = result.sortButtonTop + sortButtonHeight;
-    result.sortLabelOffsetY = ScaleDimension(2, scale);
     return result;
 }
 
@@ -238,6 +236,39 @@ inline int RequiredRowCount(
         kEmptyRows, (static_cast<int>(itemCount) +
                columns - 1) /
             columns);
+}
+
+// Measure the complete frame, including visible controls. Prefer a balanced
+// footprint among layouts that fit; never add scrolling solely to improve shape.
+template <typename Measure>
+inline int ResolveBalancedColumnCount(std::size_t itemCount,
+    int maximumColumns, int maximumHeight, Measure&& measure)
+{
+    const int upper = PreferredColumnCount(itemCount,
+        std::clamp(maximumColumns, 1, kMaximumColumns));
+    if (itemCount == 0) return upper;
+    const int lower = std::min(kEmptyColumns, upper);
+    const int heightLimit = std::max(1, maximumHeight);
+    int selected = upper;
+    int bestOverflow = std::numeric_limits<int>::max();
+    double bestAspect = std::numeric_limits<double>::infinity();
+    for (int columns = lower; columns <= upper; ++columns)
+    {
+        const auto size = measure(columns);
+        const int width = std::max(1, size.first);
+        const int height = std::max(1, size.second);
+        const int overflow = std::max(0, height - heightLimit);
+        const double aspect = std::abs(std::log(
+            static_cast<double>(width) / std::min(height, heightLimit)));
+        if (overflow < bestOverflow ||
+            (overflow == bestOverflow && aspect < bestAspect))
+        {
+            selected = columns;
+            bestOverflow = overflow;
+            bestAspect = aspect;
+        }
+    }
+    return selected;
 }
 
 inline int RequiredListRowCount(std::size_t itemCount)

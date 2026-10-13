@@ -143,9 +143,6 @@ void DesktopApp::DrawCollectionPopup(
                 popupMetrics.scale,
             &popupBackgroundAppearance, false, 0, popupMetrics.scale);
 
-        const auto headerBounds =
-            snowdesktop::collection_popup_layout::
-                ResolveHeaderVerticalBounds(popupMetrics.scale);
         const RECT titleRect = snowdesktop::collection_popup_layout::
             ResolveTitleRect(popupRect_, popupMetrics.scale,
                 dockFolderPopupOpen_ ? GetDockFolderPopupSortButtonRect(popupRect_).left -
@@ -217,12 +214,8 @@ void DesktopApp::DrawCollectionPopup(
                     widget.folderSortAscending
                         ? L" ↑" : L" ↓";
             }
-            RECT sortTextRect = sortRect;
-            OffsetRect(
-                &sortTextRect, 0,
-                headerBounds.sortLabelOffsetY);
             DrawD2DTextEllipsis(
-                ctx, sortLabel, sortTextRect,
+                ctx, sortLabel, sortRect,
                 GetCollectionPopupTextFormat(popupMetrics.scale, false),
                 popupTextColor(0.88f),
                 DWRITE_TEXT_ALIGNMENT_CENTER,

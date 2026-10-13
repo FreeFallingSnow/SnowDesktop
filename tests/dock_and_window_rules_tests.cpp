@@ -3417,10 +3417,6 @@ int main(int argc, char** argv)
                 headerBounds.sortButtonTop -
                 headerBounds.sortButtonBottom) <= 1,
             "folder popup title and sort button must share a vertical center");
-        Check(
-            headerBounds.sortLabelOffsetY ==
-                popupLayout::ScaleDimension(2, scale),
-            "folder popup sort labels must retain their downward optical offset");
         // A Dock collection can have empty desktop bounds. Its title editor
         // must track the visible popup even on a monitor with negative coordinates.
         const RECT popup{ -1200, -600, -640, 40 };

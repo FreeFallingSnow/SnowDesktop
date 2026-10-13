@@ -556,10 +556,10 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
         return metrics.paddingX * 2 + columnCount * cellW +
             std::max(0, columnCount - 1) * metrics.gapX;
     };
-    auto popupHeightForRows = [&](int rowCount) {
+    auto popupHeightForRows = [&](int rowCount, int columnCount) {
         if (groupView)
         {
-            const auto sizing = measureGroupPopup(popupWidthForColumns(columns));
+            const auto sizing = measureGroupPopup(popupWidthForColumns(columnCount));
             return sizing.contentHeight + sizing.overheadHeight;
         }
         if (listMode)
@@ -583,22 +583,31 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             std::max(0, rowCount - 1) * metrics.gapY +
             metrics.bottomPadding;
     };
-    int width = popupWidthForColumns(columns);
-    int height = popupHeightForRows(rows);
-    if (!listMode && itemCount > 0 &&
-        height > maxHeight &&
-        columns < maxColumns)
+    const auto columnsForWidth = [&](int popupWidth) {
+        return std::clamp(
+            (std::max(1, popupWidth - metrics.paddingX * 2) + metrics.gapX) /
+                std::max(1, cellW + metrics.gapX),
+            1, snowdesktop::collection_popup_layout::kMaximumColumns);
+    };
+    if (!listMode && itemCount > 0)
     {
-        columns = maxColumns;
-        rows =
-            snowdesktop::collection_popup_layout::
-                RequiredRowCount(
-                    itemCount, columns);
-        width = popupWidthForColumns(columns);
-        height = popupHeightForRows(rows);
+        columns = snowdesktop::collection_popup_layout::ResolveBalancedColumnCount(
+            itemCount, maxColumns, maxHeight, [&](int candidate) {
+                const int candidateWidth = std::min(
+                    popupWidthForColumns(candidate), availableWidth);
+                // A minimum control width can expose additional grid tracks.
+                // Measure those same tracks that painting and hit testing use.
+                const int renderedColumns = groupView ? candidate : columnsForWidth(candidateWidth);
+                const int candidateRows = snowdesktop::collection_popup_layout::
+                    RequiredRowCount(itemCount, renderedColumns);
+                return std::pair{candidateWidth,
+                    popupHeightForRows(candidateRows, renderedColumns)};
+            });
+        if (!groupView) columns = columnsForWidth(popupWidthForColumns(columns));
+        rows = snowdesktop::collection_popup_layout::RequiredRowCount(itemCount, columns);
     }
-    width = std::min(width, availableWidth);
-    height = std::min(height, maxHeight);
+    const int width = std::min(popupWidthForColumns(columns), availableWidth);
+    const int height = std::min(popupHeightForRows(rows, columns), maxHeight);
 
     int left = work.left + (workWidth - width) / 2;
     int top = work.top + (workHeight - height) / 2;
@@ -840,9 +849,10 @@ int DesktopApp::GetCollectionPopupColumnCount(const RECT& popup) const
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT content = GetCollectionPopupContentRect(popup);
     const int cellW = metrics.cellWidth;
-    return std::max(1,
+    return std::clamp(
         (static_cast<int>(content.right - content.left) + metrics.gapX) /
-        std::max(1, cellW + metrics.gapX));
+        std::max(1, cellW + metrics.gapX),
+        1, snowdesktop::collection_popup_layout::kMaximumColumns);
 }
 
 int DesktopApp::GetCollectionPopupRowCount(const DesktopWidget& widget, const RECT& popup) const

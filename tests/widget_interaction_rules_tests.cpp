@@ -2004,7 +2004,7 @@ void TestPopupChromeScaling()
     // Reproduce the reported 2x page: controls must be measured on the popup
     // page, and nondefault tab heights must reserve the complete painted header.
     const auto doubled = popup::ResolveMetrics(184, 232, 184, 232, 2.0f);
-    Check(popup::ResolveTitleFontSize(doubled.scale) == 36.0f &&
+    Check(popup::ResolveTitleFontSize(doubled.scale) == 32.0f &&
             popup::ResolveControlFontSize(doubled.scale) == 28.0f,
         "popup titles and sort labels use their own readable 2x fonts");
     Check(popup::ResolveDetailsHeaderHeight(doubled, 24.0f) == 40 &&
@@ -2017,7 +2017,7 @@ void TestPopupChromeScaling()
     const auto dense = popup::ResolveMetrics(9, 12, 9, 12, 0.1f);
     const auto bounds = popup::ResolveHeaderVerticalBounds(dense.scale);
     Check(dense.scale == 0.75f && dense.headerHeight == 41 &&
-            popup::ResolveTitleFontSize(dense.scale) == 13.5f &&
+            popup::ResolveTitleFontSize(dense.scale) == 12.0f &&
             bounds.titleBottom - bounds.titleTop >= 18 &&
             popup::ResolveDetailsHeaderHeight(dense, 24.0f) == 15,
         "dense desktop grids retain legible popup titles and control heights");
@@ -2031,8 +2031,43 @@ void TestPopupChromeScaling()
         {"src/app/popup/app_popup_render.cpp", "", "",
             {"itemTextFormat_", "itemFontSizeCu_"}},
         {"src/app/input/app_rename_begin.cpp", "if (popupTitleRename)",
-            "else if (IsGroupedCollection", {"itemTextFormat_", "itemFontSizeCu_"}}
-    }), "popup drawing and title editing cannot depend on icon title font size");
+            "else if (IsGroupedCollection", {"itemTextFormat_", "itemFontSizeCu_"}},
+        {"src/app/popup/app_popup_render.cpp", "if (dockFolderPopupOpen_)",
+            "RECT content =", {"OffsetRect(&sortTextRect"}}
+    }), "popup title independence and sort centering retain their rendering boundaries");
+}
+
+void TestBalancedPopupColumns()
+{
+    namespace popup = snowdesktop::collection_popup_layout;
+    const auto metrics = popup::ResolveMetrics(92, 116, 84, 108, 1.0f);
+    const auto measure = [&](std::size_t count, int columns, int controlsHeight) {
+        const int rows = popup::RequiredRowCount(count, columns);
+        return std::pair{
+            metrics.paddingX * 2 + columns * metrics.cellWidth + (columns - 1) * metrics.gapX,
+            metrics.headerHeight + controlsHeight + rows * metrics.cellHeight +
+                (rows - 1) * metrics.gapY + metrics.bottomPadding};
+    };
+    const auto nineItems = [&](int columns) { return measure(9, columns, 80); };
+    Check(popup::ResolveBalancedColumnCount(9, 5, 640, nineItems) == 4,
+        "nine-item popups add a third row and reduce columns when the full frame fits");
+    Check(popup::ResolveBalancedColumnCount(9, 5, 410, nineItems) == 5,
+        "short work areas preserve a fitting wider popup instead of adding scrolling");
+    Check(popup::ResolveBalancedColumnCount(9, 2, 640, nineItems) == 2,
+        "narrow work areas never request unavailable grid columns");
+    Check(popup::ResolveBalancedColumnCount(0, 5, 640, nineItems) == 3 &&
+            popup::ResolveBalancedColumnCount(2, 5, 640,
+                [&](int columns) { return measure(2, columns, 80); }) == 3,
+        "empty and tiny collections preserve their compact baseline footprint");
+    Check(popup::ResolveBalancedColumnCount(25, 5, 640,
+            [&](int columns) { return measure(25, columns, 80); }) == 5,
+        "large collections minimize required scrolling before optimizing aspect ratio");
+    Check(popup::ResolveBalancedColumnCount(9, 5, 1280,
+            [&](int columns) {
+                const auto size = nineItems(columns);
+                return std::pair{size.first * 2, size.second * 2};
+            }) == 4,
+        "uniform high-DPI scaling preserves the chosen popup proportions");
 }
 }
 
@@ -2068,6 +2103,7 @@ int main()
     TestScrollbarThumbDragging();
     TestListDetailRules();
     TestPopupChromeScaling();
+    TestBalancedPopupColumns();
     if (failures != 0)
     {
         std::cerr << failures
