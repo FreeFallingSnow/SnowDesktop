@@ -98,7 +98,7 @@ RECT DesktopApp::GetCategorizedPopupFrame(const RECT& popup) const
     if (!view) return frame;
     const LONG left = popup.left + metrics.paddingX;
     const LONG right = popup.right - metrics.paddingX;
-    const LONG inset = view->Cu(10.0f);
+    const LONG inset = ScaleWidgetCu(10.0f, metrics.scale);
     const auto* widget = GetOpenPopupWidget();
     if (widget && UsesCollectionPopupList(*widget))
     {
@@ -537,7 +537,8 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     const int detailsHeader =
         snowdesktop::collection_popup_layout::DetailsVisible(
             listMode, widget.detailShowModified, widget.detailShowType, widget.detailShowSize)
-        ? snowdesktop::collection_popup_layout::ResolveDetailsHeaderHeight(metrics)
+        ? snowdesktop::collection_popup_layout::ResolveDetailsHeaderHeight(
+            metrics, GetCategorizedWidgetTabHeight())
         : 0;
     const int maxHeight =
         snowdesktop::collection_popup_layout::
@@ -743,7 +744,7 @@ RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
             widget->detailShowSize))
     {
         top += snowdesktop::collection_popup_layout::
-            ResolveDetailsHeaderHeight(metrics);
+            ResolveDetailsHeaderHeight(metrics, GetCategorizedWidgetTabHeight());
     }
     return MakeRect(
         popup.left + metrics.paddingX,
@@ -771,7 +772,8 @@ RECT DesktopApp::GetCollectionPopupDetailsHeaderRect(
     const RECT content = GetCollectionPopupContentRect(popup);
     return MakeRect(
         content.left,
-        content.top - snowdesktop::collection_popup_layout::ResolveDetailsHeaderHeight(metrics),
+        content.top - snowdesktop::collection_popup_layout::ResolveDetailsHeaderHeight(
+            metrics, GetCategorizedWidgetTabHeight()),
         content.right,
         content.top);
 }

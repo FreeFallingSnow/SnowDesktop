@@ -14,6 +14,8 @@
 #include "drag_drop/pending_drop_rules.h"
 #include "layout/list_detail_rules.h"
 #include "layout/popup_icon_load_rules.h"
+#include "layout/collection_popup_layout.h"
+#include "test_source_boundary.h"
 #include "widget/runtime/widget_menu_catalogue.h"
 
 #include <algorithm>
@@ -1994,6 +1996,46 @@ void TestListDetailRules()
 }
 }
 
+namespace
+{
+void TestPopupChromeScaling()
+{
+    namespace popup = snowdesktop::collection_popup_layout;
+    // Reproduce the reported 2x page: controls must be measured on the popup
+    // page, and nondefault tab heights must reserve the complete painted header.
+    const auto doubled = popup::ResolveMetrics(184, 232, 184, 232, 2.0f);
+    Check(popup::ResolveTitleFontSize(doubled.scale) == 36.0f &&
+            popup::ResolveControlFontSize(doubled.scale) == 28.0f,
+        "popup titles and sort labels use their own readable 2x fonts");
+    Check(popup::ResolveDetailsHeaderHeight(doubled, 24.0f) == 40 &&
+            popup::ResolveDetailsHeaderHeight(doubled, 34.0f) == 60 &&
+            popup::ResolveDetailsHeaderHeight(doubled, 48.0f) == 88,
+        "popup headers reserve the actual configured height instead of fixed 60 pixels");
+    const auto fractional = popup::ResolveMetrics(138, 174, 138, 174, 1.5f);
+    Check(popup::ResolveDetailsHeaderHeight(fractional, 35.5f) == 47,
+        "popup header geometry preserves fractional stored heights before pixel rounding");
+    const auto dense = popup::ResolveMetrics(9, 12, 9, 12, 0.1f);
+    const auto bounds = popup::ResolveHeaderVerticalBounds(dense.scale);
+    Check(dense.scale == 0.75f && dense.headerHeight == 41 &&
+            popup::ResolveTitleFontSize(dense.scale) == 13.5f &&
+            bounds.titleBottom - bounds.titleTop >= 18 &&
+            popup::ResolveDetailsHeaderHeight(dense, 24.0f) == 15,
+        "dense desktop grids retain legible popup titles and control heights");
+    Check(popup::ResolveChromeScale(std::numeric_limits<float>::quiet_NaN()) == 1.0f &&
+            popup::ResolveChromeScale(std::numeric_limits<float>::infinity()) == 1.0f,
+        "invalid popup scaling falls back to readable finite geometry");
+    // Negative architecture boundary: this user-requested independent title
+    // must never silently pick up icon title size again. Not rendering proof.
+    const auto root = std::filesystem::path(__FILE__).parent_path().parent_path();
+    Check(snowdesktop::test::CheckSourceBoundaries(root, {
+        {"src/app/popup/app_popup_render.cpp", "", "",
+            {"itemTextFormat_", "itemFontSizeCu_"}},
+        {"src/app/input/app_rename_begin.cpp", "if (popupTitleRename)",
+            "else if (IsGroupedCollection", {"itemTextFormat_", "itemFontSizeCu_"}}
+    }), "popup drawing and title editing cannot depend on icon title font size");
+}
+}
+
 int main()
 {
     TestWidgetMenuMetadataReuse();
@@ -2025,6 +2067,7 @@ int main()
     TestNestedWidgetScrolling();
     TestScrollbarThumbDragging();
     TestListDetailRules();
+    TestPopupChromeScaling();
     if (failures != 0)
     {
         std::cerr << failures

@@ -3318,6 +3318,7 @@ private:
             const DesktopWidget& widget) const;
     snowdesktop::collection_popup_layout::Metrics
         GetOpenCollectionPopupLayoutMetrics() const;
+    IDWriteTextFormat* GetCollectionPopupTextFormat(float scale, bool title);
     RECT GetDockFolderPopupSortButtonRect(const RECT& popup) const;
     RECT GetCollectionPopupDetailsHeaderRect(
         const RECT& popup) const;
@@ -3559,6 +3560,9 @@ private:
     bool nativeGlassPanelReadyLogged_ = false;
     ComPtr<IDWriteFactory> dwriteFactory_;
     ComPtr<IDWriteTextFormat> itemTextFormat_;
+    ComPtr<IDWriteTextFormat> collectionPopupTitleTextFormat_;
+    ComPtr<IDWriteTextFormat> collectionPopupControlTextFormat_;
+    std::uint64_t collectionPopupFontRevision_ = 0;
     ComPtr<IDWriteTextFormat> componentListTextFormat_;
     ComPtr<IDWriteTextFormat> fanTitleTextFormat_;
     ComPtr<IDWriteTextFormat> listItemTextFormat_;

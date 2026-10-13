@@ -94,7 +94,8 @@ void DesktopApp::BeginRenameSelected(
                     ? GetDockFolderPopupSortButtonRect(frame).left -
                         snowdesktop::collection_popup_layout::ScaleDimension(10, popupScale)
                     : (std::numeric_limits<LONG>::max)());
-            if (itemTextFormat_) fontSize = itemTextFormat_->GetFontSize();
+            fontSize = snowdesktop::collection_popup_layout::ResolveTitleFontSize(popupScale);
+            fontWeight = FW_SEMIBOLD;
             leftAligned = true;
             foundContainer = true;
         }

@@ -3,9 +3,38 @@
 #include "app/navigation/quick_navigation_theme.h"
 #include "layout/item_render_layer_rules.h"
 #include "categorized_popup_scope.h"
+#include "ui/render/app_font.h"
 #include <d2d1effects.h>
 
 // Collection-popup rendering.
+
+IDWriteTextFormat* DesktopApp::GetCollectionPopupTextFormat(float scale, bool title)
+{
+    if (!dwriteFactory_) return nullptr;
+    const auto revision = snowdesktop::app_fonts::revision.load();
+    if (collectionPopupFontRevision_ != revision)
+    {
+        collectionPopupTitleTextFormat_.Reset();
+        collectionPopupControlTextFormat_.Reset();
+        collectionPopupFontRevision_ = revision;
+    }
+    auto& format = title ? collectionPopupTitleTextFormat_ : collectionPopupControlTextFormat_;
+    const float size = title
+        ? snowdesktop::collection_popup_layout::ResolveTitleFontSize(scale)
+        : snowdesktop::collection_popup_layout::ResolveControlFontSize(scale);
+    if (!format || format->GetFontSize() != size)
+    {
+        format.Reset();
+        snowdesktop::app_fonts::CreateTextFormat(dwriteFactory_, L"Segoe UI",
+            title ? DWRITE_FONT_WEIGHT_SEMI_BOLD : DWRITE_FONT_WEIGHT_NORMAL,
+            DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"", &format);
+        if (!format) return nullptr;
+        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+        format->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        format->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+    }
+    return format.Get();
+}
 
 void DesktopApp::DrawCollectionPopup(
     ID2D1DeviceContext* ctx,
@@ -128,7 +157,7 @@ void DesktopApp::DrawCollectionPopup(
                 ? _LW("app.overlay.collection_default") : widget.title);
         DrawD2DTextEllipsis(
             ctx, title, titleRect,
-            itemTextFormat_.Get(),
+            GetCollectionPopupTextFormat(popupMetrics.scale, true),
             popupTextColor(1.0f),
             DWRITE_TEXT_ALIGNMENT_LEADING,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -194,7 +223,7 @@ void DesktopApp::DrawCollectionPopup(
                 headerBounds.sortLabelOffsetY);
             DrawD2DTextEllipsis(
                 ctx, sortLabel, sortTextRect,
-                itemTextFormat_.Get(),
+                GetCollectionPopupTextFormat(popupMetrics.scale, false),
                 popupTextColor(0.88f),
                 DWRITE_TEXT_ALIGNMENT_CENTER,
                 DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
@@ -570,7 +599,8 @@ void DesktopApp::DrawCollectionPopup(
             : dockFolderPopupAvailable_
                 ? _LW("widget.folder_mapping.empty")
                 : _LW("widget.folder_mapping.unavailable");
-        DrawD2DTextEllipsis(ctx, status, content, itemTextFormat_.Get(),
+        DrawD2DTextEllipsis(ctx, status, content,
+            GetCollectionPopupTextFormat(popupMetrics.scale, false),
             popupTextColor(0.68f),
             DWRITE_TEXT_ALIGNMENT_CENTER,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER, false);

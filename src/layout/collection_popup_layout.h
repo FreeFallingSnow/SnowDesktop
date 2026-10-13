@@ -3,6 +3,7 @@
 #include "common/constants.h"
 #include "ui/render/font_cu_rules.h"
 #include "list_detail_rules.h"
+#include "widgets/collection_group_rules.h"
 
 #include <algorithm>
 #include <cmath>
@@ -16,6 +17,22 @@ inline constexpr int kMaximumColumns = 5;
 inline constexpr int kEmptyColumns = 3;
 inline constexpr int kEmptyRows = 2;
 inline constexpr int kMinimumListRows = 5;
+
+// Popup chrome must remain readable even on a very dense desktop grid.
+inline float ResolveChromeScale(float pageScale)
+{
+    return std::isfinite(pageScale) ? std::clamp(pageScale, 0.75f, 8.0f) : 1.0f;
+}
+
+inline float ResolveTitleFontSize(float scale)
+{
+    return 18.0f * ResolveChromeScale(scale);
+}
+
+inline float ResolveControlFontSize(float scale)
+{
+    return 14.0f * ResolveChromeScale(scale);
+}
 
 enum class View { Grid, List, Fan };
 
@@ -55,7 +72,7 @@ struct HeaderVerticalBounds
     int sortLabelOffsetY = 2;
 };
 
-inline int ScaleDimension(int value, float scale)
+inline int ScaleDimension(float value, float scale)
 {
     if (!std::isfinite(scale))
         scale = 1.0f;
@@ -65,6 +82,7 @@ inline int ScaleDimension(int value, float scale)
 
 inline HeaderVerticalBounds ResolveHeaderVerticalBounds(float scale)
 {
+    scale = ResolveChromeScale(scale);
     HeaderVerticalBounds result;
     result.titleTop = ScaleDimension(18, scale);
     result.titleBottom = ScaleDimension(44, scale);
@@ -104,9 +122,7 @@ inline Metrics ResolveMetrics(
     int minimumListHeight = 1)
 {
     Metrics result;
-    result.scale = std::isfinite(pageScale)
-        ? std::clamp(pageScale, 0.1f, 8.0f)
-        : 1.0f;
+    result.scale = ResolveChromeScale(pageScale);
     result.cellWidth = std::max({
         1, pageCellWidth, minimumVisualWidth });
     result.cellHeight = std::max({
@@ -172,9 +188,11 @@ inline int ResolveListRowHeight(
             defaultFont));
 }
 
-inline int ResolveDetailsHeaderHeight(const Metrics& metrics)
+inline int ResolveDetailsHeaderHeight(const Metrics& metrics,
+    float categorizedTabHeight = 34.0f)
 {
-    return ScaleDimension(30, metrics.scale);
+    return ScaleDimension(collection_group_rules::ResolveCategorizedControlMetrics(
+        categorizedTabHeight).detailsHeaderHeightCu, metrics.scale);
 }
 
 // Keep a known folder's footprint through loading and empty/error status.

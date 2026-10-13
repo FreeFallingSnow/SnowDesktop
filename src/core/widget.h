@@ -116,7 +116,7 @@ public:
 
     DesktopWidget* GetWidgetData() const { return data_; }
     DesktopApp* GetApp() const { return app_; }
-    float GetCellScale() const;
+    virtual float GetCellScale() const;
     float GetLayoutSpacingScale() const;
     bool UsesLightContentTheme() const;
     virtual snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const;
@@ -253,6 +253,7 @@ public:
     virtual void DrawScrollbar(ID2D1DeviceContext* context, bool hovered) const;
     void SetHostedFrame(const RECT* frame);
     void SetPopupFrame(const RECT* frame);
+    float GetCellScale() const override;
     bool IsHosted() const { return hostedFrameActive_; }
     bool IsPopupHosted() const { return popupFrameActive_; }
 
@@ -267,6 +268,7 @@ protected:
     RECT hostedFrame_{};
     bool hostedFrameActive_ = false;
     bool popupFrameActive_ = false;
+    float popupFrameScale_ = 1.0f;
 
     /** @brief 获取或创建圆角矩形裁剪几何体，frame/radius 不变时跨帧复用。 */
     ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,

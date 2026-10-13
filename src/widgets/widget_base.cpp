@@ -858,8 +858,21 @@ void WidgetContainer::SetHostedFrame(const RECT* frame)
 
 void WidgetContainer::SetPopupFrame(const RECT* frame)
 {
+    const float scale = frame && app_
+        ? app_->GetOpenCollectionPopupLayoutMetrics().scale : 1.0f;
+    const bool changed = popupFrameActive_ != (frame != nullptr) ||
+        popupFrameScale_ != scale;
     SetHostedFrame(frame);
     popupFrameActive_ = frame != nullptr;
+    popupFrameScale_ = scale;
+    if (changed) InvalidateSlots();
+}
+
+float WidgetContainer::GetCellScale() const
+{
+    // A popup projects the original component onto another page. Keep its
+    // render/input scale with that projection, without changing saved layout.
+    return popupFrameActive_ ? popupFrameScale_ : Widget::GetCellScale();
 }
 
 RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
