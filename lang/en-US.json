@@ -2685,5 +2685,12 @@
   "settings.search.legacy.personalization.backgroundColor": "Widget Background",
   "settings.search.legacy.personalization.contentTheme": "Text Color",
   "settings.search.legacy.personalization.enableGradient": "Enable Bottom Gradient",
-  "settings.search.legacy.personalization.luaWidgetRowHeight": "Lua Widget Row Height"
+  "settings.search.legacy.personalization.luaWidgetRowHeight": "Lua Widget Row Height",
+  "settings.search.prerequisite.choice": "This option depends on the selection in “{0}”. Adjust that setting first.",
+  "settings.search.prerequisite.customAppearance": "To adjust this option, set “{0}” to Custom.",
+  "settings.search.prerequisite.customTheme": "This option is available when editing a custom theme. Select Custom, or edit the currently selected saved theme.",
+  "settings.search.prerequisite.dependency": "This option depends on the current value of “{0}”. Its controlling setting is highlighted.",
+  "settings.search.prerequisite.disable": "To adjust this option, first turn off “{0}”.",
+  "settings.search.prerequisite.enable": "To adjust this option, first turn on “{0}”.",
+  "settings.search.prerequisite.unavailable": "This option cannot be adjusted under the current conditions."
 }

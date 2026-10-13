@@ -1,6 +1,7 @@
 #pragma once
 
 #include "widget/settings/widget_settings_service.h"
+#include "settings_focus_feedback.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -109,7 +110,8 @@ public:
      * Missing/cyclic dependencies fall back to a visible row or container.
      */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        FocusTarget(std::string_view settingKey, bool reveal = false) const noexcept;
+        FocusTarget(std::string_view settingKey, bool reveal = false,
+            SettingsFocusPrerequisite* prerequisite = nullptr) const noexcept;
 
     [[nodiscard]] std::wstring_view WidgetId() const noexcept;
     [[nodiscard]] std::string_view WidgetName() const noexcept;

@@ -2,6 +2,7 @@
 
 #include "settings/settings_controller.h"
 #include "hotkey_recorder.h"
+#include "settings_focus_feedback.h"
 #include "start_page_presenter.h"
 #include "../../steam_bridge/src/steam_connection_feedback.h"
 
@@ -152,7 +153,9 @@ public:
     void RefreshRuntimeState() noexcept;
     void RegisterFocusTargets(const FocusRegistrar& registrar) const;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        FocusTarget(std::string_view focusId) const noexcept;
+        FocusTarget(std::string_view focusId,
+            SettingsFocusPrerequisite* prerequisite = nullptr,
+            bool reveal = true) const noexcept;
 
     void ApplyOnboardingStatus(const HomeAboutStatusPatch& patch);
     void Activate(std::string_view focusId = {}) noexcept;

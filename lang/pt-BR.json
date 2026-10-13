@@ -2685,5 +2685,12 @@
   "settings.search.legacy.personalization.backgroundColor": "Fundo do widget",
   "settings.search.legacy.personalization.contentTheme": "Cor do texto",
   "settings.search.legacy.personalization.enableGradient": "Ativar gradiente inferior",
-  "settings.search.legacy.personalization.luaWidgetRowHeight": "Altura da linha dos widgets Lua"
+  "settings.search.legacy.personalization.luaWidgetRowHeight": "Altura da linha dos widgets Lua",
+  "settings.search.prerequisite.choice": "Esta opção depende da seleção em “{0}”. Ajuste essa configuração primeiro.",
+  "settings.search.prerequisite.customAppearance": "Para ajustar esta opção, defina “{0}” como Personalizado.",
+  "settings.search.prerequisite.customTheme": "Esta opção está disponível ao editar um tema personalizado. Selecione Personalizado ou edite o tema salvo que está selecionado.",
+  "settings.search.prerequisite.dependency": "Esta opção depende do valor atual de “{0}”. A configuração correspondente está destacada.",
+  "settings.search.prerequisite.disable": "Para ajustar esta opção, primeiro desative “{0}”.",
+  "settings.search.prerequisite.enable": "Para ajustar esta opção, primeiro ative “{0}”.",
+  "settings.search.prerequisite.unavailable": "Esta opção não pode ser ajustada nas condições atuais."
 }

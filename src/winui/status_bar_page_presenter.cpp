@@ -551,6 +551,44 @@ void StatusBarPagePresenter::Activate(std::string_view focusId)
 }
 void StatusBarPagePresenter::Deactivate() { impl_->mergedHeight->Flush(); impl_->Flush(); impl_->active = false; }
 void StatusBarPagePresenter::Close() { impl_->Close(); }
+mux::FrameworkElement StatusBarPagePresenter::FocusTarget(
+    std::string_view focusId, SettingsFocusPrerequisite* prerequisite) const
+{
+    if (prerequisite) *prerequisite = {};
+    mux::FrameworkElement result{nullptr};
+    RegisterFocusTargets([&](std::string id, const mux::FrameworkElement& target) {
+        if (id == focusId) result = target;
+    });
+    if (!result) return nullptr;
+    const auto enablingTarget = [&](bool StatusBarSettings::* member) -> mux::FrameworkElement {
+        for (const auto& toggle : impl_->toggles)
+        {
+            if (toggle->member != member) continue;
+            if (prerequisite)
+            {
+                prerequisite->messageKey = "settings.search.prerequisite.enable";
+                prerequisite->controlName = toggle->row.label.Text().c_str();
+            }
+            return toggle->control;
+        }
+        return result;
+    };
+    // Sync disables these rows through their ContentControl hosts. Inspect the
+    // same model prerequisites, rather than IsEnabled on the non-Control row.
+    if (focusId != "statusBar.enable" && !impl_->value.enabled)
+        return enablingTarget(&StatusBarSettings::enabled);
+    if (focusId == "statusBar.inputMethodPanel" && !impl_->value.inputMethod)
+        return enablingTarget(&StatusBarSettings::inputMethod);
+    if (result && focusId == "statusBar.mergedBarHeight" && !impl_->availability.anyMerged && prerequisite)
+    {
+        // A merged bar depends on both bars' current layout, not just an
+        // on/off choice. Keep the existing position target and explain that
+        // dependency only when navigation actually requests this setting.
+        prerequisite->messageKey = "settings.search.prerequisite.dependency";
+        prerequisite->controlName = impl_->edgeRow.label.Text().c_str();
+    }
+    return result;
+}
 void StatusBarPagePresenter::RegisterFocusTargets(const std::function<void(std::string, const mux::FrameworkElement&)>& target) const
 {
     target("statusBar.position", impl_->edgeRow.root); target("statusBar.monitor", impl_->monitorsRow.root);

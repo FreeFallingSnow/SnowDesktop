@@ -19,6 +19,8 @@ public:
     void Close();
     void RegisterFocusTargets(const std::function<void(std::string,
         const winrt::Microsoft::UI::Xaml::FrameworkElement&)>& registerTarget) const;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement FocusTarget(
+        std::string_view focusId, SettingsFocusPrerequisite* prerequisite = nullptr) const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

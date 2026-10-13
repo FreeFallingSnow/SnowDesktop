@@ -18,6 +18,7 @@
 #include "large_icon_page_presenter.h"
 #include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
+#include "settings_focus_feedback.h"
 #include "widget_settings_presenter.h"
 #include "widgets_page_presenter.h"
 
@@ -248,7 +249,13 @@ private:
     void RenderControllerStatus(
         const snowdesktop::SettingsSnapshot& snapshot);
     void ScheduleFocus();
-    void HighlightSetting(const winrt::Microsoft::UI::Xaml::FrameworkElement& target);
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement ResolveConditionalFocusTarget(
+        bool reveal, snowdesktop::winui::SettingsFocusPrerequisite& prerequisite);
+    [[nodiscard]] std::wstring FocusPrerequisiteMessage(
+        const snowdesktop::winui::SettingsFocusPrerequisite& prerequisite) const;
+    void RefreshFocusPrerequisite();
+    void HighlightSetting(const winrt::Microsoft::UI::Xaml::FrameworkElement& target,
+        const std::wstring& prerequisiteMessage);
     void StopFocusHighlight() noexcept;
     void UpdateFocusHighlight();
     void FocusPendingTarget();

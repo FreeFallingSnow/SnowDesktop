@@ -483,7 +483,8 @@ struct WidgetSettingsPresenter::Impl
     std::unordered_map<std::string, WidgetFieldControl*> fieldsByKey;
     // Only the condition currently preventing access contributes a parent.
     // This is navigation metadata from the accepted snapshot, not a value edit.
-    std::unordered_map<std::string, std::string> focusParents;
+    struct FocusParent { std::string key; std::string messageKey; };
+    std::unordered_map<std::string, FocusParent> focusParents;
     std::unordered_map<std::string, muxc::StackPanel> groupPanels;
     std::unordered_map<std::string, bool> rememberedGroupExpansion;
     std::unordered_map<std::string, PendingTransientPreview>
@@ -2230,17 +2231,48 @@ struct WidgetSettingsPresenter::Impl
         {
             // Visibility blocks access first. If enabledWhen is satisfied,
             // dependsOn can still be the condition disabling the same field.
-            std::string parent;
+            const wr::WidgetSettingCondition* condition = nullptr;
+            wr::WidgetSettingCondition dependency;
             if (!state.visible && state.schema.showWhen)
-                parent = state.schema.showWhen->key;
+                condition = &*state.schema.showWhen;
             else if (!state.enabled)
             {
                 if (state.schema.enabledWhen && !conditionMatches(*state.schema.enabledWhen))
-                    parent = state.schema.enabledWhen->key;
+                    condition = &*state.schema.enabledWhen;
                 else if (!state.schema.dependsOn.empty())
-                    parent = state.schema.dependsOn;
+                {
+                    dependency.key = state.schema.dependsOn;
+                    dependency.operation = "truthy";
+                    condition = &dependency;
+                }
             }
-            if (!parent.empty()) focusParents.emplace(state.schema.key, std::move(parent));
+            if (condition && !condition->key.empty())
+            {
+                std::string messageKey = "settings.search.prerequisite.dependency";
+                const auto source = states.find(condition->key);
+                if (source != states.end())
+                {
+                    const auto kind = source->second->schema.Kind();
+                    if (kind == wr::WidgetSettingKind::Boolean)
+                    {
+                        // A condition may require false (or even accept neither
+                        // state). Only name an on/off action when it is proven.
+                        const bool acceptsOff = wr::EvaluateSettingCondition(
+                            condition->operation, {"0"}, condition->values);
+                        const bool acceptsOn = wr::EvaluateSettingCondition(
+                            condition->operation, {"1"}, condition->values);
+                        if (acceptsOff != acceptsOn)
+                            messageKey = acceptsOn
+                                ? "settings.search.prerequisite.enable"
+                                : "settings.search.prerequisite.disable";
+                    }
+                    else if (kind == wr::WidgetSettingKind::Select ||
+                        kind == wr::WidgetSettingKind::MultiSelect)
+                        messageKey = "settings.search.prerequisite.choice";
+                }
+                focusParents.emplace(state.schema.key,
+                    FocusParent{condition->key, std::move(messageKey)});
+            }
             const auto found = fieldsByKey.find(state.schema.key);
             if (found != fieldsByKey.end())
                 PatchField(*found->second, state);
@@ -3497,25 +3529,38 @@ struct WidgetSettingsPresenter::Impl
     }
 
     mux::FrameworkElement FocusTarget(
-        std::string_view key, bool reveal) const noexcept
+        std::string_view key, bool reveal,
+        SettingsFocusPrerequisite* prerequisite) const noexcept
     {
+        if (prerequisite) *prerequisite = {};
         try
         {
             const auto found = fieldsByKey.find(std::string(key));
             if (found == fieldsByKey.end()) return nullptr;
             const WidgetFieldControl* candidate = found->second;
+            const bool requiresPrerequisite = !candidate->visible || !candidate->enabled;
+            const FocusParent* resolvedParent = nullptr;
             std::unordered_set<std::string_view> visited;
             while ((!candidate->visible || !candidate->enabled) &&
                 visited.emplace(candidate->schema.key).second)
             {
                 const auto parent = focusParents.find(candidate->schema.key);
                 if (parent == focusParents.end()) break;
-                const auto control = fieldsByKey.find(parent->second);
+                const auto control = fieldsByKey.find(parent->second.key);
                 if (control == fieldsByKey.end() ||
                     visited.contains(control->second->schema.key)) break;
+                resolvedParent = &parent->second;
                 candidate = control->second;
             }
             const WidgetFieldControl& field = *candidate;
+            if (prerequisite && requiresPrerequisite)
+            {
+                if (field.visible && field.enabled && resolvedParent &&
+                    !field.schema.label.empty())
+                    *prerequisite = {resolvedParent->messageKey, ToWide(field.schema.label)};
+                else
+                    prerequisite->messageKey = "settings.search.prerequisite.unavailable";
+            }
             const auto group = std::find_if(groups.begin(), groups.end(),
                 [&field](const auto& candidate) {
                     return candidate.schema.id == field.schema.group;
@@ -3764,9 +3809,11 @@ WidgetSettingsPresenter::FlushPendingEdits()
 }
 
 mux::FrameworkElement WidgetSettingsPresenter::FocusTarget(
-    std::string_view settingKey, bool reveal) const noexcept
+    std::string_view settingKey, bool reveal,
+    SettingsFocusPrerequisite* prerequisite) const noexcept
 {
-    return impl_ ? impl_->FocusTarget(settingKey, reveal) : nullptr;
+    if (prerequisite) *prerequisite = {};
+    return impl_ ? impl_->FocusTarget(settingKey, reveal, prerequisite) : nullptr;
 }
 
 std::wstring_view WidgetSettingsPresenter::WidgetId() const noexcept

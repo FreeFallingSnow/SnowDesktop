@@ -186,9 +186,19 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             !large_icon_settings_rules::Visible(field, draft, snapshot.hasEdgeColor)) return;
         RegisterTarget(id, target, field);
     }
-    x::FrameworkElement FocusTarget(std::string_view id)
+    x::FrameworkElement FocusTarget(std::string_view id,
+        SettingsFocusPrerequisite* prerequisite, bool reveal)
     {
-        if (!snapshot.available || !snapshot.editable) return status;
+        if (prerequisite) *prerequisite = {};
+        const auto unavailable = [&] {
+            if (prerequisite)
+                *prerequisite = {"settings.search.prerequisite.unavailable", {}};
+        };
+        if (!snapshot.available || !snapshot.editable)
+        {
+            unavailable();
+            return status;
+        }
         auto entry = focusTargets.find(std::string(id));
         if (entry == focusTargets.end()) return nullptr;
         // Object links never select a different mode or overwrite a field
@@ -196,34 +206,106 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (int depth = 0; depth < 4; ++depth)
         {
             const auto field = entry->second.field;
+            // This item has no Steam artwork source. Do not direct the user to
+            // a source choice that is absent from this object's editor.
+            if (field == Field::Steam && !snapshot.steam)
+            {
+                unavailable();
+                return root;
+            }
             const bool visible = (field != Field::Steam || snapshot.steam) &&
                 large_icon_settings_rules::Visible(field, draft, snapshot.hasEdgeColor);
-            if (visible) break;
+            const bool enabled = large_icon_settings_rules::Enabled(
+                field, draft, snapshot.hasEdgeColor, snapshot.accent != 0);
+            if (visible && enabled) break;
             const char* parent = "largeIcon.backgroundStyle";
+            const char* messageKey = "settings.search.prerequisite.choice";
+            const bool fill = IsLargeIconFill(draft);
+            const bool custom = draft.backgroundStyle == 9;
             switch (field)
             {
             case Field::FillImage: case Field::Steam:
-                parent = "largeIcon.fillSource"; break;
-            case Field::Crop: parent = "largeIcon.fit"; break;
+                if (fill) parent = "largeIcon.fillSource";
+                break;
+            case Field::Crop:
+                if (fill) parent = "largeIcon.fit";
+                break;
+            case Field::Custom:
+                messageKey = "settings.search.prerequisite.customAppearance";
+                break;
             case Field::Gradient: case Field::Solid:
-                parent = "largeIcon.defaultBackground"; break;
-            case Field::Blur: parent = "largeIcon.material"; break;
-            case Field::Border: parent = "largeIcon.border"; break;
-            case Field::Edge: parent = "largeIcon.edgeHighlight"; break;
-            case Field::ForegroundImage: parent = "largeIcon.foregroundSource"; break;
-            case Field::ManualTitle: parent = "largeIcon.autoTitleColor"; break;
-            case Field::Title: case Field::Tilt: case Field::Zoom: case Field::Glow: case Field::Shine:
-                parent = "largeIcon.effect"; break;
-            case Field::Radius: parent = "largeIcon.followComponentRadius"; break;
+                if (custom) parent = "largeIcon.defaultBackground";
+                else messageKey = "settings.search.prerequisite.customAppearance";
+                break;
+            case Field::Blur:
+                if (custom) parent = "largeIcon.material";
+                else messageKey = "settings.search.prerequisite.customAppearance";
+                break;
+            case Field::Border: case Field::Edge:
+                if (custom)
+                {
+                    parent = field == Field::Border ? "largeIcon.border" : "largeIcon.edgeHighlight";
+                    messageKey = "settings.search.prerequisite.enable";
+                }
+                else messageKey = "settings.search.prerequisite.customAppearance";
+                break;
+            case Field::ForegroundImage:
+                if (!fill) parent = "largeIcon.foregroundSource";
+                break;
+            case Field::ForegroundPosition:
+                if (!fill) parent = "largeIcon.effect";
+                break;
+            case Field::ManualTitle:
+                if (!fill)
+                {
+                    if (draft.effect != 2) parent = "largeIcon.effect";
+                    else
+                    {
+                        parent = "largeIcon.autoTitleColor";
+                        messageKey = "settings.search.prerequisite.disable";
+                    }
+                }
+                break;
+            case Field::Title:
+                if (!fill) parent = "largeIcon.effect";
+                break;
+            case Field::Tilt: case Field::Zoom: case Field::Glow: case Field::Shine:
+                parent = "largeIcon.effect";
+                break;
+            case Field::Radius:
+                if (draft.shape > 1) parent = "largeIcon.shape";
+                else
+                {
+                    parent = "largeIcon.followComponentRadius";
+                    messageKey = "settings.search.prerequisite.disable";
+                }
+                break;
             case Field::RadiusFollow: case Field::FlagDirection: case Field::RegularHexagon:
                 parent = "largeIcon.shape"; break;
             default: break;
             }
             const auto ancestor = focusTargets.find(parent);
-            if (ancestor == focusTargets.end() || ancestor == entry) break;
+            if (ancestor == focusTargets.end() || ancestor == entry)
+            {
+                unavailable();
+                return root;
+            }
+            if (prerequisite) *prerequisite = {messageKey, L(parent)};
             entry = ancestor;
         }
-        AppearanceSections::RevealWithin(root, entry->second.target);
+        if (!large_icon_settings_rules::Visible(entry->second.field, draft, snapshot.hasEdgeColor) ||
+            !large_icon_settings_rules::Enabled(entry->second.field, draft, snapshot.hasEdgeColor, snapshot.accent != 0))
+        {
+            unavailable();
+            return root;
+        }
+        // Crop position can also be disabled because the source has no excess
+        // image area. Keep the row's existing explanation; there is no on/off
+        // prerequisite that can honestly be suggested for that geometry.
+        if (const auto control = entry->second.target.try_as<c::Control>();
+            control && !control.IsEnabled())
+            unavailable();
+        if (reveal) AppearanceSections::RevealWithin(root, entry->second.target);
         return entry->second.target;
     }
     c::StackPanel Group(const char* key, Field field = Field::Always)
@@ -734,8 +816,12 @@ LargeIconPagePresenter::LargeIconPagePresenter(std::function<std::wstring(std::s
 }
 LargeIconPagePresenter::~LargeIconPagePresenter() { Deactivate(); impl_->previews.Close(); }
 c::StackPanel LargeIconPagePresenter::Content() const { return impl_->root; }
-x::FrameworkElement LargeIconPagePresenter::FocusTarget(std::string_view focusId) const
-{ return impl_->FocusTarget(focusId); }
+x::FrameworkElement LargeIconPagePresenter::FocusTarget(std::string_view focusId,
+    SettingsFocusPrerequisite* prerequisite, bool reveal) const
+{
+    if (prerequisite) *prerequisite = {};
+    return impl_->FocusTarget(focusId, prerequisite, reveal);
+}
 std::wstring_view LargeIconPagePresenter::NameForKey(std::wstring_view key) const
 { return impl_->active && impl_->snapshot.key == key ? std::wstring_view(impl_->headingName) : std::wstring_view{}; }
 void LargeIconPagePresenter::Activate(std::wstring key)

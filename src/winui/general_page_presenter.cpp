@@ -1470,9 +1470,49 @@ void GeneralPagePresenter::RegisterFocusTargets(
         {"desktop.doubleClickHide", "general.doubleClickHide"});
 }
 
-mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId) const noexcept
+mux::FrameworkElement GeneralPagePresenter::FocusTarget(std::string_view focusId,
+    SettingsFocusPrerequisite* prerequisite, bool reveal) const noexcept
 {
-    return impl_ && impl_->quickOptions ? impl_->quickOptions->FocusTarget(focusId, true) : nullptr;
+    if (prerequisite) *prerequisite = {};
+    if (!impl_ || impl_->closed) return nullptr;
+    const auto hotkeyTarget = [prerequisite](const HotkeyRecorder& recorder,
+        const muxc::ToggleSwitch& parent, std::wstring_view parentName)
+        -> mux::FrameworkElement {
+        if (recorder.Root().IsEnabled()) return recorder.FocusTarget();
+        if (!parent.IsEnabled()) return nullptr;
+        if (prerequisite)
+            *prerequisite = {"settings.search.prerequisite.enable", std::wstring(parentName)};
+        return parent;
+    };
+    if (focusId == "desktop.softwareDesktopHotkey.hotkey")
+        return hotkeyTarget(impl_->softwareDesktopHotkey, impl_->softwareDesktopHotkeyToggle,
+            impl_->softwareDesktopHotkeyToggleRow.label.Text().c_str());
+    if (focusId == "general.quickNavigation.hotkey")
+        return hotkeyTarget(impl_->quickNavigationHotkey, impl_->quickNavigationToggle,
+            impl_->quickNavigationToggleRow.label.Text().c_str());
+    if (focusId == "general.pageNavigation.previous")
+        return hotkeyTarget(impl_->previousPageHotkey, impl_->pageNavigationToggle,
+            impl_->pageNavigationToggleRow.label.Text().c_str());
+    if (focusId == "general.pageNavigation.next")
+        return hotkeyTarget(impl_->nextPageHotkey, impl_->pageNavigationToggle,
+            impl_->pageNavigationToggleRow.label.Text().c_str());
+    if (focusId == "desktop.passthrough.hotkey" ||
+        focusId == "general.desktopPassthrough.hotkey")
+        return hotkeyTarget(impl_->desktopPassthroughHotkey, impl_->desktopPassthroughToggle,
+            impl_->desktopPassthroughToggleRow.label.Text().c_str());
+    if (focusId == "dock.floatingShortcutMode.hotkey" ||
+        focusId == "general.floatingDock.hotkey")
+    {
+        // The Dock presenter owns its main switch. Let the shell resolve that
+        // earlier prerequisite instead of returning our disabled mode switch.
+        if (!impl_->dockEnabled) return nullptr;
+        return hotkeyTarget(impl_->floatingDockHotkey, impl_->floatingDockToggle,
+            impl_->floatingDockToggleRow.label.Text().c_str());
+    }
+    if (focusId == "dock.floatingShortcutMode" || focusId == "general.floatingDock" ||
+        focusId == "general.floatingDock.enabled")
+        return impl_->dockEnabled ? impl_->floatingDockToggle.as<mux::FrameworkElement>() : nullptr;
+    return impl_->quickOptions ? impl_->quickOptions->FocusTarget(focusId, reveal) : nullptr;
 }
 
 void GeneralPagePresenter::ApplyOnboardingStatus(const HomeAboutStatusPatch& patch)

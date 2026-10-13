@@ -2685,5 +2685,12 @@
   "settings.search.legacy.personalization.backgroundColor": "Fond du composant",
   "settings.search.legacy.personalization.contentTheme": "Couleur du texte",
   "settings.search.legacy.personalization.enableGradient": "Activer le dégradé inférieur",
-  "settings.search.legacy.personalization.luaWidgetRowHeight": "Hauteur de ligne des widgets Lua"
+  "settings.search.legacy.personalization.luaWidgetRowHeight": "Hauteur de ligne des widgets Lua",
+  "settings.search.prerequisite.choice": "Cette option dépend du choix effectué dans « {0} ». Modifiez d’abord ce réglage.",
+  "settings.search.prerequisite.customAppearance": "Pour modifier cette option, réglez « {0} » sur Personnalisé.",
+  "settings.search.prerequisite.customTheme": "Cette option est disponible lors de la modification d’un thème personnalisé. Sélectionnez Personnalisé ou modifiez le thème enregistré actuellement sélectionné.",
+  "settings.search.prerequisite.dependency": "Cette option dépend de la valeur actuelle de « {0} ». Le réglage correspondant est mis en évidence.",
+  "settings.search.prerequisite.disable": "Pour modifier cette option, désactivez d’abord « {0} ».",
+  "settings.search.prerequisite.enable": "Pour modifier cette option, activez d’abord « {0} ».",
+  "settings.search.prerequisite.unavailable": "Cette option ne peut pas être modifiée dans les conditions actuelles."
 }

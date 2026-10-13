@@ -2685,5 +2685,12 @@
   "settings.search.legacy.personalization.backgroundColor": "ウィジェットの背景",
   "settings.search.legacy.personalization.contentTheme": "文字色",
   "settings.search.legacy.personalization.enableGradient": "下部グラデーションを有効にする",
-  "settings.search.legacy.personalization.luaWidgetRowHeight": "Lua ウィジェットの行の高さ"
+  "settings.search.legacy.personalization.luaWidgetRowHeight": "Lua ウィジェットの行の高さ",
+  "settings.search.prerequisite.choice": "この項目は「{0}」の選択内容によって変わります。先にその設定を変更してください。",
+  "settings.search.prerequisite.customAppearance": "この項目を調整するには、「{0}」を「カスタム」に設定してください。",
+  "settings.search.prerequisite.customTheme": "この項目はカスタムテーマの編集中に調整できます。「カスタム」を選択するか、現在選択している保存済みテーマを編集してください。",
+  "settings.search.prerequisite.dependency": "この項目は「{0}」の現在の値によって変わります。関連する設定を強調表示しています。",
+  "settings.search.prerequisite.disable": "この項目を調整するには、先に「{0}」をオフにしてください。",
+  "settings.search.prerequisite.enable": "この項目を調整するには、先に「{0}」をオンにしてください。",
+  "settings.search.prerequisite.unavailable": "現在の条件では、この項目を調整できません。"
 }

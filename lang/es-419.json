@@ -2685,5 +2685,12 @@
   "settings.search.legacy.personalization.backgroundColor": "Fondo del componente",
   "settings.search.legacy.personalization.contentTheme": "Color del texto",
   "settings.search.legacy.personalization.enableGradient": "Habilitar degradado inferior",
-  "settings.search.legacy.personalization.luaWidgetRowHeight": "Altura de fila de los componentes Lua"
+  "settings.search.legacy.personalization.luaWidgetRowHeight": "Altura de fila de los componentes Lua",
+  "settings.search.prerequisite.choice": "Esta opción depende de lo que elijas en “{0}”. Primero ajusta ese valor.",
+  "settings.search.prerequisite.customAppearance": "Para ajustar esta opción, establece “{0}” en Personalizado.",
+  "settings.search.prerequisite.customTheme": "Esta opción está disponible al editar un tema personalizado. Selecciona Personalizado o edita el tema guardado que está seleccionado.",
+  "settings.search.prerequisite.dependency": "Esta opción depende del valor actual de “{0}”. Se resaltó el ajuste del que depende.",
+  "settings.search.prerequisite.disable": "Para ajustar esta opción, primero desactiva “{0}”.",
+  "settings.search.prerequisite.enable": "Para ajustar esta opción, primero activa “{0}”.",
+  "settings.search.prerequisite.unavailable": "Esta opción no se puede ajustar en las condiciones actuales."
 }

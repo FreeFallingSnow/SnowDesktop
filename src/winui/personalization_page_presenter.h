@@ -1,6 +1,7 @@
 #pragma once
 
 #include "settings/settings_controller.h"
+#include "settings_focus_feedback.h"
 #include "theme_library_actions.h"
 #include "shell/shell_extension_service.h"
 
@@ -95,7 +96,8 @@ public:
     void Activate() noexcept;
     void Deactivate() noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        FocusTarget(std::string_view focusId, bool reveal = false) const noexcept;
+        FocusTarget(std::string_view focusId, bool reveal = false,
+            SettingsFocusPrerequisite* prerequisite = nullptr) const noexcept;
     void Close() noexcept;
 
 private:

@@ -2079,16 +2079,30 @@ struct DesktopPagePresenter::Impl
         updatingControls = wasUpdating;
     }
 
-    mux::FrameworkElement FocusTarget(std::string_view id, bool reveal) const noexcept
+    mux::FrameworkElement FocusTarget(std::string_view id, bool reveal,
+        SettingsFocusPrerequisite* prerequisite) const noexcept
     {
-        const auto appearanceTarget = [this, reveal](mux::FrameworkElement target) {
+        if (prerequisite) *prerequisite = {};
+        const auto prerequisiteTarget = [prerequisite](mux::FrameworkElement target,
+            std::string_view message, std::wstring_view name) {
+            if (prerequisite)
+            {
+                prerequisite->messageKey = "settings.search.prerequisite." + std::string(message);
+                prerequisite->controlName.assign(name);
+            }
+            return target;
+        };
+        const auto appearanceTarget = [this, reveal, &prerequisiteTarget](mux::FrameworkElement target) {
             if (beautifyPreset.SelectedIndex() != IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom))
-                return mux::FrameworkElement{beautifyPreset};
+                return prerequisiteTarget(beautifyPreset, "customAppearance", beautifyPresetRow.label.Text().c_str());
             if (reveal) beautifySections.Reveal(target);
             return target;
         };
         const auto dependentTarget = [&](bool available, mux::FrameworkElement target,
-            mux::FrameworkElement parent) { return appearanceTarget(available ? target : parent); };
+            mux::FrameworkElement parent) {
+            return appearanceTarget(available ? target : prerequisiteTarget(parent, "enable",
+                muxa::AutomationProperties::GetName(parent).c_str()));
+        };
         if (id == "desktop.spacing" || id == "desktop.iconSpacing")
             return iconSpacing->slider;
         if (id == "desktop.iconSize") return iconSize->slider;
@@ -2291,9 +2305,10 @@ void DesktopPagePresenter::RefreshLocalizedText()
 }
 
 mux::FrameworkElement DesktopPagePresenter::FocusTarget(
-    std::string_view focusId, bool reveal) const noexcept
+    std::string_view focusId, bool reveal, SettingsFocusPrerequisite* prerequisite) const noexcept
 {
-    return impl_ ? impl_->FocusTarget(focusId, reveal) : nullptr;
+    if (prerequisite) *prerequisite = {};
+    return impl_ ? impl_->FocusTarget(focusId, reveal, prerequisite) : nullptr;
 }
 
 void DesktopPagePresenter::Activate() noexcept

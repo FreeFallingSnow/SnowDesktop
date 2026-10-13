@@ -3018,52 +3018,99 @@ struct DockPagePresenter::Impl
         updatingControls = previousUpdating;
     }
 
-    mux::FrameworkElement FocusTarget(std::string_view id) const noexcept
+    mux::FrameworkElement FocusTarget(std::string_view id, SettingsFocusPrerequisite* prerequisite) const noexcept
     {
+        if (prerequisite) *prerequisite = {};
+        const auto prerequisiteTarget = [prerequisite](mux::FrameworkElement target,
+            std::string_view message, std::wstring_view name) {
+            if (prerequisite)
+            {
+                prerequisite->messageKey = "settings.search.prerequisite." + std::string(message);
+                prerequisite->controlName.assign(name);
+            }
+            return target;
+        };
+        const auto dockTarget = [&](mux::FrameworkElement target) {
+            // Apply only to the rows disabled by UpdateDependentStates. The
+            // taskbar and independently editable appearance routes stay usable.
+            return dockEnabledToggle.IsOn() ? target : prerequisiteTarget(dockEnabledToggle,
+                "enable", dockEnabledRow.label.Text().c_str());
+        };
+        const auto edgeRevealTarget = [&] {
+            return dockTarget(showOnlyWhenSummonedToggle.IsOn()
+                ? prerequisiteTarget(showOnlyWhenSummonedToggle, "disable", showOnlyWhenSummonedRow.label.Text().c_str())
+                : floatingEdgeSwipeToggle.as<mux::FrameworkElement>());
+        };
         if (id == "dock.enable") return dockEnabledToggle;
-        if (id == "dock.position") return positionCombo;
+        if (id == "dock.position") return dockTarget(positionCombo);
         if (id == "dock.layout" || id == "dock.edgeAttached")
-            return layoutCombo;
+            return dockTarget(layoutCombo);
         if (id == "dock.monitor" || id == "dock.monitorScope")
-            return monitorScopeCombo;
+            return dockTarget(monitorScopeCombo);
         if (id == "dock.mergedBarHeight")
-            return barAvailability.anyMerged ? mergedHeight->FocusTarget().as<mux::FrameworkElement>() : positionCombo;
+            return dockTarget(barAvailability.anyMerged ? mergedHeight->FocusTarget().as<mux::FrameworkElement>()
+                : prerequisiteTarget(positionCombo, "dependency", positionRow.label.Text().c_str()));
         if (id == "dock.mergedIconScale")
-            return barAvailability.anyMerged ? mergedIconScale.slider.as<mux::FrameworkElement>() : positionCombo;
-        if (id == "dock.lastMonitorUseHomeSize") return homeSize;
+            return dockTarget(barAvailability.anyMerged ? mergedIconScale.slider.as<mux::FrameworkElement>()
+                : prerequisiteTarget(positionCombo, "dependency", positionRow.label.Text().c_str()));
+        if (id == "dock.lastMonitorUseHomeSize")
+        {
+            if (!barAvailability.dockOnLastMonitor)
+                return dockTarget(prerequisiteTarget(monitorScopeCombo, "choice", monitorScopeRow.label.Text().c_str()));
+            if (barAvailability.allDockMerged)
+                return dockTarget(prerequisiteTarget(layoutCombo, "dependency", layoutRow.label.Text().c_str()));
+            return dockTarget(homeSize);
+        }
         if (id == "taskbar.displayMode" || id == "taskbar.suppressSystemTaskbar" || id == "taskbar.autoHide") return taskbarMode;
         if (id == "dock.thickness" || id == "dock.thicknessScale")
-            return thicknessScale.slider;
-        if (id == "dock.floatingShortcutMode")
+            return dockTarget(thicknessScale.slider);
+        if (id == "dock.floatingShortcutMode" || id == "dock.floatingShortcutMode.hotkey")
+        {
+            if (!dockEnabledToggle.IsOn()) return dockTarget(dockEnabledToggle);
             return nullptr; // General owns the mounted shortcut editor.
-        if (id == "dock.edgeRevealGesture") return edgeRevealGesture;
-        if (id == "dock.showWindowPreviews") return windowPreviews;
-        if (id == "dock.singleClickLaunchItems") return singleClickLaunchItems;
+        }
+        if (id == "dock.edgeRevealGesture")
+        {
+            if (!floatingEdgeSwipeToggle.IsOn())
+            {
+                auto target = prerequisiteTarget(floatingEdgeSwipeToggle, "enable", floatingEdgeSwipeRow.label.Text().c_str());
+                return showOnlyWhenSummonedToggle.IsOn() ? edgeRevealTarget() : dockTarget(target);
+            }
+            return dockTarget(edgeRevealGesture);
+        }
+        if (id == "dock.showWindowPreviews") return dockTarget(windowPreviews);
+        if (id == "dock.singleClickLaunchItems") return dockTarget(singleClickLaunchItems);
         if (id == "dock.fullscreenPolicy" || id == "dock.floatingEdgeSwipeBlockFullscreen")
-            return fullscreenPolicyCombo;
+            return dockTarget(fullscreenPolicyCombo);
         if (id == "dock.fullscreenExceptions")
         {
-            return fullscreenExceptionAdd;
+            return dockTarget(fullscreenExceptionAdd);
         }
         if (id == "dock.floatingEdgeSwipe" ||
             id == "dock.floatingEdgeSwipeEnabled")
-            return floatingEdgeSwipeToggle;
+            return edgeRevealTarget();
         if (id == "dock.suppressSystemTaskbar") return taskbarMode;
-        if (id == "dock.reserveScreenSpace") return reserveScreenSpaceToggle;
+        if (id == "dock.reserveScreenSpace" || id == "dock.allowDesktopContentOverlap")
+        {
+            if (showOnlyWhenSummonedToggle.IsOn())
+                return dockTarget(prerequisiteTarget(showOnlyWhenSummonedToggle, "disable", showOnlyWhenSummonedRow.label.Text().c_str()));
+            if (spaceReservedByStatusBar)
+                return dockTarget(prerequisiteTarget(layoutCombo, "dependency", layoutRow.label.Text().c_str()));
+            return dockTarget(id == "dock.reserveScreenSpace" ? reserveScreenSpaceToggle : allowDesktopContentOverlapToggle);
+        }
         if (id == "dock.showWindowsButton")
-            return showWindowsButtonToggle;
+            return dockTarget(showWindowsButtonToggle);
         if (id == "dock.showQuickSearchButton")
-            return showQuickSearchButtonToggle;
+            return dockTarget(showQuickSearchButtonToggle);
         if (id == "dock.showFrequentItems")
-            return showFrequentItemsToggle;
+            return dockTarget(showFrequentItemsToggle);
         if (id == "dock.frequentItemCount")
-            return showFrequentItemsToggle.IsOn() ? frequentItemCount.slider.as<mux::FrameworkElement>() : showFrequentItemsToggle;
+            return dockTarget(showFrequentItemsToggle.IsOn() ? frequentItemCount.slider.as<mux::FrameworkElement>()
+                : prerequisiteTarget(showFrequentItemsToggle, "enable", showFrequentItemsRow.label.Text().c_str()));
         if (id == "dock.keepWhenDesktopHidden")
             return dockEnabledToggle; // Retained data field has no page control.
-        if (id == "dock.allowDesktopContentOverlap")
-            return allowDesktopContentOverlapToggle;
         if (id == "dock.showOnlyWhenSummoned" || id == "dock.autoHide")
-            return showOnlyWhenSummonedToggle;
+            return dockTarget(showOnlyWhenSummonedToggle);
         if (id == "taskbar.systemSettings" || id == "taskbar.autoHide" ||
             id == "taskbar.alignment") return taskbarSettingsLink;
         if (id == "taskbar.systemTheme" || id == "taskbar.systemPanel")
@@ -3073,14 +3120,18 @@ struct DockPagePresenter::Impl
             return taskbarThemeCombo;
         if (id == "taskbar.contentTheme")
             return taskbarContentThemeRow.root.Visibility() == mux::Visibility::Visible
-                ? taskbarContentThemeCombo : taskbarThemeCombo;
+                ? taskbarContentThemeCombo : prerequisiteTarget(taskbarThemeCombo, "choice", taskbarThemeRow.label.Text().c_str());
+        // Classic taskbars cannot expose blur radius under any theme. A theme
+        // change or enabling glass would therefore be misleading guidance.
+        if (id == "taskbar.blurRadius" && IsClassicSystemTaskbar())
+            return prerequisiteTarget(taskbarThemeCombo, "unavailable", taskbarBlurRadius.row.label.Text().c_str());
         // A search may target a value whose prerequisite is not selected.
         // Locate that visible prerequisite without changing the user's values.
         if ((id == "taskbar.backgroundColor" || id == "taskbar.borderColor" ||
                 id == "taskbar.backgroundOpacity" || id == "taskbar.borderOpacity" ||
                 id == "taskbar.glass" || id == "taskbar.blurRadius" || id == "taskbar.acrylic") &&
             taskbarCustomAppearance.Visibility() != mux::Visibility::Visible)
-            return taskbarThemeCombo;
+            return prerequisiteTarget(taskbarThemeCombo, "customTheme", taskbarThemeRow.label.Text().c_str());
         if (id == "taskbar.backgroundColor")
             return taskbarGradient.enabled ? taskbarGradient.editor->Content().as<mux::FrameworkElement>()
                 : taskbarBackgroundColor.editor.button;
@@ -3094,12 +3145,15 @@ struct DockPagePresenter::Impl
         if (id == "taskbar.glass") return taskbarGlassToggle;
         if (id == "taskbar.blurRadius")
         {
-            if (!taskbarGlassToggle.IsOn() || IsClassicSystemTaskbar()) return taskbarGlassToggle;
-            if (taskbarAcrylicToggle.IsOn()) return taskbarAcrylicToggle;
+            if (!taskbarGlassToggle.IsOn())
+                return prerequisiteTarget(taskbarGlassToggle, "enable", taskbarGlassRow.label.Text().c_str());
+            if (taskbarAcrylicToggle.IsOn())
+                return prerequisiteTarget(taskbarAcrylicToggle, "disable", taskbarAcrylicRow.label.Text().c_str());
             return taskbarBlurRadius.slider;
         }
         if (id == "taskbar.acrylic")
-            return taskbarGlassToggle.IsOn() ? taskbarAcrylicToggle : taskbarGlassToggle;
+            return taskbarGlassToggle.IsOn() ? taskbarAcrylicToggle
+                : prerequisiteTarget(taskbarGlassToggle, "enable", taskbarGlassRow.label.Text().c_str());
         if (id == "taskbar.restartExplorer") return restartExplorerButton;
         if (id == "taskbar.dynamic.visibleWindow" ||
             id == "taskbar.visibleWindow")
@@ -3396,9 +3450,10 @@ void DockPagePresenter::Deactivate() noexcept
 }
 
 mux::FrameworkElement DockPagePresenter::FocusTarget(
-    std::string_view focusId) const noexcept
+    std::string_view focusId, SettingsFocusPrerequisite* prerequisite) const noexcept
 {
-    return impl_ ? impl_->FocusTarget(focusId) : nullptr;
+    if (prerequisite) *prerequisite = {};
+    return impl_ ? impl_->FocusTarget(focusId, prerequisite) : nullptr;
 }
 
 void DockPagePresenter::Close() noexcept

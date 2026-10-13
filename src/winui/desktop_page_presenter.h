@@ -1,6 +1,7 @@
 #pragma once
 
 #include "settings/settings_controller.h"
+#include "settings_focus_feedback.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -86,7 +87,8 @@ public:
 
     /** Return a stable control for search-result navigation and focus. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement FocusTarget(
-        std::string_view focusId, bool reveal = false) const noexcept;
+        std::string_view focusId, bool reveal = false,
+        SettingsFocusPrerequisite* prerequisite = nullptr) const noexcept;
 
     void Activate() noexcept;
     void Deactivate() noexcept;

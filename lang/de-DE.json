@@ -2685,5 +2685,12 @@
   "settings.search.legacy.personalization.backgroundColor": "Widget-Hintergrund",
   "settings.search.legacy.personalization.contentTheme": "Textfarbe",
   "settings.search.legacy.personalization.enableGradient": "Unteren Farbverlauf aktivieren",
-  "settings.search.legacy.personalization.luaWidgetRowHeight": "Zeilenhöhe der Lua-Widgets"
+  "settings.search.legacy.personalization.luaWidgetRowHeight": "Zeilenhöhe der Lua-Widgets",
+  "settings.search.prerequisite.choice": "Diese Option hängt von der Auswahl unter „{0}“ ab. Passen Sie zuerst diese Einstellung an.",
+  "settings.search.prerequisite.customAppearance": "Um diese Option anzupassen, setzen Sie „{0}“ auf „Benutzerdefiniert“.",
+  "settings.search.prerequisite.customTheme": "Diese Option ist beim Bearbeiten eines benutzerdefinierten Designs verfügbar. Wählen Sie „Benutzerdefiniert“ oder bearbeiten Sie das aktuell ausgewählte gespeicherte Design.",
+  "settings.search.prerequisite.dependency": "Diese Option hängt vom aktuellen Wert von „{0}“ ab. Die zugehörige Einstellung ist hervorgehoben.",
+  "settings.search.prerequisite.disable": "Um diese Option anzupassen, deaktivieren Sie zuerst „{0}“.",
+  "settings.search.prerequisite.enable": "Um diese Option anzupassen, aktivieren Sie zuerst „{0}“.",
+  "settings.search.prerequisite.unavailable": "Diese Option kann unter den aktuellen Bedingungen nicht angepasst werden."
 }

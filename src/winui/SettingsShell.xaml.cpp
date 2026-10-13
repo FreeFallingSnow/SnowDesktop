@@ -4,6 +4,7 @@
 #include "ui/render/app_font.h"
 #include "platform/usage_guide.h"
 #include "settings/settings_page_catalog.h"
+#include "settings_focus_feedback.h"
 #if __has_include("SettingsShell.g.cpp")
 #include "SettingsShell.g.cpp"
 #endif
@@ -1531,6 +1532,7 @@ void SettingsShell::SuspendInteraction() noexcept
     StopFocusHighlight();
     try
     {
+        FocusPrerequisiteInfoBar().IsOpen(false);
         if (generalPage_)
             generalPage_->Deactivate();
         if (personalizationPage_)
@@ -1653,6 +1655,7 @@ bool SettingsShell::Navigate(
                 {
                     navigationFeedback_.Restart();
                     StopFocusHighlight();
+                    FocusPrerequisiteInfoBar().IsOpen(false);
                     RenderRoute();
                 }
                 return true;
@@ -1669,6 +1672,7 @@ bool SettingsShell::Navigate(
         {
             navigationFeedback_.Restart();
             StopFocusHighlight();
+            FocusPrerequisiteInfoBar().IsOpen(false);
             RenderRoute();
         }
         else
@@ -1972,6 +1976,7 @@ void SettingsShell::HookEvents()
     focusLayoutToken_ = PageContentGrid().LayoutUpdated([this](auto&&, auto&&) {
         if (closed_) return;
         if (focusPendingLayout_) FocusPendingTarget();
+        if (FocusPrerequisiteInfoBar().IsOpen()) RefreshFocusPrerequisite();
         UpdateFocusHighlight();
     });
     shellPointerPressedHandler_ = winrt::box_value(muxi::PointerEventHandler{
@@ -2216,7 +2221,10 @@ void SettingsShell::RenderRoute(
     RenderNavigationSelection(scheduleFocus);
     const auto route = navigation_.Route();
     if (navigationFeedback_.UpdateRoute(route, navigation_.Generation()) || forcePageCards)
+    {
         StopFocusHighlight();
+        FocusPrerequisiteInfoBar().IsOpen(false);
+    }
     focusPendingLayout_ = false;
     const auto guideTopic = snowdesktop::usage_guide::ParseTopic(route.guideTopic);
     GuideReturnBanner().Visibility(guideTopic && navigationFeedback_.ShowGuideReturn()
@@ -3155,6 +3163,62 @@ void SettingsShell::ScheduleFocus()
     });
 }
 
+mux::FrameworkElement SettingsShell::ResolveConditionalFocusTarget(
+    bool reveal, snowdesktop::winui::SettingsFocusPrerequisite& prerequisite)
+{
+    const auto& route = navigation_.Route();
+    const auto& focusId = route.focusId;
+    prerequisite = {};
+    if (focusId.empty()) return nullptr;
+    if (route.page == SettingsPage::WidgetSettings && widgetSettingsPage_)
+        return widgetSettingsPage_->FocusTarget(focusId, reveal, &prerequisite);
+    if (route.page == SettingsPage::LargeIcon && largeIconPage_)
+        return largeIconPage_->FocusTarget(focusId, &prerequisite, reveal);
+    if (route.page == SettingsPage::StatusBar && statusBarPage_)
+        return statusBarPage_->FocusTarget(focusId, &prerequisite);
+    mux::FrameworkElement target{nullptr};
+    if (personalizationPage_ && (route.page == SettingsPage::AppearanceTheme ||
+        route.page == SettingsPage::QuickNavigation || route.page == SettingsPage::ThemeManager ||
+        route.page == SettingsPage::AppearanceDesktopIcons || route.page == SettingsPage::WidgetBehavior ||
+        route.page == SettingsPage::Widgets || route.page == SettingsPage::Dock || route.page == SettingsPage::ContextMenu))
+        target = personalizationPage_->FocusTarget(focusId, reveal, &prerequisite);
+    if (!target && desktopPage_ && (route.page == SettingsPage::AppearanceDesktopIcons ||
+        route.page == SettingsPage::AppearanceIconBeautification || route.page == SettingsPage::DesktopCategories ||
+        route.page == SettingsPage::DesktopPages))
+        target = desktopPage_->FocusTarget(focusId, reveal, &prerequisite);
+    if (!target && dockPage_ && (route.page == SettingsPage::Dock || route.page == SettingsPage::Taskbar))
+        target = dockPage_->FocusTarget(focusId, &prerequisite);
+    if (!target && generalPage_ && (route.page == SettingsPage::General ||
+        route.page == SettingsPage::QuickNavigation || route.page == SettingsPage::Desktop ||
+        route.page == SettingsPage::DesktopPages || route.page == SettingsPage::Dock))
+        target = generalPage_->FocusTarget(focusId, &prerequisite, reveal);
+    return target;
+}
+
+std::wstring SettingsShell::FocusPrerequisiteMessage(
+    const snowdesktop::winui::SettingsFocusPrerequisite& prerequisite) const
+{
+    if (prerequisite.messageKey.empty()) return {};
+    auto message = Localize(prerequisite.messageKey);
+    if (const auto placeholder = message.find(L"{0}"); placeholder != std::wstring::npos)
+        message.replace(placeholder, 3, prerequisite.controlName);
+    return message;
+}
+
+void SettingsShell::RefreshFocusPrerequisite()
+{
+    // A control/snapshot may satisfy or change the prerequisite after arrival.
+    // This lookup only updates an already visible explanation: no expanding,
+    // scrolling, focus changes, metadata writes or reopening a dismissed bar.
+    if (!FocusPrerequisiteInfoBar().IsOpen()) return;
+    snowdesktop::winui::SettingsFocusPrerequisite prerequisite;
+    (void)ResolveConditionalFocusTarget(false, prerequisite);
+    const auto message = FocusPrerequisiteMessage(prerequisite);
+    if (message.empty()) FocusPrerequisiteInfoBar().IsOpen(false);
+    else if (FocusPrerequisiteInfoBar().Message() != winrt::hstring(message))
+        FocusPrerequisiteInfoBar().Message(message);
+}
+
 void SettingsShell::FocusPendingTarget()
 {
     focusPendingLayout_ = false;
@@ -3189,14 +3253,11 @@ void SettingsShell::FocusPendingTarget()
     }
     if (!focusId.empty())
     {
-        mux::FrameworkElement target{nullptr};
-        if (route.page == SettingsPage::WidgetSettings && widgetSettingsPage_)
-            target = widgetSettingsPage_->FocusTarget(focusId, true);
-        else if (route.page == SettingsPage::LargeIcon && largeIconPage_)
-            target = largeIconPage_->FocusTarget(focusId);
-        else if (route.page == SettingsPage::Widgets && focusId == "widgets.permissions" && !route.itemKey.empty() && widgetsPage_)
+        snowdesktop::winui::SettingsFocusPrerequisite prerequisite;
+        auto target = ResolveConditionalFocusTarget(true, prerequisite);
+        if (!target && route.page == SettingsPage::Widgets && focusId == "widgets.permissions" && !route.itemKey.empty() && widgetsPage_)
             target = widgetsPage_->FocusPackagePermissions(route.itemKey);
-        else
+        if (!target)
         {
             const auto refreshTarget = [this](std::string id, const mux::FrameworkElement& element) {
                 RegisterFocusTarget(std::move(id), element);
@@ -3205,21 +3266,6 @@ void SettingsShell::FocusPendingTarget()
                 statusBarPage_->RegisterFocusTargets(refreshTarget);
             if (route.page == SettingsPage::DesktopStyle && desktopStylePage_)
                 desktopStylePage_->RegisterFocusTargets(refreshTarget);
-            // Resolve conditional targets at invocation, rather than caching a
-            // hidden child or unfolding every group while registering a page.
-            if (personalizationPage_ && (route.page == SettingsPage::AppearanceTheme ||
-                route.page == SettingsPage::QuickNavigation || route.page == SettingsPage::ThemeManager ||
-                route.page == SettingsPage::AppearanceDesktopIcons || route.page == SettingsPage::WidgetBehavior ||
-                route.page == SettingsPage::Widgets || route.page == SettingsPage::Dock || route.page == SettingsPage::ContextMenu))
-                target = personalizationPage_->FocusTarget(focusId, true);
-            if (!target && desktopPage_ && (route.page == SettingsPage::AppearanceDesktopIcons ||
-                route.page == SettingsPage::AppearanceIconBeautification || route.page == SettingsPage::DesktopCategories ||
-                route.page == SettingsPage::DesktopPages))
-                target = desktopPage_->FocusTarget(focusId, true);
-            if (!target && dockPage_ && (route.page == SettingsPage::Dock || route.page == SettingsPage::Taskbar))
-                target = dockPage_->FocusTarget(focusId);
-            if (!target && generalPage_ && route.page == SettingsPage::QuickNavigation)
-                target = generalPage_->FocusTarget(focusId);
             if (!target)
                 if (const auto it = focusTargets_.find(focusId); it != focusTargets_.end()) target = it->second.get();
         }
@@ -3236,19 +3282,32 @@ void SettingsShell::FocusPendingTarget()
             }
             if (expanded || !target.IsLoaded() || target.ActualHeight() <= 0)
             { focusPendingLayout_ = true; return; }
-            HighlightSetting(target);
+            HighlightSetting(target, FocusPrerequisiteMessage(prerequisite));
             (void)target.Focus(mux::FocusState::Programmatic);
             return;
         }
     }
+    FocusPrerequisiteInfoBar().IsOpen(false);
     (void)PageScrollViewer().Focus(mux::FocusState::Programmatic);
 }
 
-void SettingsShell::HighlightSetting(const mux::FrameworkElement& target)
+void SettingsShell::HighlightSetting(const mux::FrameworkElement& target,
+    const std::wstring& prerequisiteMessage)
 {
     // A snapshot/layout refresh must not replay a locator the user has already
     // seen or dismissed. Explicit navigation rearms it, including the same route.
-    if (!navigationFeedback_.ConsumeHighlight()) return;
+    const bool newLocator = navigationFeedback_.ConsumeHighlight();
+    // A dismissed prerequisite stays dismissed during snapshot/layout updates.
+    // An open message follows the current blocker and disappears when satisfied.
+    // Keep it separate from operation errors and Steam unlock feedback.
+    if (prerequisiteMessage.empty())
+        FocusPrerequisiteInfoBar().IsOpen(false);
+    else if (newLocator || FocusPrerequisiteInfoBar().IsOpen())
+    {
+        FocusPrerequisiteInfoBar().Message(prerequisiteMessage);
+        FocusPrerequisiteInfoBar().IsOpen(true);
+    }
+    if (!newLocator) return;
     StopFocusHighlight();
     // Locate the outer setting card, ignoring labeled rows, nested expanders
     // and Borders inside editor templates. Never fall back to a single control.

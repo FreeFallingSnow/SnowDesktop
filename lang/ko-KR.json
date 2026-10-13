@@ -2685,5 +2685,12 @@
   "settings.search.legacy.personalization.backgroundColor": "위젯 배경",
   "settings.search.legacy.personalization.contentTheme": "텍스트 색상",
   "settings.search.legacy.personalization.enableGradient": "하단 그라데이션 활성화",
-  "settings.search.legacy.personalization.luaWidgetRowHeight": "Lua 위젯 행 높이"
+  "settings.search.legacy.personalization.luaWidgetRowHeight": "Lua 위젯 행 높이",
+  "settings.search.prerequisite.choice": "이 항목은 “{0}”의 선택에 따라 달라집니다. 먼저 해당 설정을 조정하세요.",
+  "settings.search.prerequisite.customAppearance": "이 항목을 조정하려면 “{0}”을(를) 커스텀으로 설정하세요.",
+  "settings.search.prerequisite.customTheme": "이 항목은 커스텀 테마를 편집할 때 조정할 수 있습니다. 커스텀을 선택하거나 현재 선택된 저장된 테마를 편집하세요.",
+  "settings.search.prerequisite.dependency": "이 항목은 “{0}”의 현재 값에 따라 달라집니다. 관련 설정이 강조 표시되어 있습니다.",
+  "settings.search.prerequisite.disable": "이 항목을 조정하려면 먼저 “{0}”을(를) 끄세요.",
+  "settings.search.prerequisite.enable": "이 항목을 조정하려면 먼저 “{0}”을(를) 켜세요.",
+  "settings.search.prerequisite.unavailable": "현재 조건에서는 이 항목을 조정할 수 없습니다."
 }

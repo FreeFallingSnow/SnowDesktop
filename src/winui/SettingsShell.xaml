@@ -212,6 +212,7 @@
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
@@ -260,7 +261,16 @@
                     </Grid>
                 </Border>
 
-                <Grid Grid.Row="2">
+                <InfoBar x:Name="FocusPrerequisiteInfoBar"
+                         Grid.Row="2"
+                         MaxWidth="1000"
+                         HorizontalAlignment="Stretch"
+                         Margin="20,0,20,0"
+                         Severity="Informational"
+                         IsOpen="False"
+                         IsClosable="True" />
+
+                <Grid Grid.Row="3">
                     <ScrollViewer x:Name="PageScrollViewer"
                                   HorizontalAlignment="Stretch"
                                   HorizontalContentAlignment="Stretch"

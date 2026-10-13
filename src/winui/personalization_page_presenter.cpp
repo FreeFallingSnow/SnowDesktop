@@ -1861,8 +1861,19 @@ struct PersonalizationPagePresenter::Impl
         }
     }
 
-    mux::FrameworkElement FocusTarget(std::string_view id, bool reveal) const noexcept
+    mux::FrameworkElement FocusTarget(std::string_view id, bool reveal,
+        SettingsFocusPrerequisite* prerequisite) const noexcept
     {
+        if (prerequisite) *prerequisite = {};
+        const auto prerequisiteTarget = [prerequisite](mux::FrameworkElement target,
+            std::string_view message, std::wstring_view name) {
+            if (prerequisite)
+            {
+                prerequisite->messageKey = "settings.search.prerequisite." + std::string(message);
+                prerequisite->controlName.assign(name);
+            }
+            return target;
+        };
         if (id == "personalization.savedThemes")
         {
             return themeTransfers->Choice();
@@ -1870,15 +1881,24 @@ struct PersonalizationPagePresenter::Impl
         if (id == "quickNav.layout" || id.starts_with("quickNav.layout.") ||
             id.starts_with("quickNav.color.") || id.starts_with("quickNav.colors."))
         {
-            if (quickAppearanceContent.Visibility() != mux::Visibility::Visible) return quickNavigationThemeCombo;
+            if (!quickAppearanceOptions->FocusTarget(id, false)) return nullptr;
+            if (quickAppearanceContent.Visibility() != mux::Visibility::Visible)
+                return prerequisiteTarget(quickNavigationThemeCombo, "customTheme",
+                    quickNavigationThemeRow.label.Text().c_str());
             return quickAppearanceOptions->FocusTarget(id, reveal);
         }
-        const auto appearanceTarget = [this, reveal](mux::FrameworkElement target) {
+        const auto appearanceTarget = [this, reveal, &prerequisiteTarget](mux::FrameworkElement target) {
             if (currentBackgroundPreset != kAppearancePresetCustom || !globalThemes->CustomSelected() ||
                 widgetAppearanceCard.root.Visibility() != mux::Visibility::Visible)
-                return mux::FrameworkElement{presetCombo};
+                return prerequisiteTarget(presetCombo, "customTheme", presetRow.label.Text().c_str());
             if (reveal) appearanceSections.Reveal(target);
             return target;
+        };
+        const auto dependentTarget = [&](bool available, mux::FrameworkElement target,
+            mux::FrameworkElement parent, std::wstring_view parentName, std::string_view message = "enable") {
+            // The theme editor may be the earlier prerequisite. Resolve it last
+            // so feedback always describes the control that is actually focused.
+            return appearanceTarget(available ? target : prerequisiteTarget(parent, message, parentName));
         };
         if (id == "personalization.theme" ||
             id == "personalization.globalTheme")
@@ -1901,9 +1921,8 @@ struct PersonalizationPagePresenter::Impl
             return collectionPopupThemeCombo;
         if (id == "personalization.widgetAlpha" ||
             id == "personalization.backgroundOpacity")
-            return appearanceTarget(panelGradientEnabled && !gradientToggle.IsOn()
-                ? gradientToggle.as<mux::FrameworkElement>()
-                : widgetAlpha.slider.as<mux::FrameworkElement>());
+            return dependentTarget(!panelGradientEnabled || gradientToggle.IsOn(), widgetAlpha.slider,
+                gradientToggle, gradientToggleRow.label.Text().c_str());
         if (id == "personalization.borderAlpha" ||
             id == "personalization.borderOpacity")
             return appearanceTarget(borderAlpha.slider);
@@ -1912,29 +1931,24 @@ struct PersonalizationPagePresenter::Impl
         if (id == "personalization.edgeHighlight")
             return appearanceTarget(edgeHighlightToggle);
         if (id == "personalization.edgeHighlightWidth")
-            return appearanceTarget(edgeHighlightToggle.IsOn()
-                ? edgeHighlightWidth.slider.as<mux::FrameworkElement>()
-                : edgeHighlightToggle.as<mux::FrameworkElement>());
+            return dependentTarget(edgeHighlightToggle.IsOn(), edgeHighlightWidth.slider,
+                edgeHighlightToggle, edgeHighlightRow.label.Text().c_str());
         if (id == "personalization.edgeHighlightStrength")
-            return appearanceTarget(edgeHighlightToggle.IsOn()
-                ? edgeHighlightStrength.slider.as<mux::FrameworkElement>()
-                : edgeHighlightToggle.as<mux::FrameworkElement>());
+            return dependentTarget(edgeHighlightToggle.IsOn(), edgeHighlightStrength.slider,
+                edgeHighlightToggle, edgeHighlightRow.label.Text().c_str());
         if (id == "personalization.gradientEndAlpha")
-            return appearanceTarget(gradientToggle.IsOn()
-                ? gradientEndAlpha.slider.as<mux::FrameworkElement>()
-                : gradientToggle.as<mux::FrameworkElement>());
+            return dependentTarget(gradientToggle.IsOn(), gradientEndAlpha.slider,
+                gradientToggle, gradientToggleRow.label.Text().c_str());
         if (id == "personalization.enableGradient")
             return appearanceTarget(gradientToggle);
         if (id == "personalization.glass")
             return appearanceTarget(glassToggle);
         if (id == "personalization.blurRadius")
-            return appearanceTarget(glassToggle.IsOn()
-                ? blurRadius.slider.as<mux::FrameworkElement>()
-                : glassToggle.as<mux::FrameworkElement>());
+            return dependentTarget(glassToggle.IsOn(), blurRadius.slider,
+                glassToggle, glassRow.label.Text().c_str());
         if (id == "personalization.acrylic")
-            return appearanceTarget(glassToggle.IsOn()
-                ? acrylicToggle.as<mux::FrameworkElement>()
-                : glassToggle.as<mux::FrameworkElement>());
+            return dependentTarget(glassToggle.IsOn(), acrylicToggle,
+                glassToggle, glassRow.label.Text().c_str());
         if (id == "personalization.contentTheme")
             return appearanceTarget(contentThemeCombo);
         if (id == "personalization.contextMenu")
@@ -1949,7 +1963,9 @@ struct PersonalizationPagePresenter::Impl
             return popupCloseOnMouseLeave;
         if (id == "personalization.popupHoverDelayMs")
         {
-            if (!popupHoverOpen.IsOn()) return popupHoverOpen;
+            if (!popupHoverOpen.IsOn())
+                return prerequisiteTarget(popupHoverOpen, "enable",
+                    muxa::AutomationProperties::GetName(popupHoverOpen).c_str());
             return popupHoverDelayMs.slider;
         }
         if (id == "personalization.barHeight")
@@ -2191,9 +2207,10 @@ void PersonalizationPagePresenter::Deactivate() noexcept
 }
 
 mux::FrameworkElement PersonalizationPagePresenter::FocusTarget(
-    std::string_view focusId, bool reveal) const noexcept
+    std::string_view focusId, bool reveal, SettingsFocusPrerequisite* prerequisite) const noexcept
 {
-    return impl_ ? impl_->FocusTarget(focusId, reveal) : nullptr;
+    if (prerequisite) *prerequisite = {};
+    return impl_ ? impl_->FocusTarget(focusId, reveal, prerequisite) : nullptr;
 }
 
 void PersonalizationPagePresenter::Close() noexcept

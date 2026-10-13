@@ -1,6 +1,7 @@
 #pragma once
 
 #include "settings/settings_controller.h"
+#include "settings_focus_feedback.h"
 #include "theme_library_actions.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
@@ -103,7 +104,8 @@ public:
     void ActivateTaskbar() noexcept;
     void Deactivate() noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        FocusTarget(std::string_view focusId) const noexcept;
+        FocusTarget(std::string_view focusId,
+            SettingsFocusPrerequisite* prerequisite = nullptr) const noexcept;
     void Close() noexcept;
 
 private:

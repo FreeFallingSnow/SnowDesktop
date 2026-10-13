@@ -2685,5 +2685,12 @@
   "settings.search.legacy.personalization.backgroundColor": "组件背景",
   "settings.search.legacy.personalization.contentTheme": "文字颜色",
   "settings.search.legacy.personalization.enableGradient": "启用底部渐变",
-  "settings.search.legacy.personalization.luaWidgetRowHeight": "Lua 组件行高"
+  "settings.search.legacy.personalization.luaWidgetRowHeight": "Lua 组件行高",
+  "settings.search.prerequisite.choice": "此项取决于“{0}”的选项。请先调整该设置。",
+  "settings.search.prerequisite.customAppearance": "要调整此项，请将“{0}”设为“自定义”。",
+  "settings.search.prerequisite.customTheme": "此项仅在自定义主题编辑时可调整。请选择“自定义”，或编辑当前已保存的主题。",
+  "settings.search.prerequisite.dependency": "此项取决于“{0}”的当前值。已定位到控制它的设置。",
+  "settings.search.prerequisite.disable": "要调整此项，请先关闭“{0}”。",
+  "settings.search.prerequisite.enable": "要调整此项，请先打开“{0}”。",
+  "settings.search.prerequisite.unavailable": "此项在当前条件下不可调整。"
 }
