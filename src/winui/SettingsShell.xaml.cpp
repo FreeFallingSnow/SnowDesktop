@@ -1009,23 +1009,33 @@ void SettingsShell::RefreshLocalizedText()
     if (closed_)
         return;
 
-    DesktopOrganizationItem().Content(winrt::box_value(Localize("settings.nav.group.organization")));
-    DesktopLayoutItem().Content(winrt::box_value(Localize("settings.nav.group.layout")));
-    PersonalizationItem().Content(winrt::box_value(Localize("settings.nav.group.appearanceInteraction")));
+    const auto setNavigationLabel = [](const muxc::NavigationViewItem& item, const std::wstring& value) {
+        muxc::TextBlock text;
+        text.Text(value);
+        text.TextWrapping(mux::TextWrapping::NoWrap);
+        text.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+        text.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        item.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+        item.Content(text);
+        muxa::AutomationProperties::SetName(item, value);
+        muxc::ToolTipService::SetToolTip(item, winrt::box_value(value));
+    };
+    setNavigationLabel(DesktopOrganizationItem(), Localize("settings.nav.group.organization"));
+    setNavigationLabel(DesktopLayoutItem(), Localize("settings.nav.group.layout"));
+    setNavigationLabel(PersonalizationItem(), Localize("settings.nav.group.appearanceInteraction"));
     for (const auto page : {SettingsPage::General, SettingsPage::QuickNavigation,
         SettingsPage::DesktopStyle, SettingsPage::AnimationPerformance, SettingsPage::Calendar,
         SettingsPage::ContextMenu, SettingsPage::AppearanceTheme, SettingsPage::ThemeManager,
         SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceIconBeautification,
         SettingsPage::WidgetBehavior, SettingsPage::Desktop, SettingsPage::DesktopPages,
         SettingsPage::DesktopCategories, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar})
-        NavigationItemForPage(page).Content(winrt::box_value(Localize(snowdesktop::SettingsPageTitleKey(page))));
-    WidgetsItem().Content(winrt::box_value(Localize(snowdesktop::SettingsPageTitleKey(SettingsPage::Widgets))));
-    BackupItem().Content(winrt::box_value(Localize(snowdesktop::SettingsPageTitleKey(SettingsPage::BackupAndData))));
-    AboutItem().Content(winrt::box_value(Localize("app.settings.about")));
-    DeveloperItem().Content(
-        winrt::box_value(Localize("app.settings.widgets_developer_tools")));
+        setNavigationLabel(NavigationItemForPage(page), Localize(snowdesktop::SettingsPageTitleKey(page)));
+    setNavigationLabel(WidgetsItem(), Localize(snowdesktop::SettingsPageTitleKey(SettingsPage::Widgets)));
+    setNavigationLabel(BackupItem(), Localize(snowdesktop::SettingsPageTitleKey(SettingsPage::BackupAndData)));
+    setNavigationLabel(AboutItem(), Localize("app.settings.about"));
+    setNavigationLabel(DeveloperItem(), Localize("app.settings.widgets_developer_tools"));
     RenderAgentSkillUpdateBadge();
-    DebugItem().Content(winrt::box_value(Localize("app.settings.debug")));
+    setNavigationLabel(DebugItem(), Localize("app.settings.debug"));
     SettingsSearchBox().PlaceholderText(
         Localize("settings.search.placeholder"));
     CancelOperationButton().Content(

@@ -218,6 +218,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     general.queryAdvancedFeatureStatus = [] { GeneralAdvancedFeatureStatus status; status.state = GeneralAdvancedFeatureState::Registered;
         status.bridgeAvailable = status.registered = status.cardVisible = true; return status; };
     shell->SetGeneralPageActions(std::move(general));
+    WidgetsPageActions widgetActions;
+    widgetActions.invoke = [](std::uint64_t, WidgetsPageRequest) {};
+    widgetActions.setDeveloperToolsEnabled = [](std::uint64_t, bool) { return true; };
+    shell->SetWidgetsPageActions(std::move(widgetActions));
     PersonalizationPageActions appearance;
     const bool english = locale == "en-US";
     const auto themeLibrary = [english](std::uint64_t, const ThemeLibraryRequest& request) {
@@ -339,6 +343,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         if (page == SettingsPage::Widgets || page == SettingsPage::DeveloperTools)
         {
             WidgetsPageSnapshot packages; packages.generation = 1; packages.revision = revision;
+            packages.workshopAvailable = true;
             packages.developmentWorkspace = L"C:\\Preview\\Components";
             packages.componentCliPath = L"C:\\Preview\\SnowDesktop\\snowwidget.exe";
             WidgetAgentSkillTargetSnapshot skill; skill.id = "shared";

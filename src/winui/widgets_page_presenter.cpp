@@ -1284,7 +1284,10 @@ struct WidgetsPagePresenter::Impl
     [[nodiscard]] muxc::Border MakePackageTag(
         std::wstring text) const
     {
-        muxc::Border tag;
+        auto tag = mux::Markup::XamlReader::Load(LR"(<Border
+            xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+            Background="{ThemeResource SolidBackgroundFillColorTertiaryBrush}"
+            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" />)").as<muxc::Border>();
         tag.Padding({8.0, 3.0, 8.0, 3.0});
         tag.BorderThickness({1.0, 1.0, 1.0, 1.0});
         tag.CornerRadius({5.0, 5.0, 5.0, 5.0});
@@ -1297,31 +1300,6 @@ struct WidgetsPagePresenter::Impl
         label.TextWrapping(mux::TextWrapping::NoWrap);
         tag.Child(label);
 
-        try
-        {
-            if (const auto application = mux::Application::Current())
-            {
-                const auto resources = application.Resources();
-                if (const auto background = resources.TryLookup(
-                        winrt::box_value(
-                            L"SolidBackgroundFillColorTertiaryBrush"))
-                        .try_as<muxm::Brush>())
-                {
-                    tag.Background(background);
-                }
-                if (const auto border = resources.TryLookup(winrt::box_value(
-                        L"CardStrokeColorDefaultBrush"))
-                        .try_as<muxm::Brush>())
-                {
-                    tag.BorderBrush(border);
-                }
-            }
-        }
-        catch (...)
-        {
-            // Tags remain readable with the default transparent brushes when
-            // an older WinUI resource dictionary omits these optional keys.
-        }
         SetAutomation(tag, label.Text());
         return tag;
     }

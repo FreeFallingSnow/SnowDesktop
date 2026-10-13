@@ -31,8 +31,18 @@ public:
         if (transfer_)
         {
             filters_.ColumnSpacing(8); filters_.RowSpacing(8);
-            c::StackPanel toolbar;
-            toolbar.Spacing(8);
+            c::Grid toolbar;
+            toolbar.ColumnSpacing(8);
+            c::ColumnDefinition filterColumn, commandColumn;
+            filterColumn.Width(x::GridLengthHelper::FromValueAndType(1, x::GridUnitType::Star));
+            commandColumn.Width(x::GridLengthHelper::Auto());
+            toolbar.ColumnDefinitions().Append(filterColumn);
+            toolbar.ColumnDefinitions().Append(commandColumn);
+            commands_.HorizontalAlignment(x::HorizontalAlignment::Right);
+            commands_.VerticalAlignment(x::VerticalAlignment::Top);
+            commands_.MaxWidth(180);
+            commands_.IsDynamicOverflowEnabled(true);
+            c::Grid::SetColumn(commands_, 1);
             toolbar.Children().Append(filters_);
             toolbar.Children().Append(commands_);
             c::Border toolbarSurface;

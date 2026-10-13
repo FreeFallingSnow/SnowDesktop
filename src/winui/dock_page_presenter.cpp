@@ -2664,7 +2664,7 @@ struct DockPagePresenter::Impl
         updatingControls = true;
 
         SetCardText(appearanceCard,
-            "settings.dock.appearance", L"Appearance");
+            centralizedAppearance ? "settings.nav.dock" : "settings.dock.appearance", L"Appearance");
         SetCardText(animationCard,
             "settings.animation.dock", L"Dock animations");
         SetCardText(edgeSwipeCard,
@@ -3387,6 +3387,8 @@ mux::UIElement DockPagePresenter::DockAppearanceContent() const
 {
     if (impl_)
     {
+        impl_->centralizedAppearance = false;
+        impl_->SetCardText(impl_->appearanceCard, "settings.dock.appearance", L"Appearance");
         uint32_t index = 0;
         if (!impl_->dockAppearanceRoot.Children().IndexOf(impl_->appearanceCard.root, index))
             impl_->dockAppearanceRoot.Children().InsertAt(0, impl_->appearanceCard.root);
@@ -3397,6 +3399,8 @@ mux::UIElement DockPagePresenter::DockAppearanceContent() const
 mux::UIElement DockPagePresenter::DockThemeContent() const
 {
     if (!impl_) return nullptr;
+    impl_->centralizedAppearance = true;
+    impl_->SetCardText(impl_->appearanceCard, "settings.nav.dock", L"Dock");
     uint32_t index = 0;
     if (impl_->dockAppearanceRoot.Children().IndexOf(impl_->appearanceCard.root, index))
         impl_->dockAppearanceRoot.Children().RemoveAt(index);
