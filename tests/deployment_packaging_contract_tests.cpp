@@ -411,7 +411,7 @@ foreach ($loop in $loops) { Invoke-Statement $loop }
         const auto output = fixture / packager;
         auto result = bridge.invoke(driver, {utf8(script.wstring()), utf8(output.wstring())});
         require(result.code == 0, result.out + result.err);
-        for (const auto* hook : {"SnowDesktopDockMinimizeHook.dll",
+        for (const auto* hook : {"SnowDesktopHookEntry.dll", "SnowDesktopHookEntry32.dll", "SnowDesktopDockMinimizeHook.dll",
                  "SnowDesktopDockMinimizeHook32.dll", "SnowDesktopDockMinimizeHost32.exe"})
         {
             const auto packaged = output / "output" / "SnowDesktop.Runtime" / hook;
@@ -546,7 +546,9 @@ void TestRuntimeResolution(const std::string& deploymentHeader,
             deploymentSource.find("~InjectableRuntimeDirectory") !=
                 std::string::npos,
         "cross-process hooks use a leased data directory with legacy, startup, and exit cleanup");
-    Check(deploymentSource.find("cache.Deploy(source, excluded)") != std::string::npos &&
+    Check(deploymentSource.find("cache.Deploy(source, excludeImplementation)") != std::string::npos &&
+            deploymentSource.find("GetStableHookEntryRoot()") != std::string::npos &&
+            deploymentSource.find("hook_entry::Prepare") != std::string::npos &&
             deploymentSource.find("shared.empty() ? source.wstring()") == std::string::npos &&
             deploymentSource.find("DeployInjectableRuntimeCopy(kTaskbarHookFilename, previous)") != std::string::npos,
         "ordinary and isolated hook deployment share the bounded pool without unbounded fallback paths");

@@ -690,7 +690,7 @@
   "app.settings.set_as_default": "預設設定",
   "app.settings.taskbar_connecting": "正在連接 Explorer 工作列...",
   "app.settings.taskbar_unsupported": "目前系統不支援 Win11 XAML 工作列個人化方案",
-  "app.settings.taskbar_connect_failed": "Explorer 工作列個人化連線失敗，請重新啟動 Explorer 後重試",
+  "app.settings.taskbar_connect_failed": "工作列美化未能生效，請查看工作列設定中的狀態",
   "app.settings.backup_before_restore_suffix": "（還原前備份）",
   "app.settings.bg_color": "背景顏色",
   "app.settings.border_color": "邊框顏色",

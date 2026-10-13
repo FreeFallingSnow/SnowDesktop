@@ -690,7 +690,7 @@
     "app.settings.set_as_default": "默认设置",
     "app.settings.taskbar_connecting": "正在连接 Explorer 任务栏…",
     "app.settings.taskbar_unsupported": "当前系统不支持 Win11 XAML 任务栏个性化方案",
-    "app.settings.taskbar_connect_failed": "Explorer 任务栏个性化连接失败，请重启 Explorer 后重试",
+    "app.settings.taskbar_connect_failed": "任务栏美化未能生效，请查看任务栏设置中的状态",
     "app.settings.backup_before_restore_suffix": "（恢复前备份）",
     "app.settings.bg_color": "背景颜色",
     "app.settings.border_color": "边框颜色",

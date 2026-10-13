@@ -690,7 +690,7 @@
     "app.settings.set_as_default": "Reset to Defaults",
     "app.settings.taskbar_connecting": "Connecting to the Explorer taskbar...",
     "app.settings.taskbar_unsupported": "This system does not support Win11 XAML taskbar personalization",
-    "app.settings.taskbar_connect_failed": "Failed to connect to Explorer taskbar personalization. Restart Explorer and try again",
+    "app.settings.taskbar_connect_failed": "Taskbar personalization could not be applied. Check its status in taskbar settings.",
     "app.settings.backup_before_restore_suffix": " (Before Restore)",
     "app.settings.bg_color": "Background Color",
     "app.settings.border_color": "Border Color",

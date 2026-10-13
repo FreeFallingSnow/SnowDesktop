@@ -690,7 +690,7 @@
   "app.settings.set_as_default": "既定値にリセット",
   "app.settings.taskbar_connecting": "エクスプローラーのタスクバーに接続しています...",
   "app.settings.taskbar_unsupported": "このシステムは Win11 XAML タスクバーの個人設定をサポートしていません",
-  "app.settings.taskbar_connect_failed": "エクスプローラーのタスクバーの個人設定に接続できませんでした。エクスプローラーを再起動して、もう一度試してください",
+  "app.settings.taskbar_connect_failed": "タスクバーのカスタマイズを適用できませんでした。タスクバー設定で状態を確認してください。",
   "app.settings.backup_before_restore_suffix": " (復元前バックアップ)",
   "app.settings.bg_color": "背景色",
   "app.settings.border_color": "境界線の色",

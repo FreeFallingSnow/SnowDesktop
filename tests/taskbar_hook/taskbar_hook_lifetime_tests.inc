@@ -229,6 +229,15 @@ int RunLifetimeChild(const std::filesystem::path& root,
     shared->ownerProcessId = restartedOwner.value.dwProcessId;
     shared->status = kStatusInjecting;
     shared->lastError = ERROR_SUCCESS;
+    shared->diagnosticStage = 4243;
+    ResetEvent(ready);
+    if (ResumeTaskbarThreads(windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId, nullptr) != ERROR_SUCCESS ||
+        WaitForSingleObject(ready, 5000) != WAIT_OBJECT_0 || shared->diagnosticStage != 90 ||
+        shared->status != kStatusFailed || shared->lastError != ERROR_ALREADY_EXISTS || !WaitForLifetimeWorkers(first))
+        return fail("resident reconnect for a new owner must retry failed TAP without a new Hook registration");
+    report << "PASS: resident resume restarts failed appearance initialization in the existing DLL\n";
+    shared->status = kStatusInjecting;
+    shared->lastError = ERROR_SUCCESS;
     if (!attach(root / L"SnowDesktopTaskbarHook.dll", reused) || reused != first ||
         shared->diagnosticStage != 90 || !observeActivation(true) ||
         !AreTaskbarThreadsConnected(windows, GetCurrentProcessId(), restartedOwner.value.dwProcessId))

@@ -690,7 +690,7 @@
   "app.settings.set_as_default": "Restablecer valores predeterminados",
   "app.settings.taskbar_connecting": "Conectándose a la barra de tareas del Explorador...",
   "app.settings.taskbar_unsupported": "Este sistema no admite la personalización de la barra de tareas XAML de Win11",
-  "app.settings.taskbar_connect_failed": "No se pudo conectar con la personalización de la barra de tareas del Explorador. Reinicia el Explorador y vuelve a intentarlo",
+  "app.settings.taskbar_connect_failed": "No se pudo aplicar la personalización de la barra de tareas. Revisa su estado en la configuración de la barra de tareas.",
   "app.settings.backup_before_restore_suffix": " (Antes de restaurar)",
   "app.settings.bg_color": "Color de fondo",
   "app.settings.border_color": "Color del borde",

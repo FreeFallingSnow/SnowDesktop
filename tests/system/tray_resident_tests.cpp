@@ -51,6 +51,9 @@ int wmain(int argc, wchar_t** argv)
 {
     if (argc == 3 && std::wstring_view(argv[1]) == L"--fixture") return Fixture(argv[2]);
     if (argc != 2) return 2;
+    auto library = std::filesystem::path(argv[1]);
+    if (!std::filesystem::is_regular_file(library))
+        library = library.parent_path() / L"SnowDesktop.Runtime" / library.filename();
     const auto host = GetCurrentProcessId();
     const std::wstring fixtureName = L"Local\\SnowDesktop.Tray.Resident.Fixture." + std::to_wstring(host);
     HANDLE fixtureMapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(FixtureState), fixtureName.c_str());
@@ -82,7 +85,7 @@ int wmain(int argc, wchar_t** argv)
         state->ownerCreation = static_cast<std::uint64_t>(creation.dwHighDateTime) << 32 | creation.dwLowDateTime;
         InterlockedExchange64(&state->epoch, 1001);
         const wchar_t* stage = L"start";
-        const DWORD cold = AttachCollector(fixture->window, *state, module, stage, [&] { return std::wstring(argv[1]); });
+        const DWORD cold = AttachCollector(fixture->window, *state, module, stage, [&] { return library.wstring(); });
         passed = passed && cold == 0 && WaitFor([&] { return Read(state->ready) != 0; });
         std::cout << "cold error=" << cold << " ready=" << Read(state->ready) << " valid=" << passed << '\n';
         for (unsigned cycle = 0; cycle < 8 && passed; ++cycle)
@@ -118,7 +121,7 @@ int wmain(int argc, wchar_t** argv)
             InterlockedExchange64(&state->epoch, 1002 + cycle);
             HMODULE warmModule = nullptr;
             const DWORD warm = AttachCollector(fixture->window, *state, warmModule, stage,
-                [&] { ++warmPathResolutions; return std::wstring(argv[1]); }, {DenyRegistration, UnhookWindowsHookEx});
+                [&] { ++warmPathResolutions; return library.wstring(); }, {DenyRegistration, UnhookWindowsHookEx});
             passed = passed && warm == 0 && !warmModule && WaitFor([&] { return Read(state->ready) != 0; });
             if (warmModule) FreeLibrary(warmModule);
             std::cout << "warm cycle=" << cycle << " error=" << warm << " registrations=" << denied

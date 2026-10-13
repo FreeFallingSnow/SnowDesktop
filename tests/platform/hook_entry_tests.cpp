@@ -74,6 +74,21 @@ int Target(const wchar_t* name)
 }
 int wmain(int argc, wchar_t** argv)
 {
+    if (argc == 6 && std::wstring_view(argv[1]) == L"--run32")
+    {
+        std::wstring command = L"\"" + std::wstring(argv[2]) + L"\"";
+        for (int argument=3; argument<argc; ++argument)
+            command += L" \"" + std::wstring(argv[argument]) + L"\"";
+        STARTUPINFOW startup{sizeof(startup)}; PROCESS_INFORMATION child{};
+        if (!CreateProcessW(argv[2], command.data(), nullptr, nullptr, FALSE,
+                0, nullptr, nullptr, &startup, &child)) return 6;
+        const bool exited = WaitForSingleObject(child.hProcess, 20000) == WAIT_OBJECT_0;
+        DWORD result = 99;
+        if (exited) GetExitCodeProcess(child.hProcess, &result);
+        else { TerminateProcess(child.hProcess, 99); WaitForSingleObject(child.hProcess, 2000); }
+        CloseHandle(child.hThread); CloseHandle(child.hProcess);
+        return exited ? static_cast<int>(result) : 7;
+    }
     if (argc == 3 && std::wstring_view(argv[1]) == L"--target") return Target(argv[2]);
 #ifndef _WIN64
     if (argc == 6 && std::wstring_view(argv[1]) == L"--inject")

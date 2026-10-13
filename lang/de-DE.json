@@ -690,7 +690,7 @@
   "app.settings.set_as_default": "Zurücksetzen",
   "app.settings.taskbar_connecting": "Verbindung zur Explorer-Taskleiste herstellen...",
   "app.settings.taskbar_unsupported": "Dieses System unterstützt keine Win11-XAML-Taskleistenpersonalisierung",
-  "app.settings.taskbar_connect_failed": "Verbindung zur Personalisierung der Explorer-Taskleiste konnte nicht hergestellt werden. Starten Sie den Explorer neu und versuchen Sie es erneut",
+  "app.settings.taskbar_connect_failed": "Die Taskleistenanpassung konnte nicht angewendet werden. Prüfen Sie den Status in den Taskleisteneinstellungen.",
   "app.settings.backup_before_restore_suffix": " (Vor der Wiederherstellung)",
   "app.settings.bg_color": "Hintergrundfarbe",
   "app.settings.border_color": "Rahmenfarbe",

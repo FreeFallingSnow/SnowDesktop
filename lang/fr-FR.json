@@ -690,7 +690,7 @@
   "app.settings.set_as_default": "Rétablir les valeurs par défaut",
   "app.settings.taskbar_connecting": "Connexion à la barre des tâches de l’Explorateur…",
   "app.settings.taskbar_unsupported": "Ce système ne prend pas en charge la personnalisation de la barre des tâches Win11 XAML",
-  "app.settings.taskbar_connect_failed": "Échec de la connexion à la personnalisation de la barre des tâches de l'Explorateur. Redémarrez l'Explorateur et réessayez",
+  "app.settings.taskbar_connect_failed": "La personnalisation de la barre des tâches est indisponible. Consultez son état dans les paramètres de la barre des tâches.",
   "app.settings.backup_before_restore_suffix": " (Avant la restauration)",
   "app.settings.bg_color": "Couleur de fond",
   "app.settings.border_color": "Couleur de la bordure",

@@ -690,7 +690,7 @@
   "app.settings.set_as_default": "설정 초기화",
   "app.settings.taskbar_connecting": "탐색기 작업 표시줄에 연결하는 중...",
   "app.settings.taskbar_unsupported": "이 시스템은 Win11 XAML 작업 표시줄 개인화를 지원하지 않습니다.",
-  "app.settings.taskbar_connect_failed": "Explorer 작업 표시줄 개인화에 연결하지 못했습니다. 탐색기를 다시 시작하고 다시 시도해 보세요.",
+  "app.settings.taskbar_connect_failed": "작업 표시줄 개인 설정을 적용하지 못했습니다. 작업 표시줄 설정에서 상태를 확인하세요.",
   "app.settings.backup_before_restore_suffix": " (복원 전)",
   "app.settings.bg_color": "배경색",
   "app.settings.border_color": "테두리 색상",

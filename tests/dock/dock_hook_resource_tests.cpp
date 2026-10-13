@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string>
 #include <functional>
+#include <filesystem>
 
 using namespace snowdesktop::dock_minimize;
 namespace
@@ -68,6 +69,9 @@ int wmain(int argc, wchar_t** argv)
 {
     if (argc == 3 && std::wstring_view(argv[1]) == L"--target") return Target(argv[2]);
     if (argc != 2) return 2;
+    auto library = std::filesystem::path(argv[1]);
+    if (!std::filesystem::is_regular_file(library))
+        library = library.parent_path() / L"SnowDesktop.Runtime" / library.filename();
     const auto name = L"Local\\SnowDesktop.Dock.HookResource." + std::to_wstring(GetCurrentProcessId());
     const HANDLE mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0, sizeof(Fixture), name.c_str());
     auto* fixture = mapping ? static_cast<Fixture*>(MapViewOfFile(mapping, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(Fixture))) : nullptr;
@@ -87,7 +91,7 @@ int wmain(int argc, wchar_t** argv)
     const std::array<DWORD,1> threads{thread};
     {
         ThreadHooks denied({Deny, Remove});
-        Check(denied.Start(argv[1]), "denied hook module loads");
+        Check(denied.Start(library.wstring()), "denied hook module loads");
         for (unsigned refresh=0;refresh<10000;++refresh) denied.Sync(threads);
         Check(denied.RegistrationStatistics().attempts == 1 && denied.RegistrationStatistics().failures == 1,
             "10000 failed refreshes perform one registration attempt");
@@ -96,7 +100,7 @@ int wmain(int argc, wchar_t** argv)
     }
     {
         ThreadHooks hooks({Install, Remove});
-        Check(hooks.Start(argv[1]), "hook module loads");
+        Check(hooks.Start(library.wstring()), "hook module loads");
         for(unsigned refresh=0;refresh<10000;++refresh) hooks.Sync(threads);
         Check(cbt==1 && cloak==0 && hooks.HookCount()==1, "idle target keeps one CBT and zero cloak hooks");
         SetPropW(fixture->window, kCloakDispatcherProperty, hooks.CloakWindow());
