@@ -601,8 +601,12 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 registerHoverRegion(
                     visible, kind, index);
         };
-    quickNavigationTabScrollOffset_ = std::clamp(quickNavigationTabScrollOffset_, 0,
-        GetQuickNavigationMaxTabScrollOffset(overlay));
+    snowdesktop::quick_navigation_rules::SetTabScrollOffset(
+        std::clamp(quickNavigationTabScrollOffset_, 0,
+            GetQuickNavigationMaxTabScrollOffset(overlay)),
+        quickNavigationTabScrollOffset_,
+        quickNavTabDragging_, quickNavTabDragStartPoint_,
+        quickNavTabDragDeltaX_);
     quickNavigationScrollOffset_ = std::clamp(quickNavigationScrollOffset_, 0,
         GetQuickNavigationMaxScrollOffset(overlay, contentModel));
     const std::vector<RECT> itemRects =
@@ -788,11 +792,6 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             int dragTw = tabWidths[quickNavTabDragIndex_];
             int posX = calcTabPosX(quickNavTabDragIndex_) + quickNavTabDragDeltaX_;
             RECT tabRect = MakeRect(posX, tabs.top + tabInsetY, posX + dragTw, tabs.bottom - tabInsetY);
-            tabRect.left = std::max(
-                tabRect.left,
-                static_cast<LONG>(
-                    tabsStart));
-            tabRect.right = std::min<LONG>(tabRect.right, static_cast<LONG>(tabClipRight));
             DrawD2DRoundedRectangle(ctx.Get(), tabRect,
                 static_cast<float>(QuickNavScale(navigationSettings_.layout.tabRadius)),
                 ToD2DColor(t.tabDragFloatFill, 0.82f),

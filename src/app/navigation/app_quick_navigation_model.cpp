@@ -260,25 +260,8 @@ bool DesktopApp::TryLaunchQuickNavigationEverythingApp()
 
 std::vector<size_t> DesktopApp::GetQuickNavigationCollectionIndices() const
 {
-    auto isTabWidget = [](DesktopWidgetType t) {
-        return t == DesktopWidgetType::Collection ||
-               t == DesktopWidgetType::FileCategories ||
-               t == DesktopWidgetType::FolderMapping;
-    };
-    std::vector<std::wstring> widgetIds;
-    std::vector<bool> eligible;
-    widgetIds.reserve(widgets_.size());
-    eligible.reserve(widgets_.size());
-    for (size_t i = 0; i < widgets_.size(); ++i)
-    {
-        widgetIds.push_back(widgets_[i].id);
-        eligible.push_back(
-            isTabWidget(widgets_[i].type) &&
-            !IsGroupedCollection(widgets_[i]));
-    }
     return snowdesktop::quick_navigation_rules::
-        OrderIndicesByTabIds(
-            navTabOrder_, widgetIds, eligible);
+        OrderTabWidgetIndices(navTabOrder_, widgets_);
 }
 
 std::vector<std::wstring> DesktopApp::GetQuickNavigationItemKeys() const

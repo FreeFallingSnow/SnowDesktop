@@ -332,6 +332,58 @@ void TestMappingSectionsFollowTabOrder()
         "unregistered mappings must append stably after ordered tabs");
 }
 
+void TestGroupedCollectionTabs()
+{
+    // Production tab enumeration and persisted-order normalization must retain
+    // every collection, including inactive children hidden by a collection group.
+    std::vector<DesktopWidget> widgets(8);
+    widgets[0].id = L"standalone";
+    widgets[1].id = L"collection-group";
+    widgets[1].type = DesktopWidgetType::CollectionGroup;
+    widgets[1].childWidgetIds = {L"grouped-a", L"grouped-b"};
+    widgets[1].activeCategoryId = L"grouped-b";
+    widgets[2].id = L"grouped-a";
+    widgets[3].id = L"grouped-b";
+    widgets[4].id = L"file-group";
+    widgets[4].type = DesktopWidgetType::FileGroup;
+    widgets[4].childWidgetIds = {L"mapping", L"files"};
+    widgets[5].id = L"mapping";
+    widgets[5].type = DesktopWidgetType::FolderMapping;
+    widgets[6].id = L"files";
+    widgets[6].type = DesktopWidgetType::FileCategories;
+    widgets[7].id = L"lua";
+    widgets[7].type = DesktopWidgetType::LuaScript;
+
+    std::vector<std::wstring> tabOrder{
+        L"grouped-b", L"standalone", L"deleted", L"collection-group",
+        L"grouped-b", L"mapping", L"file-group", L"lua"};
+    const std::vector<size_t> expectedIndices{3, 0, 5, 2, 6};
+    const std::vector<std::wstring> expectedOrder{
+        L"grouped-b", L"standalone", L"mapping", L"grouped-a", L"files"};
+    Check(rules::OrderTabWidgetIndices(tabOrder, widgets) == expectedIndices,
+        "grouped collections must have individual tabs in saved order, with missing children appended");
+    rules::NormalizeTabOrder(tabOrder, widgets);
+    Check(tabOrder == expectedOrder,
+        "persisted tab order must retain grouped collections and remove stale, duplicate and non-tab IDs");
+    Check(rules::OrderTabWidgetIndices(tabOrder, widgets) == expectedIndices,
+        "visible tab indices must match persisted order for clicks and drag reordering");
+
+    widgets[1].activeCategoryId = L"grouped-a";
+    rules::NormalizeTabOrder(tabOrder, widgets);
+    Check(tabOrder == expectedOrder,
+        "changing a group's active collection must not hide or reorder other collection tabs");
+    widgets[1].childWidgetIds.clear();
+    rules::NormalizeTabOrder(tabOrder, widgets);
+    Check(tabOrder == expectedOrder,
+        "ungrouping collections must preserve their quick-access tab order");
+
+    widgets.erase(widgets.begin() + 2);
+    rules::NormalizeTabOrder(tabOrder, widgets);
+    Check(tabOrder == std::vector<std::wstring>({
+        L"grouped-b", L"standalone", L"mapping", L"files"}),
+        "deleting a collection must remove only its tab from persisted order");
+}
+
 void TestSectionLayout()
 {
     const auto layouts =
@@ -389,6 +441,48 @@ void TestSectionLayout()
             rules::InitialJumpBucketIndex(L'W') == 22 &&
             rules::InitialJumpBucketIndex(L'#') == 26,
         "initial jump buckets must map A-Z and fallback consistently");
+}
+
+void TestTabDragWhileScrolling()
+{
+    // Keep the grabbed pixel at the same screen position while wheel scrolling,
+    // then move the pointer without letting the next mouse message undo it.
+    int scrollOffset = 40;
+    POINT startPoint{430, 100};
+    int dragDelta = 30;
+    const auto draggedLeft = [&]() { return 420 - scrollOffset + dragDelta; };
+    Check(draggedLeft() == 410, "drag fixture must preserve the original cursor grab offset");
+    rules::SetTabScrollOffset(100, scrollOffset, true, startPoint, dragDelta);
+    Check(draggedLeft() == 410 && startPoint.x == 370,
+        "scrolling right during a drag must keep the floating tab under a stationary pointer");
+    dragDelta = 480 - startPoint.x;
+    Check(draggedLeft() == 430,
+        "moving the mouse after wheel scrolling must retain scroll compensation");
+    rules::SetTabScrollOffset(0, scrollOffset, true, startPoint, dragDelta);
+    Check(draggedLeft() == 430,
+        "scrolling back to the left boundary must preserve the cursor grab offset");
+    rules::SetTabScrollOffset(0, scrollOffset, true, startPoint, dragDelta);
+    Check(draggedLeft() == 430,
+        "a clamped wheel step must not introduce phantom drag displacement");
+    rules::SetTabScrollOffset(80, scrollOffset, false, startPoint, dragDelta);
+    Check(startPoint.x == 470 && dragDelta == 10 && scrollOffset == 80,
+        "scrolling without an active tab drag must leave the drag origin and delta alone");
+
+    const std::vector<int> centers{0, 0, 240, 360, 500, 680};
+    Check(rules::TabDragTarget(3, 360, centers) == 3,
+        "a dragged tab must stay in place until it crosses a neighboring midpoint");
+    Check(rules::TabDragTarget(3, 499, centers) == 3 &&
+        rules::TabDragTarget(3, 501, centers) == 4,
+        "rightward reordering must use neighboring tab centers rather than the source center");
+    Check(rules::TabDragTarget(3, 239, centers) == 2,
+        "leftward reordering must stop at the first scrollable tab");
+    Check(rules::TabDragTarget(2, 800, centers) == 5 &&
+        rules::TabDragTarget(5, 800, centers) == 5,
+        "dragging past the last tab must target the end instead of wrapping to the first tab");
+    const std::vector<int> scrolledCenters{0, 0, 180, 300, 440, 620};
+    Check(rules::TabDragTarget(3, 450, centers) == 3 &&
+        rules::TabDragTarget(3, 450, scrolledCenters) == 4,
+        "scrolling beneath a stationary floating tab must update the drop target");
 }
 
 void TestAnimationRules()
@@ -1052,7 +1146,9 @@ int main()
     TestApplicationIconCacheIdentity();
     TestSourceOwnership();
     TestMappingSectionsFollowTabOrder();
+    TestGroupedCollectionTabs();
     TestSectionLayout();
+    TestTabDragWhileScrolling();
     TestAnimationRules();
     TestAnimationEffects();
     TestGenieTranslucentContentCoverage();

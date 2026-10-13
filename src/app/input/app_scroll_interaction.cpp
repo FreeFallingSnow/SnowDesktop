@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "app/popup/categorized_popup_scope.h"
+#include "navigation/quick_navigation_rules.h"
 
 // Mouse-wheel routing across active drag, popup and widget containers.
 
@@ -82,11 +83,14 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
                     int maxTabScroll =
                         GetQuickNavigationMaxTabScrollOffset(
                             overlay);
-                    quickNavigationTabScrollOffset_ =
+                    snowdesktop::quick_navigation_rules::SetTabScrollOffset(
                         std::clamp(
                             quickNavigationTabScrollOffset_ -
                                 delta / 2,
-                            0, maxTabScroll);
+                            0, maxTabScroll),
+                        quickNavigationTabScrollOffset_,
+                        quickNavTabDragging_, quickNavTabDragStartPoint_,
+                        quickNavTabDragDeltaX_);
                 }
             }
             else

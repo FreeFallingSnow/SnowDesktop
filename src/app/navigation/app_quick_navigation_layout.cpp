@@ -238,33 +238,8 @@ int DesktopApp::GetQuickNavigationTabWidth() const
 
 void DesktopApp::EnsureNavTabOrder()
 {
-    auto isTabWidget = [](DesktopWidgetType t) {
-        return t == DesktopWidgetType::Collection ||
-               t == DesktopWidgetType::FileCategories ||
-               t == DesktopWidgetType::FolderMapping;
-    };
-    std::unordered_set<std::wstring> orderSet(navTabOrder_.begin(), navTabOrder_.end());
-    for (const auto& w : widgets_)
-    {
-        if (isTabWidget(w.type) &&
-            !IsGroupedCollection(w) &&
-            !orderSet.count(w.id))
-        {
-            navTabOrder_.push_back(w.id);
-            orderSet.insert(w.id);
-        }
-    }
-    navTabOrder_.erase(
-        std::remove_if(navTabOrder_.begin(), navTabOrder_.end(),
-            [this, &isTabWidget](const std::wstring& id) {
-                for (const auto& w : widgets_)
-                    if (isTabWidget(w.type) &&
-                        !IsGroupedCollection(w) &&
-                        w.id == id)
-                        return false;
-                return true;
-            }),
-        navTabOrder_.end());
+    snowdesktop::quick_navigation_rules::
+        NormalizeTabOrder(navTabOrder_, widgets_);
 }
 
 RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t tabIndex) const

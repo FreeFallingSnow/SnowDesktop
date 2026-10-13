@@ -844,15 +844,14 @@ int DesktopApp::GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const
     RECT overlay = quickNavigationRect_;
     int srcCenter = GetQuickNavigationTabRect(overlay, dragTab).left
         + tw[dragTab] / 2 + deltaX;
-    int target = 2;
+    std::vector<int> tabCenters(tw.size());
     for (size_t i = 2; i < tw.size(); ++i)
     {
         RECT r = GetQuickNavigationTabRect(overlay, i);
-        if (srcCenter < r.left + tw[i] / 2) { target = static_cast<int>(i); break; }
+        tabCenters[i] = r.left + tw[i] / 2;
     }
-    if (target > static_cast<int>(tw.size()) - 1)
-        target = static_cast<int>(tw.size()) - 1;
-    return target;
+    return snowdesktop::quick_navigation_rules::
+        TabDragTarget(dragTab, srcCenter, tabCenters);
 }
 
 /**
