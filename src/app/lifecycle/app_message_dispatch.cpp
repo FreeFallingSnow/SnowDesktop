@@ -1061,16 +1061,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_GETDLGCODE:
         return DLGC_WANTALLKEYS | DLGC_WANTARROWS;
     case WM_KEYDOWN:
-    {
-        const bool repeated =
-            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
-        if (TryHandlePageNavigationKey(wp, repeated))
-            return 0;
-        DispatchLuaWidgetViewKeyEvent(wp, true,
-            repeated);
-        OnKeyDown(wp, repeated);
-        return 0;
-    }
+    case WM_CHAR:
+    case WM_IME_CHAR:
+    case WM_IME_STARTCOMPOSITION:
+    case WM_IME_COMPOSITION:
+    case WM_IME_ENDCOMPOSITION:
+        return HandleInputMessage(hwnd, msg, wp, lp);
     case WM_SYSKEYDOWN:
     {
         if (wp == VK_RETURN && OnKeyDown(wp,
@@ -1155,6 +1151,9 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
+        typeToSelectSession_.Reset();
+        typeToSelectImeComposing_ = false;
+        typeToSelectSuppressChar_ = false;
         CancelRenameClick();
         if (widgetEngine_)
         {

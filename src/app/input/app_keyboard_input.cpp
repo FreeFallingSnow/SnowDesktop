@@ -143,6 +143,15 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
 
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
+    // Text arrives as WM_CHAR. Commands, arrows and scope changes end the
+    // previous query before subsequent text can reuse it.
+    if ((key < VK_SPACE && key != VK_SHIFT && key != VK_CAPITAL) || key > VK_OEM_CLEAR ||
+        (key >= VK_PRIOR && key <= VK_HELP) ||
+        (key >= VK_F1 && key <= VK_F24) ||
+        key == VK_LWIN || key == VK_RWIN ||
+        (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0 ||
+        (GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+        typeToSelectSession_.Reset();
     if (DockTrayPopupKeyDown(key)) return true;
     CancelRenameClick();
     if (key == VK_ESCAPE && (dragSession_.HasContext() ||
@@ -709,6 +718,16 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             const auto paths = GetSelectedFolderEntryPaths();
             if (paths.size() == 1) ShowPathProperties(paths.front());
             else if (paths.empty()) InvokeSelectedShellVerb("properties");
+            break;
+        }
+        if (!ctrl && !shift && dockFolderPopupOpen_ &&
+            IsCollectionPopupInteractive())
+        {
+            if (repeated) break;
+            const auto paths = GetSelectedFolderEntryPaths();
+            if (paths.size() == 1 &&
+                LaunchPathWithShortcutPolicy(hwnd_, paths.front()))
+                CloseCollectionPopup();
             break;
         }
         if (keyboardNavInsideWidget_)

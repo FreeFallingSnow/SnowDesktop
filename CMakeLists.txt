@@ -261,6 +261,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/layout/app_item_sorting.cpp
     src/app/menus/app_item_menu.cpp
     src/app/input/app_keyboard_input.cpp
+    src/app/input/app_type_to_select.cpp
     src/app/input/app_keyboard_navigation.cpp
     src/app/layout/app_layout.cpp
     src/app/features/app_large_icons.cpp
@@ -2335,8 +2336,11 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopDesktopKeyboardRulesTests
         desktop_keyboard_rules
-        SOURCES tests/desktop_keyboard_rules_tests.cpp
+        SOURCES
+            tests/desktop_keyboard_rules_tests.cpp
+            tests/navigation/type_to_select_tests.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopPinyinData
         LABELS contract interaction shell)
 
     snowdesktop_add_test(

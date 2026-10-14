@@ -175,6 +175,7 @@ bool DesktopApp::ShowHostInputContextMenu(
 void DesktopApp::OnRightButtonDown(
     PersistentDockHost* dockHost, POINT point)
 {
+    typeToSelectSession_.Reset();
     // Nonactivating Dock Hosts do not dismiss another menu on their own.
     // Unwind that session before release starts an asynchronous running-app
     // lookup: its delivery is fenced while a menu is active, and otherwise

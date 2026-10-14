@@ -299,6 +299,9 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     case WM_NCHITTEST:
         return HTTRANSPARENT;
     case WM_IME_STARTCOMPOSITION:
+        typeToSelectSession_.Reset();
+        typeToSelectSuppressChar_ = false;
+        typeToSelectImeComposing_ = true;
         if (widgetEngine_ &&
             widgetEngine_->HasFocusedHostInput())
         {
@@ -434,6 +437,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         break;
     }
     case WM_IME_ENDCOMPOSITION:
+        typeToSelectImeComposing_ = false;
         if (widgetEngine_ &&
             widgetEngine_->HasFocusedHostInput())
         {
@@ -452,13 +456,19 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         break;
     case WM_KEYDOWN:
     {
-        if ((widgetEngine_&&widgetEngine_->IsHostInputComposing()) ||
+        typeToSelectSuppressChar_ = false;
+        if (typeToSelectImeComposing_ ||
+            (widgetEngine_&&widgetEngine_->IsHostInputComposing()) ||
             (focusedSearchWidget()&&focusedSearchWidget()->IsSearchComposing()))
             return DefWindowProcW(hwnd,msg,wp,lp);
         const bool repeated =
             (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0;
         if (TryHandlePageNavigationKey(wp, repeated))
+        {
+            typeToSelectSession_.Reset();
+            typeToSelectSuppressChar_ = true;
             return 0;
+        }
         DispatchLuaWidgetViewKeyEvent(wp, true,
             repeated);
         if (widgetEngine_ && widgetEngine_->HandleHostInputKey(wp))
@@ -467,7 +477,8 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
         }
-        OnKeyDown(wp, repeated);
+        typeToSelectSuppressChar_ = OnKeyDown(wp, repeated);
+        if (typeToSelectSuppressChar_) typeToSelectSession_.Reset();
         UpdateHostInputImePosition();
         return 0;
     }
@@ -523,6 +534,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         wchar_t ch = static_cast<wchar_t>(wp);
         if (widgetEngine_ && widgetEngine_->HandleHostInputChar(ch))
         {
+            typeToSelectSession_.Reset();
             UpdateHostInputImePosition();
             InvalidateRect(hwnd_, nullptr, FALSE);
             return 0;
@@ -532,6 +544,7 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused())
             {
                 view->AppendSearchChar(ch);
+                typeToSelectSession_.Reset();
                 popupScrollOffset_ = 0;
                 ResetCollectionPopupAnimationCache();
                 UpdateHostInputImePosition();
@@ -544,12 +557,15 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
                 if (searchable && searchable->IsSearchFocused())
                 {
                     searchable->AppendSearchChar(ch);
+                    typeToSelectSession_.Reset();
                     UpdateHostInputImePosition();
                     InvalidateRect(hwnd_, nullptr, FALSE);
-                    break;
+                    return 0;
                 }
             }
         }
+        TryHandleTypeToSelectChar(ch, msg == WM_CHAR &&
+            (static_cast<ULONG_PTR>(lp) & (ULONG_PTR{1} << 30)) != 0);
         return 0;
     }
     case WM_KEYUP:
@@ -561,6 +577,9 @@ LRESULT DesktopApp::HandleInputMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
             DispatchLuaWidgetViewKeyEvent(wp, false, false);
         break;
     case WM_KILLFOCUS:
+        typeToSelectSession_.Reset();
+        typeToSelectImeComposing_ = false;
+        typeToSelectSuppressChar_ = false;
         CancelRenameClick();
         if (widgetEngine_)
         {

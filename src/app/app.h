@@ -20,6 +20,7 @@
 #include "ui/render/inline_tooltip_backdrop.h"
 #include "ui/render/native_tooltip_content.h"
 #include "ui/input/text_input_window.h"
+#include "navigation/type_to_select.h"
 #include "layout/layout_scroll_save.h"
 #include "ui/render/scroll_content_clip.h"
 #include "platform/operation_feedback.h"
@@ -1925,6 +1926,8 @@ private:
         DWORD allowedEffects, bool externalSource);
     /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
     bool OnKeyDown(WPARAM key, bool repeated = false);
+    /** @brief 在当前桌面、容器或弹出窗口中按名称前缀定位文件。 */
+    bool TryHandleTypeToSelectChar(wchar_t ch, bool repeated = false);
     /** @brief 在桌面根输入上下文中处理可配置的本地翻页按键。 */
     bool TryHandlePageNavigationKey(WPARAM key, bool repeated = false);
     /** @brief 向当前聚焦的 Lua 声明式元素投递受限按键事件。 */
@@ -3965,6 +3968,9 @@ private:
     int pageOffset_ = 0;
     // ── 键盘导航状态 ──
     bool keyboardNavInsideWidget_ = false;
+    snowdesktop::type_to_select::Session typeToSelectSession_;
+    bool typeToSelectImeComposing_ = false;
+    bool typeToSelectSuppressChar_ = false;
     size_t keyboardNavWidgetIndex_ = static_cast<size_t>(-1);
     int keyboardNavMemberIndex_ = -1;
     bool keyboardNavVisualFocus_ = false;

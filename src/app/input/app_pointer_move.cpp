@@ -13,6 +13,7 @@
 
 void DesktopApp::OnMiddleButtonDown(WPARAM wp, LPARAM lp)
 {
+    typeToSelectSession_.Reset();
     if (rightButtonItemDrag_ ||
         (HasActiveContextMenuSession() && dragSession_.HasContext())) return;
     CancelPopupHover(true);
