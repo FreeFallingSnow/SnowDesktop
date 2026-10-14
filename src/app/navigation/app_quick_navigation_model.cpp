@@ -479,11 +479,9 @@ DesktopApp::BuildQuickNavigationContentModel() const
             appendSection(i < 26 ? std::wstring(1, static_cast<wchar_t>(L'A' + i)) : L"#", bucket);
         }
     };
-    const auto sortWidgetEntries = [&] {
+    const auto groupWidgetEntriesByInitial = [&] {
         if (GetQuickNavigationViewMode() == QuickNavigationDesktopViewMode::Initial)
-            std::stable_sort(model.entries.begin(), model.entries.end(), [](const auto& lhs, const auto& rhs) {
-                return snowdesktop::quick_navigation_rules::InitialNameLess(lhs.name, rhs.name);
-            });
+            groupByInitial();
     };
 
     if (query.empty())
@@ -740,7 +738,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
                 if (CanPickLuaLogicalSlotEntry(entry))
                     model.entries.push_back(std::move(entry));
             }
-            sortWidgetEntries();
+            groupWidgetEntriesByInitial();
             return model;
         }
 
@@ -752,7 +750,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
                 quickNavigationActiveWidgetIndex_ < widgets_.size()
                     ? quickNavigationActiveWidgetIndex_
                     : static_cast<size_t>(-1));
-        sortWidgetEntries();
+        groupWidgetEntriesByInitial();
         return model;
     }
 
