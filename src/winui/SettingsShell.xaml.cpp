@@ -2883,8 +2883,6 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             if (desktopPage_) personalizationPage_->SetLayoutSpacingContent(desktopPage_->LayoutSpacingContent());
             PageCards().Children().Append(personalizationPage_->TypographyContent());
             registerPersonalizationFocus({"personalization.font", "personalization.tooltipFontSize",
-                "personalization.windowPinBorder.show", "personalization.windowPinBorder.color",
-                "personalization.windowPinBorder.width", "personalization.windowPinBorder.opacity",
                 "desktop.categoryLayout", "desktop.tabHeight", "personalization.tabHeight", "personalization.luaWidgetRowHeight",
                 "personalization.cornerRadius", "personalization.barHeight"});
             personalizationPage_->Activate();
@@ -2899,6 +2897,12 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "desktop.itemFontSize", "desktop.listFontSize",
                 "desktop.fontWeight", "desktop.shortcutArrow", "desktop.titleLines", "desktop.largeFolderTitleLines", "desktop.scrollingTitleLines", "desktop.titleOverflow"});
             desktopPage_->Activate();
+        }
+        if (personalizationPage_)
+        {
+            PageCards().Children().Append(personalizationPage_->WindowPinBorderContent());
+            registerPersonalizationFocus({"personalization.windowPinBorder.show", "personalization.windowPinBorder.color",
+                "personalization.windowPinBorder.width", "personalization.windowPinBorder.opacity"});
         }
         break;
     case SettingsPage::AppearanceIconBeautification:

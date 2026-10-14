@@ -152,6 +152,7 @@ struct PersonalizationPagePresenter::Impl
     muxc::ContentControl dockAppearanceHost;
     muxc::StackPanel menuRoot;
     muxc::StackPanel widgetLayoutRoot{nullptr};
+    muxc::StackPanel pinBorderRoot;
     muxc::StackPanel quickThemeRoot;
     muxc::StackPanel widgetCommonRoot;
     muxc::StackPanel widgetBehaviorRoot;
@@ -491,7 +492,7 @@ struct PersonalizationPagePresenter::Impl
         contentThemeRow.Initialize(contentThemeCombo);
         appearanceSections.text.Children().Append(contentThemeRow.root);
 
-        InitializeCard(pinBorderCard, cardStyle, widgetLayoutRoot);
+        InitializeCard(pinBorderCard, cardStyle, pinBorderRoot);
         pinBorderCard.content.Spacing(0);
         pinBorderEnabled = muxc::ToggleSwitch{};
         pinBorderEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -2285,6 +2286,11 @@ mux::UIElement PersonalizationPagePresenter::WidgetLayoutContent()
 mux::UIElement PersonalizationPagePresenter::TypographyContent() const noexcept
 {
     return impl_ ? impl_->widgetLayoutRoot : nullptr;
+}
+
+mux::UIElement PersonalizationPagePresenter::WindowPinBorderContent() const noexcept
+{
+    return impl_ ? impl_->pinBorderRoot : nullptr;
 }
 
 mux::UIElement PersonalizationPagePresenter::QuickNavigationAppearanceContent() const noexcept
