@@ -78,6 +78,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::QuickNavigation, "quickNav.engines", "quickNav.engines", "quickNav.engines.hint"},
 
     {SettingsPage::StatusBar, "statusBar.taskView", "statusBar.taskView", "statusBar.leftItems"},
+    {SettingsPage::StatusBar, "statusBar.showDesktop", "statusBar.showDesktop", "statusBar.clickBehavior"},
     {SettingsPage::StatusBar, "statusBar.clockPanel", "statusBar.clockPanel", "statusBar.timeAndNotificationArea"},
     {SettingsPage::StatusBar, "statusBar.controlCenterPanel", "statusBar.controlCenterPanel", "statusBar.controlCenter"},
     {SettingsPage::StatusBar, "statusBar.audioControls", "statusBar.audioControls", "statusBar.controlCenter"},

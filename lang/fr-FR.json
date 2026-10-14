@@ -2731,5 +2731,7 @@
   "start.animation.description": "Contrôler le mode, les effets, la vitesse et la fréquence d’images.",
   "start.animation.instructions": "Choisissez Activé, Suivre le système ou Désactivé. Ajustez ensuite les effets du Dock et des fenêtres contextuelles, la vitesse et la fréquence d’images. Les limites en économie d’énergie et sur batterie sont indépendantes. Toutes les fonctions restent utilisables sans animation.",
   "start.section.layout": "Disposition du bureau",
-  "start.section.basics.description": "Commencez par les options de démarrage et les commandes de base, puis découvrez les composants, la grille, les icônes, les thèmes et les menus contextuels."
+  "start.section.basics.description": "Commencez par les options de démarrage et les commandes de base, puis découvrez les composants, la grille, les icônes, les thèmes et les menus contextuels.",
+  "statusBar.showDesktop": "Cliquer sur le bord droit pour afficher le Bureau",
+  "statusBar.showDesktopTip": "Afficher le Bureau (Win+D)"
 }

@@ -2731,5 +2731,7 @@
   "start.animation.description": "控制動畫開關、效果、速度和影格率。",
   "start.animation.instructions": "動畫模式可選開啟、跟隨系統或關閉。再調整彈出視窗和 Dock 的效果、速度及影格率；系統節能和電池供電下的影格限制可分別設定。關閉動畫後仍可正常使用各項功能。",
   "start.section.layout": "桌面配置",
-  "start.section.basics.description": "從啟動和基本操作開始，了解元件、網格、圖示、主題與右鍵選單。"
+  "start.section.basics.description": "從啟動和基本操作開始，了解元件、網格、圖示、主題與右鍵選單。",
+  "statusBar.showDesktop": "點擊右側邊緣顯示桌面",
+  "statusBar.showDesktopTip": "顯示桌面（Win+D）"
 }

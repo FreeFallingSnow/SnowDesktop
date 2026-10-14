@@ -273,6 +273,7 @@ struct StatusBarPagePresenter::Impl
         clockPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         controlPanel.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         clockPanelRow.Initialize(clockPanel); controlPanelRow.Initialize(controlPanel);
+        ToggleRow(clickBehavior, "statusBar.showDesktop", "statusBar.showDesktop", &StatusBarSettings::showDesktop);
         clickBehavior.Children().Append(clockPanelRow.root);
         clickBehavior.Children().Append(inputPanelRow.root);
         if (systemQuickSettings) clickBehavior.Children().Append(controlPanelRow.root);

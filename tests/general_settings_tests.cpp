@@ -567,6 +567,16 @@ int main(int argc, char** argv)
         Check(firstEnable.taskView && !firstEnable.clockSystemPanel && !firstEnable.controlCenterSystemPanel,
             "task view starts visible while existing clock and controls retain the SnowDesktop panels");
         Check(firstEnable.inputMethod, "existing profiles gain the input indicator by default");
+        Check(value.statusBar.showDesktop && firstEnable.showDesktop,
+            "new and existing profiles enable the invisible show-desktop edge by default");
+        for (const bool showDesktop : {false, true})
+        {
+            firstEnable.showDesktop = showDesktop;
+            JsonValue stored; StatusBarSettings restored;
+            Check(ParseJson(EncodeStatusBarSettings(firstEnable), stored) &&
+                DecodeStatusBarSettings(stored, restored) && restored.showDesktop == showDesktop,
+                "disabling the show-desktop edge survives reload without reverting to its default");
+        }
         Check(!value.statusBar.inputMethodSystemPanel && !firstEnable.inputMethodSystemPanel,
             "new and existing bars default to the SnowDesktop keyboard layout panel");
         for (const bool systemInput : {true, false})

@@ -2731,5 +2731,7 @@
   "start.animation.description": "애니메이션 모드, 효과, 속도, 프레임 속도를 조절합니다.",
   "start.animation.instructions": "애니메이션은 켜기, 시스템 설정 따르기, 끄기 중에서 고릅니다. 팝업과 Dock 효과, 속도, 프레임 속도를 조정하고 시스템 절전과 배터리 사용 시의 프레임 제한을 각각 설정할 수 있습니다. 애니메이션을 꺼도 모든 기능은 사용할 수 있습니다.",
   "start.section.layout": "바탕 화면 배치",
-  "start.section.basics.description": "시작 옵션과 기본 조작부터 익힌 다음 구성 요소, 격자, 아이콘, 테마, 오른쪽 클릭 메뉴를 알아보세요."
+  "start.section.basics.description": "시작 옵션과 기본 조작부터 익힌 다음 구성 요소, 격자, 아이콘, 테마, 오른쪽 클릭 메뉴를 알아보세요.",
+  "statusBar.showDesktop": "오른쪽 가장자리를 클릭하여 바탕 화면 표시",
+  "statusBar.showDesktopTip": "바탕 화면 표시(Win+D)"
 }

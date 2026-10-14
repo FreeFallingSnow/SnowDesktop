@@ -51,6 +51,7 @@ inline StatusBarShellChord ResolveStatusBarShellChord(StatusBarAction action, bo
     // The caller shields repeated presses at the opening button before sending
     // Win+Tab. Wait only for held input, not the full double-click interval.
     if (action == StatusBarAction::TaskView) return {VK_TAB, false, 0, true};
+    if (action == StatusBarAction::ShowDesktop) return {'D', false, 0, true};
     if (action == StatusBarAction::SystemCalendar) return windows11 ? StatusBarShellChord{'N'} : StatusBarShellChord{'D', true};
     if (action == StatusBarAction::SystemControlCenter) return windows11 ? StatusBarShellChord{'A'} : StatusBarShellChord{};
     if (action == StatusBarAction::Notifications) return {static_cast<WORD>(classicTaskbar ? 'A' : 'N')};
@@ -105,7 +106,7 @@ private:
 
 inline bool IsTaskViewTransitionSensitiveAction(StatusBarAction action) noexcept
 {
-    return action == StatusBarAction::TaskView || action == StatusBarAction::Notifications ||
+    return action == StatusBarAction::TaskView || action == StatusBarAction::ShowDesktop || action == StatusBarAction::Notifications ||
         action == StatusBarAction::SystemCalendar || action == StatusBarAction::SystemControlCenter;
 }
 

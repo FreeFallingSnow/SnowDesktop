@@ -2731,5 +2731,7 @@
   "start.animation.description": "Animationsmodus, Effekte, Geschwindigkeit und Bildrate steuern.",
   "start.animation.instructions": "Wählen Sie Ein, Systemeinstellung oder Aus. Passen Sie anschließend Popup- und Dock-Effekte, Geschwindigkeit und Bildrate an. Bildratenlimits bei System-Energiesparen und Akkubetrieb sind unabhängig. Ohne Animationen bleiben alle Funktionen bedienbar.",
   "start.section.layout": "Desktop-Layout",
-  "start.section.basics.description": "Beginnen Sie mit Startoptionen und grundlegenden Funktionen und lernen Sie Komponenten, Raster, Symbole, Designs und Kontextmenüs kennen."
+  "start.section.basics.description": "Beginnen Sie mit Startoptionen und grundlegenden Funktionen und lernen Sie Komponenten, Raster, Symbole, Designs und Kontextmenüs kennen.",
+  "statusBar.showDesktop": "Desktop durch Klicken auf den rechten Rand anzeigen",
+  "statusBar.showDesktopTip": "Desktop anzeigen (Win+D)"
 }

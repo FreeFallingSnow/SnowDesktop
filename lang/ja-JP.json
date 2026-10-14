@@ -2731,5 +2731,7 @@
   "start.animation.description": "有効・無効、効果、速度、フレームレートを選びます。",
   "start.animation.instructions": "アニメーションはオン、システムに従う、オフから選べます。ポップアップや Dock の効果、速度、フレームレートを調整し、システムの省電力時とバッテリー使用時の制限を個別に設定します。オフでも各機能は使用できます。",
   "start.section.layout": "デスクトップ配置",
-  "start.section.basics.description": "起動設定と基本操作から始め、コンポーネント、グリッド、アイコン、テーマ、右クリックメニューについて学びます。"
+  "start.section.basics.description": "起動設定と基本操作から始め、コンポーネント、グリッド、アイコン、テーマ、右クリックメニューについて学びます。",
+  "statusBar.showDesktop": "右端をクリックしてデスクトップを表示",
+  "statusBar.showDesktopTip": "デスクトップを表示（Win+D）"
 }

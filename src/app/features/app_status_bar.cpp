@@ -134,7 +134,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     const auto generation = ++*statusBarActivationGeneration_;
     statusBarActivationMonitor_ = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
     const double shortcutStarted = action == Action::Notifications || action == Action::SystemControlCenter ||
-        action == Action::TaskView || action == Action::SystemCalendar ||
+        action == Action::TaskView || action == Action::ShowDesktop || action == Action::SystemCalendar ||
         action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::InputMethodPanel || action == Action::SystemInputMethodPanel
         ? snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() : -1;
     TraceStatusBarShellActivation(action, generation, L"queued", shortcutStarted);
@@ -155,7 +155,8 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
         statusBarActivationMonitor_ = nullptr;
         return;
     }
-    if (!statusBar_ || exitRequested_ || !generalSettings_.statusBar.enabled || !owner ||
+    if (!statusBar_ || exitRequested_ || !generalSettings_.statusBar.enabled ||
+        (action == Action::ShowDesktop && !generalSettings_.statusBar.showDesktop) || !owner ||
         !IsWindow(owner) || !IsWindowVisible(owner) ||
         !statusBar_->IsInteractionAvailable(statusBarActivationMonitor_))
     {
@@ -187,10 +188,11 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     const std::weak_ptr<std::uint64_t> lifetime = statusBarActivationGeneration_;
     // Queued callbacks share the hold, including callbacks discarded by an
     // outside click. Open surfaces subsequently own their interaction lifetime.
-    const auto current = [this, lifetime, generation, owner, monitor] {
+    const auto current = [this, lifetime, generation, action, owner, monitor] {
         const auto state = lifetime.lock();
         return state && *state == generation && !exitRequested_ &&
-            generalSettings_.statusBar.enabled && statusBar_ && IsWindow(owner) &&
+            generalSettings_.statusBar.enabled && (action != Action::ShowDesktop || generalSettings_.statusBar.showDesktop) &&
+            statusBar_ && IsWindow(owner) &&
             IsWindowVisible(owner) && MonitorFromWindow(owner, MONITOR_DEFAULTTONULL) == monitor &&
             statusBar_->IsInteractionAvailable(monitor);
     };
@@ -365,7 +367,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
     const bool externalSurface = action == Action::SystemMenu || snowdesktop::IsStatusBarContextMenuAction(action) ||
         action == Action::QuickSearch || action == Action::Settings ||
         action == Action::Notifications || action == Action::SystemControlCenter ||
-        action == Action::TaskView || action == Action::SystemCalendar ||
+        action == Action::TaskView || action == Action::ShowDesktop || action == Action::SystemCalendar ||
         action == Action::InputMethod || action == Action::InputMethodMenu || action == Action::InputMethodPanel || action == Action::SystemInputMethodPanel;
     if (externalSurface && systemPanel_ && systemPanel_->IsOpen())
     {

@@ -326,6 +326,11 @@ std::vector<StatusBarItem> BuildStatusBarItems(const StatusBarSettings& s, const
         control.controlTips[2] = std::wstring(_LW(battery.label)) + L"  " + Percent(power->batteryPercent);
         if (s.batteryPercentage) control.batteryPercentageText = Percent(power->batteryPercent);
     }
+    if (s.showDesktop)
+    {
+        add("showDesktop", L"", StatusBarAction::ShowDesktop);
+        items.back().tip = _LW("statusBar.showDesktopTip");
+    }
     return items;
 }
 
@@ -416,13 +421,14 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             const float paddingDip = item.key == "clock" ? (mergedDock ? 8.f : 0.f) : item.glyph.empty() ? 8.f : 28.f;
             return std::clamp(metrics.widthIncludingTrailingWhitespace + paddingDip * scale, 28.f * scale, 260.f * scale);
         };
-        std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex;
+        std::optional<std::size_t> clockIndex, notificationIndex, controlRightIndex, showDesktopIndex;
         std::vector<std::size_t> leftIndices, rightIndices, trayIndices;
         std::vector<LONG> widths(items.size()), rightWidths;
         LONG clockWidth = 0, notificationWidth = 0, controlWidth = 0, trayWidth = 0;
         for (std::size_t i = 0; i < items.size(); ++i)
         {
             auto& item = items[i]; item.bounds = {}; item.contentBounds = {};
+            if (item.action == StatusBarAction::ShowDesktop) { showDesktopIndex = i; continue; }
             // Keep the stored standalone preference. Suppress only the duplicate
             // merged entry, including its spacing, pointer and keyboard target.
             if (mergedDock && dockQuickSearch && item.key == "quickSearch") continue;
@@ -439,6 +445,8 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
             }
         }
         const LONG viewportWidth = static_cast<LONG>(w), viewportHeight = static_cast<LONG>(h);
+        const RECT showDesktopBounds = showDesktopIndex ? StatusBarShowDesktopTarget(viewportWidth, viewportHeight, scale) : RECT{};
+        const LONG trailingInset = showDesktopBounds.right - showDesktopBounds.left;
         const LONG edgePadding = static_cast<LONG>(padding);
         // Keep the date itself centered. The symmetric reservation protects
         // its trailing notification button without shifting the date left.
@@ -449,7 +457,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         if (mergedDock || timeNotificationRightAligned)
         {
             const auto layout = LayoutRightStatusBar(viewportWidth, viewportHeight, scale,
-                edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex, mergedDock);
+                edgePadding, clockWidth, notificationWidth, rightWidths, controlRightIndex, mergedDock, trailingInset);
             if (clockIndex) items[*clockIndex].bounds = layout.clock;
             if (notificationIndex) items[*notificationIndex].bounds = layout.notifications;
             for (std::size_t i = 0; i < rightIndices.size(); ++i)
@@ -470,7 +478,7 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         {
             const LONG centerWidth = clockWidth ? clockWidth + 2 * notificationWidth : notificationWidth;
             const auto bounds = StatusBarHorizontalLayout(viewportWidth, viewportHeight,
-                edgePadding, std::span<const LONG>{}, centerWidth, rightWidths);
+                edgePadding, std::span<const LONG>{}, centerWidth, rightWidths, trailingInset);
             RECT dateAndNotification = bounds[0];
             if (!IsRectEmpty(&dateAndNotification))
             {
@@ -523,6 +531,8 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         if (mergedDock)
             for (auto& item : items)
                 item.bounds = StatusBarCompactTarget(item.bounds, scale, item.key == "clock" && twoLineClock);
+        // Keep the edge target full-height, including a tall merged Dock strip.
+        if (showDesktopIndex) items[*showDesktopIndex].bounds = showDesktopBounds;
         ComPtr<ID2D1SolidColorBrush> hoverBrush;
         context->CreateSolidColorBrush(hc ? palette.highlight :
             D2D1::ColorF(a.contentTheme == 1 ? 0x000000 : 0xffffff, .08f), &hoverBrush);
@@ -549,7 +559,8 @@ HRESULT DrawStatusBarContent(ID2D1DeviceContext* context, IDWriteFactory* text, 
         for (auto& item : items)
         {
             if (trayLayer && !item.icon) { context->PopLayer(); trayLayer = false; }
-            if (IsRectEmpty(&item.bounds))
+            // No glyph, separator, hover fill or focus outline for this target.
+            if (item.action == StatusBarAction::ShowDesktop || IsRectEmpty(&item.bounds))
             {
 
                 continue;

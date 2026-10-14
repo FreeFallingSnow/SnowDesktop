@@ -2731,5 +2731,7 @@
   "start.widgetPreferences.description": "Configura el comportamiento del mouse sobre pestañas de grupos, categorías y ventanas emergentes.",
   "start.section.appearance.description": "Ajusta la apariencia del Dock y el comportamiento al pasar el cursor por los componentes, de las ventanas emergentes y de las animaciones.",
   "start.section.layout": "Diseño del escritorio",
-  "start.section.basics.description": "Empieza por las opciones de inicio y los controles básicos; después, conoce los componentes, la cuadrícula, los íconos, los temas y los menús contextuales."
+  "start.section.basics.description": "Empieza por las opciones de inicio y los controles básicos; después, conoce los componentes, la cuadrícula, los íconos, los temas y los menús contextuales.",
+  "statusBar.showDesktop": "Hacer clic en el borde derecho para mostrar el escritorio",
+  "statusBar.showDesktopTip": "Mostrar escritorio (Win+D)"
 }

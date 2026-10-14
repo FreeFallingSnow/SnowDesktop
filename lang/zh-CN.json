@@ -2731,5 +2731,7 @@
   "start.animation.description": "控制动画开关、效果、速度和帧率。",
   "start.animation.instructions": "动画模式可选开启、跟随系统或关闭。再按需要调整弹窗和 Dock 的效果、速度及帧率；系统节能和电池供电下的限帧可分别设置。关闭动画后，仍能正常使用各项功能。",
   "start.section.layout": "桌面布局",
-  "start.section.basics.description": "从启动和基础操作开始，了解组件、网格、图标、主题与右键菜单。"
+  "start.section.basics.description": "从启动和基础操作开始，了解组件、网格、图标、主题与右键菜单。",
+  "statusBar.showDesktop": "点击右侧边缘显示桌面",
+  "statusBar.showDesktopTip": "显示桌面（Win+D）"
 }

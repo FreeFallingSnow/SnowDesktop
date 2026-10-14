@@ -390,6 +390,7 @@ void TestTaskViewTransition()
     Check(!transition.Busy(11350) && !transition.CanBegin(11350, true),
         "duplicate shown events allow other native panels after settling but keep Task View open-only");
     Check(IsTaskViewTransitionSensitiveAction(StatusBarAction::TaskView) &&
+        IsTaskViewTransitionSensitiveAction(StatusBarAction::ShowDesktop) &&
         IsTaskViewTransitionSensitiveAction(StatusBarAction::Notifications) &&
         IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemCalendar) &&
         IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemControlCenter) &&
@@ -618,8 +619,8 @@ void TestStatusBarShellShortcuts()
     std::vector<std::vector<INPUT>> batches;
     UINT sentCount = 4;
     std::vector<Result> outcomes;
-    const auto queue = [&](WORD key, UINT timeout = 5000, bool alt = false) {
-        return ScheduleStatusBarShellShortcut(scheduler, StatusBarShellChord{key, alt}, {
+    const auto queueChord = [&](StatusBarShellChord chord, UINT timeout = 5000) {
+        return ScheduleStatusBarShellShortcut(scheduler, chord, {
             [&](int code) { return code == held; },
             [&](UINT count, INPUT* input, int size) {
                 Check(size == sizeof(INPUT), "shortcut uses the native INPUT size");
@@ -628,6 +629,9 @@ void TestStatusBarShellShortcuts()
             },
             [&](auto) { return current; },
             [&](auto, Result result) { outcomes.push_back(result); }}, timeout);
+    };
+    const auto queue = [&](WORD key, UINT timeout = 5000, bool alt = false) {
+        return queueChord(StatusBarShellChord{key, alt}, timeout);
     };
     const auto expectChord = [&](WORD key) {
         Check(batches.size() == 1 && batches.front().size() == 4,
@@ -657,6 +661,19 @@ void TestStatusBarShellShortcuts()
     batches.clear(); outcomes.clear();
     queue(VK_TAB); WaitAndDispatch(scheduler); expectChord(VK_TAB);
     batches.clear(); outcomes.clear();
+    for (const bool windows11 : {false, true})
+    {
+        const auto desktop = ResolveStatusBarShellChord(Action::ShowDesktop, windows11, !windows11);
+        Check(desktop.key == 'D' && !desktop.alt && desktop.waitForPointerRelease,
+            "show desktop uses Win+D on both Windows versions rather than the Win+Alt+D calendar");
+        queueChord(desktop);
+        held = VK_LBUTTON; WaitAndDispatch(scheduler);
+        Check(batches.empty() && outcomes.empty(), "show desktop waits until the initiating mouse gesture ends");
+        held = VK_CONTROL; WaitAndDispatch(scheduler);
+        Check(batches.empty() && outcomes.empty(), "show desktop does not inject through a held modifier");
+        held = 0; WaitAndDispatch(scheduler); expectChord('D');
+        batches.clear(); outcomes.clear();
+    }
     sentCount = 6;
     queue('D', 5000, true); held = VK_MENU; WaitAndDispatch(scheduler);
     Check(batches.empty() && outcomes.empty(), "date-panel shortcut waits for a physically held Alt key");

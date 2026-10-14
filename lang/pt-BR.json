@@ -2731,5 +2731,7 @@
   "start.animation.description": "Controle modo, efeitos, velocidade e taxa de quadros.",
   "start.animation.instructions": "Escolha Ativado, Seguir o sistema ou Desativado. Ajuste os efeitos do Dock e dos pop-ups, a velocidade e a taxa de quadros. Os limites na economia de energia do sistema e no uso da bateria são independentes. Todas as funções continuam disponíveis sem animações.",
   "start.section.layout": "Layout da área de trabalho",
-  "start.section.basics.description": "Comece pelas opções de inicialização e controles básicos; depois, conheça os componentes, a grade, os ícones, os temas e os menus de contexto."
+  "start.section.basics.description": "Comece pelas opções de inicialização e controles básicos; depois, conheça os componentes, a grade, os ícones, os temas e os menus de contexto.",
+  "statusBar.showDesktop": "Clicar na borda direita para mostrar a área de trabalho",
+  "statusBar.showDesktopTip": "Mostrar área de trabalho (Win+D)"
 }

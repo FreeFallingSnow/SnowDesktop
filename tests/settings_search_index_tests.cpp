@@ -331,6 +331,9 @@ int main(int argc, char* argv[])
     const auto seconds = find("statusBar.clockShowSeconds");
     Check(seconds != catalog.staticSettings.end() && seconds->page == SettingsPage::StatusBar,
         "clock seconds search opens the Status Bar page with its stable focus target");
+    const auto showDesktop = find("statusBar.showDesktop");
+    Check(showDesktop != catalog.staticSettings.end() && showDesktop->page == SettingsPage::StatusBar,
+        "show desktop search opens the Status Bar page with its stable toggle target");
     Check(find("personalization.savedThemes")->page == SettingsPage::ThemeManager,
         "theme management search targets the independent page");
     for (const auto focus : {"desktop.softwareDesktopHotkey", "desktop.softwareDesktopHotkey.hotkey"})

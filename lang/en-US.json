@@ -2731,5 +2731,7 @@
   "start.animation.description": "Control animation mode, effects, speed and frame rate.",
   "start.animation.instructions": "Choose On, Follow system or Off for animations. Then adjust popup and Dock effects, speed and frame rate. Frame limits for system energy saving and battery power are independent. All features remain usable with animations off.",
   "start.section.layout": "Desktop layout",
-  "start.section.basics.description": "Start with launch options and basic controls, then learn about components, grids, icons, themes, and context menus."
+  "start.section.basics.description": "Start with launch options and basic controls, then learn about components, grids, icons, themes, and context menus.",
+  "statusBar.showDesktop": "Click the right edge to show the desktop",
+  "statusBar.showDesktopTip": "Show desktop (Win+D)"
 }

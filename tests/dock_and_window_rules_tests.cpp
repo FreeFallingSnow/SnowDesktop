@@ -1475,6 +1475,45 @@ void CheckStatusBarInteraction()
         if (tray) { value.icon.emplace(); value.icon->key = key; value.key = "tray"; }
         return value;
     };
+    // A real edge click must survive both layouts and DPI changes, without
+    // stealing the last control or dispatching after the option is disabled.
+    for (const float scale : {.75f, 1.f, 1.25f, 2.f, 3.f})
+        for (const LONG height : {32L, 64L})
+        {
+            const LONG width = static_cast<LONG>(1920 * scale);
+            const auto edge = StatusBarShowDesktopTarget(width, height, scale);
+            Check(edge.left == width - static_cast<LONG>(std::ceil(8 * scale)) &&
+                edge.right == width && edge.top == 0 && edge.bottom == height,
+                "show-desktop hit target keeps the full right edge at every scale and merged height");
+            const std::vector<StatusBarItem> targets{
+                item("controlCenter", StatusBarAction::ControlCenter, {edge.left - 56, 0, edge.left, height}, false),
+                item("showDesktop", StatusBarAction::ShowDesktop, edge, false)};
+            Check(HitTestStatusBarItems(targets, {width - 1, height - 1}) == 1 &&
+                HitTestStatusBarItems(targets, {edge.left - 1, height - 1}) == 0 &&
+                !HitTestStatusBarItems(targets, {width, height - 1}),
+                "edge hit testing separates show desktop from the adjacent control and monitor");
+            StatusBarInteraction edgeInteraction;
+            edgeInteraction.Press(targets, {width - 1, 0}, false);
+            const auto release = edgeInteraction.Release(targets, {width - 1, 0}, false);
+            const auto invocation = ResolveStatusBarInvocation(targets, release.item, false);
+            Check(release.accepted && invocation && invocation->action == StatusBarAction::ShowDesktop,
+                "a complete edge gesture resolves to the show-desktop production action");
+            edgeInteraction.Press(targets, {width - 1, 0}, false);
+            auto disabled = targets; disabled.pop_back();
+            edgeInteraction.Reconcile(targets, disabled);
+            Check(!edgeInteraction.Release(disabled, {width - 1, 0}, false).accepted &&
+                !HitTestStatusBarItems(disabled, {width - 1, 0}),
+                "disabling the edge removes its hit target and cancels a pending click");
+        }
+    for (const bool merged : {false, true})
+        for (const LONG width : {96L, 240L, 320L, 1920L})
+        {
+            const auto layout = LayoutRightStatusBar(width, 64, 1.f, 12, 180, 28,
+                std::vector<LONG>{28, 56}, 1, merged, 8);
+            for (const auto bounds : {layout.clock, layout.notifications, layout.right[0], layout.right[1]})
+                Check(IsRectEmpty(&bounds) || bounds.right <= width - 8,
+                    "even narrow-layout fallback keeps visible controls out of the show-desktop edge");
+        }
     const std::vector<StatusBarItem> before{
         item("menu", StatusBarAction::SystemMenu, {0, 0, 32, 32}, false),
         item("menu", StatusBarAction::Tray, {64, 0, 96, 32}, true),

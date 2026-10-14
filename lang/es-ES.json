@@ -2731,5 +2731,7 @@
   "start.animation.description": "Controla el modo, los efectos, la velocidad y los fotogramas por segundo.",
   "start.animation.instructions": "Elige Activado, Seguir el sistema o Desactivado. Ajusta después los efectos del Dock y las ventanas emergentes, la velocidad y los fotogramas por segundo. Los límites con ahorro de energía y con batería son independientes. Todas las funciones siguen disponibles sin animaciones.",
   "start.section.layout": "Diseño del escritorio",
-  "start.section.basics.description": "Empieza por las opciones de inicio y los controles básicos; después, conoce los componentes, la cuadrícula, los iconos, los temas y los menús contextuales."
+  "start.section.basics.description": "Empieza por las opciones de inicio y los controles básicos; después, conoce los componentes, la cuadrícula, los iconos, los temas y los menús contextuales.",
+  "statusBar.showDesktop": "Hacer clic en el borde derecho para mostrar el escritorio",
+  "statusBar.showDesktopTip": "Mostrar escritorio (Win+D)"
 }
