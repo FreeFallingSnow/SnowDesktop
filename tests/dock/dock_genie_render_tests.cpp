@@ -37,6 +37,49 @@ struct DockWindowTransitionTestAccess
     {
         return transition.compositionTimelineActive_;
     }
+    static void SeekProgress(DockWindowTransition& transition, double progress)
+    {
+        LARGE_INTEGER counter{}, frequency{};
+        QueryPerformanceCounter(&counter);
+        QueryPerformanceFrequency(&frequency);
+        transition.animationStartTimeMs_ = static_cast<double>(counter.QuadPart) * 1000.0 /
+            static_cast<double>(frequency.QuadPart) - progress * transition.animationDurationMs_;
+    }
+    static bool HostContainsGenieOutline(const DockWindowTransition& transition)
+    {
+        using namespace snowdesktop::dock_genie;
+        RECT host{};
+        if (!GetWindowRect(transition.hwnd_, &host)) return false;
+        const RECT window = transition.windowRect_, dock = transition.dockRect_;
+        const Rect source{static_cast<double>(window.left), static_cast<double>(window.top),
+            static_cast<double>(window.right), static_cast<double>(window.bottom)};
+        const Rect target{static_cast<double>(dock.left), static_cast<double>(dock.top),
+            static_cast<double>(dock.right), static_cast<double>(dock.bottom)};
+        // Inspect the unchanged spatial mesh against the actual HWND, rather
+        // than duplicating the host-size rule. Every reversed frame must fit.
+        for (int phase = 0; phase <= 64; ++phase)
+            for (std::size_t boundary = 0; boundary <= StripCount; ++boundary)
+            {
+                const auto section = SectionAt(source, target, transition.genieEdge_,
+                    Mix(transition.collapseFrom_, transition.collapseTo_, phase / 64.0),
+                    static_cast<double>(boundary) / StripCount);
+                for (const double cross : {section.center - section.width * 0.5,
+                        section.center + section.width * 0.5})
+                {
+                    const double x = Vertical(transition.genieEdge_) ? cross : section.axis;
+                    const double y = Vertical(transition.genieEdge_) ? section.axis : cross;
+                    if (x < host.left - 0.5 || x > host.right + 0.5 ||
+                        y < host.top - 0.5 || y > host.bottom + 0.5)
+                    {
+                        std::cout << "Reversed Genie outside host: point=" << x << ',' << y
+                            << " host=" << host.left << ',' << host.top << ',' << host.right
+                            << ',' << host.bottom << '\n';
+                        return false;
+                    }
+                }
+            }
+        return true;
+    }
     static HWND PresentDisplacedGenie(DockWindowTransition& transition,
         HWND source, RECT frame, RECT dock, snowdesktop::dock_genie::Edge edge,
         bool compositorTimeline)
@@ -468,7 +511,7 @@ void CheckFramePixelAlignment()
                 host.bottom - host.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
             UpdateWindow(backing);
             const ULONGLONG prepareStarted = GetTickCount64();
-            const bool started = transition.StartMinimize(source, dock);
+            const bool started = transition.StartMinimize(source, displacedDock);
             std::cout << "Genie compositor preparation: " << GetTickCount64() - prepareStarted << "ms\n";
             Check(started && DockWindowTransitionTestAccess::TimelineActive(transition) &&
                 scheduler.Metrics().activeAnimations == 0 && scheduler.Metrics().activeTimers == 1,
@@ -493,13 +536,15 @@ void CheckFramePixelAlignment()
                 } while (GetTickCount64() < deadline);
                 Check(moved, "Genie window pixels deform while the UI animation scheduler is not dispatched");
                 int requests = 0;
-                const bool reversed = transition.StartRestore(source, dock, [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                DockWindowTransitionTestAccess::SeekProgress(transition, 0.6);
+                const auto restore = [&](HWND window, DockWindowRestoreTransitionPhase phase) {
                     if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
                     {
                         ++requests;
                         ShowWindow(window, SW_SHOWNOACTIVATE);
                     }
-                });
+                };
+                const bool reversed = transition.StartRestore(source, displacedDock, restore);
                 Check(reversed && requests == 1,
                     "reversing a running compositor Genie requests native restore exactly once");
                 const ULONGLONG preparationDeadline = GetTickCount64() + 1000;
@@ -516,6 +561,33 @@ void CheckFramePixelAlignment()
                 Check(DockWindowTransitionTestAccess::TimelineActive(transition) &&
                     scheduler.Metrics().activeAnimations == 0 && requests == 1,
                     "reversed Genie returns to compositor playback after native restore preparation");
+                Check(DockWindowTransitionTestAccess::HostContainsGenieOutline(transition),
+                    "restoring a partially pulled Genie keeps its whole outline inside the render host");
+                // Interrupt the reversal again before it completes. This must
+                // retain the same full envelope through another native rebind.
+                DockWindowTransitionTestAccess::SeekProgress(transition, 0.25);
+                Check(transition.StartMinimize(source, displacedDock),
+                    "a prepared Genie restore can immediately reverse to minimize");
+                ShowWindow(source, SW_MINIMIZE);
+                Check(DockWindowTransitionTestAccess::HostContainsGenieOutline(transition),
+                    "a repeated minimize reversal preserves the remaining deformed outline");
+                DockWindowTransitionTestAccess::SeekProgress(transition, 0.45);
+                Check(transition.StartRestore(source, displacedDock, restore),
+                    "a second interrupted Genie minimize requests another restore");
+                const ULONGLONG secondDeadline = GetTickCount64() + 1000;
+                while (transition.IsActive() && !DockWindowTransitionTestAccess::TimelineActive(transition) &&
+                    GetTickCount64() < secondDeadline)
+                {
+                    scheduler.DispatchDue();
+                    MSG message{};
+                    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                    { TranslateMessage(&message); DispatchMessageW(&message); }
+                    const HANDLE wake = scheduler.WaitHandle();
+                    MsgWaitForMultipleObjects(1, &wake, FALSE, 10, QS_ALLINPUT);
+                }
+                Check(DockWindowTransitionTestAccess::TimelineActive(transition) && requests == 2 &&
+                    DockWindowTransitionTestAccess::HostContainsGenieOutline(transition),
+                    "repeated restore preparation preserves the entire remaining Genie silhouette");
                 transition.Cancel();
                 DWORD flags = 0;
                 Check(!transition.IsActive() && scheduler.Metrics().activeAnimations == 0 &&

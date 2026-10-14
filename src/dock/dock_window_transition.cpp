@@ -1906,8 +1906,12 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
         windowRect_ = frame;
         toRect_ = windowRect_;
         if (effect_ == 2) fromRect_ = toRect_;
+        // A reversed Genie's interpolated frame is only a timing proxy: its
+        // pulled edge can already reach the Dock outside that rectangle. Keep
+        // the full deformation envelope when rebinding the restored image.
         const RECT requestedHost = UsesCompositionImage()
-            ? ResolveDockWindowImageHostRect(fromRect_, toRect_) : fromRect_;
+            ? ResolveDockWindowImageHostRect(effect_ == 3 ? dockRect_ : fromRect_, toRect_)
+            : fromRect_;
         const auto safeHost = ResolveDockWindowNonFullscreenHostRect(requestedHost, animationMonitorRects_);
         bool prepared = safeHost.has_value();
         if (prepared)
