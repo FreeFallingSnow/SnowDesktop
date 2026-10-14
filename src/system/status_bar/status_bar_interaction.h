@@ -93,13 +93,23 @@ struct StatusBarInteraction
         }
         focused.reset();
     }
+    // Show desktop does not open a popup. A matching pointer hover can retain
+    // its tooltip through both button-down and invocation, without a new delay.
+    void PrepareActionHover(const std::vector<StatusBarItem>& items, std::optional<std::size_t> index,
+        bool context, const std::function<void()>& clearHover) const
+    {
+        const bool retain = !context && index && hovered == index && *index < items.size() &&
+            !items[*index].icon && items[*index].action == StatusBarAction::ShowDesktop;
+        if (!retain && clearHover) clearHover();
+    }
     StatusBarAction Press(const std::vector<StatusBarItem>& items, POINT point, bool right, bool doubleClick = false,
-        const std::function<void()>& pointerPressed = {})
+        const std::function<void()>& pointerPressed = {}, const std::function<void()>& clearHover = {})
     {
         // Notify before any blank-area, double-click or native tray early return.
         // These no-activate surfaces cannot clear host selection via focus loss.
         if (pointerPressed) pointerPressed();
         const auto hit = HitTestStatusBarItems(items, point);
+        PrepareActionHover(items, hit, right, clearHover);
         // A Task View double-click is one opening request. Do not re-arm its
         // second release while Shell may be taking over the foreground.
         if (!right && doubleClick && hit && !items[*hit].icon &&

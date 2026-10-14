@@ -846,7 +846,7 @@ struct StatusBar::Impl
             const auto action = invocation->action;
             CancelTrayMenu();
             if (owner.tray) owner.tray->CancelFocusReturn();
-            ClearHover();
+            interaction.PrepareActionHover(items, index, context, [this] { ClearHover(); });
             paintDirty = true; Paint();
             auto onActivated = owner.activate;
             onActivated(action, hwnd, anchor);
@@ -1061,10 +1061,9 @@ struct StatusBar::Impl
             {
                 const POINT point{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
                 const bool doubleClick = message == WM_LBUTTONDBLCLK && self->interaction.IsDoubleClickTarget(self->items, point);
-                self->ClearHover();
                 if (self->owner.tray) self->owner.tray->CancelFocusReturn();
                 if (self->interaction.Press(self->items, point, message == WM_RBUTTONDOWN, doubleClick,
-                    self->owner.pointerPressed) == StatusBarAction::Dismiss)
+                    self->owner.pointerPressed, [self] { self->ClearHover(); }) == StatusBarAction::Dismiss)
                 {
                     self->DismissSurfaces();
                     return 0;

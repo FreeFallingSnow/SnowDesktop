@@ -1514,6 +1514,61 @@ void CheckStatusBarInteraction()
                 Check(IsRectEmpty(&bounds) || bounds.right <= width - 8,
                     "even narrow-layout fallback keeps visible controls out of the show-desktop edge");
         }
+    {
+        // Reproduce the press/release/invocation path. Only native popup hiding
+        // is replaced: clearing twice used to erase the visible tip and deadline.
+        const std::vector<StatusBarItem> targets{
+            item("controlCenter", StatusBarAction::ControlCenter, {160, 0, 296, 32}, false),
+            item("showDesktop", StatusBarAction::ShowDesktop, {312, 0, 320, 32}, false)};
+        StatusBarInteraction click;
+        NativeTooltipState tooltip;
+        tooltip.Enter("bar/showDesktop", L"Show desktop", {}, 100, 400);
+        click.hovered = 1;
+        int hides = 0, presses = 0;
+        const auto clearHover = [&] { ++hides; tooltip.Leave(); click.hovered.reset(); };
+        for (const bool doubleClick : {false, true})
+        {
+            Check(click.Press(targets, {319, 16}, false, doubleClick,
+                [&] { ++presses; }, clearHover) == StatusBarAction::None,
+                "show desktop still notifies the host and arms the pointer gesture");
+            const auto released = click.Release(targets, {319, 16}, false);
+            const auto invocation = ResolveStatusBarInvocation(targets, released.item, false);
+            Check(released.accepted && invocation && invocation->action == StatusBarAction::ShowDesktop,
+                "retaining the tooltip must not swallow the show-desktop action");
+            click.PrepareActionHover(targets, released.item, false, clearHover);
+            Check(hides == 0 && click.hovered == 1 && tooltip.key == "bar/showDesktop" && tooltip.readyAt == 500,
+                "press and invocation retain the existing tooltip without restarting its hover deadline");
+        }
+        Check(presses == 2, "retaining the tooltip never suppresses host pointer notification");
+        click.Press(targets, {319, 16}, true, false, {}, clearHover);
+        Check(hides == 1 && tooltip.key.empty() && !click.hovered,
+            "the same edge's context click dismisses the tooltip before opening a menu");
+        const auto context = click.Release(targets, {319, 16}, true);
+        const auto contextInvocation = ResolveStatusBarInvocation(targets, context.item, true);
+        Check(context.accepted && contextInvocation && contextInvocation->action == StatusBarAction::Menu,
+            "tooltip retention does not alter the edge's context-menu routing");
+        tooltip.Enter("bar/controlCenter", L"Controls", {}, 600, 400); click.hovered = 0;
+        click.Press(targets, {319, 16}, false, false, {}, clearHover);
+        Check(hides == 2 && tooltip.key.empty(), "clicking the edge cannot retain another target's stale tooltip");
+        tooltip.Enter("bar/showDesktop", L"Show desktop", {}, 600, 400); click.hovered = 1;
+        click.Press(targets, {180, 16}, false, false, {}, clearHover);
+        Check(hides == 3 && tooltip.key.empty(), "clicking another button keeps normal tooltip dismissal");
+        tooltip.Enter("bar/showDesktop", L"Show desktop", {}, 600, 400); click.hovered = 1;
+        click.Press(targets, {305, 16}, false, false, {}, clearHover);
+        Check(hides == 4 && !click.hovered, "blank-area dismissal must not preserve the edge tooltip");
+        tooltip.Enter("bar/showDesktop", L"Show desktop", {}, 600, 400); click.hovered = 1;
+        click.PrepareActionHover(targets, {}, false, clearHover);
+        Check(hides == 5 && tooltip.key.empty(), "invalid invocation cannot retain a removed edge's tooltip");
+        // Negative control: replay the old window's unconditional pre-press
+        // hide with the same gesture; the preservation check must reject it.
+        tooltip.Enter("bar/showDesktop", L"Show desktop", {}, 100, 400); click.hovered = 1;
+        clearHover();
+        click.Press(targets, {319, 16}, false, false, {}, clearHover);
+        const auto legacyRelease = click.Release(targets, {319, 16}, false);
+        click.PrepareActionHover(targets, legacyRelease.item, false, clearHover);
+        Check(legacyRelease.accepted && tooltip.key.empty() && tooltip.readyAt == 0 && !click.hovered,
+            "the original unconditional hide reproduces the lost tooltip and hover deadline");
+    }
     const std::vector<StatusBarItem> before{
         item("menu", StatusBarAction::SystemMenu, {0, 0, 32, 32}, false),
         item("menu", StatusBarAction::Tray, {64, 0, 96, 32}, true),
