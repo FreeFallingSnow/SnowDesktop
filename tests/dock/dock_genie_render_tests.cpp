@@ -545,7 +545,7 @@ LRESULT CALLBACK MaximizedFixtureProc(HWND window, UINT message, WPARAM wParam, 
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-std::array<double, 2> FrameMarkerCenters(HWND ownedDestination, unsigned minimum = 150)
+std::array<double, 2> FrameMarkerCenters(HWND ownedDestination)
 {
     RECT area{};
     if (!GetWindowRect(ownedDestination, &area)) return {-1, -1};
@@ -575,10 +575,11 @@ std::array<double, 2> FrameMarkerCenters(HWND ownedDestination, unsigned minimum
                 {
                     const unsigned pixel = pixels[y * width + x];
                     const unsigned red = (pixel >> 16) & 255, green = (pixel >> 8) & 255, blue = pixel & 255;
-                    const bool redMarker =
-                        minimum < 150 ? red > green + 40 && red > blue + 40 : red > 150 && green < 70 && blue < 100;
-                    const bool greenMarker =
-                        minimum < 150 ? green > red + 40 && green > blue + 40 : green > 150 && red < 70 && blue < 100;
+                    // The owned GDI markers can read back at R/G=122 after
+                    // display colour conversion. Preserve their geometry using
+                    // channel separation rather than a fixed brightness floor.
+                    const bool redMarker = red > green + 40 && red > blue + 40;
+                    const bool greenMarker = green > red + 40 && green > blue + 40;
                     if (redMarker)
                     {
                         sums[0] += x;
@@ -855,7 +856,7 @@ void CheckFramePixelAlignment()
                     do
                     {
                         DwmFlush();
-                        actual = FrameMarkerCenters(presented, 60);
+                        actual = FrameMarkerCenters(presented);
                         if (std::abs(actual[0] - expected[0]) < 4 && std::abs(actual[1] - expected[1]) < 4)
                             break;
                     } while (GetTickCount64() < deadline);
@@ -878,7 +879,7 @@ void CheckFramePixelAlignment()
                     do
                     {
                         DwmFlush();
-                        markers = FrameMarkerCenters(tail, 60);
+                        markers = FrameMarkerCenters(tail);
                     } while ((markers[0] >= 0 || markers[1] >= 0) && GetTickCount64() < deadline);
                     Check(markers[0] < 0 && markers[1] < 0,
                           "a transparent subpixel tail cannot reappear as coloured source fragments");
@@ -904,7 +905,7 @@ void CheckFramePixelAlignment()
                 do
                 {
                     DwmFlush();
-                    const auto centers = FrameMarkerCenters(transition.GetPresentationWindow(), 60);
+                    const auto centers = FrameMarkerCenters(transition.GetPresentationWindow());
                     if (centers[0] >= 0 && std::abs(centers[0] - initialRed) > 4)
                     {
                         moved = true;

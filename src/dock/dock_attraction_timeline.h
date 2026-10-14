@@ -5,7 +5,7 @@
 
 namespace snowdesktop::dock_attraction
 {
-inline constexpr std::size_t TimelineSteps = 32;
+inline constexpr std::size_t TimelineSteps = 8;
 // Nine projective coefficients, local gradient opacity, parent opacity.
 using Values = std::array<double, 11>;
 struct Frame

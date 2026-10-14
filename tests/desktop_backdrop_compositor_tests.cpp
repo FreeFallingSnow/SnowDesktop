@@ -126,10 +126,17 @@ int CheckDockTransitionShellExclusion()
     const std::array<RECT, 2> aligned{{{0, 0, 1280, 720}, {1280, 0, 2560, 1080}}};
     const auto alignedHost = ResolveDockWindowNonFullscreenHostRect({0, 0, 2560, 1080}, aligned);
     check(alignedHost && !covers(*alignedHost, aligned[0]) && !covers(*alignedHost, aligned[1]),
-        "one pixel at a shared monitor edge prevents fullscreen coverage on both monitors");
+          "one pixel at a shared monitor edge prevents fullscreen coverage on both monitors");
     const std::array<RECT, 2> staggered{{{-1280, -200, 0, 520}, {0, 0, 1280, 720}}};
-    check(!ResolveDockWindowNonFullscreenHostRect({-1280, -200, 1280, 720}, staggered),
-        "unsafe staggered monitor unions use native fallback rather than clipping substantial content");
+    const RECT staggeredBounds{-1280, -200, 1280, 720};
+    const auto staggeredHost = ResolveDockWindowNonFullscreenHostRect(staggeredBounds, staggered);
+    check(staggeredHost && !covers(*staggeredHost, staggered[0]) && !covers(*staggeredHost, staggered[1]) &&
+              staggeredHost->left - staggeredBounds.left <= 1 && staggeredHost->top - staggeredBounds.top <= 1 &&
+              staggeredBounds.right - staggeredHost->right <= 1 && staggeredBounds.bottom - staggeredHost->bottom <= 1,
+          "offset displays use combined one-pixel guards without clipping substantial content");
+    const std::array<RECT, 3> interior{{{-1280, -200, 0, 520}, {0, 0, 1280, 720}, {1280, 200, 2560, 920}}};
+    check(!ResolveDockWindowNonFullscreenHostRect({-1280, -200, 2560, 920}, interior),
+          "a fully interior display retains native fallback when one-pixel outer guards cannot uncover it");
     // Called only on the private fixture desktop. Use the production HWND and
     // host-bounds rule without capturing or minimizing an external application.
     for (int generation = 0; generation < 2; ++generation)
