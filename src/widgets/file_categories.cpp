@@ -353,8 +353,8 @@ std::wstring FileCategories::CachedActiveCategoryId() const
 /**
  * @brief 构建当前激活分类的布局段表（LayoutSegment），缓存到 layoutCache_。
  *
- * 列表模式下：每组先插入一个 Header 段（高 28px），接着一个 Item 段包含该组全部条目。
- * 网格模式下：每组先插入一个 Header 段（高 24px，占满行宽），接着一个 Item 段，
+ * 列表模式下：每组先插入一个 Header 段（高 28Cu），接着一个 Item 段包含该组全部条目。
+ * 网格模式下：每组先插入一个 Header 段（高 36Cu，占满行宽），接着一个 Item 段，
  * 其内条目按 columns 列排布。
  */
 void FileCategories::EnsureLayout() const
@@ -1341,14 +1341,16 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
         {
             if (!seg.isHeader) continue;
             RECT headerRect = MakeRect(content.left,
-                std::max<LONG>(content.top, content.top + seg.y - scroll),
+                content.top + seg.y - scroll,
                 content.right,
-                std::min<LONG>(content.bottom, content.top + seg.y + seg.height - scroll));
-            if (headerRect.top >= headerRect.bottom) continue;
+                content.top + seg.y + seg.height - scroll);
+            if (headerRect.bottom <= content.top ||
+                headerRect.top >= content.bottom) continue;
 
+            // Center in the full row: vertical insets can clip fallback glyphs.
+            // ScrollContentClip crops the viewport without moving the baseline.
             RECT labelRect = headerRect;
             labelRect.left += Cu(8.0f);
-            InflateRect(&labelRect, 0, -Cu(8.0f));
             app_->DrawD2DText(context, seg.label, labelRect,
                 (lt && lightHeaderFormat) ? lightHeaderFormat :
                     (headerFormat ? headerFormat : app_->listItemTextFormat_.Get()),

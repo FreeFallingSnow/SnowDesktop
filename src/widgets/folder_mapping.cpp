@@ -1066,16 +1066,14 @@ void FolderMapping::DrawContent(ID2D1DeviceContext* context, RECT body)
             if (!segment.isHeader) continue;
             RECT headerRect = MakeRect(
                 content.left,
-                std::max<LONG>(
-                    content.top, content.top + segment.y - scroll),
+                content.top + segment.y - scroll,
                 content.right,
-                std::min<LONG>(
-                    content.bottom,
-                    content.top + segment.y + segment.height - scroll));
-            if (headerRect.top >= headerRect.bottom) continue;
+                content.top + segment.y + segment.height - scroll);
+            if (headerRect.bottom <= content.top ||
+                headerRect.top >= content.bottom) continue;
+            // Keep full-row centering; the content clip handles viewport edges.
             RECT labelRect = headerRect;
             labelRect.left += Cu(8.0f);
-            InflateRect(&labelRect, 0, -Cu(8.0f));
             app_->DrawD2DText(context, segment.label, labelRect,
                 (lt && lightHeaderFormat)
                     ? lightHeaderFormat
