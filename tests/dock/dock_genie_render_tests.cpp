@@ -37,6 +37,35 @@ struct DockWindowTransitionTestAccess
     {
         return transition.compositionTimelineActive_;
     }
+    static HWND PresentDisplacedGenie(DockWindowTransition& transition,
+        HWND source, RECT frame, RECT dock, snowdesktop::dock_genie::Edge edge,
+        bool compositorTimeline)
+    {
+        transition.sourceWindow_ = source;
+        transition.windowRect_ = frame;
+        transition.dockRect_ = dock;
+        transition.genieEdge_ = edge;
+        transition.effect_ = 3;
+        transition.imageHostRect_ = ResolveDockWindowImageHostRect(frame, dock);
+        if (!transition.CreateSharedWindowImage()) return nullptr;
+        const RECT host = transition.imageHostRect_;
+        if (!SetWindowPos(transition.hwnd_, HWND_TOPMOST, host.left, host.top,
+                host.right - host.left, host.bottom - host.top, SWP_NOACTIVATE))
+            return nullptr;
+        if (compositorTimeline)
+        {
+            // Hold the geometry at its displaced endpoint. Override only the
+            // usual invisible endpoint opacity so its actual pixels can be read.
+            transition.collapseFrom_ = transition.collapseTo_ = 1.0;
+            if (!transition.StartGenieTimeline() ||
+                FAILED(transition.compositionEffect_->SetOpacity(1.0f)) ||
+                FAILED(transition.compositionDevice_->Commit())) return nullptr;
+        }
+        else if (!transition.ApplyGenieFrame(1.0, 255)) return nullptr;
+        transition.presenting_ = true;
+        ShowWindow(transition.hwnd_, SW_SHOWNOACTIVATE);
+        return transition.hwnd_;
+    }
 };
 
 namespace
@@ -372,11 +401,59 @@ void CheckFramePixelAlignment()
             DockWindowTransition transition;
             Check(scheduler.Initialize() && transition.Initialize(type.hInstance, &scheduler, nullptr, composition.Get()),
                 "owned compositor animation fixture initializes");
+            const double red = clientOrigin.x - frame.left + 27.5;
+            const double green = clientOrigin.x - frame.left + client.right - 28.5;
             snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                 2, 0, 60, false, false, 3);
             const RECT dock{frame.left + 80, frame.bottom + 8, frame.left + 144, frame.bottom + 72};
             const RECT host = ResolveDockWindowImageHostRect(frame, dock);
             ShowWindow(destination, SW_HIDE);
+            SetWindowPos(backing, HWND_TOPMOST, host.left, host.top, host.right - host.left,
+                host.bottom - host.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            UpdateWindow(backing);
+            // A destination outside BOTH source axes makes a clip performed
+            // after perspective discard the whole image. Read actual DWM
+            // marker pixels, covering both live matrices and compositor curves.
+            const RECT displacedDock{frame.right + 8, frame.bottom + 8,
+                frame.right + 72, frame.bottom + 72};
+            const RECT displacedHost = ResolveDockWindowImageHostRect(frame, displacedDock);
+            SetWindowPos(backing, HWND_TOPMOST, displacedHost.left, displacedHost.top,
+                displacedHost.right - displacedHost.left, displacedHost.bottom - displacedHost.top,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            UpdateWindow(backing);
+            for (const auto edge : {snowdesktop::dock_genie::Edge::Bottom,
+                    snowdesktop::dock_genie::Edge::Top, snowdesktop::dock_genie::Edge::Left,
+                    snowdesktop::dock_genie::Edge::Right})
+                for (const bool compositorTimeline : {false, true})
+                {
+                    DockWindowTransition displaced;
+                    const bool initialized = displaced.Initialize(type.hInstance, nullptr, nullptr, composition.Get());
+                    const HWND presented = initialized ? DockWindowTransitionTestAccess::PresentDisplacedGenie(
+                        displaced, source, frame, displacedDock, edge, compositorTimeline) : nullptr;
+                    Check(presented != nullptr, "displaced production Genie fixture prepares");
+                    if (presented)
+                    {
+                        const std::array<double, 2> expected{
+                            displacedDock.left - displacedHost.left + red * 64.0 / size.cx,
+                            displacedDock.left - displacedHost.left + green * 64.0 / size.cx};
+                        std::array<double, 2> actual{-1, -1};
+                        const ULONGLONG deadline = GetTickCount64() + 500;
+                        do
+                        {
+                            DwmFlush();
+                            actual = FrameMarkerCenters(presented);
+                            if (std::abs(actual[0] - expected[0]) < 2 &&
+                                std::abs(actual[1] - expected[1]) < 2) break;
+                        } while (GetTickCount64() < deadline);
+                        std::cout << "Displaced Genie edge=" << static_cast<int>(edge)
+                            << " timeline=" << compositorTimeline << " markers=" << actual[0]
+                            << ',' << actual[1] << " expected=" << expected[0] << ',' << expected[1] << '\n';
+                        Check(std::abs(actual[0] - expected[0]) < 2 &&
+                            std::abs(actual[1] - expected[1]) < 2,
+                            "source strip clips move with perspective beyond the original image bounds");
+                    }
+                    displaced.Cancel();
+                }
             SetWindowPos(backing, HWND_TOPMOST, host.left, host.top, host.right - host.left,
                 host.bottom - host.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
             UpdateWindow(backing);

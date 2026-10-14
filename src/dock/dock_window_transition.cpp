@@ -1100,18 +1100,6 @@ bool DockWindowTransition::CreateGenieStrips()
     genieStrips_.reserve(snowdesktop::dock_genie::StripCount);
     for (std::size_t i = 0; i < snowdesktop::dock_genie::StripCount; ++i)
     {
-        Microsoft::WRL::ComPtr<IDCompositionVisual3> strip;
-        snowdesktop::dock_thumbnail::SharedVisual image;
-        HRESULT hr = image.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), compositionImageSize_,
-            &compositionSourceRegion_);
-        strip = image.visual;
-        if (SUCCEEDED(hr)) genieWindowImages_.push_back(std::move(image));
-        if (FAILED(hr) || !strip)
-        {
-            imageResult_ = FAILED(hr) ? hr : E_FAIL;
-            return false;
-        }
-        genieStrips_.push_back(strip);
         const float begin = static_cast<float>(i) /
             static_cast<float>(snowdesktop::dock_genie::StripCount);
         const float end = static_cast<float>(i + 1) /
@@ -1123,7 +1111,37 @@ bool DockWindowTransition::CreateGenieStrips()
                 width, std::min(height, end * height + 0.75f))
             : D2D1::RectF(std::max(0.0f, begin * width - 0.75f), 0,
                 std::min(width, end * width + 0.75f), height);
-        if (SUCCEEDED(hr)) hr = strip->SetClip(clip);
+        // Each DWM relationship supplies only this source band, rather than
+        // another full-size window image. Keep integer pixel crops unscaled
+        // and preserve the original fractional overlap inside the crop.
+        RECT crop{static_cast<LONG>(std::floor(clip.left)), static_cast<LONG>(std::floor(clip.top)),
+            static_cast<LONG>(std::ceil(clip.right)), static_cast<LONG>(std::ceil(clip.bottom))};
+        // SharedVisual requires both dimensions to exceed one pixel, including
+        // very small source windows whose individual bands are subpixel-sized.
+        crop.right = std::min(compositionImageSize_.cx, std::max(crop.right, crop.left + 2));
+        crop.bottom = std::min(compositionImageSize_.cy, std::max(crop.bottom, crop.top + 2));
+        crop.left = std::min(crop.left, crop.right - 2);
+        crop.top = std::min(crop.top, crop.bottom - 2);
+        const SIZE size{crop.right - crop.left, crop.bottom - crop.top};
+        const RECT source{compositionSourceRegion_.left + crop.left, compositionSourceRegion_.top + crop.top,
+            compositionSourceRegion_.left + crop.right, compositionSourceRegion_.top + crop.bottom};
+        snowdesktop::dock_thumbnail::SharedVisual image;
+        HRESULT hr = image.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), size, &source);
+        Microsoft::WRL::ComPtr<IDCompositionVisual3> strip = image.visual;
+        if (FAILED(hr) || !strip)
+        {
+            imageResult_ = FAILED(hr) ? hr : E_FAIL;
+            return false;
+        }
+        genieWindowImages_.push_back(std::move(image));
+        genieStrips_.push_back(strip);
+        // Visual3 applies offsets before its Transform, so the existing mesh
+        // and precomputed curves still use the full source coordinate system.
+        const float cropLeft = static_cast<float>(crop.left), cropTop = static_cast<float>(crop.top);
+        hr = strip->SetOffsetX(cropLeft);
+        if (SUCCEEDED(hr)) hr = strip->SetOffsetY(cropTop);
+        if (SUCCEEDED(hr)) hr = strip->SetClip(D2D1::RectF(
+            clip.left - cropLeft, clip.top - cropTop, clip.right - cropLeft, clip.bottom - cropTop));
         if (SUCCEEDED(hr)) hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
         if (SUCCEEDED(hr)) hr = strip->SetBitmapInterpolationMode(
             DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
