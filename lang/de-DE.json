@@ -1565,7 +1565,7 @@
     "settings.animation.popup": "Popup-Animation",
     "settings.animation.popup.description": "Effekte beim Öffnen und Schließen von Popups.",
     "settings.animation.speed": "Animationsgeschwindigkeit",
-    "settings.animation.speed.description": "Geschwindigkeit der Popup- und Dock-Animationen anpassen.",
+    "settings.animation.speed.description": "Die Faktoren geben die Wiedergabegeschwindigkeit relativ zur Standardeinstellung an.",
     "settings.animation.hover": "Effekt beim Zeigen",
     "settings.animation.hover.description": "Beim Zeigen ein Symbol oder benachbarte Symbole vergrößern.",
     "settings.animation.hoverScale": "Vergrößerung beim Zeigen (%)",
@@ -1585,9 +1585,9 @@
     "settings.animation.option.off": "Aus",
     "settings.animation.option.fade": "Ein-/Ausblenden",
     "settings.animation.option.scale": "Skalieren",
-    "settings.animation.option.fast": "Schnell",
-    "settings.animation.option.standard": "Standard",
-    "settings.animation.option.slow": "Langsam",
+    "settings.animation.option.fast": "Schnell (1.43×)",
+    "settings.animation.option.standard": "Standard (1×)",
+    "settings.animation.option.slow": "Langsam (0.71×)",
     "settings.animation.option.noMagnification": "Keine Vergrößerung",
     "settings.animation.option.singleIcon": "Ein Symbol leicht vergrößern",
     "settings.animation.option.wave": "Welle",
@@ -2752,5 +2752,8 @@
   "settings.personalization.windowPinBorder.color": "Rahmenfarbe",
   "settings.personalization.windowPinBorder.width": "Rahmenstärke",
   "settings.personalization.windowPinBorder.opacity": "Deckkraft des Rahmens",
-  "settings.animation.option.attraction": "Anziehungseffekt"
+  "settings.animation.option.attraction": "Anziehungseffekt",
+  "settings.animation.option.slower": "Langsamer (0.5×)",
+  "settings.animation.option.verySlow": "Sehr langsam (0.33×)",
+  "settings.animation.option.slowest": "Am langsamsten (0.25×)"
 }

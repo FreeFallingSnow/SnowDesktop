@@ -1565,7 +1565,7 @@
     "settings.animation.popup": "Popup animation",
     "settings.animation.popup.description": "Effects when opening and closing popups.",
     "settings.animation.speed": "Animation speed",
-    "settings.animation.speed.description": "Adjust the speed of popup and Dock animations.",
+    "settings.animation.speed.description": "Multipliers indicate playback speed relative to the standard setting.",
     "settings.animation.hover": "Hover effect",
     "settings.animation.hover.description": "Magnify one icon or nearby icons when you hover.",
     "settings.animation.hoverScale": "Hover magnification (%)",
@@ -1585,9 +1585,9 @@
     "settings.animation.option.off": "Off",
     "settings.animation.option.fade": "Fade",
     "settings.animation.option.scale": "Scale",
-    "settings.animation.option.fast": "Fast",
-    "settings.animation.option.standard": "Standard",
-    "settings.animation.option.slow": "Slow",
+    "settings.animation.option.fast": "Fast (1.43×)",
+    "settings.animation.option.standard": "Standard (1×)",
+    "settings.animation.option.slow": "Slow (0.71×)",
     "settings.animation.option.noMagnification": "No magnification",
     "settings.animation.option.singleIcon": "Gentle single-icon enlargement",
     "settings.animation.option.wave": "Wave",
@@ -2752,5 +2752,8 @@
   "settings.personalization.windowPinBorder.color": "Border color",
   "settings.personalization.windowPinBorder.width": "Border thickness",
   "settings.personalization.windowPinBorder.opacity": "Border opacity",
-  "settings.animation.option.attraction": "Attraction"
+  "settings.animation.option.attraction": "Attraction",
+  "settings.animation.option.slower": "Slower (0.5×)",
+  "settings.animation.option.verySlow": "Very slow (0.33×)",
+  "settings.animation.option.slowest": "Slowest (0.25×)"
 }

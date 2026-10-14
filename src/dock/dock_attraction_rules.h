@@ -141,7 +141,7 @@ inline Patch ControlPoints(Rect window, Rect dock, double collapsed) noexcept
                                    : below && j == 5 ? 0.90
                                                      : 1.0);
         result[i] = Bezier(initial[i], control(first, j, initial[i]), control(second, j, target), target, time);
-        // The point endpoint has zero area. Retain a subpixel source-shaped
+        // The point endpoint has zero area. Retain a small source-shaped
         // core for finite compositor matrices; the endpoint is transparent.
         result[i] = result[i] + (initial[i] - Point{w * 0.5, h * 0.5}) * (0.002 * std::pow(collapsed, 8));
         result[i] = result[i] + Point{window.left, window.top};
@@ -211,6 +211,21 @@ inline std::optional<Matrix> Projection(const Patch &patch, Cell cell, double so
 inline double Opacity(double collapsed) noexcept
 {
     return 1 - dock_genie::Smooth((collapsed - 0.88) / 0.12);
+}
+inline double CellVisibility(const Patch &patch, Cell cell) noexcept
+{
+    const std::array<Point, 4> corners{Surface(patch, cell.left, cell.top), Surface(patch, cell.right, cell.top),
+                                       Surface(patch, cell.right, cell.bottom), Surface(patch, cell.left, cell.bottom)};
+    double area = 2;
+    for (std::size_t i = 0; i < corners.size(); ++i)
+    {
+        const auto a = corners[(i + 1) % 4] - corners[i];
+        const auto b = corners[(i + 2) % 4] - corners[(i + 1) % 4];
+        area = std::min(area, a.x * b.y - a.y * b.x);
+    }
+    // Retire a tile smoothly before it folds or becomes a subpixel sliver.
+    // Its finite endpoint matrix must never make a tiny remnant visible again.
+    return dock_genie::Smooth(area / 2);
 }
 inline double CellOpacity(Rect window, Rect dock, double collapsed, Cell cell) noexcept
 {

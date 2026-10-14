@@ -1565,7 +1565,7 @@
     "settings.animation.popup": "彈出視窗動畫",
     "settings.animation.popup.description": "彈出視窗開啟和關閉時的效果。",
     "settings.animation.speed": "動畫速度",
-    "settings.animation.speed.description": "調整彈出視窗和 Dock 動畫的快慢。",
+    "settings.animation.speed.description": "倍率表示相對標準檔的播放速度。",
     "settings.animation.hover": "游標暫留效果",
     "settings.animation.hover.description": "游標停留時放大單一或鄰近圖示。",
     "settings.animation.hoverScale": "游標停留放大比例（%）",
@@ -1585,9 +1585,9 @@
     "settings.animation.option.off": "關閉",
     "settings.animation.option.fade": "淡入淡出",
     "settings.animation.option.scale": "縮放",
-    "settings.animation.option.fast": "快",
-    "settings.animation.option.standard": "標準",
-    "settings.animation.option.slow": "慢",
+    "settings.animation.option.fast": "快（1.43×）",
+    "settings.animation.option.standard": "標準（1×）",
+    "settings.animation.option.slow": "慢（0.71×）",
     "settings.animation.option.noMagnification": "不放大",
     "settings.animation.option.singleIcon": "單一圖示輕微放大",
     "settings.animation.option.wave": "波浪放大",
@@ -2752,5 +2752,8 @@
   "settings.personalization.windowPinBorder.color": "邊框色彩",
   "settings.personalization.windowPinBorder.width": "邊框粗細",
   "settings.personalization.windowPinBorder.opacity": "邊框不透明度",
-  "settings.animation.option.attraction": "吸引效果"
+  "settings.animation.option.attraction": "吸引效果",
+  "settings.animation.option.slower": "更慢（0.5×）",
+  "settings.animation.option.verySlow": "很慢（0.33×）",
+  "settings.animation.option.slowest": "最慢（0.25×）"
 }

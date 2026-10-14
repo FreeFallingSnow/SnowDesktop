@@ -14,16 +14,17 @@
 #include <d2d1.h>
 #include <wincodec.h>
 
-#include <cstring>
+#include <array>
 #include <cmath>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <iterator>
 #include <limits>
-#include <utility>
 #include <thread>
-#include <functional>
+#include <utility>
 
 std::wstring GetDataFilePath(const wchar_t* filename)
 {
@@ -882,7 +883,7 @@ int main(int argc, char** argv)
     saved.contextMenuHideMoreManagement = true;
     saved.animationMode = 1;
     saved.popupAnimationEffect = 1;
-    saved.animationSpeed = 2;
+    saved.animationSpeed = 5;
     saved.animationFrameLimit = 30;
     saved.animationEnergySaver = false;
     saved.animationOnBattery = true;
@@ -1118,10 +1119,14 @@ int main(int argc, char** argv)
         Check(!DecodeSurfaceTheme(encoded, theme) && theme == before,
             "invalid custom opacity rejects the complete replacement without changing stored appearance");
     }
-    Check(loaded.animationMode == 1 && loaded.popupAnimationEffect == 1 &&
-        loaded.animationSpeed == 2 && loaded.animationFrameLimit == 30 &&
-        !loaded.animationEnergySaver && loaded.animationOnBattery,
-        "animation preferences survive a settings save and reload");
+    Check(loaded.animationMode == 1 && loaded.popupAnimationEffect == 1 && loaded.animationSpeed == 5 &&
+              loaded.animationFrameLimit == 30 && !loaded.animationEnergySaver && loaded.animationOnBattery,
+          "animation preferences survive a settings save and reload");
+    const std::array<double, 6> animationDurations{0.7, 1.0, 1.4, 2.0, 3.0, 4.0};
+    for (std::size_t choice = 0; choice < animationDurations.size(); ++choice)
+        Check(snowdesktop::animation::NormalizeSpeed(static_cast<int>(choice)) == static_cast<int>(choice) &&
+                  snowdesktop::animation::DurationScale(static_cast<int>(choice)) == animationDurations[choice],
+              "slower playback extends durations while keeping the existing speed choices stable");
     Check(loaded.demoModeEnabled &&
         loaded.widgetDeveloperToolsEnabled &&
         loaded.quickNavTheme == kFourThemeAcrylicDark &&

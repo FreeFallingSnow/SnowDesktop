@@ -321,7 +321,7 @@ void TestCodec()
     settings.externalReplacementPending = true;
     settings.values.general.animationMode = 1;
     settings.values.general.popupAnimationEffect = 1;
-    settings.values.general.animationSpeed = 2;
+    settings.values.general.animationSpeed = 5;
     settings.values.general.animationFrameLimit = 120;
     settings.values.general.animationEnergySaver = false;
     settings.values.general.animationOnBattery = true;
@@ -474,13 +474,10 @@ void TestCodec()
     Check(restored.values.general.quickNavigationAppearance == settings.values.general.quickNavigationAppearance &&
         restored.values.general.collectionPopupAppearance == settings.values.general.collectionPopupAppearance,
         "independent surface modes and custom gradients reach the settings process intact");
-    Check(restored.values.general.animationMode == 1 &&
-        restored.values.general.popupAnimationEffect == 1 &&
-        restored.values.general.animationSpeed == 2 &&
-        restored.values.general.animationFrameLimit == 120 &&
-        !restored.values.general.animationEnergySaver &&
-        restored.values.general.animationOnBattery,
-        "animation preferences reach the independent settings process intact");
+    Check(restored.values.general.animationMode == 1 && restored.values.general.popupAnimationEffect == 1 &&
+              restored.values.general.animationSpeed == 5 && restored.values.general.animationFrameLimit == 120 &&
+              !restored.values.general.animationEnergySaver && restored.values.general.animationOnBattery,
+          "animation preferences reach the independent settings process intact");
     Check(restored.externalReplacementPending && restored.revision == UINT64_MAX &&
         restored.values.dock == settings.values.dock &&
         restored.values.desktop.iconBeautify.filterTintR == 0.123f &&

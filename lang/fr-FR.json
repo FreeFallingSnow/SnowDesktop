@@ -1565,7 +1565,7 @@
     "settings.animation.popup": "Animation des fenêtres contextuelles",
     "settings.animation.popup.description": "Effets à l’ouverture et à la fermeture des fenêtres contextuelles.",
     "settings.animation.speed": "Vitesse des animations",
-    "settings.animation.speed.description": "Réglez la vitesse des animations des fenêtres contextuelles et du Dock.",
+    "settings.animation.speed.description": "Les multiplicateurs indiquent la vitesse de lecture par rapport au réglage normal.",
     "settings.animation.hover": "Effet au survol",
     "settings.animation.hover.description": "Agrandissez une icône ou les icônes voisines au survol.",
     "settings.animation.hoverScale": "Grossissement au survol (%)",
@@ -1585,9 +1585,9 @@
     "settings.animation.option.off": "Désactivées",
     "settings.animation.option.fade": "Fondu",
     "settings.animation.option.scale": "Zoom",
-    "settings.animation.option.fast": "Rapide",
-    "settings.animation.option.standard": "Normale",
-    "settings.animation.option.slow": "Lente",
+    "settings.animation.option.fast": "Rapide (1.43×)",
+    "settings.animation.option.standard": "Normale (1×)",
+    "settings.animation.option.slow": "Lente (0.71×)",
     "settings.animation.option.noMagnification": "Aucun grossissement",
     "settings.animation.option.singleIcon": "Léger agrandissement d’une icône",
     "settings.animation.option.wave": "Vague",
@@ -2752,5 +2752,8 @@
   "settings.personalization.windowPinBorder.color": "Couleur de la bordure",
   "settings.personalization.windowPinBorder.width": "Épaisseur de la bordure",
   "settings.personalization.windowPinBorder.opacity": "Opacité de la bordure",
-  "settings.animation.option.attraction": "Attraction"
+  "settings.animation.option.attraction": "Attraction",
+  "settings.animation.option.slower": "Plus lente (0.5×)",
+  "settings.animation.option.verySlow": "Très lente (0.33×)",
+  "settings.animation.option.slowest": "La plus lente (0.25×)"
 }

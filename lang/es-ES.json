@@ -1565,7 +1565,7 @@
     "settings.animation.popup": "Animación de ventanas emergentes",
     "settings.animation.popup.description": "Efectos al abrir y cerrar ventanas emergentes.",
     "settings.animation.speed": "Velocidad de animación",
-    "settings.animation.speed.description": "Ajusta la velocidad de las animaciones de ventanas emergentes y del Dock.",
+    "settings.animation.speed.description": "Los multiplicadores indican la velocidad de reproducción respecto al ajuste estándar.",
     "settings.animation.hover": "Efecto al pasar el cursor",
     "settings.animation.hover.description": "Amplía un icono o los iconos cercanos al pasar el cursor.",
     "settings.animation.hoverScale": "Ampliación al pasar el cursor (%)",
@@ -1585,9 +1585,9 @@
     "settings.animation.option.off": "Desactivadas",
     "settings.animation.option.fade": "Fundido",
     "settings.animation.option.scale": "Escala",
-    "settings.animation.option.fast": "Rápida",
-    "settings.animation.option.standard": "Estándar",
-    "settings.animation.option.slow": "Lenta",
+    "settings.animation.option.fast": "Rápida (1.43×)",
+    "settings.animation.option.standard": "Estándar (1×)",
+    "settings.animation.option.slow": "Lenta (0.71×)",
     "settings.animation.option.noMagnification": "Sin ampliación",
     "settings.animation.option.singleIcon": "Ampliación suave de un icono",
     "settings.animation.option.wave": "Onda",
@@ -2752,5 +2752,8 @@
   "settings.personalization.windowPinBorder.color": "Color del borde",
   "settings.personalization.windowPinBorder.width": "Grosor del borde",
   "settings.personalization.windowPinBorder.opacity": "Opacidad del borde",
-  "settings.animation.option.attraction": "Atracción"
+  "settings.animation.option.attraction": "Atracción",
+  "settings.animation.option.slower": "Más lenta (0.5×)",
+  "settings.animation.option.verySlow": "Muy lenta (0.33×)",
+  "settings.animation.option.slowest": "La más lenta (0.25×)"
 }

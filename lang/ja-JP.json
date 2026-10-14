@@ -1565,7 +1565,7 @@
     "settings.animation.popup": "ポップアップのアニメーション",
     "settings.animation.popup.description": "ポップアップを開閉するときの効果です。",
     "settings.animation.speed": "アニメーション速度",
-    "settings.animation.speed.description": "ポップアップと Dock のアニメーション速度を調整します。",
+    "settings.animation.speed.description": "倍率は標準設定に対する再生速度を表します。",
     "settings.animation.hover": "ホバー効果",
     "settings.animation.hover.description": "マウスを重ねると、1 つまたは周囲のアイコンを拡大します。",
     "settings.animation.hoverScale": "ホバー時の拡大率 (%)",
@@ -1585,9 +1585,9 @@
     "settings.animation.option.off": "オフ",
     "settings.animation.option.fade": "フェード",
     "settings.animation.option.scale": "拡大縮小",
-    "settings.animation.option.fast": "速い",
-    "settings.animation.option.standard": "標準",
-    "settings.animation.option.slow": "遅い",
+    "settings.animation.option.fast": "速い（1.43×）",
+    "settings.animation.option.standard": "標準（1×）",
+    "settings.animation.option.slow": "遅い（0.71×）",
     "settings.animation.option.noMagnification": "拡大しない",
     "settings.animation.option.singleIcon": "単一アイコンを軽く拡大",
     "settings.animation.option.wave": "波状に拡大",
@@ -2752,5 +2752,8 @@
   "settings.personalization.windowPinBorder.color": "枠の色",
   "settings.personalization.windowPinBorder.width": "枠の太さ",
   "settings.personalization.windowPinBorder.opacity": "枠の不透明度",
-  "settings.animation.option.attraction": "吸引エフェクト"
+  "settings.animation.option.attraction": "吸引エフェクト",
+  "settings.animation.option.slower": "さらに遅い（0.5×）",
+  "settings.animation.option.verySlow": "とても遅い（0.33×）",
+  "settings.animation.option.slowest": "最も遅い（0.25×）"
 }

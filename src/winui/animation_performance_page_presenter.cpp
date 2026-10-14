@@ -114,9 +114,9 @@ struct AnimationPerformancePagePresenter::Impl
              L10N_KEY("settings.animation.option.fade"),
              L10N_KEY("settings.animation.option.scale")});
         AddChoice(speed, generalCard, "speed", "animation.speed", 1,
-            {L10N_KEY("settings.animation.option.fast"),
-             L10N_KEY("settings.animation.option.standard"),
-             L10N_KEY("settings.animation.option.slow")});
+                  {L10N_KEY("settings.animation.option.fast"), L10N_KEY("settings.animation.option.standard"),
+                   L10N_KEY("settings.animation.option.slow"), L10N_KEY("settings.animation.option.slower"),
+                   L10N_KEY("settings.animation.option.verySlow"), L10N_KEY("settings.animation.option.slowest")});
         HookGeneral(mode, &GeneralSettings::animationMode);
         HookGeneral(popup, &GeneralSettings::popupAnimationEffect);
         HookGeneral(speed, &GeneralSettings::animationSpeed);

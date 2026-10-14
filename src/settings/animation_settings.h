@@ -29,7 +29,7 @@ inline int NormalizePopupEffect(int value) noexcept
 }
 inline int NormalizeSpeed(int value) noexcept
 {
-    return value >= 0 && value <= 2 ? value : 1;
+    return value >= 0 && value <= 5 ? value : 1;
 }
 inline int NormalizeFrameLimit(int value) noexcept
 {
@@ -58,8 +58,9 @@ inline bool ResolveEnabled(int mode, bool systemEnabled) noexcept
 }
 inline double DurationScale(int speed) noexcept
 {
-    return NormalizeSpeed(speed) == 0 ? 0.7 :
-        NormalizeSpeed(speed) == 2 ? 1.4 : 1.0;
+    // Keep the three existing stored choices and append slower playback.
+    constexpr double scales[]{0.7, 1.0, 1.4, 2.0, 3.0, 4.0};
+    return scales[NormalizeSpeed(speed)];
 }
 inline int ResolveFrameLimit(int requested, bool energySaverPreference,
     bool batteryPreference, bool systemEnergySaver, bool onBattery) noexcept

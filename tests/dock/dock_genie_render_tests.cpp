@@ -17,6 +17,15 @@
 
 struct DockWindowTransitionTestAccess
 {
+    static RECT AttractionHost(RECT window, RECT dock, std::vector<RECT> monitors)
+    {
+        DockWindowTransition transition;
+        transition.effect_ = 4;
+        transition.windowRect_ = window;
+        transition.dockRect_ = dock;
+        transition.animationMonitorRects_ = std::move(monitors);
+        return transition.ResolveImageHostRect();
+    }
     static void SetPresentationWait(DockWindowTransition& transition,
         std::function<HRESULT(IDCompositionDesktopDevice*)> wait)
     {
@@ -130,7 +139,8 @@ struct DockWindowTransitionTestAccess
         ShowWindow(transition.hwnd_, SW_SHOWNOACTIVATE);
         return transition.hwnd_;
     }
-    static HWND PresentAttraction(DockWindowTransition &transition, HWND source, RECT frame, RECT dock, bool timeline)
+    static HWND PresentAttraction(DockWindowTransition &transition, HWND source, RECT frame, RECT dock, bool timeline,
+                                  double collapsed = 0.3)
     {
         transition.sourceWindow_ = source;
         transition.windowRect_ = frame;
@@ -143,8 +153,11 @@ struct DockWindowTransitionTestAccess
         if (!SetWindowPos(transition.hwnd_, HWND_TOPMOST, host.left, host.top, host.right - host.left,
                           host.bottom - host.top, SWP_NOACTIVATE))
             return nullptr;
-        transition.collapseFrom_ = transition.collapseTo_ = 0.3;
-        if (timeline ? !transition.StartAttractionTimeline() : !transition.ApplyAttractionFrame(0.3, 255))
+        transition.collapseFrom_ = transition.collapseTo_ = collapsed;
+        if (timeline ? !transition.StartAttractionTimeline() : !transition.ApplyAttractionFrame(collapsed, 255))
+            return nullptr;
+        if (timeline && collapsed > 0.9 &&
+            (FAILED(transition.compositionEffect_->SetOpacity(1.0f)) || FAILED(transition.compositionDevice_->Commit())))
             return nullptr;
         transition.presenting_ = true;
         ShowWindow(transition.hwnd_, SW_SHOWNOACTIVATE);
@@ -401,7 +414,7 @@ void CheckAttractionGeometry()
     Check(curved && a::Opacity(0) == 1 && a::Opacity(1) == 0,
           "attraction deforms a curved patch and reaches a transparent collapsed endpoint");
     const a::Rect window{0, 0, 2560, 1600}, dock{2700, 800, 2764, 864};
-    bool timelineFinite = true;
+    bool timelineFinite = true, timelineBounded = true;
     for (const auto range : {std::array<double, 2>{0, 1}, {0.6, 0}, {0.6, 1}})
     {
         std::array<a::Frame, a::TimelineSteps + 1> frames{};
@@ -417,28 +430,79 @@ void CheckAttractionGeometry()
             for (std::size_t step = 0; step < samples.size(); ++step)
                 samples[step] = a::SampleCell(frames[step], window, dock, cell, 2560, 1600, cropX, cropY, -500, -500);
             a::StabilizeInactiveGeometry(samples);
+            const auto tangents =
+                a::CellTangents(samples, cell.left * 2560 - cropX - 0.5, cell.top * 1600 - cropY - 0.5,
+                                cell.right * 2560 - cropX + 0.5, cell.bottom * 1600 - cropY + 0.5);
             for (std::size_t step = 0; step < a::TimelineSteps; ++step)
-                for (const double fraction : {0.19, 0.51, 0.83})
+                for (const double fraction : {0.0, 0.19, 0.51, 0.83, 1.0})
                 {
                     a::Values value{};
                     for (std::size_t element = 0; element < value.size(); ++element)
-                        value[element] = a::TimelineSegment(samples[step], samples[step + 1], element, 0.42)
+                        value[element] = a::TimelineSegment(samples[step], samples[step + 1], tangents[step],
+                                                            tangents[step + 1], element, 0.42)
                                              .Evaluate(fraction * 0.42 / a::TimelineSteps);
                     for (const double u : {cell.left, cell.right})
                         for (const double v : {cell.top, cell.bottom})
                         {
-                            const double x = u * 2560 - cropX, y = v * 1600 - cropY;
+                            const double x = u * 2560 - cropX + (u == cell.left ? -0.5 : 0.5);
+                            const double y = v * 1600 - cropY + (v == cell.top ? -0.5 : 0.5);
                             const double w = value[2] * x + value[5] * y + value[8];
                             timelineFinite = timelineFinite && w > 0 &&
                                              std::isfinite((value[0] * x + value[3] * y + value[6]) / w) &&
                                              std::isfinite((value[1] * x + value[4] * y + value[7]) / w) &&
-                                             value[9] >= -0.00001 && value[9] <= 1.00001;
+                                             value[9] >= -0.00001 && value[9] <= 1.00001 && value[10] >= -0.00001 &&
+                                             value[10] <= 1.00001;
+                            for (const int axis : {0, 1})
+                            {
+                                const auto project = [&](const a::Values &sample) {
+                                    return (sample[axis] * x + sample[axis + 3] * y + sample[axis + 6]) /
+                                           (sample[2] * x + sample[5] * y + sample[8]);
+                                };
+                                const double first = project(samples[step]), last = project(samples[step + 1]);
+                                timelineBounded = timelineBounded && project(value) >= std::min(first, last) - 0.55 &&
+                                                  project(value) <= std::max(first, last) + 0.55;
+                            }
                         }
                 }
         }
     }
     Check(timelineFinite,
           "actual float compositor curves retain finite positive perspective between samples and on reversals");
+    Check(timelineBounded, "cropped corner playback cannot throw fragments beyond adjacent trajectory samples");
+    const auto sourcePatch = a::ControlPoints(window, dock, 0);
+    auto folded = sourcePatch;
+    for (auto &point : folded)
+        point.x = -point.x;
+    const auto tiny = a::ControlPoints({0, 0, 2, 2}, {30, 30, 32, 32}, 0);
+    Check(a::CellVisibility(sourcePatch, a::SourceCell(0)) == 1 && a::CellVisibility(folded, a::SourceCell(0)) == 0 &&
+              a::CellVisibility(tiny, a::SourceCell(0)) < 0.001,
+          "folded and subpixel slivers retire without revealing a finite endpoint remnant");
+    const std::vector<RECT> monitors{{0, 0, 2560, 1600}, {2560, 510, 4480, 1590}};
+    const RECT fullWindow{0, 0, 2560, 1600}, farDock{4400, 1450, 4464, 1514};
+    const auto requested = DockWindowTransitionTestAccess::AttractionHost(fullWindow, farDock, monitors);
+    const auto safe = ResolveDockWindowNonFullscreenHostRect(requested, monitors);
+    Check(safe.has_value(), "maximized cross-screen attraction retains an eligible non-fullscreen host");
+    if (safe)
+    {
+        bool covered = true;
+        for (int phase = 0; phase <= 128; ++phase)
+        {
+            const auto patch = a::ControlPoints(window, {4400, 1450, 4464, 1514}, phase / 128.0);
+            for (int y = 0; y <= 16; ++y)
+                for (int x = 0; x <= 16; ++x)
+                {
+                    const auto point = a::Surface(patch, x / 16.0, y / 16.0);
+                    const bool visible = std::any_of(monitors.begin(), monitors.end(), [&](RECT monitor) {
+                        return point.x >= monitor.left && point.x <= monitor.right && point.y >= monitor.top &&
+                               point.y <= monitor.bottom;
+                    });
+                    if (visible)
+                        covered = covered && point.x >= safe->left - 1 && point.x <= safe->right + 1 &&
+                                  point.y >= safe->top - 1 && point.y <= safe->bottom + 1;
+                }
+        }
+        Check(covered, "both displays' visible attraction surface fits the host with its one-pixel Shell guard");
+    }
 }
 
 LRESULT CALLBACK FrameFixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -800,6 +864,24 @@ void CheckFramePixelAlignment()
                     Check(std::abs(actual[0] - expected[0]) < 4 && std::abs(actual[1] - expected[1]) < 4,
                           "actual attraction image pixels follow the independent curved surface within the cell "
                           "sampling tolerance");
+                }
+                attraction.Cancel();
+                const HWND tail = DockWindowTransitionTestAccess::PresentAttraction(attraction, source, frame,
+                                                                                    displacedDock, timeline, 0.96);
+                Check(tail != nullptr, "owned attraction tail prepares with finite geometry");
+                if (tail)
+                {
+                    // Force the parent fully visible: cell retirement alone
+                    // must suppress tiny end fragments, including GPU playback.
+                    const ULONGLONG deadline = GetTickCount64() + 250;
+                    std::array<double, 2> markers{};
+                    do
+                    {
+                        DwmFlush();
+                        markers = FrameMarkerCenters(tail, 60);
+                    } while ((markers[0] >= 0 || markers[1] >= 0) && GetTickCount64() < deadline);
+                    Check(markers[0] < 0 && markers[1] < 0,
+                          "a transparent subpixel tail cannot reappear as coloured source fragments");
                 }
                 attraction.Cancel();
             }

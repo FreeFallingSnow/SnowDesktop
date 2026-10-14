@@ -385,43 +385,45 @@ RECT ResolveDockWindowImageHostRect(
     };
 }
 
-std::optional<RECT> ResolveDockWindowNonFullscreenHostRect(
-    RECT host, std::span<const RECT> monitors) noexcept
+std::optional<RECT> ResolveDockWindowNonFullscreenHostRect(RECT host, std::span<const RECT> monitors) noexcept
 {
     const auto valid = [](RECT rect) { return rect.right > rect.left && rect.bottom > rect.top; };
-    if (!valid(host) || monitors.empty()) return std::nullopt;
+    if (!valid(host) || monitors.empty())
+        return std::nullopt;
     const auto covers = [](RECT rect, RECT monitor) {
-        return rect.left <= monitor.left && rect.top <= monitor.top &&
-            rect.right >= monitor.right && rect.bottom >= monitor.bottom;
+        return rect.left <= monitor.left && rect.top <= monitor.top && rect.right >= monitor.right &&
+               rect.bottom >= monitor.bottom;
     };
-    std::array<RECT, 4> candidates{host, host, host, host};
     bool fullscreen = false;
     for (const RECT monitor : monitors)
     {
-        if (!valid(monitor)) return std::nullopt;
-        if (!covers(host, monitor)) continue;
+        if (!valid(monitor))
+            return std::nullopt;
+        if (!covers(host, monitor))
+            continue;
         fullscreen = true;
-        candidates[0].left = std::max(candidates[0].left, monitor.left + 1);
-        candidates[1].top = std::max(candidates[1].top, monitor.top + 1);
-        candidates[2].right = std::min(candidates[2].right, monitor.right - 1);
-        candidates[3].bottom = std::min(candidates[3].bottom, monitor.bottom - 1);
     }
-    if (!fullscreen) return host;
+    if (!fullscreen)
+        return host;
     std::optional<RECT> best;
     std::uint64_t largestArea = 0;
-    for (const RECT candidate : candidates)
+    // Offset displays may need different guarded edges. A single edge cannot
+    // uncover both monitors; still remove at most one pixel from any edge.
+    for (unsigned edges = 1; edges < 16; ++edges)
     {
-        if (!valid(candidate) ||
-            static_cast<std::int64_t>(candidate.left) - host.left > 1 ||
-            static_cast<std::int64_t>(candidate.top) - host.top > 1 ||
-            static_cast<std::int64_t>(host.right) - candidate.right > 1 ||
-            static_cast<std::int64_t>(host.bottom) - candidate.bottom > 1)
+        const RECT candidate{host.left + ((edges & 1u) ? 1 : 0), host.top + ((edges & 2u) ? 1 : 0),
+                             host.right - ((edges & 4u) ? 1 : 0), host.bottom - ((edges & 8u) ? 1 : 0)};
+        if (!valid(candidate))
             continue;
-        if (std::any_of(monitors.begin(), monitors.end(),
-                [&](RECT monitor) { return covers(candidate, monitor); })) continue;
+        if (std::any_of(monitors.begin(), monitors.end(), [&](RECT monitor) { return covers(candidate, monitor); }))
+            continue;
         const auto area = static_cast<std::uint64_t>(static_cast<std::int64_t>(candidate.right) - candidate.left) *
-            static_cast<std::uint64_t>(static_cast<std::int64_t>(candidate.bottom) - candidate.top);
-        if (area > largestArea) { best = candidate; largestArea = area; }
+                          static_cast<std::uint64_t>(static_cast<std::int64_t>(candidate.bottom) - candidate.top);
+        if (area > largestArea)
+        {
+            best = candidate;
+            largestArea = area;
+        }
     }
     return best;
 }
@@ -707,7 +709,6 @@ bool DockWindowTransition::Start(
         return false;
     }
 
-    imageHostRect_ = ResolveImageHostRect();
     if (!EnumDisplayMonitors(nullptr, nullptr, CollectAnimationMonitor,
             reinterpret_cast<LPARAM>(&animationMonitorRects_)))
     {
@@ -715,6 +716,10 @@ bool DockWindowTransition::Start(
         nativeFallbackRequested_ = true;
         return false;
     }
+    // A fresh restore starts with a transparent point at the Dock. Its full
+    // envelope must use actual restored geometry, after native preparation.
+    imageHostRect_ =
+        effect_ == 4 && direction_ == DockWindowTransitionDirection::Restore ? dockRect_ : ResolveImageHostRect();
     const auto safeHost = ResolveDockWindowNonFullscreenHostRect(
         imageHostRect_, animationMonitorRects_);
     if (!safeHost)
@@ -1298,8 +1303,24 @@ RECT DockWindowTransition::ResolveImageHostRect() const
     {
         const auto bounds =
             snowdesktop::dock_attraction::Bounds(DeformationRect(windowRect_), DeformationRect(dockRect_));
-        return {static_cast<LONG>(bounds.left), static_cast<LONG>(bounds.top), static_cast<LONG>(bounds.right),
-                static_cast<LONG>(bounds.bottom)};
+        RECT host{static_cast<LONG>(bounds.left), static_cast<LONG>(bounds.top), static_cast<LONG>(bounds.right),
+                  static_cast<LONG>(bounds.bottom)};
+        const bool coversMonitor =
+            std::any_of(animationMonitorRects_.begin(), animationMonitorRects_.end(), [&](RECT m) {
+                return host.left <= m.left && host.top <= m.top && host.right >= m.right && host.bottom >= m.bottom;
+            });
+        if (coversMonitor)
+        {
+            RECT desktop = animationMonitorRects_.front();
+            for (const RECT monitor : animationMonitorRects_)
+                UnionRect(&desktop, &desktop, &monitor);
+            RECT visible{};
+            // Curves beyond the virtual desktop cannot be displayed. Trim
+            // only those pixels before applying the existing one-pixel guard.
+            if (IntersectRect(&visible, &host, &desktop))
+                host = visible;
+        }
+        return host;
     }
     if (effect_ == 3)
         return ResolveDockWindowImageHostRect(windowRect_, dockRect_);
@@ -1376,13 +1397,17 @@ bool DockWindowTransition::StartAttractionTimeline()
                                                    compositionImageSize_.cx, compositionImageSize_.cy, crop.left,
                                                    crop.top, imageHostRect_.left, imageHostRect_.top);
         attraction::StabilizeInactiveGeometry(samples);
+        const auto band = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, i, true);
+        const auto tangents = attraction::CellTangents(samples, band.clip.left - crop.left, band.clip.top - crop.top,
+                                                       band.clip.right - crop.left, band.clip.bottom - crop.top);
         for (std::size_t element = 0; element < (i == 0 ? 11u : 10u) && SUCCEEDED(hr); ++element)
         {
             Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
             hr = compositionDevice_->CreateAnimation(&animation);
             for (std::size_t step = 0; step < attraction::TimelineSteps && SUCCEEDED(hr); ++step)
             {
-                const auto curve = attraction::TimelineSegment(samples[step], samples[step + 1], element, duration);
+                const auto curve = attraction::TimelineSegment(samples[step], samples[step + 1], tangents[step],
+                                                               tangents[step + 1], element, duration);
                 hr =
                     animation->AddCubic(step * stepSeconds, curve.constant, curve.linear, curve.quadratic, curve.cubic);
             }
