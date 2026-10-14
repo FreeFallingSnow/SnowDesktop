@@ -22,13 +22,25 @@ struct TimelineCubic
     }
 };
 
+// Translate a cropped image's origin inside the homography, including its
+// perspective denominator, before constructing normalized timeline curves.
+inline ProjectiveMatrix SourceLocalMatrix(ProjectiveMatrix matrix,
+    double sourceX, double sourceY) noexcept
+{
+    matrix.dx += matrix.m11 * sourceX + matrix.m21 * sourceY;
+    matrix.dy += matrix.m12 * sourceX + matrix.m22 * sourceY;
+    matrix.w += matrix.m14 * sourceX + matrix.m24 * sourceY;
+    return matrix;
+}
+
 inline TimelineValues TimelineValue(const Rect& window, const Rect& dock, Edge edge,
     double from, double to, double progress, double sourceWidth, double sourceHeight,
-    double begin, double end, double hostLeft, double hostTop) noexcept
+    double begin, double end, double hostLeft, double hostTop,
+    double sourceX = 0.0, double sourceY = 0.0) noexcept
 {
     const double collapsed = Mix(from, to, Smooth(progress));
-    const auto matrix = StripProjectiveMatrix(window, dock, edge, collapsed,
-        sourceWidth, sourceHeight, begin, end, hostLeft, hostTop);
+    const auto matrix = SourceLocalMatrix(StripProjectiveMatrix(window, dock, edge, collapsed,
+        sourceWidth, sourceHeight, begin, end, hostLeft, hostTop), sourceX, sourceY);
     // A common boundary must have the same homogeneous numerator and denominator
     // in both strips, including BETWEEN timeline samples. Normalizing by the
     // first section width provides this invariant; raw matrix interpolation does not.
@@ -41,11 +53,12 @@ inline TimelineValues TimelineValue(const Rect& window, const Rect& dock, Edge e
 
 inline TimelineSample SampleTimeline(const Rect& window, const Rect& dock, Edge edge,
     double from, double to, double progress, double sourceWidth, double sourceHeight,
-    double begin, double end, double hostLeft, double hostTop) noexcept
+    double begin, double end, double hostLeft, double hostTop,
+    double sourceX = 0.0, double sourceY = 0.0) noexcept
 {
     const auto sample = [&](double time) {
         return TimelineValue(window, dock, edge, from, to, time, sourceWidth,
-            sourceHeight, begin, end, hostLeft, hostTop);
+            sourceHeight, begin, end, hostLeft, hostTop, sourceX, sourceY);
     };
     TimelineSample result;
     result.value = sample(progress);

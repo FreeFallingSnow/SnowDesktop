@@ -36,6 +36,36 @@ bool IsUsableRect(const RECT& rect)
         rect.bottom - rect.top > 1;
 }
 
+struct GenieSourceBand
+{
+    D2D1_RECT_F clip;
+    RECT crop;
+};
+
+GenieSourceBand ResolveGenieSourceBand(SIZE size, snowdesktop::dock_genie::Edge edge,
+    std::size_t index) noexcept
+{
+    const float width = static_cast<float>(size.cx), height = static_cast<float>(size.cy);
+    const float begin = static_cast<float>(index) / snowdesktop::dock_genie::StripCount;
+    const float end = static_cast<float>(index + 1) / snowdesktop::dock_genie::StripCount;
+    // Preserve the fractional overlap, with integer crops providing its
+    // bilinear sampling neighbours and no change to the image's pixel scale.
+    const D2D1_RECT_F clip = snowdesktop::dock_genie::Vertical(edge)
+        ? D2D1::RectF(0, std::max(0.0f, begin * height - 0.75f),
+            width, std::min(height, end * height + 0.75f))
+        : D2D1::RectF(std::max(0.0f, begin * width - 0.75f), 0,
+            std::min(width, end * width + 0.75f), height);
+    RECT crop{static_cast<LONG>(std::floor(clip.left)), static_cast<LONG>(std::floor(clip.top)),
+        static_cast<LONG>(std::ceil(clip.right)), static_cast<LONG>(std::ceil(clip.bottom))};
+    // The shared-image API requires dimensions above one pixel, even when
+    // an individual band of a tiny source window is subpixel-sized.
+    crop.right = std::min(size.cx, std::max(crop.right, crop.left + 2));
+    crop.bottom = std::min(size.cy, std::max(crop.bottom, crop.top + 2));
+    crop.left = std::min(crop.left, crop.right - 2);
+    crop.top = std::min(crop.top, crop.bottom - 2);
+    return {clip, crop};
+}
+
 bool SystemWindowAnimationsEnabled()
 {
     BOOL compositionEnabled = FALSE;
@@ -1094,34 +1124,15 @@ bool DockWindowTransition::CreateGenieStrips()
         imageResult_ = E_UNEXPECTED;
         return false;
     }
-    const float width = static_cast<float>(compositionImageSize_.cx);
-    const float height = static_cast<float>(compositionImageSize_.cy);
-    const bool vertical = snowdesktop::dock_genie::Vertical(genieEdge_);
     genieStrips_.reserve(snowdesktop::dock_genie::StripCount);
     for (std::size_t i = 0; i < snowdesktop::dock_genie::StripCount; ++i)
     {
-        const float begin = static_cast<float>(i) /
-            static_cast<float>(snowdesktop::dock_genie::StripCount);
-        const float end = static_cast<float>(i + 1) /
-            static_cast<float>(snowdesktop::dock_genie::StripCount);
-        // Slight overlap avoids transparent seams under fractional GPU sampling.
-        // Opacity belongs to the parent so overlapping strips do not darken.
-        const D2D1_RECT_F clip = vertical
-            ? D2D1::RectF(0, std::max(0.0f, begin * height - 0.75f),
-                width, std::min(height, end * height + 0.75f))
-            : D2D1::RectF(std::max(0.0f, begin * width - 0.75f), 0,
-                std::min(width, end * width + 0.75f), height);
+        const auto band = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, i);
+        const D2D1_RECT_F clip = band.clip;
         // Each DWM relationship supplies only this source band, rather than
         // another full-size window image. Keep integer pixel crops unscaled
         // and preserve the original fractional overlap inside the crop.
-        RECT crop{static_cast<LONG>(std::floor(clip.left)), static_cast<LONG>(std::floor(clip.top)),
-            static_cast<LONG>(std::ceil(clip.right)), static_cast<LONG>(std::ceil(clip.bottom))};
-        // SharedVisual requires both dimensions to exceed one pixel, including
-        // very small source windows whose individual bands are subpixel-sized.
-        crop.right = std::min(compositionImageSize_.cx, std::max(crop.right, crop.left + 2));
-        crop.bottom = std::min(compositionImageSize_.cy, std::max(crop.bottom, crop.top + 2));
-        crop.left = std::min(crop.left, crop.right - 2);
-        crop.top = std::min(crop.top, crop.bottom - 2);
+        const RECT crop = band.crop;
         const SIZE size{crop.right - crop.left, crop.bottom - crop.top};
         const RECT source{compositionSourceRegion_.left + crop.left, compositionSourceRegion_.top + crop.top,
             compositionSourceRegion_.left + crop.right, compositionSourceRegion_.top + crop.bottom};
@@ -1135,11 +1146,9 @@ bool DockWindowTransition::CreateGenieStrips()
         }
         genieWindowImages_.push_back(std::move(image));
         genieStrips_.push_back(strip);
-        // Visual3 applies offsets before its Transform, so the existing mesh
-        // and precomputed curves still use the full source coordinate system.
+        // Keep clips in cropped-image coordinates. The mesh and timeline
+        // explicitly translate that origin inside their projective matrices.
         const float cropLeft = static_cast<float>(crop.left), cropTop = static_cast<float>(crop.top);
-        hr = strip->SetOffsetX(cropLeft);
-        if (SUCCEEDED(hr)) hr = strip->SetOffsetY(cropTop);
         if (SUCCEEDED(hr)) hr = strip->SetClip(D2D1::RectF(
             clip.left - cropLeft, clip.top - cropTop, clip.right - cropLeft, clip.bottom - cropTop));
         if (SUCCEEDED(hr)) hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
@@ -1178,12 +1187,14 @@ bool DockWindowTransition::ApplyGenieFrame(double collapsed, BYTE opacity)
     if (!geometryChanged && !opacityChanged) return true;
     for (std::size_t i = 0; geometryChanged && i < genieStrips_.size() && SUCCEEDED(hr); ++i)
     {
-        const auto transform = snowdesktop::dock_genie::StripProjectiveMatrix(
+        const RECT crop = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, i).crop;
+        const auto transform = snowdesktop::dock_genie::SourceLocalMatrix(
+            snowdesktop::dock_genie::StripProjectiveMatrix(
             rect(windowRect_), rect(dockRect_), genieEdge_, collapsed,
             compositionImageSize_.cx, compositionImageSize_.cy,
             static_cast<double>(i) / static_cast<double>(genieStrips_.size()),
             static_cast<double>(i + 1) / static_cast<double>(genieStrips_.size()),
-            imageHostRect_.left, imageHostRect_.top);
+            imageHostRect_.left, imageHostRect_.top), crop.left, crop.top);
         const D2D1_MATRIX_4X4_F matrix{
             static_cast<float>(transform.m11), static_cast<float>(transform.m12), 0, static_cast<float>(transform.m14),
             static_cast<float>(transform.m21), static_cast<float>(transform.m22), 0, static_cast<float>(transform.m24),
@@ -1224,11 +1235,13 @@ bool DockWindowTransition::StartGenieTimeline()
         hr = compositionDevice_->CreateMatrixTransform3D(&transform);
         const double begin = static_cast<double>(strip) / static_cast<double>(genieStrips_.size());
         const double end = static_cast<double>(strip + 1) / static_cast<double>(genieStrips_.size());
+        const RECT crop = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, strip).crop;
         std::array<genie::TimelineSample, genie::TimelineSteps + 1> samples{};
         for (std::size_t step = 0; step < samples.size(); ++step)
             samples[step] = genie::SampleTimeline(window, dock, genieEdge_, collapseFrom_, collapseTo_,
                 static_cast<double>(step) / genie::TimelineSteps, compositionImageSize_.cx,
-                compositionImageSize_.cy, begin, end, imageHostRect_.left, imageHostRect_.top);
+                compositionImageSize_.cy, begin, end, imageHostRect_.left, imageHostRect_.top,
+                crop.left, crop.top);
         for (std::size_t element = 0; element < elements.size() + (strip == 0 ? 1 : 0) && SUCCEEDED(hr); ++element)
         {
             Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;

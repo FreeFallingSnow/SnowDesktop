@@ -179,6 +179,7 @@ void CheckTimelineGeometry()
     bool positive = true;
     // Compare the compositor's float cubic coefficients with the exact spatial
     // deformation, including mid-segment times and reversals on mixed monitors.
+    for (const bool croppedSource : {false, true})
     for (const double width : {1920.0, 3840.0, 7680.0})
         for (const auto edge : {Edge::Bottom, Edge::Top, Edge::Left, Edge::Right})
             for (const auto range : {std::array<double, 2>{0, 1}, {1, 0}, {0.43, 0}, {0.43, 1}})
@@ -187,16 +188,21 @@ void CheckTimelineGeometry()
                 const Rect window{-width, -height, 0, 0};
                 const Rect dock{-width + 73, height * 0.3, -width + 137, height * 0.3 + 64};
                 TimelineValues previous{};
+                double previousSourceX = 0.0, previousSourceY = 0.0;
                 for (std::size_t step = 0; step < TimelineSteps; ++step)
                     for (const double fraction : {0.0, 0.19, 0.51, 0.83, 1.0})
                         for (std::size_t strip = 0; strip < StripCount; ++strip)
                         {
                             const double begin = static_cast<double>(strip) / StripCount;
                             const double end = static_cast<double>(strip + 1) / StripCount;
+                            const double sourceX = croppedSource && !Vertical(edge)
+                                ? std::max(0.0, std::floor(begin * width - 0.75)) : 0.0;
+                            const double sourceY = croppedSource && Vertical(edge)
+                                ? std::max(0.0, std::floor(begin * height - 0.75)) : 0.0;
                             const auto sample = [&](std::size_t time) {
                                 return SampleTimeline(window, dock, edge, range[0], range[1],
                                     static_cast<double>(time) / TimelineSteps, width, height,
-                                    begin, end, -width, -height);
+                                    begin, end, -width, -height, sourceX, sourceY);
                             };
                             const auto first = sample(step), last = sample(step + 1);
                             TimelineValues value{};
@@ -207,9 +213,10 @@ void CheckTimelineGeometry()
                             const double collapsed = Mix(range[0], range[1], Smooth(progress));
                             const auto exact = StripProjectiveMatrix(window, dock, edge, collapsed,
                                 width, height, begin, end, -width, -height);
-                            const auto project = [&](const TimelineValues& values, double axis, double cross) {
-                                const double x = Vertical(edge) ? cross * width : axis * width;
-                                const double y = Vertical(edge) ? axis * height : cross * height;
+                            const auto project = [&](const TimelineValues& values, double axis, double cross,
+                                double originX, double originY) {
+                                const double x = (Vertical(edge) ? cross * width : axis * width) - originX;
+                                const double y = (Vertical(edge) ? axis * height : cross * height) - originY;
                                 const double w = values[3] * (Vertical(edge) ? y : x) + values[6];
                                 positive = positive && w > 0 && std::isfinite(w);
                                 return Point{(values[0] * x + (Vertical(edge) ? values[1] * y : 0) + values[4]) / w,
@@ -218,7 +225,7 @@ void CheckTimelineGeometry()
                             for (const double axis : {begin, end})
                                 for (const double cross : {0.0, 0.5, 1.0})
                                 {
-                                    const Point actual = project(value, axis, cross);
+                                    const Point actual = project(value, axis, cross, sourceX, sourceY);
                                     const double x = (Vertical(edge) ? cross : axis) * width;
                                     const double y = (Vertical(edge) ? axis : cross) * height;
                                     maximumError = std::max(maximumError, Gap(actual, Transform(exact, x, y)));
@@ -226,9 +233,12 @@ void CheckTimelineGeometry()
                             if (strip)
                                 for (const double cross : {0.0, 0.5, 1.0})
                                     maximumGap = std::max(maximumGap,
-                                        Gap(project(previous, begin, cross), project(value, begin, cross)));
+                                        Gap(project(previous, begin, cross, previousSourceX, previousSourceY),
+                                            project(value, begin, cross, sourceX, sourceY)));
                             maximumOpacityError = std::max(maximumOpacityError, std::abs(value[7] - Opacity(collapsed)));
                             previous = value;
+                            previousSourceX = sourceX;
+                            previousSourceY = sourceY;
                         }
             }
     std::cout << "Genie cubic maximum error=" << maximumError << "px gap=" << maximumGap
