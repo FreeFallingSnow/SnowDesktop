@@ -127,7 +127,7 @@ struct LuaWidgetManifest
         std::string noResultsLabel;
         double minValue = 0.0;
         double maxValue = 100.0;
-        double stepValue = 1.0;
+        double stepValue = 0.1;
         int minLength = -1;
         int maxLength = -1;
         bool required = false;

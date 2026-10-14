@@ -103,7 +103,7 @@ struct WidgetSettingFieldSchema
     std::string noResultsLabel;
     double minimum = 0.0;
     double maximum = 100.0;
-    double step = 1.0;
+    double step = 0.1;
     int minimumLength = -1;
     int maximumLength = -1;
     bool required = false;

@@ -1,6 +1,7 @@
 #include "widget/settings/widget_engine_settings_backend.h"
 
 #include <cstdlib>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -37,6 +38,30 @@ int main(int argc, char* argv[])
     using namespace snowdesktop::widget_runtime;
     namespace detail = widget_settings_backend_detail;
 
+    // Omitted steps must preserve fractional defaults and persisted slider edits.
+    LuaWidgetManifest::Setting defaultStepRange;
+    defaultStepRange.key = "fineScale";
+    defaultStepRange.type = "range";
+    defaultStepRange.defaultValue = "4.6";
+    const auto convertedDefaultStepRange = detail::ConvertSetting(defaultStepRange);
+    Check(convertedDefaultStepRange.schema.step == 0.1 &&
+            convertedDefaultStepRange.defaultValue.type ==
+                InteractionValue::Type::Number &&
+            std::abs(convertedDefaultStepRange.defaultValue.number - 4.6) < 1e-9,
+        "range declarations without a step retain fractional defaults");
+    detail::EncodedOrdinaryWrite encodedDefaultStepRange;
+    InteractionValue decodedDefaultStepRange;
+    std::string defaultStepError;
+    Check(detail::EncodeOrdinaryWrite(convertedDefaultStepRange.schema,
+                { "fineScale", MakeWidgetSettingNumber(6.24), true },
+                encodedDefaultStepRange, defaultStepError) &&
+            encodedDefaultStepRange.typedMarker &&
+            DecodeTypedStorageValue(encodedDefaultStepRange.value,
+                decodedDefaultStepRange, defaultStepError) &&
+            decodedDefaultStepRange.type == InteractionValue::Type::Number &&
+            std::abs(decodedDefaultStepRange.number - 6.2) < 1e-9,
+        "range edits without a step persist values snapped to tenths");
+
     LuaWidgetManifest::Setting range;
     range.key = "scale";
     range.label = "Scale";
@@ -58,6 +83,7 @@ int main(int argc, char* argv[])
             convertedRange.schema.group == "appearance" &&
             convertedRange.schema.validationMessage == "Invalid scale" &&
             convertedRange.schema.Kind() == WidgetSettingKind::Range &&
+            convertedRange.schema.step == 0.5 &&
             convertedRange.schema.showWhen &&
             convertedRange.schema.showWhen->key == "mode" &&
             convertedRange.schema.dependsOn == "enabled" &&
