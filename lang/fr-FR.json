@@ -2745,5 +2745,11 @@
   "settings.dock.traySingleClick": "Clic sur l’icône",
   "settings.dock.trayDoubleClick": "Double-clic sur l’icône",
   "settings.dock.trayLaunch": "Démarrer un nouveau processus",
-  "settings.dock.trayInvalidTarget": "Saisissez un nom de fichier EXE ou son chemin absolu. La liste peut contenir jusqu’à 128 entrées."
+  "settings.dock.trayInvalidTarget": "Saisissez un nom de fichier EXE ou son chemin absolu. La liste peut contenir jusqu’à 128 entrées.",
+  "settings.personalization.windowPinBorder": "Bordure des fenêtres épinglées",
+  "settings.personalization.windowPinBorder.show": "Afficher la bordure des fenêtres épinglées",
+  "settings.personalization.windowPinBorder.hint": "Masquer la bordure laisse la fenêtre épinglée au premier plan.",
+  "settings.personalization.windowPinBorder.color": "Couleur de la bordure",
+  "settings.personalization.windowPinBorder.width": "Épaisseur de la bordure",
+  "settings.personalization.windowPinBorder.opacity": "Opacité de la bordure"
 }

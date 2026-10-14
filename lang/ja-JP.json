@@ -2745,5 +2745,11 @@
   "settings.dock.traySingleClick": "トレイアイコンをクリック",
   "settings.dock.trayDoubleClick": "トレイアイコンをダブルクリック",
   "settings.dock.trayLaunch": "新しいプロセスを起動",
-  "settings.dock.trayInvalidTarget": "EXE ファイル名または EXE の絶対パスを入力してください。最大 128 件まで登録できます。"
+  "settings.dock.trayInvalidTarget": "EXE ファイル名または EXE の絶対パスを入力してください。最大 128 件まで登録できます。",
+  "settings.personalization.windowPinBorder": "最前面のウィンドウの枠",
+  "settings.personalization.windowPinBorder.show": "最前面のウィンドウの枠を表示",
+  "settings.personalization.windowPinBorder.hint": "枠を非表示にしても、ウィンドウは最前面のままです。",
+  "settings.personalization.windowPinBorder.color": "枠の色",
+  "settings.personalization.windowPinBorder.width": "枠の太さ",
+  "settings.personalization.windowPinBorder.opacity": "枠の不透明度"
 }

@@ -2745,5 +2745,11 @@
   "settings.dock.traySingleClick": "单击托盘图标",
   "settings.dock.trayDoubleClick": "双击托盘图标",
   "settings.dock.trayLaunch": "启动新进程",
-  "settings.dock.trayInvalidTarget": "请输入 EXE 文件名或 EXE 的完整路径。最多支持 128 项。"
+  "settings.dock.trayInvalidTarget": "请输入 EXE 文件名或 EXE 的完整路径。最多支持 128 项。",
+  "settings.personalization.windowPinBorder": "置顶边框",
+  "settings.personalization.windowPinBorder.show": "显示置顶边框",
+  "settings.personalization.windowPinBorder.hint": "关闭边框后，窗口仍保持置顶。",
+  "settings.personalization.windowPinBorder.color": "边框颜色",
+  "settings.personalization.windowPinBorder.width": "边框粗细",
+  "settings.personalization.windowPinBorder.opacity": "边框不透明度"
 }

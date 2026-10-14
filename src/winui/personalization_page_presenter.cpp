@@ -157,6 +157,13 @@ struct PersonalizationPagePresenter::Impl
     muxc::StackPanel widgetBehaviorRoot;
 
     SettingsCard themeCard;
+    SettingsCard pinBorderCard;
+    SettingRow pinBorderEnabledRow;
+    muxc::ToggleSwitch pinBorderEnabled{nullptr};
+    winrt::event_token pinBorderEnabledToken{};
+    ColorControl pinBorderColor;
+    ContinuousControl pinBorderWidth;
+    ContinuousControl pinBorderOpacity;
     std::unique_ptr<ThemeLibraryControls> globalThemes, quickThemes, popupThemes, dockThemes, themeTransfers;
     muxc::StackPanel managementRoot;
     SettingsCard fontCard;
@@ -273,7 +280,7 @@ struct PersonalizationPagePresenter::Impl
     SettingRow contentThemeRow;
     SettingRow contextMenuRow;
 
-    std::array<ContinuousControl*, 13> continuousControls = {
+    std::array<ContinuousControl*, 15> continuousControls = {
         &widgetAlpha,
         &borderAlpha,
         &borderWidth,
@@ -287,10 +294,13 @@ struct PersonalizationPagePresenter::Impl
         &luaWidgetContentRowHeight,
         &popupHoverDelayMs,
         &tabHoverDelayMs,
+        &pinBorderWidth,
+        &pinBorderOpacity,
     };
-    std::array<ColorControl*, 2> colorControls = {
+    std::array<ColorControl*, 3> colorControls = {
         &backgroundColor,
         &borderColor,
+        &pinBorderColor,
     };
 
     std::uint64_t generation = 0;
@@ -481,6 +491,26 @@ struct PersonalizationPagePresenter::Impl
         contentThemeRow.Initialize(contentThemeCombo);
         appearanceSections.text.Children().Append(contentThemeRow.root);
 
+        InitializeCard(pinBorderCard, cardStyle, themeRoot);
+        pinBorderCard.content.Spacing(0);
+        pinBorderEnabled = muxc::ToggleSwitch{};
+        pinBorderEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        pinBorderEnabledRow.Initialize(pinBorderEnabled);
+        pinBorderEnabledRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        InitializeColorControl(pinBorderColor, &PersonalizationSettings::windowPinBorderR,
+            &PersonalizationSettings::windowPinBorderG, &PersonalizationSettings::windowPinBorderB);
+        InitializeContinuousControl(pinBorderWidth, &PersonalizationSettings::windowPinBorderWidth,
+            kMinimumWindowPinBorderWidth, kMaximumWindowPinBorderWidth, 1.0, 1.0);
+        InitializeContinuousControl(pinBorderOpacity, &PersonalizationSettings::windowPinBorderOpacity,
+            0.0, 100.0, 1.0, 0.01);
+        SetUnit(pinBorderWidth, L"px");
+        SetUnit(pinBorderOpacity, L"%");
+        pinBorderCard.content.Children().Append(pinBorderEnabledRow.root);
+        pinBorderCard.content.Children().Append(pinBorderColor.editor.row.root);
+        pinBorderCard.content.Children().Append(pinBorderWidth.row.root);
+        pinBorderCard.content.Children().Append(pinBorderOpacity.row.root);
+        presenter_controls::UpdateSettingsSubrows(pinBorderCard.content, 0.0);
+
         const auto reset = [this](SettingRow& row, auto action) {
             appearanceResets.emplace_back(&row, presenter_controls::AddRestoreDefaultAction(row,
                 L("app.settings.restore_default", L"Restore default"), [this, action] {
@@ -493,6 +523,7 @@ struct PersonalizationPagePresenter::Impl
                 value.*color->red = defaults.*color->red; value.*color->green = defaults.*color->green; value.*color->blue = defaults.*color->blue;
             });
         reset(glassRow, [](auto& value) { value.glassEnabled = PersonalizationSettings{}.glassEnabled; });
+        reset(pinBorderEnabledRow, [](auto& value) { value.windowPinBorderEnabled = true; });
         reset(acrylicRow, [](auto& value) { value.acrylicEnabled = PersonalizationSettings{}.acrylicEnabled; });
         reset(edgeHighlightRow, [](auto& value) { value.widgetEdgeHighlightEnabled = PersonalizationSettings{}.widgetEdgeHighlightEnabled; });
         reset(contentThemeRow, [](auto& value) { value.contentTheme = PersonalizationSettings{}.contentTheme; });
@@ -962,6 +993,13 @@ struct PersonalizationPagePresenter::Impl
 
     void HookEvents()
     {
+        pinBorderEnabledToken = pinBorderEnabled.Toggled([this](const auto&, const auto&) {
+            UpdateDependentStates();
+            const bool enabled = pinBorderEnabled.IsOn();
+            Emit(SettingsUpdateMode::PreviewAndCommit, [enabled](auto& settings) {
+                settings.windowPinBorderEnabled = enabled;
+            });
+        });
         fontOpenToken = fontFlyout.Opened([this](const auto&, const auto&) {
             if (!CanEmit()) return;
             // Rescan newly installed fonts, but never commit a search query or
@@ -1359,6 +1397,8 @@ struct PersonalizationPagePresenter::Impl
             : static_cast<int>(std::distance(kPresetIds.begin(), preset)));
         PatchColor(backgroundColor, settings);
         PatchColor(borderColor, settings);
+        PatchColor(pinBorderColor, settings);
+        pinBorderEnabled.IsOn(settings.windowPinBorderEnabled);
         for (ContinuousControl* control : continuousControls)
             PatchContinuous(*control, settings);
         panelGradientEnabled = settings.panelGradient.enabled;
@@ -1544,6 +1584,10 @@ struct PersonalizationPagePresenter::Impl
         acrylicRow.SetEnabled(custom && glassToggle.IsOn());
         contentThemeRow.SetEnabled(custom);
         const auto visible = [](bool value) { return value ? mux::Visibility::Visible : mux::Visibility::Collapsed; };
+        pinBorderColor.editor.row.root.Visibility(visible(pinBorderEnabled.IsOn()));
+        pinBorderWidth.row.root.Visibility(visible(pinBorderEnabled.IsOn()));
+        pinBorderOpacity.row.root.Visibility(visible(pinBorderEnabled.IsOn()));
+        presenter_controls::UpdateSettingsSubrows(pinBorderCard.content, 0.0);
         edgeHighlightWidth.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
         edgeHighlightStrength.row.root.Visibility(visible(edgeHighlightToggle.IsOn()));
         edgeLightEditor->Content().Visibility(visible(edgeHighlightToggle.IsOn()));
@@ -1642,6 +1686,13 @@ struct PersonalizationPagePresenter::Impl
         RefreshFonts();
         SetCardText(themeCard,
             "app.settings.global_theme", L"Global Theme");
+        SetCardText(pinBorderCard, "settings.personalization.windowPinBorder", L"Pinned window border");
+        pinBorderEnabledRow.SetText(L("settings.personalization.windowPinBorder.show", L"Show pinned window border"),
+            L("settings.personalization.windowPinBorder.hint", L"Hiding the border keeps the window pinned."));
+        muxa::AutomationProperties::SetName(pinBorderEnabled, pinBorderEnabledRow.label.Text());
+        SetColorText(pinBorderColor, "settings.personalization.windowPinBorder.color", L"Border color");
+        SetContinuousText(pinBorderWidth, "settings.personalization.windowPinBorder.width", L"Border thickness");
+        SetContinuousText(pinBorderOpacity, "settings.personalization.windowPinBorder.opacity", L"Border opacity");
         SetCardText(themeTargetsCard, "appearance.quickPanelCard", L"Quick panel theme");
         SetCardText(popupThemeCard, "appearance.popupCard", L"Popup theme");
         popupCopyComponent.Content(winrt::box_value(L("appearance.copyComponent", L"Copy current component appearance")));
@@ -1964,6 +2015,15 @@ struct PersonalizationPagePresenter::Impl
             id == "personalization.globalTheme")
             return presetCombo;
         if (id == "personalization.font") return fontPicker;
+        if (id == "personalization.windowPinBorder.show") return pinBorderEnabled;
+        if (id.starts_with("personalization.windowPinBorder."))
+        {
+            if (!pinBorderEnabled.IsOn())
+                return prerequisiteTarget(pinBorderEnabled, "enable", pinBorderEnabledRow.label.Text().c_str());
+            if (id == "personalization.windowPinBorder.color") return pinBorderColor.editor.button;
+            if (id == "personalization.windowPinBorder.width") return pinBorderWidth.slider;
+            if (id == "personalization.windowPinBorder.opacity") return pinBorderOpacity.slider;
+        }
         if (id == "personalization.tooltipFontSize") return tooltipFontSizeSlider;
         if (id == "personalization.dockAppearance") return dockAppearanceCombo;
         if (id == "personalization.statusBarTheme") return statusBarLink;
@@ -2142,6 +2202,7 @@ struct PersonalizationPagePresenter::Impl
             collectionPopupThemeCombo.SelectionChanged(
                 collectionPopupThemeToken);
             gradientToggle.Toggled(gradientToken);
+            pinBorderEnabled.Toggled(pinBorderEnabledToken);
             edgeHighlightToggle.Toggled(edgeHighlightToken);
             glassToggle.Toggled(glassToken);
             acrylicToggle.Toggled(acrylicToken);

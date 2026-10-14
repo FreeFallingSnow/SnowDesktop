@@ -985,6 +985,8 @@ public:
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
             app_.personalizationSettings_ = snapshot.values.personalization;
+            if (app_.dockWindowPreview_)
+                app_.dockWindowPreview_->SetPinBorderAppearance(app_.personalizationSettings_);
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyPersistentDockHostAppearance();
@@ -1154,6 +1156,8 @@ public:
         if (HasSettingsDomain(domains, SettingsDomain::Personalization))
         {
             app_.personalizationSettings_ = snapshot.values.personalization;
+            if (app_.dockWindowPreview_)
+                app_.dockWindowPreview_->SetPinBorderAppearance(app_.personalizationSettings_);
             app_.ApplyQuickNavigationAppearance();
             app_.ApplyCollectionPopupAppearance();
             app_.ApplyPersistentDockHostAppearance();

@@ -271,6 +271,12 @@ void ApplyAppearancePreset(PersonalizationSettings& settings, int presetId)
     preset.popupHoverDelayMs = settings.popupHoverDelayMs;
     preset.popupCloseOnMouseLeave = settings.popupCloseOnMouseLeave;
     preset.contextMenuStyle = settings.contextMenuStyle;
+    preset.windowPinBorderEnabled = settings.windowPinBorderEnabled;
+    preset.windowPinBorderR = settings.windowPinBorderR;
+    preset.windowPinBorderG = settings.windowPinBorderG;
+    preset.windowPinBorderB = settings.windowPinBorderB;
+    preset.windowPinBorderWidth = settings.windowPinBorderWidth;
+    preset.windowPinBorderOpacity = settings.windowPinBorderOpacity;
     settings = std::move(preset);
 }
 
@@ -492,6 +498,20 @@ bool LoadPersonalization(
         s.backgroundPreset = NormalizeAppearancePresetId((int)v);
     }
     if (ReadDoubleField(text, "cornerRadius", v)) s.cornerRadius = (float)v;
+    const PersonalizationSettings pinDefaults;
+    s.windowPinBorderEnabled = pinDefaults.windowPinBorderEnabled;
+    ReadBoolField(text, "windowPinBorderEnabled", s.windowPinBorderEnabled);
+    for (const auto& [key, member] : {
+            std::pair{"windowPinBorderR", &PersonalizationSettings::windowPinBorderR},
+            std::pair{"windowPinBorderG", &PersonalizationSettings::windowPinBorderG},
+            std::pair{"windowPinBorderB", &PersonalizationSettings::windowPinBorderB},
+            std::pair{"windowPinBorderWidth", &PersonalizationSettings::windowPinBorderWidth},
+            std::pair{"windowPinBorderOpacity", &PersonalizationSettings::windowPinBorderOpacity}})
+    {
+        s.*member = pinDefaults.*member;
+        if (ReadDoubleField(text, key, v) && std::isfinite(v)) s.*member = static_cast<float>(v);
+    }
+    NormalizeWindowPinBorderAppearance(s);
     if (ReadDoubleField(text, "contextMenuStyle", v))
         s.contextMenuStyle = std::clamp(static_cast<int>(v), 0, 6);
     s.scrollableTitleBarOnTop = false;
@@ -631,6 +651,14 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
          << (s.popupCloseOnMouseLeave ? "true" : "false") << ",\n";
     file << "  \"backgroundPreset\": " << s.backgroundPreset << ",\n";
     file << "  \"cornerRadius\": " << s.cornerRadius << ",\n";
+    auto pinAppearance = s;
+    NormalizeWindowPinBorderAppearance(pinAppearance);
+    file << "  \"windowPinBorderEnabled\": " << (s.windowPinBorderEnabled ? "true" : "false") << ",\n";
+    file << "  \"windowPinBorderR\": " << pinAppearance.windowPinBorderR << ",\n";
+    file << "  \"windowPinBorderG\": " << pinAppearance.windowPinBorderG << ",\n";
+    file << "  \"windowPinBorderB\": " << pinAppearance.windowPinBorderB << ",\n";
+    file << "  \"windowPinBorderWidth\": " << pinAppearance.windowPinBorderWidth << ",\n";
+    file << "  \"windowPinBorderOpacity\": " << pinAppearance.windowPinBorderOpacity << ",\n";
     file << "  \"contextMenuStyle\": "
          << std::clamp(s.contextMenuStyle, 0, 6) << ",\n";
     file << "  \"glassEnabled\": " << (s.glassEnabled ? "true" : "false") << ",\n";

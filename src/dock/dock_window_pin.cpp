@@ -1,4 +1,5 @@
 #include "dock_window_pin.h"
+#include "theme/personalization.h"
 
 #include <dwmapi.h>
 #include <d2d1.h>
@@ -18,9 +19,17 @@ constexpr wchar_t kPinProperty[] = L"SnowDesktop.DockWindowPin";
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr UINT kRefreshIntervalMs = 100;
 constexpr UINT kRefreshMessage = WM_APP + 1;
-constexpr UINT32 kBorderRgb = 0x0078D7;
 constexpr UINT kPositionFlags =
     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+
+struct BorderAppearance
+{
+    bool enabled = true;
+    float width = 6.0f;
+    UINT32 rgb = 0x0078D7;
+    float opacity = 0.5f;
+    bool operator==(const BorderAppearance&) const = default;
+};
 
 class ScopedPhysicalCoordinates
 {
@@ -61,11 +70,13 @@ struct DockWindowPin::State
         RECT bounds{};
         int thickness = 0;
         int radius = -1;
+        UINT32 rgb = 0;
+        float opacity = -1.0f;
         bool restoreTopmost = false;
         Microsoft::WRL::ComPtr<ID2D1Factory> factory;
         Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> renderTarget;
 
-        bool DrawBorder(const RECT& frame, int stroke, int corner)
+        bool DrawBorder(const RECT& frame, int stroke, int corner, const BorderAppearance& appearance)
         {
             if (!factory && FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
                     factory.GetAddressOf()))) return false;
@@ -112,7 +123,7 @@ struct DockWindowPin::State
                 D2D1_FILL_MODE_ALTERNATE, geometries, 2, ring.GetAddressOf());
             if (SUCCEEDED(result)) result = renderTarget->BindDC(dc, &client);
             if (SUCCEEDED(result)) result = renderTarget->CreateSolidColorBrush(
-                D2D1::ColorF(kBorderRgb, 0.5f), brush.GetAddressOf());
+                D2D1::ColorF(appearance.rgb, appearance.opacity), brush.GetAddressOf());
             if (SUCCEEDED(result))
             {
                 renderTarget->BeginDraw();
@@ -157,7 +168,7 @@ struct DockWindowPin::State
             if (border) DestroyWindow(border);
         }
 
-        void MaintainPin()
+        void MaintainPin(const BorderAppearance& appearance)
         {
             // Keep the user's request when an application resets TOPMOST during
             // movement, focus changes or restore, as PowerToys does. Only repair
@@ -167,11 +178,16 @@ struct DockWindowPin::State
                 ShowWindow(border, SW_HIDE);
                 return;
             }
-            UpdateBorder();
+            UpdateBorder(appearance);
         }
 
-        void UpdateBorder()
+        void UpdateBorder(const BorderAppearance& appearance)
         {
+            if (!appearance.enabled || appearance.opacity <= 0.0f)
+            {
+                if (IsWindowVisible(border)) ShowWindow(border, SW_HIDE);
+                return;
+            }
             // DWM frame bounds are physical pixels even for DPI-unaware apps.
             // Both layered-window placement and fallback queries use that space.
             const ScopedPhysicalCoordinates physicalCoordinates;
@@ -191,7 +207,8 @@ struct DockWindowPin::State
                 GetWindowDpiAwarenessContext(target));
             const UINT dpi = std::max<UINT>(96, GetDpiForWindow(
                 awareness == DPI_AWARENESS_PER_MONITOR_AWARE ? target : border));
-            const int nextThickness = std::max(1, MulDiv(6, static_cast<int>(dpi), 96));
+            const int nextThickness = std::max(1, static_cast<int>(std::lround(
+                appearance.width * static_cast<float>(dpi) / 96.0f)));
             const bool maximized = IsZoomed(target) != FALSE;
             DWM_WINDOW_CORNER_PREFERENCE corner = DWMWCP_DEFAULT;
             const bool hasCornerPreference = SUCCEEDED(DwmGetWindowAttribute(target,
@@ -217,6 +234,7 @@ struct DockWindowPin::State
             const bool shapeChanged = width != bounds.right - bounds.left ||
                 height != bounds.bottom - bounds.top || thickness != nextThickness ||
                 radius != nextRadius;
+            const bool paintChanged = rgb != appearance.rgb || opacity != appearance.opacity;
             if (shapeChanged)
             {
                 // Leave one transparent pixel around the inner geometry so
@@ -242,7 +260,10 @@ struct DockWindowPin::State
                     ShowWindow(border, SW_HIDE);
                     return;
                 }
-                if (!DrawBorder(frame, nextThickness, nextRadius))
+            }
+            if (shapeChanged || paintChanged)
+            {
+                if (!DrawBorder(frame, nextThickness, nextRadius, appearance))
                 {
                     ShowWindow(border, SW_HIDE);
                     return;
@@ -254,7 +275,7 @@ struct DockWindowPin::State
             const HWND previous = GetWindow(target, GW_HWNDPREV);
             const bool move = !EqualRect(&bounds, &frame);
             const bool show = !IsWindowVisible(border);
-            if (move || shapeChanged || show || previous != border)
+            if (move || shapeChanged || paintChanged || show || previous != border)
             {
                 UINT flags = SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_SHOWWINDOW;
                 if (previous == border) flags |= SWP_NOZORDER;
@@ -269,11 +290,14 @@ struct DockWindowPin::State
                 bounds = frame;
                 thickness = nextThickness;
                 radius = nextRadius;
+                rgb = appearance.rgb;
+                opacity = appearance.opacity;
             }
         }
     };
 
     HWND manager = nullptr;
+    BorderAppearance appearance;
     std::vector<std::unique_ptr<Entry>> entries;
     std::vector<HWINEVENTHOOK> hooks;
     bool refreshQueued = false;
@@ -306,7 +330,7 @@ struct DockWindowPin::State
         if (!entry) return;
         refreshing = true;
         if (entry->OwnsTarget())
-            entry->MaintainPin();
+            entry->MaintainPin(appearance);
         else
             QueueRefresh();
         // Keep ownership changes and vector erasure in the manager handler.
@@ -442,10 +466,10 @@ struct DockWindowPin::State
         std::erase_if(entries, [](const auto& entry) {
             return !entry->OwnsTarget();
         });
-        for (const auto& entry : entries) entry->MaintainPin();
+        for (const auto& entry : entries) entry->MaintainPin(appearance);
         if (entries.empty())
         {
-            KillTimer(manager, kRefreshTimer);
+            if (manager) KillTimer(manager, kRefreshTimer);
             Unsubscribe();
         }
         refreshing = false;
@@ -464,6 +488,20 @@ bool DockWindowPin::IsPinned(HWND window)
 void DockWindowPin::Refresh()
 {
     if (state_) state_->Refresh();
+}
+
+void DockWindowPin::SetAppearance(const PersonalizationSettings& settings)
+{
+    auto normalized = settings;
+    NormalizeWindowPinBorderAppearance(normalized);
+    const auto channel = [](float value) { return static_cast<UINT32>(std::lround(value * 255.0f)); };
+    const BorderAppearance appearance{normalized.windowPinBorderEnabled, normalized.windowPinBorderWidth,
+        (channel(normalized.windowPinBorderR) << 16) | (channel(normalized.windowPinBorderG) << 8) |
+            channel(normalized.windowPinBorderB), normalized.windowPinBorderOpacity};
+    if (!state_) state_ = std::make_unique<State>();
+    if (state_->appearance == appearance) return;
+    state_->appearance = appearance;
+    state_->Refresh();
 }
 
 void DockWindowPin::Clear()
@@ -505,10 +543,9 @@ bool DockWindowPin::Toggle(HWND window)
     }
     if (!state_)
     {
-        auto state = std::make_unique<State>();
-        if (!state->Initialize()) return false;
-        state_ = std::move(state);
+        state_ = std::make_unique<State>();
     }
+    if (!state_->manager && !state_->Initialize()) return false;
 
     auto entry = std::make_unique<State::Entry>();
     entry->target = window;
@@ -526,7 +563,7 @@ bool DockWindowPin::Toggle(HWND window)
     if (!ChangeTopmost(window, true)) return false;
     entry->restoreTopmost = true;
     if (!SetTimer(state_->manager, kRefreshTimer, kRefreshIntervalMs, nullptr)) return false;
-    entry->UpdateBorder();
+    entry->UpdateBorder(state_->appearance);
     state_->entries.push_back(std::move(entry));
     state_->Subscribe();
     return true;

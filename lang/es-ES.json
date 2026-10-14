@@ -2745,5 +2745,11 @@
   "settings.dock.traySingleClick": "Un clic en el icono",
   "settings.dock.trayDoubleClick": "Doble clic en el icono",
   "settings.dock.trayLaunch": "Iniciar un nuevo proceso",
-  "settings.dock.trayInvalidTarget": "Introduce un nombre de archivo EXE o una ruta absoluta a un EXE. Se admiten hasta 128 entradas."
+  "settings.dock.trayInvalidTarget": "Introduce un nombre de archivo EXE o una ruta absoluta a un EXE. Se admiten hasta 128 entradas.",
+  "settings.personalization.windowPinBorder": "Borde de ventanas fijadas",
+  "settings.personalization.windowPinBorder.show": "Mostrar el borde de las ventanas fijadas",
+  "settings.personalization.windowPinBorder.hint": "Ocultar el borde mantiene la ventana fijada en primer plano.",
+  "settings.personalization.windowPinBorder.color": "Color del borde",
+  "settings.personalization.windowPinBorder.width": "Grosor del borde",
+  "settings.personalization.windowPinBorder.opacity": "Opacidad del borde"
 }

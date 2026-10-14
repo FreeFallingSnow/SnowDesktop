@@ -644,6 +644,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
                 InvalidateDockRects();
             }))
         dockWindowPreview_.reset();
+    if (dockWindowPreview_)
+        dockWindowPreview_->SetPinBorderAppearance(CurrentPersonalization());
     if (!CreateDesktopInputWindow(parent))
     {
         WriteDiagnosticLogEntry(L"CreateInputWindow FAILED");

@@ -1319,6 +1319,12 @@ int main(int argc, char** argv)
     savedAppearance.popupCloseOnMouseLeave = true;
     savedAppearance.popupHoverDelayMs = 1200.0f;
     savedAppearance.showCategoryTabCounts = false;
+    savedAppearance.windowPinBorderEnabled = false;
+    savedAppearance.windowPinBorderR = 0.21f;
+    savedAppearance.windowPinBorderG = 0.31f;
+    savedAppearance.windowPinBorderB = 0.61f;
+    savedAppearance.windowPinBorderWidth = 14.0f;
+    savedAppearance.windowPinBorderOpacity = 0.73f;
     savedAppearance.edgeLight.direction = 127.f;
     savedAppearance.edgeLight.outerGlow = .4f;
     savedAppearance.edgeLight.glowThreshold = .99f;
@@ -1331,9 +1337,21 @@ int main(int argc, char** argv)
             personalizationPath.c_str(), savedAppearance),
         "personalization save succeeds");
     PersonalizationSettings loadedAppearance;
+    for (const int preset : {0, 1, 6, 7, 9, 10, 11, 13})
+    {
+        auto changedTheme = savedAppearance;
+        ApplyAppearancePreset(changedTheme, preset);
+        Check(!changedTheme.windowPinBorderEnabled && changedTheme.windowPinBorderR == 0.21f &&
+                changedTheme.windowPinBorderG == 0.31f && changedTheme.windowPinBorderB == 0.61f &&
+                changedTheme.windowPinBorderWidth == 14.0f && changedTheme.windowPinBorderOpacity == 0.73f,
+            "switching a component preset preserves the independent global pin indicator");
+    }
     Check(LoadPersonalization(
             personalizationPath.c_str(), loadedAppearance) &&
             loadedAppearance.edgeLight == savedAppearance.edgeLight &&
+            !loadedAppearance.windowPinBorderEnabled && loadedAppearance.windowPinBorderR == 0.21f &&
+            loadedAppearance.windowPinBorderG == 0.31f && loadedAppearance.windowPinBorderB == 0.61f &&
+            loadedAppearance.windowPinBorderWidth == 14.0f && loadedAppearance.windowPinBorderOpacity == 0.73f &&
             loadedAppearance.widgetBorderWidth == 3.5f &&
             loadedAppearance.widgetEdgeHighlightEnabled &&
             loadedAppearance.widgetEdgeHighlightWidth == 2.5f &&
@@ -1573,6 +1591,35 @@ int main(int argc, char** argv)
             explicitAppearance.widgetEdgeHighlightEnabled == MakeAppearancePreset(kAppearancePresetAcrylicDark).widgetEdgeHighlightEnabled &&
             explicitAppearance.luaWidgetContentRowHeight == 48.0f,
         "legacy Lua title-area height migrates to the clamped content row height");
+    {
+        std::ofstream fixture(personalizationPath, std::ios::binary | std::ios::trunc);
+        fixture << "{}";
+    }
+    auto legacyPinAppearance = savedAppearance;
+    Check(LoadPersonalization(personalizationPath.c_str(), legacyPinAppearance) &&
+            legacyPinAppearance.windowPinBorderEnabled && legacyPinAppearance.windowPinBorderR == 0.0f &&
+            legacyPinAppearance.windowPinBorderG == 120.0f / 255.0f &&
+            legacyPinAppearance.windowPinBorderB == 215.0f / 255.0f &&
+            legacyPinAppearance.windowPinBorderWidth == 6.0f && legacyPinAppearance.windowPinBorderOpacity == 0.5f,
+        "profiles without pin-border fields restore the existing blue six-pixel half-opacity indicator");
+    {
+        std::ofstream fixture(personalizationPath, std::ios::binary | std::ios::trunc);
+        fixture << "{\"windowPinBorderEnabled\":false,\"windowPinBorderR\":-1,"
+                   "\"windowPinBorderG\":2,\"windowPinBorderB\":0.3,"
+                   "\"windowPinBorderWidth\":999,\"windowPinBorderOpacity\":-1}";
+    }
+    Check(LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+            !loadedAppearance.windowPinBorderEnabled && loadedAppearance.windowPinBorderR == 0.0f &&
+            loadedAppearance.windowPinBorderG == 1.0f && loadedAppearance.windowPinBorderB == 0.3f &&
+            loadedAppearance.windowPinBorderWidth == 20.0f && loadedAppearance.windowPinBorderOpacity == 0.0f,
+        "persisted pin border values are bounded without changing its explicit off state");
+    auto nonfinitePinAppearance = savedAppearance;
+    nonfinitePinAppearance.windowPinBorderWidth = std::numeric_limits<float>::infinity();
+    nonfinitePinAppearance.windowPinBorderOpacity = std::numeric_limits<float>::quiet_NaN();
+    Check(SavePersonalization(personalizationPath.c_str(), nonfinitePinAppearance) &&
+            LoadPersonalization(personalizationPath.c_str(), loadedAppearance) &&
+            loadedAppearance.windowPinBorderWidth == 6.0f && loadedAppearance.windowPinBorderOpacity == 0.5f,
+        "nonfinite pin-border values save as usable defaults rather than invalid JSON");
     std::filesystem::remove(personalizationPath, error);
 
     std::filesystem::remove(path, error);

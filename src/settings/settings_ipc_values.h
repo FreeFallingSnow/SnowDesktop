@@ -26,7 +26,9 @@ SD_IPC_FIELDS(PersonalizationSettings,
     v.gradientEndA, v.barHeight, v.scrollableTitleBarOnTop, v.widgetTransformCursors, v.categorizedTabHeight, v.luaWidgetContentRowHeight,
     v.showCategoryTabCounts, v.showGroupTabCounts, v.popupHoverOpen, v.popupHoverDelayMs, v.popupCloseOnMouseLeave, v.backgroundPreset, v.cornerRadius, v.contextMenuStyle,
     v.glassEnabled, v.glassBlurRadius, v.acrylicEnabled, v.contentTheme, v.panelGradient,
-    v.groupTabHoverSwitch, v.categoryTabHoverSwitch, v.tabHoverDelayMs);
+    v.groupTabHoverSwitch, v.categoryTabHoverSwitch, v.tabHoverDelayMs,
+    v.windowPinBorderEnabled, v.windowPinBorderR, v.windowPinBorderG, v.windowPinBorderB,
+    v.windowPinBorderWidth, v.windowPinBorderOpacity);
 SD_IPC_FIELDS(SurfaceTheme, v.mode, v.customized, v.appearance);
 SD_IPC_FIELDS(StatusBarAppearanceRule, v.enabled, v.theme);
 SD_IPC_FIELDS(SystemTaskbarDynamicRule,

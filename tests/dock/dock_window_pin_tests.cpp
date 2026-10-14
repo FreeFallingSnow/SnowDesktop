@@ -176,6 +176,7 @@ int RunDockWindowPinTests()
     ShowWindow(target, SW_SHOWNOACTIVATE);
     const HWND foreground = GetForegroundWindow();
     DockWindowPin pins;
+    pins.SetAppearance(PersonalizationSettings{});
     check(!pins.Toggle(nullptr), "invalid handles cannot create a pin");
     {
         const ScopedDpiContext unawareCaller(DPI_AWARENESS_CONTEXT_UNAWARE);
@@ -327,6 +328,43 @@ int RunDockWindowPinTests()
         if (observation) UnhookWinEvent(observation);
         observedWindow = nullptr;
         if (manager) SetTimer(manager, 1, 100, nullptr);
+
+        PersonalizationSettings pinAppearance;
+        pinAppearance.windowPinBorderWidth = 12.0f;
+        pinAppearance.windowPinBorderR = 1.0f;
+        pinAppearance.windowPinBorderG = 0.2f;
+        pinAppearance.windowPinBorderB = 0.0f;
+        pinAppearance.windowPinBorderOpacity = 0.8f;
+        pins.SetAppearance(pinAppearance);
+        RECT styledBounds{}, styledFrame{};
+        GetWindowRect(border, &styledBounds);
+        DwmGetWindowAttribute(target, DWMWA_EXTENDED_FRAME_BOUNDS, &styledFrame, sizeof(styledFrame));
+        const int styledStroke = MulDiv(12, static_cast<int>(GetDpiForWindow(target)), 96);
+        check(styledBounds.left == styledFrame.left - styledStroke &&
+                styledBounds.top == styledFrame.top - styledStroke &&
+                styledBounds.right == styledFrame.right + styledStroke &&
+                styledBounds.bottom == styledFrame.bottom + styledStroke &&
+                GetPropW(target, kPinProperty) == border,
+            "changing global border thickness resizes the existing ring in physical pixels");
+        pinAppearance.windowPinBorderEnabled = false;
+        pins.SetAppearance(pinAppearance);
+        check(!IsWindowVisible(border) && IsNativeTopmost(target) && GetPropW(target, kPinProperty) == border,
+            "disabling the indicator hides its ring without cancelling the pin or ownership");
+        SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        pins.Refresh();
+        check(IsNativeTopmost(target) && !IsWindowVisible(border),
+            "TOPMOST recovery stays active while the border is disabled");
+        pinAppearance.windowPinBorderEnabled = true;
+        pins.SetAppearance(pinAppearance);
+        check(IsWindowVisible(border) && GetPropW(target, kPinProperty) == border,
+            "enabling the indicator restores the existing ring without repinning");
+        pinAppearance.windowPinBorderOpacity = 0.0f;
+        pins.SetAppearance(pinAppearance);
+        check(!IsWindowVisible(border) && IsNativeTopmost(target),
+            "zero border opacity hides the ring while keeping the native pin");
+        pins.SetAppearance(PersonalizationSettings{});
+        check(IsWindowVisible(border), "restoring border defaults restores the indicator immediately");
 
         ShowWindow(target, SW_SHOWMINNOACTIVE);
         SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,

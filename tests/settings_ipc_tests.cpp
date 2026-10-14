@@ -80,6 +80,14 @@ void TestPermissionAndRelocatedRoutesCodec()
 
 void TestCodec()
 {
+    for (const auto focus : {"personalization.windowPinBorder.show", "personalization.windowPinBorder.color",
+             "personalization.windowPinBorder.width", "personalization.windowPinBorder.opacity"})
+    {
+        const auto requested = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, focus);
+        const auto routed = snowdesktop::CanonicalizeSettingsRoute(Unpack<snowdesktop::SettingsRoute>(Pack(requested)));
+        Check(routed.page == snowdesktop::SettingsPage::AppearanceTheme && routed.focusId == focus,
+            "pin-border search and IPC focus resolve to global appearance independently of the starting page");
+    }
     {
         snowdesktop::StatusBarSettings statusBar;
         Check(!statusBar.batteryPercentage, "new profiles keep battery percentage hidden");
@@ -356,6 +364,12 @@ void TestCodec()
     settings.values.personalization.showGroupTabCounts = true;
     settings.values.personalization.scrollableTitleBarOnTop = true;
     settings.values.personalization.widgetTransformCursors = false;
+    settings.values.personalization.windowPinBorderEnabled = false;
+    settings.values.personalization.windowPinBorderR = 0.3f;
+    settings.values.personalization.windowPinBorderG = 0.6f;
+    settings.values.personalization.windowPinBorderB = 0.9f;
+    settings.values.personalization.windowPinBorderWidth = 18.0f;
+    settings.values.personalization.windowPinBorderOpacity = 0.7f;
     settings.values.personalization.popupHoverOpen = true;
     settings.values.personalization.popupCloseOnMouseLeave = true;
     settings.values.personalization.popupHoverDelayMs = 1700.0f;
@@ -375,6 +389,13 @@ void TestCodec()
     settings.values.desktop.scrollingTitleLines = 1;
     settings.values.desktop.titleEllipsis = false;
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(!restored.values.personalization.windowPinBorderEnabled &&
+            restored.values.personalization.windowPinBorderR == 0.3f &&
+            restored.values.personalization.windowPinBorderG == 0.6f &&
+            restored.values.personalization.windowPinBorderB == 0.9f &&
+            restored.values.personalization.windowPinBorderWidth == 18.0f &&
+            restored.values.personalization.windowPinBorderOpacity == 0.7f,
+        "global pin border visibility and style cross the independent settings-process boundary");
     Check(restored.values.general.font == settings.values.general.font &&
         restored.values.general.tooltipFontSize == 22 &&
         restored.values.desktop.itemFontWeight == 600.f &&
@@ -594,9 +615,9 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 34 omitted independent mapping modes and widget sorting.
+        // Version 35 omitted the independent global window-pin border fields.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{34},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{35},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),

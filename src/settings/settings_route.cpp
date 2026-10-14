@@ -233,7 +233,9 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
     if (route.page != SettingsPage::WidgetSettings && route.page != SettingsPage::LargeIcon)
     {
         const std::string_view focus = route.focusId;
-        if (!requestedThemeOverview &&
+        if (focus.starts_with("personalization.windowPinBorder."))
+            route.page = SettingsPage::AppearanceTheme;
+        else if (!requestedThemeOverview &&
             (focus == "personalization.quickNavigationTheme" || focus == "personalization.quickNavTheme" ||
             focus == "quickNav.layout" || focus.starts_with("quickNav.layout.") ||
             focus.starts_with("quickNav.color.") || focus.starts_with("quickNav.colors.")))

@@ -36,6 +36,8 @@ inline constexpr float kMinimumWidgetBorderWidth = 0.5f;
 inline constexpr float kMaximumWidgetBorderWidth = 4.0f;
 inline constexpr float kDefaultEdgeHighlightWidth = 2.0f;
 inline constexpr float kDefaultEdgeHighlightStrength = 0.75f;
+inline constexpr float kMinimumWindowPinBorderWidth = 1.0f;
+inline constexpr float kMaximumWindowPinBorderWidth = 20.0f;
 
 inline constexpr float kDefaultPopupHoverDelayMs = 250.0f;
 inline constexpr float kMinimumPopupHoverDelayMs = 100.0f;
@@ -211,6 +213,14 @@ struct PersonalizationSettings
     /** @brief 独立的组件圆角半径，不属于主题预设。 */
     float cornerRadius = 12.0f;
 
+    // Global window-pin indicator; independent of component theme presets.
+    bool windowPinBorderEnabled = true;
+    float windowPinBorderR = 0.0f;
+    float windowPinBorderG = 120.0f / 255.0f;
+    float windowPinBorderB = 215.0f / 255.0f;
+    float windowPinBorderWidth = 6.0f;
+    float windowPinBorderOpacity = 0.5f;
+
     /**
      * @brief 自绘右键菜单样式，不属于主题预设。
      * @details 0=跟随系统，1=浅色模糊，2=深色模糊，
@@ -261,6 +271,21 @@ struct PersonalizationSettings
     static PersonalizationSettings AcrylicDarkPreset();
     static PersonalizationSettings AcrylicLightPreset();
 };
+
+inline void NormalizeWindowPinBorderAppearance(PersonalizationSettings& settings)
+{
+    const PersonalizationSettings defaults;
+    const auto normalize = [&](float PersonalizationSettings::* member, float minimum, float maximum) {
+        settings.*member = std::isfinite(settings.*member)
+            ? std::clamp(settings.*member, minimum, maximum) : defaults.*member;
+    };
+    normalize(&PersonalizationSettings::windowPinBorderR, 0.0f, 1.0f);
+    normalize(&PersonalizationSettings::windowPinBorderG, 0.0f, 1.0f);
+    normalize(&PersonalizationSettings::windowPinBorderB, 0.0f, 1.0f);
+    normalize(&PersonalizationSettings::windowPinBorderOpacity, 0.0f, 1.0f);
+    normalize(&PersonalizationSettings::windowPinBorderWidth,
+        kMinimumWindowPinBorderWidth, kMaximumWindowPinBorderWidth);
+}
 
 /** @brief 将旧版或无效预设 ID 映射到现有主题。 */
 int NormalizeAppearancePresetId(int presetId);

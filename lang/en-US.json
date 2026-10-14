@@ -2745,5 +2745,11 @@
   "settings.dock.traySingleClick": "Single-click tray icon",
   "settings.dock.trayDoubleClick": "Double-click tray icon",
   "settings.dock.trayLaunch": "Start new process",
-  "settings.dock.trayInvalidTarget": "Enter an EXE filename or an absolute EXE path. Up to 128 entries are supported."
+  "settings.dock.trayInvalidTarget": "Enter an EXE filename or an absolute EXE path. Up to 128 entries are supported.",
+  "settings.personalization.windowPinBorder": "Pinned window border",
+  "settings.personalization.windowPinBorder.show": "Show pinned window border",
+  "settings.personalization.windowPinBorder.hint": "Hiding the border keeps the window pinned.",
+  "settings.personalization.windowPinBorder.color": "Border color",
+  "settings.personalization.windowPinBorder.width": "Border thickness",
+  "settings.personalization.windowPinBorder.opacity": "Border opacity"
 }
