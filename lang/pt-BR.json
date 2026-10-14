@@ -2751,5 +2751,6 @@
   "settings.personalization.windowPinBorder.hint": "Ocultar a borda mantém a janela fixada em primeiro plano.",
   "settings.personalization.windowPinBorder.color": "Cor da borda",
   "settings.personalization.windowPinBorder.width": "Espessura da borda",
-  "settings.personalization.windowPinBorder.opacity": "Opacidade da borda"
+  "settings.personalization.windowPinBorder.opacity": "Opacidade da borda",
+  "settings.animation.option.attraction": "Atração"
 }

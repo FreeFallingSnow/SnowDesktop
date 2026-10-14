@@ -2751,5 +2751,6 @@
   "settings.personalization.windowPinBorder.hint": "Das Fenster bleibt auch mit ausgeblendetem Rahmen im Vordergrund.",
   "settings.personalization.windowPinBorder.color": "Rahmenfarbe",
   "settings.personalization.windowPinBorder.width": "Rahmenstärke",
-  "settings.personalization.windowPinBorder.opacity": "Deckkraft des Rahmens"
+  "settings.personalization.windowPinBorder.opacity": "Deckkraft des Rahmens",
+  "settings.animation.option.attraction": "Anziehungseffekt"
 }

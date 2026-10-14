@@ -2751,5 +2751,6 @@
   "settings.personalization.windowPinBorder.hint": "Hiding the border keeps the window pinned.",
   "settings.personalization.windowPinBorder.color": "Border color",
   "settings.personalization.windowPinBorder.width": "Border thickness",
-  "settings.personalization.windowPinBorder.opacity": "Border opacity"
+  "settings.personalization.windowPinBorder.opacity": "Border opacity",
+  "settings.animation.option.attraction": "Attraction"
 }

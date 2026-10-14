@@ -683,7 +683,7 @@ void TestDesktopStylePresetScope()
             Check(NeedsDesktopStyleAnimations(key, changedHover) && NeedsDesktopStyleAnimations(key, changedLaunch),
                 "changing either recommended effect makes the animation choice meaningful again");
             dock.hoverScale = 1.25f;
-            dock.windowEffect = 3;
+            dock.windowEffect = 4;
             Check(!NeedsDesktopStyleAnimations(key, dock),
                 "unrelated magnification scale and window effects do not cause an animation prompt");
         }

@@ -2751,5 +2751,6 @@
   "settings.personalization.windowPinBorder.hint": "关闭边框后，窗口仍保持置顶。",
   "settings.personalization.windowPinBorder.color": "边框颜色",
   "settings.personalization.windowPinBorder.width": "边框粗细",
-  "settings.personalization.windowPinBorder.opacity": "边框不透明度"
+  "settings.personalization.windowPinBorder.opacity": "边框不透明度",
+  "settings.animation.option.attraction": "吸引效果"
 }

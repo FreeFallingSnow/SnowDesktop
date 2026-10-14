@@ -2751,5 +2751,6 @@
   "settings.personalization.windowPinBorder.hint": "Ocultar el borde mantiene la ventana fijada en primer plano.",
   "settings.personalization.windowPinBorder.color": "Color del borde",
   "settings.personalization.windowPinBorder.width": "Grosor del borde",
-  "settings.personalization.windowPinBorder.opacity": "Opacidad del borde"
+  "settings.personalization.windowPinBorder.opacity": "Opacidad del borde",
+  "settings.animation.option.attraction": "Atracción"
 }

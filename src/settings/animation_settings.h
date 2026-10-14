@@ -49,7 +49,7 @@ inline int NormalizeLaunchEffect(int value) noexcept
 }
 inline int NormalizeWindowEffect(int value) noexcept
 {
-    return value >= 0 && value <= 3 ? value : 1;
+    return value >= 0 && value <= 4 ? value : 1;
 }
 inline bool ResolveEnabled(int mode, bool systemEnabled) noexcept
 {

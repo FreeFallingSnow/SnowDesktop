@@ -2751,5 +2751,6 @@
   "settings.personalization.windowPinBorder.hint": "테두리를 숨겨도 창은 항상 위에 유지됩니다.",
   "settings.personalization.windowPinBorder.color": "테두리 색",
   "settings.personalization.windowPinBorder.width": "테두리 두께",
-  "settings.personalization.windowPinBorder.opacity": "테두리 불투명도"
+  "settings.personalization.windowPinBorder.opacity": "테두리 불투명도",
+  "settings.animation.option.attraction": "흡인 효과"
 }

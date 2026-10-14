@@ -198,8 +198,11 @@ private:
     }
     bool CreateGenieStrips();
     bool ApplyGenieFrame(double progress, BYTE opacity);
+    bool ApplyAttractionFrame(double collapsed, BYTE opacity);
     void ClearGenieStrips();
     bool StartGenieTimeline();
+    bool StartAttractionTimeline();
+    RECT ResolveImageHostRect() const;
     bool StartCompositionTimeline(bool opacityOnly = false);
     bool CommitCompositionTimeline(std::span<IDCompositionAnimation* const> animations);
     bool ScheduleAnimationWake();
@@ -251,6 +254,7 @@ private:
     bool compositionImageActive_ = false;
     bool compositionTimelineActive_ = false;
     std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual3>> genieStrips_;
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionEffectGroup>> attractionCellEffects_;
     snowdesktop::dock_thumbnail::SharedVisual compositionWindowImage_;
     std::vector<snowdesktop::dock_thumbnail::SharedVisual> genieWindowImages_;
     snowdesktop::dock_thumbnail::SharedVisual retiredWindowImage_;

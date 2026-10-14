@@ -1233,7 +1233,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.hoverScale = snowdesktop::animation::NormalizeHoverScale(static_cast<float>(value));
     if (ReadDoubleField(text, "launchEffect", value) && std::isfinite(value) && value >= 0 && value <= 2 && std::floor(value) == value)
         settings.launchEffect = static_cast<int>(value);
-    if (ReadDoubleField(text, "windowEffect", value) && std::isfinite(value) && value >= 0 && value <= 3 && std::floor(value) == value)
+    if (ReadDoubleField(text, "windowEffect", value) && std::isfinite(value) && value >= 0 && value <= 4 && std::floor(value) == value)
         settings.windowEffect = static_cast<int>(value);
     ReadBoolField(text, "systemTaskbarAutoHide", settings.systemTaskbarAutoHide);
     ReadBoolField(text, "suppressSystemTaskbar", settings.suppressSystemTaskbar);

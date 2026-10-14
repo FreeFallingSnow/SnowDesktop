@@ -1,3 +1,4 @@
+#include "dock/dock_attraction_timeline.h"
 #include "dock/dock_genie_rules.h"
 #include "dock/dock_genie_timeline.h"
 #include "dock/dock_minimize_protocol.h"
@@ -45,6 +46,10 @@ struct DockWindowTransitionTestAccess
         transition.animationStartTimeMs_ = static_cast<double>(counter.QuadPart) * 1000.0 /
             static_cast<double>(frequency.QuadPart) - progress * transition.animationDurationMs_;
     }
+    static double Collapse(const DockWindowTransition &transition)
+    {
+        return transition.lastCollapse_;
+    }
     static bool HostContainsGenieOutline(const DockWindowTransition& transition)
     {
         using namespace snowdesktop::dock_genie;
@@ -58,6 +63,21 @@ struct DockWindowTransitionTestAccess
         // Inspect the unchanged spatial mesh against the actual HWND, rather
         // than duplicating the host-size rule. Every reversed frame must fit.
         for (int phase = 0; phase <= 64; ++phase)
+        {
+            if (transition.effect_ == 4)
+            {
+                const auto patch = snowdesktop::dock_attraction::ControlPoints(
+                    source, target, Mix(transition.collapseFrom_, transition.collapseTo_, phase / 64.0));
+                for (int y = 0; y <= 16; ++y)
+                    for (int x = 0; x <= 16; ++x)
+                    {
+                        const auto p = snowdesktop::dock_attraction::Surface(patch, x / 16.0, y / 16.0);
+                        if (p.x < host.left - 0.5 || p.x > host.right + 0.5 || p.y < host.top - 0.5 ||
+                            p.y > host.bottom + 0.5)
+                            return false;
+                    }
+                continue;
+            }
             for (std::size_t boundary = 0; boundary <= StripCount; ++boundary)
             {
                 const auto section = SectionAt(source, target, transition.genieEdge_,
@@ -78,6 +98,7 @@ struct DockWindowTransitionTestAccess
                     }
                 }
             }
+        }
         return true;
     }
     static HWND PresentDisplacedGenie(DockWindowTransition& transition,
@@ -105,6 +126,26 @@ struct DockWindowTransitionTestAccess
                 FAILED(transition.compositionDevice_->Commit())) return nullptr;
         }
         else if (!transition.ApplyGenieFrame(1.0, 255)) return nullptr;
+        transition.presenting_ = true;
+        ShowWindow(transition.hwnd_, SW_SHOWNOACTIVATE);
+        return transition.hwnd_;
+    }
+    static HWND PresentAttraction(DockWindowTransition &transition, HWND source, RECT frame, RECT dock, bool timeline)
+    {
+        transition.sourceWindow_ = source;
+        transition.windowRect_ = frame;
+        transition.dockRect_ = dock;
+        transition.effect_ = 4;
+        transition.imageHostRect_ = transition.ResolveImageHostRect();
+        if (!transition.CreateSharedWindowImage())
+            return nullptr;
+        const RECT host = transition.imageHostRect_;
+        if (!SetWindowPos(transition.hwnd_, HWND_TOPMOST, host.left, host.top, host.right - host.left,
+                          host.bottom - host.top, SWP_NOACTIVATE))
+            return nullptr;
+        transition.collapseFrom_ = transition.collapseTo_ = 0.3;
+        if (timeline ? !transition.StartAttractionTimeline() : !transition.ApplyAttractionFrame(0.3, 255))
+            return nullptr;
         transition.presenting_ = true;
         ShowWindow(transition.hwnd_, SW_SHOWNOACTIVATE);
         return transition.hwnd_;
@@ -292,6 +333,114 @@ void CheckTimelineGeometry()
     Check(maximumOpacityError < 1.0 / 255.0, "compositor opacity remains within one alpha step of the original effect");
 }
 
+void CheckAttractionGeometry()
+{
+    namespace a = snowdesktop::dock_attraction;
+    const auto golden = a::ControlPoints({0, 0, 320, 200}, {336, 208, 400, 272}, 0.5);
+    // Independently evaluated upstream top-left trajectory: p0=(0,0),
+    // p1=(370.368,-25.4), p2=(395.93,228), p3=(368,240), parameter=0.5.
+    Check(std::hypot(golden[0].x - 333.3605, golden[0].y - 105.97421875) < 0.001,
+          "attraction retains the upstream asymmetric control-point trajectory");
+    bool bounded = true, positive = true, curved = false;
+    double maxCornerError = 0;
+    for (const double width : {320.0, 2560.0, 7680.0})
+    {
+        const std::array<a::Rect, 4> targets{{{width + 30, width * 0.6, width + 94, width * 0.6 + 64},
+                                              {-1600, 800, -1536, 864},
+                                              {100, -800, 164, -736},
+                                              {-900, -600, -836, -536}}};
+        for (const auto target : targets)
+        {
+            const a::Rect window{0, 0, width, width * 0.625};
+            const auto bounds = a::Bounds(window, target);
+            for (int phase = 0; phase <= 192; ++phase)
+            {
+                const double collapse = phase / 192.0;
+                const auto patch = a::ControlPoints(window, target, collapse);
+                for (std::size_t i = 0; i < a::CellCount; ++i)
+                {
+                    const auto cell = a::SourceCell(i);
+                    for (const double u : {cell.left, cell.right})
+                        for (const double v : {cell.top, cell.bottom})
+                        {
+                            const auto p = a::Surface(patch, u, v);
+                            bounded = bounded && p.x >= bounds.left && p.x <= bounds.right && p.y >= bounds.top &&
+                                      p.y <= bounds.bottom;
+                        }
+                    const double cropX = std::max(0.0, std::floor(cell.left * width - 0.5));
+                    const double cropY = std::max(0.0, std::floor(cell.top * width * 0.625 - 0.5));
+                    const auto matrix =
+                        a::Projection(patch, cell, width, width * 0.625, cropX, cropY, bounds.left, bounds.top);
+                    if (matrix)
+                        for (const double u : {cell.left, cell.right})
+                            for (const double v : {cell.top, cell.bottom})
+                            {
+                                const double x = u * width - cropX, y = v * width * 0.625 - cropY;
+                                const auto actual = Transform(*matrix, x, y);
+                                const auto p = a::Surface(patch, u, v);
+                                const double den = matrix->m14 * x + matrix->m24 * y + matrix->w;
+                                positive = positive && den > 0 && std::isfinite(actual.x) && std::isfinite(actual.y);
+                                maxCornerError = std::max(maxCornerError, std::hypot(actual.x - p.x + bounds.left,
+                                                                                     actual.y - p.y + bounds.top));
+                            }
+                }
+                const auto middle = a::Surface(patch, 0.5, 0.5);
+                const auto affine = (patch[0] + patch[3] + patch[6] + patch[9]) * 0.25;
+                curved = curved || std::hypot(middle.x - affine.x, middle.y - affine.y) > 2;
+            }
+            const auto first = a::ControlPoints(window, target, 0);
+            Check(Gap({first[0].x, first[0].y}, {window.left, window.top}) < 0.001 &&
+                      Gap({first[6].x, first[6].y}, {window.right, window.bottom}) < 0.001,
+                  "attraction restore endpoint preserves the exact source frame");
+        }
+    }
+    std::cout << "Attraction cropped projective corner error=" << maxCornerError << "px\n";
+    Check(bounded, "complete attraction bounds contain sampled curves through 8K on both sides and above the source");
+    Check(positive && maxCornerError < 0.5,
+          "attraction cropped cells have finite positive perspective and subpixel corners");
+    Check(curved && a::Opacity(0) == 1 && a::Opacity(1) == 0,
+          "attraction deforms a curved patch and reaches a transparent collapsed endpoint");
+    const a::Rect window{0, 0, 2560, 1600}, dock{2700, 800, 2764, 864};
+    bool timelineFinite = true;
+    for (const auto range : {std::array<double, 2>{0, 1}, {0.6, 0}, {0.6, 1}})
+    {
+        std::array<a::Frame, a::TimelineSteps + 1> frames{};
+        for (std::size_t step = 0; step < frames.size(); ++step)
+            frames[step] =
+                a::TimelineFrame(window, dock, range[0], range[1], static_cast<double>(step) / a::TimelineSteps);
+        for (std::size_t i = 0; i < a::CellCount; ++i)
+        {
+            const auto cell = a::SourceCell(i);
+            const double cropX = std::max(0.0, std::floor(cell.left * 2560 - 0.5));
+            const double cropY = std::max(0.0, std::floor(cell.top * 1600 - 0.5));
+            std::array<a::Values, a::TimelineSteps + 1> samples{};
+            for (std::size_t step = 0; step < samples.size(); ++step)
+                samples[step] = a::SampleCell(frames[step], window, dock, cell, 2560, 1600, cropX, cropY, -500, -500);
+            a::StabilizeInactiveGeometry(samples);
+            for (std::size_t step = 0; step < a::TimelineSteps; ++step)
+                for (const double fraction : {0.19, 0.51, 0.83})
+                {
+                    a::Values value{};
+                    for (std::size_t element = 0; element < value.size(); ++element)
+                        value[element] = a::TimelineSegment(samples[step], samples[step + 1], element, 0.42)
+                                             .Evaluate(fraction * 0.42 / a::TimelineSteps);
+                    for (const double u : {cell.left, cell.right})
+                        for (const double v : {cell.top, cell.bottom})
+                        {
+                            const double x = u * 2560 - cropX, y = v * 1600 - cropY;
+                            const double w = value[2] * x + value[5] * y + value[8];
+                            timelineFinite = timelineFinite && w > 0 &&
+                                             std::isfinite((value[0] * x + value[3] * y + value[6]) / w) &&
+                                             std::isfinite((value[1] * x + value[4] * y + value[7]) / w) &&
+                                             value[9] >= -0.00001 && value[9] <= 1.00001;
+                        }
+                }
+        }
+    }
+    Check(timelineFinite,
+          "actual float compositor curves retain finite positive perspective between samples and on reversals");
+}
+
 LRESULT CALLBACK FrameFixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
 {
     if (message == WM_PAINT)
@@ -332,12 +481,13 @@ LRESULT CALLBACK MaximizedFixtureProc(HWND window, UINT message, WPARAM wParam, 
     return DefWindowProcW(window, message, wParam, lParam);
 }
 
-std::array<double, 2> FrameMarkerCenters(HWND ownedDestination)
+std::array<double, 2> FrameMarkerCenters(HWND ownedDestination, unsigned minimum = 150)
 {
     RECT area{};
     if (!GetWindowRect(ownedDestination, &area)) return {-1, -1};
     const int width = area.right - area.left, height = area.bottom - area.top;
-    if (width <= 0 || height <= 0 || width > 512 || height > 512) return {-1, -1};
+    if (width <= 0 || height <= 0 || width > 1024 || height > 1024)
+        return {-1, -1};
     HDC screen = GetDC(nullptr), memory = CreateCompatibleDC(screen);
     BITMAPINFO info{};
     info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
@@ -361,8 +511,20 @@ std::array<double, 2> FrameMarkerCenters(HWND ownedDestination)
                 {
                     const unsigned pixel = pixels[y * width + x];
                     const unsigned red = (pixel >> 16) & 255, green = (pixel >> 8) & 255, blue = pixel & 255;
-                    if (red > 150 && green < 70 && blue < 100) { sums[0] += x; ++counts[0]; }
-                    if (green > 150 && red < 70 && blue < 100) { sums[1] += x; ++counts[1]; }
+                    const bool redMarker =
+                        minimum < 150 ? red > green + 40 && red > blue + 40 : red > 150 && green < 70 && blue < 100;
+                    const bool greenMarker =
+                        minimum < 150 ? green > red + 40 && green > blue + 40 : green > 150 && red < 70 && blue < 100;
+                    if (redMarker)
+                    {
+                        sums[0] += x;
+                        ++counts[0];
+                    }
+                    if (greenMarker)
+                    {
+                        sums[1] += x;
+                        ++counts[1];
+                    }
                 }
         }
         SelectObject(memory, previous);
@@ -596,6 +758,122 @@ void CheckFramePixelAlignment()
                     (flags & DWM_CLOAKED_APP) == 0,
                     "cancelling a compositor Genie retires its wake and releases the source window");
             }
+            // Exercise the new production mesh with actual live DWM pixels,
+            // comparing CPU matrices and compositor property playback.
+            for (const bool timeline : {false, true})
+            {
+                DockWindowTransition attraction;
+                const bool initialized = attraction.Initialize(type.hInstance, nullptr, nullptr, composition.Get());
+                const HWND presented = initialized ? DockWindowTransitionTestAccess::PresentAttraction(
+                                                         attraction, source, frame, displacedDock, timeline)
+                                                   : nullptr;
+                Check(presented != nullptr, "owned attraction patch prepares its DWM source cells");
+                if (presented)
+                {
+                    RECT hostBounds{};
+                    GetWindowRect(presented, &hostBounds);
+                    SetWindowPos(backing, presented, hostBounds.left, hostBounds.top,
+                                 hostBounds.right - hostBounds.left, hostBounds.bottom - hostBounds.top,
+                                 SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    UpdateWindow(backing);
+                    const auto patch = snowdesktop::dock_attraction::ControlPoints(
+                        {static_cast<double>(frame.left), static_cast<double>(frame.top),
+                         static_cast<double>(frame.right), static_cast<double>(frame.bottom)},
+                        {static_cast<double>(displacedDock.left), static_cast<double>(displacedDock.top),
+                         static_cast<double>(displacedDock.right), static_cast<double>(displacedDock.bottom)},
+                        0.3);
+                    const double v = (clientOrigin.y - frame.top + 39.5) / size.cy;
+                    const auto p0 = snowdesktop::dock_attraction::Surface(patch, red / size.cx, v);
+                    const auto p1 = snowdesktop::dock_attraction::Surface(patch, green / size.cx, v);
+                    const std::array<double, 2> expected{p0.x - hostBounds.left, p1.x - hostBounds.left};
+                    std::array<double, 2> actual{-1, -1};
+                    const ULONGLONG deadline = GetTickCount64() + 500;
+                    do
+                    {
+                        DwmFlush();
+                        actual = FrameMarkerCenters(presented, 60);
+                        if (std::abs(actual[0] - expected[0]) < 4 && std::abs(actual[1] - expected[1]) < 4)
+                            break;
+                    } while (GetTickCount64() < deadline);
+                    std::cout << "Attraction timeline=" << timeline << " markers=" << actual[0] << ',' << actual[1]
+                              << " expected=" << expected[0] << ',' << expected[1] << '\n';
+                    Check(std::abs(actual[0] - expected[0]) < 4 && std::abs(actual[1] - expected[1]) < 4,
+                          "actual attraction image pixels follow the independent curved surface within the cell "
+                          "sampling tolerance");
+                }
+                attraction.Cancel();
+            }
+            snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn, 2, 0, 60, false, false, 4);
+            ShowWindow(source, SW_SHOWNOACTIVATE);
+            const ULONGLONG attractionStarted = GetTickCount64();
+            const bool attractionStart = transition.StartMinimize(source, displacedDock);
+            std::cout << "Attraction compositor preparation: " << GetTickCount64() - attractionStarted << "ms\n";
+            Check(attractionStart && DockWindowTransitionTestAccess::TimelineActive(transition) &&
+                      scheduler.Metrics().activeAnimations == 0 && scheduler.Metrics().activeTimers == 1,
+                  "attraction uses compositor playback and one completion wake");
+            if (attractionStart)
+            {
+                ShowWindow(source, SW_MINIMIZE);
+                RECT hostBounds{};
+                GetWindowRect(transition.GetPresentationWindow(), &hostBounds);
+                const double initialRed = frame.left - hostBounds.left + red;
+                const ULONGLONG movementDeadline = GetTickCount64() + 250;
+                bool moved = false;
+                do
+                {
+                    DwmFlush();
+                    const auto centers = FrameMarkerCenters(transition.GetPresentationWindow(), 60);
+                    if (centers[0] >= 0 && std::abs(centers[0] - initialRed) > 4)
+                    {
+                        moved = true;
+                        break;
+                    }
+                } while (GetTickCount64() < movementDeadline);
+                Check(moved, "actual attraction pixels keep moving while the UI animation scheduler is stalled");
+                DockWindowTransitionTestAccess::SeekProgress(transition, 0.55);
+                int requests = 0;
+                const auto restore = [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                    if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                    {
+                        ++requests;
+                        ShowWindow(window, SW_SHOWNOACTIVATE);
+                    }
+                };
+                Check(transition.StartRestore(source, displacedDock, restore), "attraction reverses to restore");
+                const double held = DockWindowTransitionTestAccess::Collapse(transition);
+                DockWindowTransitionTestAccess::SeekProgress(transition, 0.85);
+                Check(transition.StartMinimize(source, displacedDock) &&
+                          std::abs(held - DockWindowTransitionTestAccess::Collapse(transition)) < 0.0001,
+                      "interrupting native restore preparation preserves the held deformation phase");
+                ShowWindow(source, SW_MINIMIZE);
+                DockWindowTransitionTestAccess::SeekProgress(transition, 0.45);
+                Check(transition.StartRestore(source, displacedDock, restore),
+                      "attraction repeatedly reverses to restore");
+                const ULONGLONG deadline = GetTickCount64() + 1500;
+                while (transition.IsActive() && !DockWindowTransitionTestAccess::TimelineActive(transition) &&
+                       GetTickCount64() < deadline)
+                {
+                    scheduler.DispatchDue();
+                    MSG message{};
+                    while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE))
+                    {
+                        TranslateMessage(&message);
+                        DispatchMessageW(&message);
+                    }
+                    const HANDLE wake = scheduler.WaitHandle();
+                    MsgWaitForMultipleObjects(1, &wake, FALSE, 10, QS_ALLINPUT);
+                }
+                Check(requests == 2 && DockWindowTransitionTestAccess::TimelineActive(transition) &&
+                          DockWindowTransitionTestAccess::HostContainsGenieOutline(transition),
+                      "repeated attraction restore rebind preserves the full curved render envelope");
+                transition.Cancel();
+                DWORD cloak = 0;
+                Check(!transition.IsActive() && scheduler.Metrics().activeTimers == 0 &&
+                          scheduler.Metrics().activeAnimations == 0 &&
+                          SUCCEEDED(DwmGetWindowAttribute(source, DWMWA_CLOAKED, &cloak, sizeof(cloak))) &&
+                          (cloak & DWM_CLOAKED_APP) == 0,
+                      "attraction cancellation releases its source image, wake and native cloak");
+            }
         }
     }
     if (destination) DestroyWindow(destination);
@@ -688,7 +966,7 @@ void CheckRetainedWindowImage()
             {
                 snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                     2, 0, 60, false, false, 3);
-                for (const int effect : {1, 2, 3})
+                for (const int effect : {1, 2, 3, 4})
                 {
                     snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                         2, 0, 60, false, false, effect);
@@ -788,7 +1066,7 @@ void CheckRetainedWindowImage()
                 };
                 Check(!appCloaked(source), "restore handoff releases only the animation's temporary source cloak");
 
-                for (const int effect : {1, 2, 3})
+                for (const int effect : {1, 2, 3, 4})
                 {
                     std::cout << "Short-bar restore effect: " << effect << '\n';
                     snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
@@ -930,7 +1208,7 @@ void CheckRetainedWindowImage()
                         (legacy.right - legacy.left != visibleFrame.right - visibleFrame.left ||
                             legacy.bottom - legacy.top != visibleFrame.bottom - visibleFrame.top),
                         "framed fixture distinguishes invisible borders from the visible image");
-                    for (const int effect : {1, 2, 3})
+                    for (const int effect : {1, 2, 3, 4})
                     {
                         for (const int sizeCase : {0, 1, 2})
                         {
@@ -1017,7 +1295,7 @@ void CheckRetainedWindowImage()
                 {
                     DwmSetWindowAttribute(maximizedSource, DWMWA_TRANSITIONS_FORCEDISABLED,
                         &alreadyDisabled, sizeof(alreadyDisabled));
-                    for (const int effect : {1, 2, 3})
+                    for (const int effect : {1, 2, 3, 4})
                     {
                         snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                             2, 0, 60, false, false, effect);
@@ -1087,7 +1365,7 @@ void CheckRetainedWindowImage()
                 }
                 // Real restore entry with a controlled slow presentation wait:
                 // the source stays cloaked while independent UI work progresses.
-                for (const int effect : {1, 2, 3})
+                for (const int effect : {1, 2, 3, 4})
                 {
                     snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                         2, 0, 60, false, false, effect);
@@ -1187,7 +1465,7 @@ void CheckRetainedWindowImage()
                 // Model a toolkit UI thread which dispatches the native state
                 // change after the visual timeline. The source must remain
                 // cloaked then, otherwise a second native animation can flash.
-                for (const int effect : {1, 2, 3})
+                for (const int effect : {1, 2, 3, 4})
                 {
                     snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                         2, 0, 60, false, false, effect);
@@ -1286,6 +1564,7 @@ int main()
         !IsMinimizeCommand(SW_HIDE), "restore, maximize and tray hiding remain independent");
     CheckContinuousOutline();
     CheckTimelineGeometry();
+    CheckAttractionGeometry();
     CheckFramePixelAlignment();
     CheckRetainedWindowImage();
     if (!failures) std::cout << "Genie outline, minimize protocol and cache-independent DWM image checks passed\n";

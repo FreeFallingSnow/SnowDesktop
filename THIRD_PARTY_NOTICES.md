@@ -50,6 +50,7 @@ described under "Optional Steamworks dependency" below.
 | HarmonyOS Sans SC | 1.0 original Regular TTF | HarmonyOS Sans Fonts License Agreement | Copyright 2021 Huawei Device Co., Ltd.; <https://developer.huawei.com/consumer/cn/design/resource/> |
 | DeskMakeover shape catalog | upstream `main` as referenced in 2026 | MIT | Copyright (c) 2026 Jinming Yang; <https://github.com/nicepkg/deskmakeover> |
 | OpenHarmony GraphicsEffect adapted rim calculations | upstream commit `da8e11652a705ea2141c35de1a1fff501148740e` | Apache-2.0 | Copyright (c) 2025-2026 Huawei Device Co., Ltd.; <https://github.com/openharmony/graphic_graphics_effect> |
+| OpenHarmony adapted attraction control-point calculations | upstream commit `e72069008cd4762ddd150d164861c43f8183e439` | Apache-2.0 | Copyright (c) 2024 Huawei Device Co., Ltd.; <https://github.com/openharmony/graphic_graphic_2d> |
 | TranslucentTB-derived portions | upstream commit `322e2b7395a51975150126276308b415970e080b` | GPL-3.0-only | Copyright (c) TranslucentTB contributors; <https://github.com/TranslucentTB/TranslucentTB/tree/322e2b7395a51975150126276308b415970e080b> |
 
 The complete Everything SDK, Dear ImGui, Lua, pinyin-data, Font Awesome,
@@ -169,7 +170,17 @@ binary are not included in this repository and are not covered by either the
 SnowDesktop GPL license or the bridge MIT license. See
 `steam_bridge/THIRD_PARTY_NOTICES.md` for the distribution boundary.
 
-## Apache License 2.0 — OpenHarmony GraphicsEffect
+## OpenHarmony-derived attraction calculations
+
+`src/dock/dock_attraction_rules.h` adapts the control-point trajectories and
+timing parameters of `RSAttractionEffectFilter` at the pinned commit above.
+SnowDesktop supplies its own DWM image grid, Coons evaluation, source-local
+projection, compositor timeline, finite transparent endpoint, and motion
+bounds. These changes are part of SnowDesktop's corresponding source.
+The copyright and Apache-2.0 notice are retained in the adapted header;
+the complete Apache-2.0 license below applies to these adapted portions too.
+
+## Apache License 2.0 — OpenHarmony adapted portions
 
 ```text
 

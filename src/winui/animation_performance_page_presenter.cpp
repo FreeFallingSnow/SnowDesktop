@@ -209,7 +209,8 @@ struct AnimationPerformancePagePresenter::Impl
             {L10N_KEY("settings.animation.option.systemDefault"),
              L10N_KEY("settings.animation.option.scale"),
              L10N_KEY("settings.animation.option.fade"),
-             L10N_KEY("settings.animation.option.genie")});
+             L10N_KEY("settings.animation.option.genie"),
+             L10N_KEY("settings.animation.option.attraction")});
         HookDock(launch, &DockSettings::launchEffect);
         HookDock(window, &DockSettings::windowEffect);
         AddChoice(frameLimit, performanceCard, "frameLimit", "animation.frameLimit", 0,

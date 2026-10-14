@@ -2751,5 +2751,6 @@
   "settings.personalization.windowPinBorder.hint": "Masquer la bordure laisse la fenêtre épinglée au premier plan.",
   "settings.personalization.windowPinBorder.color": "Couleur de la bordure",
   "settings.personalization.windowPinBorder.width": "Épaisseur de la bordure",
-  "settings.personalization.windowPinBorder.opacity": "Opacité de la bordure"
+  "settings.personalization.windowPinBorder.opacity": "Opacité de la bordure",
+  "settings.animation.option.attraction": "Attraction"
 }

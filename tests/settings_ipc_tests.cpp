@@ -343,7 +343,7 @@ void TestCodec()
     settings.values.dock.hoverEffect = 1;
     settings.values.dock.hoverScale = 1.75f;
     settings.values.dock.launchEffect = 2;
-    settings.values.dock.windowEffect = 3;
+    settings.values.dock.windowEffect = 4;
     settings.values.dock.suppressSystemTaskbar = true;
     settings.values.dock.showWindowsButton = false;
     settings.values.dock.showQuickSearchButton = false;
@@ -389,6 +389,8 @@ void TestCodec()
     settings.values.desktop.scrollingTitleLines = 1;
     settings.values.desktop.titleEllipsis = false;
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(restored.values.dock.windowEffect == 4,
+          "attraction selection survives the independent settings process boundary");
     Check(!restored.values.personalization.windowPinBorderEnabled &&
             restored.values.personalization.windowPinBorderR == 0.3f &&
             restored.values.personalization.windowPinBorderG == 0.6f &&
