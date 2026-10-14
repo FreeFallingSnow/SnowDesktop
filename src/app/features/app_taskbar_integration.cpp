@@ -21,6 +21,16 @@ void DesktopApp::PrepareDockWindowMinimize(HWND window, const wchar_t* origin)
 
 void DesktopApp::StartDockForegroundMonitor()
 {
+    if (!dockShellHookWindow_)
+    {
+        dockShellHookMessage_ = RegisterWindowMessageW(L"SHELLHOOK");
+        const HWND target = controlHwnd_ && IsWindow(controlHwnd_)
+            ? controlHwnd_ : hwnd_;
+        if (dockShellHookMessage_ && target && RegisterShellHookWindow(target))
+            dockShellHookWindow_ = target;
+        else
+            WriteDiagnosticLogEntry(L"Dock attention Shell hook registration failed");
+    }
     dockForegroundNotificationWindow_.store(
         controlHwnd_ && IsWindow(controlHwnd_)
             ? controlHwnd_ : hwnd_);
@@ -68,6 +78,12 @@ void DesktopApp::RestartSystemTaskbarShellVisibilityDetectors()
 
 void DesktopApp::StopDockForegroundMonitor()
 {
+    if (dockShellHookWindow_)
+        DeregisterShellHookWindow(dockShellHookWindow_);
+    dockShellHookWindow_ = nullptr;
+    dockShellHookMessage_ = 0;
+    // Desktop/Explorer recovery also stops this monitor. Preserve pending
+    // requests across that rebind; the normal refresh prunes expired windows.
     dockExternalMinimize_.reset();
     snowdesktop::dock_taskbar_diagnostics::Stop();
     dockForegroundNotificationWindow_.store(nullptr);

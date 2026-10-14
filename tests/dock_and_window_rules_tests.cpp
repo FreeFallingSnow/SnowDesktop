@@ -30,6 +30,7 @@
 #include "layout/item_title_layout.h"
 #include "layout/item_render_layer_rules.h"
 #include "dock/dock_window_rules.h"
+#include "dock/dock_window_attention.h"
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_transition.h"
 #include "dock/dock_genie_rules.h"
@@ -1954,6 +1955,44 @@ int main(int argc, char** argv)
         return failures == 0 ? 0 : 1;
     }
     snowdesktop::tests::dock_folder_order::Run(Check);
+    {
+        namespace attention = snowdesktop::dock_window_attention;
+        attention::Tracker tracker;
+        const HWND first = reinterpret_cast<HWND>(UINT_PTR{101});
+        const HWND sibling = reinterpret_cast<HWND>(UINT_PTR{102});
+        const HWND unrelated = reinterpret_cast<HWND>(UINT_PTR{103});
+        const std::vector<HWND> windows{first, sibling};
+        Check(!tracker.HasAny(first, windows), "a running application starts without an attention badge");
+        Check(!tracker.Flash(nullptr, {1, 2}, false) &&
+            !tracker.Flash(first, {0, 2}, false) &&
+            !tracker.Flash(first, {1, 0}, false) &&
+            !tracker.Flash(first, {1, 2}, true),
+            "invalid and already foreground windows cannot create attention requests");
+        Check(tracker.Flash(sibling, {1, 3}, false) &&
+            tracker.HasAny(first, windows) &&
+            !tracker.HasAny(unrelated, std::vector<HWND>{unrelated}),
+            "a non-representative flashing sibling lights only its application badge");
+        Check(!tracker.Flash(sibling, {1, 3}, false) && tracker.HasAny(first, windows),
+            "repeated flash pulses retain a steady badge without toggling it off");
+        Check(tracker.Flash(first, {1, 2}, false), "each sibling keeps its own attention request");
+        Check(tracker.Retain([first](HWND window, attention::WindowIdentity) {
+                return window != first;
+            }) && tracker.HasAny(first, windows),
+            "acknowledging one window preserves a different sibling's pending attention");
+        Check(tracker.Remove(sibling) && !tracker.HasAny(first, windows) &&
+            !tracker.Remove(sibling),
+            "destroying the last flashing window clears the application badge idempotently");
+        tracker.Flash(first, {1, 2}, false);
+        Check(tracker.Retain([](HWND, attention::WindowIdentity identity) {
+                return identity == attention::WindowIdentity{7, 8};
+            }) && !tracker.HasAny(first, windows),
+            "a recycled window handle cannot inherit a previous process or thread's badge");
+        Check(tracker.Flash(first, {7, 8}, false) &&
+            tracker.HasAny(sibling, windows),
+            "identity refinement and a changed representative retain the actual window request");
+        tracker.Clear();
+        Check(!tracker.HasAny(first, windows), "resetting attention tracking clears transient requests");
+    }
     {
         SYSTEMTIME time{};
         time.wYear = 2026; time.wMonth = 10; time.wDay = 11;

@@ -373,8 +373,55 @@ DockWindowVisualState DesktopApp::GetDockWindowVisualState(size_t itemIndex) con
     return DockWindowVisualState::Running;
 }
 
+void DesktopApp::PruneDockWindowAttention(HWND acknowledgedWindow)
+{
+    // Use actual Windows foreground ownership, not the floating Dock's
+    // logical foreground or a click whose activation request may be rejected.
+    const HWND foreground = GetForegroundWindow();
+    const bool changed = dockWindowAttention_.Retain(
+        [foreground, acknowledgedWindow](HWND window,
+            snowdesktop::dock_window_attention::WindowIdentity identity) {
+            DWORD process = 0;
+            const DWORD thread = GetWindowThreadProcessId(window, &process);
+            return IsWindow(window) && process == identity.process &&
+                thread == identity.thread &&
+                !DockWindowsShareActivationGroup(window, foreground) &&
+                !DockWindowsShareActivationGroup(window, acknowledgedWindow);
+        });
+    if (changed) InvalidateDockRects();
+}
+
+void DesktopApp::HandleDockShellHook(WPARAM event, HWND window)
+{
+    if (event == HSHELL_FLASH)
+    {
+        if (!window || !IsWindow(window)) return;
+        window = GetAncestor(window, GA_ROOT);
+        if (!IsDockTaskWindow(window)) return;
+        DWORD process = 0;
+        const DWORD thread = GetWindowThreadProcessId(window, &process);
+        if (dockWindowAttention_.Flash(window, {process, thread},
+                DockWindowsShareActivationGroup(window, GetForegroundWindow())))
+        {
+            InvalidateDockRects();
+            // A flash can precede discovery. Keep the request while the usual
+            // refresh resolves the application's identity and Dock membership.
+            dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    else if (event == HSHELL_WINDOWACTIVATED || event == HSHELL_RUDEAPPACTIVATED)
+    {
+        PruneDockWindowAttention(window);
+    }
+    else if (event == HSHELL_WINDOWDESTROYED)
+    {
+        if (dockWindowAttention_.Remove(window)) InvalidateDockRects();
+    }
+}
+
 void DesktopApp::RefreshDockForegroundState()
 {
+    PruneDockWindowAttention();
     if (!generalSettings_.dockEnabled)
         return;
     const DWORD observedForegroundTick = dockForegroundChangedTick_.load();
@@ -424,6 +471,8 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
+    if (event == EVENT_OBJECT_DESTROY && dockWindowAttention_.Remove(window))
+        InvalidateDockRects();
     const auto tracks = [window](const auto& state) {
         return state.window == window ||
             std::find(state.trackedWindows.begin(), state.trackedWindows.end(), window) !=
@@ -464,6 +513,7 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 void DesktopApp::RefreshDockRunningWindows(
     bool invalidateChanged, HWND preferredWindow)
 {
+    PruneDockWindowAttention();
     if (invalidateChanged && dockWindowTransition_ && dockWindowTransition_->IsActive())
     {
         // Background discovery can spend tens of milliseconds in process/Shell queries.

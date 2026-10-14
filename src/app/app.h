@@ -32,6 +32,7 @@
 #include "dock/dock_refresh_cache.h"
 #include "app/dock/dock_tray_popup_state.h"
 #include "dock/dock_running_animation.h"
+#include "dock/dock_window_attention.h"
 #include "dock/dock_external_minimize.h"
 #include "common/bounded_lru_cache.h"
 #include "icons/icon_row_index.h"
@@ -1441,6 +1442,8 @@ private:
     snowdesktop::dock_refresh_cache::Cache<std::wstring, HWND> dockWindowAppIds_;
     DockWindowVisualState GetDockWindowVisualState(size_t itemIndex) const;
     void RefreshDockForegroundState();
+    void HandleDockShellHook(WPARAM event, HWND window);
+    void PruneDockWindowAttention(HWND acknowledgedWindow = nullptr);
     void HandleDockWindowListChanged(HWND window, DWORD event);
     void RefreshDockRunningWindows(bool invalidateChanged = true,
         HWND preferredWindow = nullptr);
@@ -2975,6 +2978,7 @@ private:
         ID2D1DeviceContext* ctx, RECT iconRect, bool lightTheme);
     void DrawDockRunningApp(ID2D1DeviceContext* ctx,
         const DockRunningAppInfo& app, RECT rect, int state, int requestedIconSize = 0);
+    void DrawDockAttentionDot(ID2D1DeviceContext* ctx, RECT iconRect, float opacity = 1.0f);
     /** @brief 将 RECT 转换为 D2D1_RECT_F。 @param r 输入矩形 @return D2D 矩形 */
     static D2D1_RECT_F ToD2DRect(const RECT& r);
 
@@ -3796,6 +3800,9 @@ private:
     std::unordered_map<std::wstring, DockUsageRecord> dockUsageStats_;
     snowdesktop::dock_refresh_cache::Cache<DockAppIdentity> dockAppIdentityCache_;
     std::unordered_map<std::wstring, DockWindowInfo> dockRunningWindows_;
+    snowdesktop::dock_window_attention::Tracker dockWindowAttention_;
+    UINT dockShellHookMessage_ = 0;
+    HWND dockShellHookWindow_ = nullptr;
     std::vector<DockRunningAppInfo> dockUnpinnedRunningApps_;
     bool dockRunningAppsInitialized_ = false;
     std::unordered_map<HWND, ULONGLONG> dockPendingCloseWindows_;

@@ -75,6 +75,12 @@ bool DesktopApp::HandleShellContextMenuMessage(
 
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (dockShellHookMessage_ && msg == dockShellHookMessage_ &&
+        hwnd == dockShellHookWindow_)
+    {
+        HandleDockShellHook(wp, reinterpret_cast<HWND>(lp));
+        return 0;
+    }
     if (msg >= 0xC000 && msg == snowdesktop::tray::ChangeMessage())
     {
         if (dockTrayService_ && dockTrayService_->AcknowledgeChange(hwnd, wp)) RefreshDockTrayPopup();

@@ -423,6 +423,8 @@ LRESULT DesktopApp::HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 {
     // The stable control HWND receives cross-process minimize preparation even
     // while Explorer reparents/recreates the desktop surface.
+    if (dockShellHookMessage_ && msg == dockShellHookMessage_)
+        return HandleMessage(hwnd, msg, wp, lp);
     if (msg >= 0xC000 &&
         (msg == snowdesktop::dock_minimize::RequestMessage() ||
          msg == snowdesktop::dock_minimize::CancelMessage()))

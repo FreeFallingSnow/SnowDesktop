@@ -130,6 +130,25 @@ void DesktopApp::DrawDockSelectionIndicator(
         ctx->FillGeometry(geometry.Get(), brush.Get());
 }
 
+void DesktopApp::DrawDockAttentionDot(
+    ID2D1DeviceContext* ctx, RECT iconRect, float opacity)
+{
+    if (!ctx || IsRectEmptyRect(iconRect) || opacity <= 0.0f) return;
+    const float size = static_cast<float>(std::min(
+        iconRect.right - iconRect.left, iconRect.bottom - iconRect.top));
+    const float radius = std::min(size * 0.25f, std::clamp(size * 0.09f, 3.0f, 6.0f));
+    const auto ellipse = D2D1::Ellipse(D2D1::Point2F(
+        static_cast<float>(iconRect.right) - radius - 1.0f,
+        static_cast<float>(iconRect.top) + radius + 1.0f), radius, radius);
+    ComPtr<ID2D1SolidColorBrush> brush;
+    if (FAILED(ctx->CreateSolidColorBrush(
+            D2D1::ColorF(0.94f, 0.20f, 0.23f, opacity), &brush)) || !brush)
+        return;
+    ctx->FillEllipse(ellipse, brush.Get());
+    brush->SetColor(D2D1::ColorF(1.0f, 1.0f, 1.0f, opacity * 0.9f));
+    ctx->DrawEllipse(ellipse, brush.Get(), std::max(1.0f, size * 0.018f));
+}
+
 void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const DockEntry& entry, RECT rect, int state, int requestedIconSize)
 {
@@ -244,6 +263,10 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 previousTransform);
         }
         drawDesktopItem(items_[index], iconRect);
+        const auto running = dockRunningWindows_.find(DockItemWindowKey(items_[index]));
+        if (running != dockRunningWindows_.end() && dockWindowAttention_.HasAny(
+                running->second.window, running->second.trackedWindows))
+            DrawDockAttentionDot(ctx, iconRect);
         if (state == 2)
             DrawDockSelectionIndicator(ctx, iconRect, lt);
         if (launchTransformApplied)
@@ -505,6 +528,8 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         DrawIconBitmap(ctx, bitmap, iconRect, presence, reinterpret_cast<std::uintptr_t>(&app));
     else
         DrawPlaceholderIcon(ctx, -1, iconRect, presence, true);
+    if (dockWindowAttention_.HasAny(app.window, app.trackedWindows))
+        DrawDockAttentionDot(ctx, iconRect, presence);
     if (state == 2)
     {
         DrawDockSelectionIndicator(ctx, iconRect, lt);
