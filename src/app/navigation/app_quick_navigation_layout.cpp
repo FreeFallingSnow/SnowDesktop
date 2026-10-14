@@ -97,24 +97,22 @@ RECT DesktopApp::GetQuickNavigationTabsRect(const RECT& overlay) const
 RECT DesktopApp::GetQuickNavigationViewModeButtonRect(
     const RECT& overlay) const
 {
-    if (UseQuickNavigationList() || !GetQuickNavigationEffectiveSearchText().empty() ||
-        quickNavigationActiveWidgetIndex_ !=
-            static_cast<size_t>(-1))
+    if (quickNavigationActiveWidgetIndex_ != static_cast<size_t>(-1))
+        return MakeRect(0, 0, 0, 0);
+    return GetQuickNavigationViewModeSlotRect(overlay);
+}
+
+RECT DesktopApp::GetQuickNavigationViewModeSlotRect(
+    const RECT& overlay) const
+{
+    if (UseQuickNavigationList() || !GetQuickNavigationEffectiveSearchText().empty())
         return MakeRect(0, 0, 0, 0);
 
     const RECT tabs =
         GetQuickNavigationTabsRect(overlay);
     const int buttonSize = QuickNavScale(28);
-    int width = QuickNavScale(76);
-    const auto label = QuickNavigationViewLabel();
-    ComPtr<IDWriteTextLayout> text;
-    if (dwriteFactory_ && quickNavTabTextFormat_ && SUCCEEDED(dwriteFactory_->CreateTextLayout(
-            label.c_str(), static_cast<UINT32>(label.size()), quickNavTabTextFormat_.Get(), 10000.f, 10000.f, &text)))
-    {
-        DWRITE_TEXT_METRICS metrics{};
-        if (SUCCEEDED(text->GetMetrics(&metrics))) width = std::clamp(
-            static_cast<int>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + QuickNavScale(30), QuickNavScale(60), QuickNavScale(164));
-    }
+    // The cached slot is shared by every tab, including non-desktop tabs.
+    const int width = std::max(QuickNavScale(76), quickNavViewModeSlotWidth_);
     const int top = tabs.top +
         std::max(0,
             static_cast<int>(
@@ -131,15 +129,15 @@ int DesktopApp::GetQuickNavigationTabsStart(
 {
     const RECT tabs =
         GetQuickNavigationTabsRect(overlay);
-    const RECT button =
-        GetQuickNavigationViewModeButtonRect(
+    const RECT slot =
+        GetQuickNavigationViewModeSlotRect(
             overlay);
     return snowdesktop::
         quick_navigation_rules::
             TabStripLabelStart(
                 tabs.left,
-                !IsRectEmpty(&button),
-                static_cast<int>(button.right - button.left),
+                !IsRectEmpty(&slot),
+                static_cast<int>(slot.right - slot.left),
                 QuickNavScale(8));
 }
 
@@ -287,6 +285,32 @@ RECT DesktopApp::GetQuickNavigationTabRect(const RECT& overlay, size_t tabIndex)
         if (tabIndex < n) width = quickNavTabWidths_[tabIndex];
     }
     return MakeRect(left, tabs.top, left + width, tabs.bottom);
+}
+
+std::optional<size_t> DesktopApp::GetQuickNavigationTabAtPoint(POINT point) const
+{
+    if (!quickNavigationOpen_ || UseQuickNavigationList() ||
+        !GetQuickNavigationEffectiveSearchText().empty() ||
+        quickNavigationMenu_ != QuickNavigationMenu::None)
+        return std::nullopt;
+
+    const RECT tabs = GetQuickNavigationTabsRect(quickNavigationRect_);
+    if (!PtInRect(&tabs, point))
+        return std::nullopt;
+    const size_t count = std::min(quickNavTabWidths_.size(),
+        GetQuickNavigationCollectionIndices().size() + 2);
+    for (size_t tab = 0; tab < count; ++tab)
+    {
+        const RECT bounds = GetQuickNavigationTabRect(quickNavigationRect_, tab);
+        RECT viewport = tabs;
+        if (tab >= 2)
+            viewport.left = GetQuickNavigationTabRect(quickNavigationRect_, 2).left +
+                quickNavigationTabScrollOffset_;
+        RECT visible{};
+        if (IntersectRect(&visible, &bounds, &viewport) && PtInRect(&visible, point))
+            return tab;
+    }
+    return std::nullopt;
 }
 
 int DesktopApp::GetQuickNavigationColumnCount(const RECT& overlay) const

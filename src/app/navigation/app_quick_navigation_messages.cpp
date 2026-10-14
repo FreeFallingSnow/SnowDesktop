@@ -5,6 +5,9 @@
 
 namespace
 {
+// This timer belongs to the separate Quick Navigation HWND.
+constexpr UINT_PTR kQuickNavigationTabHoverTimerId = 1;
+
 bool IsCurrentProcessWindow(HWND candidate)
 {
     if (!candidate)
@@ -33,6 +36,78 @@ bool IsWindowOwnedBy(
     }
     return false;
 }
+}
+
+void DesktopApp::CancelQuickNavigationTabHover()
+{
+    if (quickNavigationTabHoverTimerArmed_ && quickNavigationHwnd_)
+        KillTimer(quickNavigationHwnd_, kQuickNavigationTabHoverTimerId);
+    quickNavigationTabHoverTimerArmed_ = false;
+    quickNavigationTabHoverController_.Reset();
+}
+
+void DesktopApp::UpdateQuickNavigationTabHover(POINT point, bool allowSwitch)
+{
+    if (!personalizationSettings_.groupTabHoverSwitch || !quickNavigationOpen_ ||
+        quickNavigationPreview_ || quickNavigationAnimation_.IsAnimating() ||
+        quickNavTabDragIndex_ != static_cast<size_t>(-1) || quickNavScrollbarDragging_ ||
+        quickNavigationKeyboardTargetKind_ != QuickNavigationKeyboardTargetKind::None ||
+        renameController_.IsActive() || dragSession_.HasContext() ||
+        dragDropController_.IsTransportActive() || GetCapture() ||
+        HasActiveContextMenuSession() ||
+        snowdesktop::text_input::HasEditingMenu(quickNavigationSearchEdit_) ||
+        ((GetAsyncKeyState(VK_LBUTTON) | GetAsyncKeyState(VK_RBUTTON) |
+            GetAsyncKeyState(VK_MBUTTON)) & 0x8000))
+    {
+        CancelQuickNavigationTabHover();
+        return;
+    }
+
+    if (allowSwitch)
+    {
+        POINT screenPoint{};
+        if (!GetCursorPos(&screenPoint) || WindowFromPoint(screenPoint) != quickNavigationHwnd_)
+        {
+            CancelQuickNavigationTabHover();
+            return;
+        }
+        point = { screenPoint.x - virtualLeft_, screenPoint.y - virtualTop_ };
+    }
+    const auto tab = GetQuickNavigationTabAtPoint(point);
+    if (!tab)
+    {
+        CancelQuickNavigationTabHover();
+        return;
+    }
+
+    const auto indices = GetQuickNavigationCollectionIndices();
+    const size_t target = *tab == 0 ? static_cast<size_t>(-1) :
+        *tab == 1 ? static_cast<size_t>(-2) : indices[*tab - 2];
+    if (target == quickNavigationActiveWidgetIndex_)
+    {
+        CancelQuickNavigationTabHover();
+        return;
+    }
+
+    // Stable identity prevents a reordered/rebuilt tab from inheriting dwell.
+    const DWORD delay = static_cast<DWORD>(NormalizeTabHoverDelayMs(personalizationSettings_.tabHoverDelayMs));
+    const RECT bounds = GetQuickNavigationTabRect(quickNavigationRect_, *tab);
+    const std::wstring identity = *tab < 2 ? (*tab == 0 ? L"desktop" : L"mapping") :
+        L"widget:" + widgets_[target].id;
+    const std::wstring token = std::to_wstring(identity.size()) + L":" + identity + L":" +
+        std::to_wstring(quickNavigationActiveWidgetIndex_) + L":" + std::to_wstring(pageMutationRevision_) + L":" +
+        std::to_wstring(quickNavigationTabScrollOffset_) + L":" + std::to_wstring(bounds.left) + L":" +
+        std::to_wstring(bounds.top) + L":" + std::to_wstring(bounds.right) + L":" + std::to_wstring(delay);
+    const DWORD now = GetTickCount();
+    quickNavigationTabHoverController_.Track(token, now);
+    if (allowSwitch && quickNavigationTabHoverController_.Consume(now, delay))
+    {
+        (void)ActivateQuickNavigationTab(*tab);
+        return;
+    }
+    if (!quickNavigationTabHoverTimerArmed_ && quickNavigationHwnd_)
+        quickNavigationTabHoverTimerArmed_ = SetTimer(quickNavigationHwnd_,
+            kQuickNavigationTabHoverTimerId, kPopupHoverPollIntervalMs, nullptr) != 0;
 }
 
 LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
@@ -113,6 +188,12 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     case WM_ERASEBKGND:
         return 1;
     case WM_TIMER:
+        if (wp == kQuickNavigationTabHoverTimerId)
+        {
+            if (quickNavigationTabHoverTimerArmed_)
+                UpdateQuickNavigationTabHover(quickNavigationLastMousePoint_, true);
+            return 0;
+        }
         if (wp ==
             kQuickNavigationEverythingSearchTimerId)
         {
@@ -133,6 +214,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         break;
     case WM_LBUTTONDOWN:
     {
+        CancelQuickNavigationTabHover();
         ResetQuickNavigationKeyboardTarget();
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         POINT appPoint{
@@ -223,6 +305,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     }
     case WM_RBUTTONDOWN:
     case WM_RBUTTONDBLCLK:
+        CancelQuickNavigationTabHover();
         OnRightButtonDown(nullptr);
         return 0;
     case WM_RBUTTONUP:
@@ -240,6 +323,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     }
     case WM_CONTEXTMENU:
     {
+        CancelQuickNavigationTabHover();
         if (reinterpret_cast<HWND>(wp) != hwnd)
             break;
         POINT screenPoint{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -349,6 +433,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             quickNavigationHoverRegions_.empty();
         quickNavigationPointerTarget_ =
             pointerTarget;
+        UpdateQuickNavigationTabHover(appPoint);
         if (UseQuickNavigationList() || quickNavigationMenu_ != QuickNavigationMenu::None ||
             (appPoint.y < GetQuickNavigationSearchRect(quickNavigationRect_).bottom) ||
             wasHovered != quickNavScrollbarHovered_ ||
@@ -359,6 +444,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
     }
     case WM_MOUSELEAVE:
     {
+        CancelQuickNavigationTabHover();
         quickNavigationLastMousePoint_ = {
             LONG_MIN, LONG_MIN };
         quickNavScrollbarHovered_ = false;
@@ -408,13 +494,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
             }
             else
             {
-                std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
-                if (dragTab >= 2 && dragTab - 2 < ci.size())
-                {
-                    quickNavigationActiveWidgetIndex_ = ci[dragTab - 2];
-                    quickNavigationScrollOffset_ = 0;
-                    quickNavigationInitialJumpOpen_ = false;
-                }
+                (void)ActivateQuickNavigationTab(dragTab);
             }
 
             quickNavTabDragIndex_ = static_cast<size_t>(-1);
@@ -426,8 +506,13 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         break;
     }
     case WM_MOUSEWHEEL:
+        CancelQuickNavigationTabHover();
         OnMouseWheel(wp, lp);
         return 0;
+    case WM_CANCELMODE:
+    case WM_CAPTURECHANGED:
+        CancelQuickNavigationTabHover();
+        break;
     case WM_COMMAND:
         if (renameInputWindow_ && reinterpret_cast<HWND>(lp) == renameInputWindow_ &&
             HIWORD(wp) == EN_UPDATE)
@@ -444,6 +529,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         }
         break;
     case WM_KEYDOWN:
+        CancelQuickNavigationTabHover();
         if (snowdesktop::text_input::IsComposing(quickNavigationSearchEdit_) || !quickNavigationSearchCompositionText_.empty()) break;
         if (HandleQuickNavigationSearchKey(wp)) return 0;
         if (HandleQuickNavigationKeyboardInput(wp))
@@ -511,6 +597,7 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         CloseQuickNavigation();
         return 0;
     case WM_DESTROY:
+        CancelQuickNavigationTabHover();
         if (quickNavigationHwnd_ == hwnd)
             quickNavigationHwnd_ = nullptr;
         return 0;
@@ -534,6 +621,11 @@ LRESULT CALLBACK DesktopApp::QuickNavigationSearchSubclassProc(
     (void)subclassId;
     auto* app = reinterpret_cast<DesktopApp*>(refData);
     if (!app) return DefSubclassProc(hwnd, message, wParam, lParam);
+
+    if (message == WM_KEYDOWN || message == WM_MOUSEWHEEL ||
+        message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN ||
+        message == WM_IME_STARTCOMPOSITION)
+        app->CancelQuickNavigationTabHover();
 
     if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN)
     {

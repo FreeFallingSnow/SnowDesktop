@@ -171,6 +171,21 @@ void DesktopApp::ToggleQuickNavigation()
             QuickNavigationInvocationSource::Hotkey);
 }
 
+bool DesktopApp::ActivateQuickNavigationTab(size_t tab)
+{
+    const auto indices = GetQuickNavigationCollectionIndices();
+    if (tab >= 2 && tab - 2 >= indices.size())
+        return false;
+    CancelQuickNavigationTabHover();
+    quickNavigationActiveWidgetIndex_ = tab == 0 ? static_cast<size_t>(-1) :
+        tab == 1 ? static_cast<size_t>(-2) : indices[tab - 2];
+    quickNavigationScrollOffset_ = 0;
+    quickNavigationInitialJumpOpen_ = false;
+    ResetQuickNavigationKeyboardTarget();
+    InvalidateQuickNavigationWindow();
+    return true;
+}
+
 /**
  * @brief 处理快捷导航面板内的点击事件
  * @param point 点击坐标（客户端坐标）
@@ -180,6 +195,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
 {
     if (!quickNavigationOpen_)
         return false;
+    CancelQuickNavigationTabHover();
     ResetQuickNavigationKeyboardTarget();
 
     RECT overlay = quickNavigationRect_;
@@ -224,24 +240,8 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
                 point))
             return true;
 
-        RECT tab0Rect = GetQuickNavigationTabRect(overlay, 0);
-        if (PtInRect(&tab0Rect, point))
-        {
-            quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
-            quickNavigationScrollOffset_ = 0;
-            quickNavigationInitialJumpOpen_ = false;
-            InvalidateQuickNavigationWindow();
-            return true;
-        }
-        RECT tab1Rect = GetQuickNavigationTabRect(overlay, 1);
-        if (PtInRect(&tab1Rect, point))
-        {
-            quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-2);
-            quickNavigationScrollOffset_ = 0;
-            quickNavigationInitialJumpOpen_ = false;
-            InvalidateQuickNavigationWindow();
-            return true;
-        }
+        if (const auto tab = GetQuickNavigationTabAtPoint(point))
+            return ActivateQuickNavigationTab(*tab);
     }
 
     RECT content = GetQuickNavigationContentRect(overlay);

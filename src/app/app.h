@@ -1803,8 +1803,14 @@ private:
         const QuickNavigationContentModel& model) const;
     RECT GetQuickNavigationViewModeButtonRect(
         const RECT& overlay) const;
+    RECT GetQuickNavigationViewModeSlotRect(
+        const RECT& overlay) const;
     int GetQuickNavigationTabsStart(
         const RECT& overlay) const;
+    std::optional<size_t> GetQuickNavigationTabAtPoint(POINT point) const;
+    bool ActivateQuickNavigationTab(size_t tab);
+    void CancelQuickNavigationTabHover();
+    void UpdateQuickNavigationTabHover(POINT point, bool allowSwitch = false);
     bool TrySetQuickNavigationDesktopViewModeAtPoint(
         POINT point);
     void SetQuickNavigationDesktopViewMode(
@@ -4183,6 +4189,7 @@ private:
     std::array<ComPtr<ID2D1Bitmap>, 7> quickNavActionIconCache_;
     ID2D1DeviceContext* quickNavActionIconContext_ = nullptr;
     std::vector<int> quickNavTabWidths_;
+    int quickNavViewModeSlotWidth_ = 0;
     static LRESULT CALLBACK ControlWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT HandleControlMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     static LRESULT CALLBACK InputWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -4706,6 +4713,8 @@ private:
         quickNavigationHoverRegions_;
     QuickNavigationPointerTarget
         quickNavigationPointerTarget_{};
+    PopupHoverController quickNavigationTabHoverController_;
+    bool quickNavigationTabHoverTimerArmed_ = false;
     HIMAGELIST quickNavigationSystemImageListSmall_ = nullptr;
     snowdesktop::BoundedLruCache<std::wstring, int> quickNavigationEverythingIconCache_{512};
     snowdesktop::IconRowIndex<std::wstring> quickNavigationEverythingIconRows_;

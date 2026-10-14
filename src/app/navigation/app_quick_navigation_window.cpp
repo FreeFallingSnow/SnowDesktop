@@ -74,6 +74,7 @@ _LW("app.interact.snow_nav_title"),
  */
 void DesktopApp::DestroyQuickNavigationWindow()
 {
+    CancelQuickNavigationTabHover();
     quickNavigationHasLastEditAnimationFrame_ = false;
     quickNavBackdropCompositor_.Reset();
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
@@ -318,6 +319,7 @@ void DesktopApp::ClearQuickNavigationSearchCompositionText()
  */
 void DesktopApp::RefreshQuickNavigationSearchText()
 {
+    CancelQuickNavigationTabHover();
     ResetQuickNavigationKeyboardTarget();
     quickNavigationInitialJumpOpen_ = false;
     std::wstring previousQuery = GetQuickNavigationEffectiveSearchText();
@@ -811,9 +813,29 @@ void DesktopApp::UpdateQuickNavTabWidths()
     std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
     const size_t tabCount = ci.size() + 2;
     quickNavTabWidths_.resize(tabCount, QuickNavScale(72));
+    quickNavViewModeSlotWidth_ = QuickNavScale(76);
 
     if (!dwriteFactory_ || !quickNavTabTextFormat_)
         return;
+
+    // Measure all modes once with the tab widths; hit tests reuse this slot.
+    // Switching modes or hiding the desktop-only button must not move tabs.
+    constexpr const char* keys[] = {
+        "app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial" };
+    for (const char* key : keys)
+    {
+        const std::wstring label = _LW(key);
+        ComPtr<IDWriteTextLayout> layout;
+        if (FAILED(dwriteFactory_->CreateTextLayout(label.c_str(),
+                static_cast<UINT32>(label.size()), quickNavTabTextFormat_.Get(),
+                10000.f, 10000.f, &layout)) || !layout)
+            continue;
+        DWRITE_TEXT_METRICS metrics{};
+        if (SUCCEEDED(layout->GetMetrics(&metrics)))
+            quickNavViewModeSlotWidth_ = std::max(quickNavViewModeSlotWidth_, std::clamp(
+                static_cast<int>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + QuickNavScale(30),
+                QuickNavScale(60), QuickNavScale(164)));
+    }
 
     for (size_t i = 0; i < tabCount; ++i)
     {
@@ -1053,6 +1075,7 @@ void DesktopApp::OpenQuickNavigation(
     }
 
     quickNavigationOpen_ = true;
+    CancelQuickNavigationTabHover();
     quickNavigationCollapsed_ = navigationSettings_.lastCollapsed && !IsLuaLogicalSlotPickerOpen();
     quickNavigationFixedTop_ = false;
     quickNavigationSearchType_ = QuickNavigationSearchType::All;
@@ -1159,6 +1182,7 @@ void DesktopApp::OpenQuickNavigation(
  */
 void DesktopApp::CloseQuickNavigation(bool restoreDesktopFocus)
 {
+    CancelQuickNavigationTabHover();
     if (!quickNavigationOpen_) return;
     if (!quickNavigationPostCloseAction_)
         logicalSlotPickerRequest_ = {};

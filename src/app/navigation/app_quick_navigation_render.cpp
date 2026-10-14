@@ -601,6 +601,8 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                 registerHoverRegion(
                     visible, kind, index);
         };
+    if (!searching && !UseQuickNavigationList())
+        UpdateQuickNavTabWidths();
     snowdesktop::quick_navigation_rules::SetTabScrollOffset(
         std::clamp(quickNavigationTabScrollOffset_, 0,
             GetQuickNavigationMaxTabScrollOffset(overlay)),
@@ -648,7 +650,6 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         const size_t tabCount = collectionIndices.size() + 2;
-        UpdateQuickNavTabWidths();
         const auto& tabWidths = quickNavTabWidths_;
         const int gap = QuickNavScale(8);
         const int sepGap = QuickNavScale(6);
