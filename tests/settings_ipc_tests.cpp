@@ -85,7 +85,7 @@ void TestCodec()
     {
         const auto requested = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, focus);
         const auto routed = snowdesktop::CanonicalizeSettingsRoute(Unpack<snowdesktop::SettingsRoute>(Pack(requested)));
-        Check(routed.page == snowdesktop::SettingsPage::AppearanceTheme && routed.focusId == focus,
+        Check(routed.page == snowdesktop::SettingsPage::AppearanceDesktopIcons && routed.focusId == focus,
             "pin-border search and IPC focus resolve to global appearance independently of the starting page");
     }
     {

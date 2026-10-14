@@ -491,7 +491,7 @@ struct PersonalizationPagePresenter::Impl
         contentThemeRow.Initialize(contentThemeCombo);
         appearanceSections.text.Children().Append(contentThemeRow.root);
 
-        InitializeCard(pinBorderCard, cardStyle, themeRoot);
+        InitializeCard(pinBorderCard, cardStyle, widgetLayoutRoot);
         pinBorderCard.content.Spacing(0);
         pinBorderEnabled = muxc::ToggleSwitch{};
         pinBorderEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);

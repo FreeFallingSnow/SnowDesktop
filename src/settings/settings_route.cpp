@@ -234,7 +234,7 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
     {
         const std::string_view focus = route.focusId;
         if (focus.starts_with("personalization.windowPinBorder."))
-            route.page = SettingsPage::AppearanceTheme;
+            route.page = SettingsPage::AppearanceDesktopIcons;
         else if (!requestedThemeOverview &&
             (focus == "personalization.quickNavigationTheme" || focus == "personalization.quickNavTheme" ||
             focus == "quickNav.layout" || focus.starts_with("quickNav.layout.") ||
