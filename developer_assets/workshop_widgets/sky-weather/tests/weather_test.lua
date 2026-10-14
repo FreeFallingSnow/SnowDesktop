@@ -4,17 +4,33 @@ local cities=module.require("modules/cities.lua")
 local function fixture()
     return [[{"current":{"temperature_2m":21,"apparent_temperature":20,"weather_code":0,"is_day":1,"time":"2026-10-02T14:30"},"daily":{"time":["2026-10-02","2026-10-03","2026-10-04"],"temperature_2m_max":[23,null,20],"temperature_2m_min":[11,17,12],"weather_code":[2,2,61]}}]]
 end
-local function model()
+local function model(retryDirect)
     local c={location="38.914,121.614",cityName="Dalian",interval=1800}
     local requests,canceled,saved={}, {},nil
     local now,mono,permission=100000,1000,true
     local m=w.new({config=function()return c end,language=function()return"zh-CN"end,
+        retryDirect=retryDirect,
         now=function()return now end,monotonic=function()return mono end,permission=function()return permission end,
         start=function(args) requests[#requests+1]=args;return #requests end,
         cancel=function(id)canceled[#canceled+1]=id end,decode=j.decode,save=function(s)saved=s end})
     return m,c,requests,canceled,function()return saved end,function(n,p)mono=n;now=n;permission=p end
 end
 return {
+    ["Weather and city queries enable direct retry only on supporting hosts"]=function()
+        for _,supported in ipairs({false,true}) do
+            local flag=supported and true or nil
+            local m,c,requests=model(flag)
+            m:refresh(true);assert(requests[1].retryDirect==flag)
+            c.location="London";m:refresh(true)
+            assert(requests[2].retryDirect==flag)
+            m:complete({taskId=2,ok=true,value={body='{"results":[{"name":"London","latitude":51.507,"longitude":-0.128}]}'}})
+            assert(requests[3].retryDirect==flag)
+            local searched={}
+            local s=cities.search({retryDirect=flag,start=function(args)searched[#searched+1]=args;return #searched end,
+                cancel=function()end,encode=w.encode,decode=j.decode,language=function()return"en"end})
+            s:query("London");assert(#searched==1 and searched[1].retryDirect==flag)
+        end
+    end,
     ["Every documented WMO code selects the correct day and night background"]=function()
         local groups={sky={0},cloudy={1,2,3},fog={45,48},rain={51,53,55,56,57,61,63,65,66,67,80,81,82,95,96,97,99},snow={71,73,75,77,85,86}}
         for asset,codes in pairs(groups) do for _,code in ipairs(codes) do

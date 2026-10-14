@@ -384,9 +384,12 @@ end
 
 local function setup(context)
     local m={preview=context.preview,query="",results={},searchLoading=false,locationTask=nil,locating=false}
+    local retryDirect=widget.hasFeature("task.network.retryDirect") and true or nil
     m.citySearch=cities.search({start=function(args)return task.start("network.request",args)end,cancel=task.cancel,
+        retryDirect=retryDirect,
         decode=json.decode,encode=weather.encode,language=function()return langs[l10n.language()] or "en"end})
     m.weather=weather.new({config=config,permission=function() return widget.hasPermission("network.internet") end,
+        retryDirect=retryDirect,
         language=l10n.language,now=time.now,monotonic=time.monotonic,decode=json.decode,
         start=function(args) return task.start("network.request",args) end,cancel=task.cancel,
         save=function(snapshot) storage.set("snapshot",snapshot) end})

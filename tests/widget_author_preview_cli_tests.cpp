@@ -1244,6 +1244,31 @@ return widget.define({
             assert(not ok and tostring(err):find("body secret descriptor is invalid", 1, true),
                 "invalid body secret descriptor accepted")
         end
+        -- The new retry option must pass the production parser before the
+        -- permission broker, and must never allow duplicate write requests.
+        assert(widget.hasFeature("task.network.retryDirect"))
+        for _, options in ipairs({
+            {retryDirect=true}, {method="HEAD", retryDirect=true},
+            {retryDirect=false}, {method="POST", retryDirect=false, body="data"},
+        }) do
+            options.url="https://api.example.com/balance"
+            local ok, id, err=pcall(task.start, "network.request", options)
+            assert(ok and id==nil and err=="permissionDenied")
+        end
+        for _, value in ipairs({"true", 1, {}}) do
+            local ok, err=pcall(task.start, "network.request", {
+                url="https://api.example.com/balance", retryDirect=value,
+            })
+            assert(not ok and tostring(err):find("retryDirect must be a boolean", 1, true))
+        end
+        for _, options in ipairs({
+            {method="POST"}, {method="PUT"}, {method="PATCH"}, {method="DELETE"},
+            {body="data"}, {body={secretRef=reference}},
+        }) do
+            options.url="https://api.example.com/balance";options.retryDirect=true
+            local ok, err=pcall(task.start, "network.request", options)
+            assert(not ok and tostring(err):find("requires a bodyless GET or HEAD", 1, true))
+        end
         return {}
     end,
     render = function()

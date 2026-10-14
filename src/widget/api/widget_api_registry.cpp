@@ -142,6 +142,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "task.location.current",
     "task.network.request",
     "task.network.standardHttp",
+    "task.network.retryDirect",
     "task.network.headers",
     "task.network.requestBody",
     "task.network.secretReference",

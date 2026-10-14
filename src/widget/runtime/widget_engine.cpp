@@ -6852,7 +6852,7 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
             if (key != "url" && key != "method" &&
                 key != "headers" && key != "body" &&
                 key != "timeoutMs" && key != "cacheSeconds" &&
-                key != "maxBytes")
+                key != "maxBytes" && key != "retryDirect")
             {
                 lua_pop(state, 2);
                 return luaL_error(state,
@@ -7181,6 +7181,24 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
                 "task.start: network.request body must be a string or secret descriptor");
         }
         lua_pop(state, 1);
+
+        lua_getfield(state, 2, "retryDirect");
+        if (!lua_isnil(state, -1) && !lua_isboolean(state, -1))
+        {
+            lua_pop(state, 1);
+            return luaL_error(state,
+                "task.start: network.request retryDirect must be a boolean");
+        }
+        const bool retryDirect = lua_toboolean(state, -1) != 0;
+        lua_pop(state, 1);
+        if (retryDirect && ((method != "GET" && method != "HEAD") ||
+                arguments.at("body.kind") != "raw" ||
+                !arguments.at("body.value").empty()))
+        {
+            return luaL_error(state,
+                "task.start: network.request retryDirect requires a bodyless GET or HEAD");
+        }
+        arguments.emplace("retryDirect", retryDirect ? "true" : "false");
 
         const auto readBoundedInteger = [&](const char* field,
             lua_Integer fallback, lua_Integer minimum,
@@ -13528,6 +13546,9 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
             options.allowHttpAndLocalTargets = true;
             options.sameOriginRedirectsOnly =
                 action.arguments.contains("usesSecret");
+            const auto retry = action.arguments.find("retryDirect");
+            options.retryDirect = retry != action.arguments.end() &&
+                retry->second == "true";
             wipe(headersUtf8);
             const int requestId = httpService_->Submit(std::move(options));
             if (requestId <= 0)

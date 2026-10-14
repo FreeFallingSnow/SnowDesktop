@@ -108,6 +108,7 @@ struct HttpRequestOptions
     bool allowAnyHttpOrHttpsUrl = false;
     bool allowHttpAndLocalTargets = false;
     bool sameOriginRedirectsOnly = false;
+    bool retryDirect = false;
 };
 
 struct HttpResponse
@@ -145,6 +146,8 @@ private:
     };
 
     static HttpResponse Execute(int id, const HttpRequestOptions& options, std::stop_token token);
+    static HttpResponse ExecuteAttempt(int id, const HttpRequestOptions& options,
+        std::stop_token token, bool direct, bool& transportFailure);
     void Complete(HttpResponse response);
 
     std::atomic<int> nextId_{ 1 };

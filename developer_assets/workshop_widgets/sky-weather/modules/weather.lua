@@ -137,7 +137,8 @@ function M.new(env)
                 "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,is_day,wind_speed_10m"..
                 "&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=5"
         end
-        local id,err=self.env.start({url=url,timeoutMs=12000,cacheSeconds=self.force and 0 or (kind=="forecast" and 600 or 3600),maxBytes=131072})
+        local id,err=self.env.start({url=url,timeoutMs=12000,cacheSeconds=self.force and 0 or (kind=="forecast" and 600 or 3600),maxBytes=131072,
+            retryDirect=self.env.retryDirect})
         if not id then self:fail(err=="permissionDenied" and "permission" or "error");return false end
         self.request=id;self.kind=kind;self.loading=true;return true
     end

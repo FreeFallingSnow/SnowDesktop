@@ -76,7 +76,8 @@ function M.search(options)
         if self.queryText=="" then return end
         for _,name in ipairs(M.queries(self.queryText)) do
             local id=options.start({url="https://geocoding-api.open-meteo.com/v1/search?name="..options.encode(name)..
-                "&count=100&format=json&language="..options.language(),timeoutMs=12000,cacheSeconds=3600,maxBytes=131072})
+                "&count=100&format=json&language="..options.language(),timeoutMs=12000,cacheSeconds=3600,maxBytes=131072,
+                retryDirect=options.retryDirect})
             if id then self.requests[id]=true else self.error=true end
         end
         self.loading=next(self.requests)~=nil
