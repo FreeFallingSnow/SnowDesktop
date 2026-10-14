@@ -37,11 +37,16 @@ private:
     DPI_AWARENESS_CONTEXT previous_;
 };
 
+bool IsTopmost(HWND window)
+{
+    return IsWindow(window) && (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+}
+
 bool ChangeTopmost(HWND window, bool pinned)
 {
     return SetWindowPos(window, pinned ? HWND_TOPMOST : HWND_NOTOPMOST,
         0, 0, 0, 0, kPositionFlags) != FALSE &&
-        DockWindowPin::IsPinned(window) == pinned;
+        IsTopmost(window) == pinned;
 }
 }
 
@@ -145,11 +150,24 @@ struct DockWindowPin::State
         {
             if (OwnsTarget())
             {
-                if (restoreTopmost && DockWindowPin::IsPinned(target))
+                if (restoreTopmost && IsTopmost(target))
                     ChangeTopmost(target, false);
                 RemovePropW(target, kPinProperty);
             }
             if (border) DestroyWindow(border);
+        }
+
+        void MaintainPin()
+        {
+            // Keep the user's request when an application resets TOPMOST during
+            // movement, focus changes or restore, as PowerToys does. Only repair
+            // a lost flag; refreshing a stable pin must not raise the window.
+            if (!IsTopmost(target) && !ChangeTopmost(target, true))
+            {
+                ShowWindow(border, SW_HIDE);
+                return;
+            }
+            UpdateBorder();
         }
 
         void UpdateBorder()
@@ -287,8 +305,8 @@ struct DockWindowPin::State
         Entry* entry = FindEntry(window);
         if (!entry) return;
         refreshing = true;
-        if (entry->OwnsTarget() && DockWindowPin::IsPinned(window))
-            entry->UpdateBorder();
+        if (entry->OwnsTarget())
+            entry->MaintainPin();
         else
             QueueRefresh();
         // Keep ownership changes and vector erasure in the manager handler.
@@ -318,7 +336,9 @@ struct DockWindowPin::State
         const auto found = ActiveHooks().find(hook);
         if (found == ActiveHooks().end()) return;
         State* state = found->second;
-        if (event == EVENT_SYSTEM_FOREGROUND)
+        // Focus events commonly refer to OBJID_CLIENT or a child control, not
+        // OBJID_WINDOW. They can reveal a reset on any other tracked window.
+        if (event == EVENT_SYSTEM_FOREGROUND || event == EVENT_OBJECT_FOCUS)
         {
             state->QueueRefresh();
             return;
@@ -336,10 +356,10 @@ struct DockWindowPin::State
     void Subscribe()
     {
         if (!hooks.empty()) return;
-        constexpr std::array<DWORD, 8> events{
+        constexpr std::array<DWORD, 9> events{
             EVENT_OBJECT_LOCATIONCHANGE, EVENT_OBJECT_SHOW, EVENT_OBJECT_HIDE,
             EVENT_OBJECT_DESTROY, EVENT_SYSTEM_MINIMIZESTART, EVENT_SYSTEM_MINIMIZEEND,
-            EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_FOREGROUND};
+            EVENT_SYSTEM_MOVESIZEEND, EVENT_SYSTEM_FOREGROUND, EVENT_OBJECT_FOCUS};
         for (const DWORD event : events)
         {
             const HWINEVENTHOOK hook = SetWinEventHook(event, event, nullptr, WinEventProc,
@@ -420,9 +440,9 @@ struct DockWindowPin::State
         if (refreshing) return;
         refreshing = true;
         std::erase_if(entries, [](const auto& entry) {
-            return !entry->OwnsTarget() || !DockWindowPin::IsPinned(entry->target);
+            return !entry->OwnsTarget();
         });
-        for (const auto& entry : entries) entry->UpdateBorder();
+        for (const auto& entry : entries) entry->MaintainPin();
         if (entries.empty())
         {
             KillTimer(manager, kRefreshTimer);
@@ -437,7 +457,8 @@ DockWindowPin::~DockWindowPin() = default;
 
 bool DockWindowPin::IsPinned(HWND window)
 {
-    return IsWindow(window) && (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+    return IsWindow(window) &&
+        (IsWindow(static_cast<HWND>(GetPropW(window, kPinProperty))) || IsTopmost(window));
 }
 
 void DockWindowPin::Refresh()
@@ -454,8 +475,29 @@ bool DockWindowPin::Toggle(HWND window)
 {
     const ScopedPhysicalCoordinates physicalCoordinates;
     if (!IsWindow(window) || GetAncestor(window, GA_ROOT) != window) return false;
+    if (state_)
+    {
+        if (auto* entry = state_->FindEntry(window); entry && entry->OwnsTarget())
+        {
+            // Retire the request before refreshing so explicit cancellation
+            // cannot be mistaken for another application resetting TOPMOST.
+            const bool wasRefreshing = std::exchange(state_->refreshing, true);
+            if (IsTopmost(window) && !ChangeTopmost(window, false))
+            {
+                state_->refreshing = wasRefreshing;
+                return false;
+            }
+            entry->restoreTopmost = false;
+            std::erase_if(state_->entries, [window](const auto& tracked) {
+                return tracked->target == window;
+            });
+            state_->refreshing = wasRefreshing;
+            Refresh();
+            return true;
+        }
+    }
     Refresh();
-    if (IsPinned(window))
+    if (IsTopmost(window))
     {
         if (!ChangeTopmost(window, false)) return false;
         Refresh();

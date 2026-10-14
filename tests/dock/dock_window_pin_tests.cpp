@@ -85,6 +85,11 @@ bool IsAbove(HWND window, HWND target)
     return false;
 }
 
+bool IsNativeTopmost(HWND window)
+{
+    return (GetWindowLongPtrW(window, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0;
+}
+
 HWND FindFixtureManager()
 {
     HWND manager = nullptr;
@@ -244,11 +249,17 @@ int RunDockWindowPinTests()
         check(backlogCreated, "the native follow regression creates a real posted-message backlog");
         int samplesFollowed = 0;
         int samplesDelivered = 0;
+        int samplesRepinned = 0;
         unsigned slowestSampleMs = 0;
         std::vector<MSG> deferredWork;
         for (int sample = 1; sample <= 8; ++sample)
         {
             const unsigned locationsBefore = observedLocations;
+            // Model QQ resetting the native band during title-bar movement.
+            // Use the native flag as the oracle, independently of IsPinned's
+            // retained user-request state; the timer and posted work stay off.
+            SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
             SetWindowPos(target, nullptr, -11000 + sample * 37, -11500 + sample * 19,
                 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
             RECT expected{};
@@ -273,10 +284,12 @@ int RunDockWindowPinTests()
                     }
                 }
                 GetWindowRect(border, &actual);
-                aligned = observedLocations > locationsBefore && EqualRect(&actual, &expected);
+                aligned = observedLocations > locationsBefore && EqualRect(&actual, &expected) &&
+                    IsNativeTopmost(target);
                 if (!aligned) MsgWaitForMultipleObjectsEx(0, nullptr, 1, QS_SENDMESSAGE, MWMO_INPUTAVAILABLE);
             } while (!aligned && GetTickCount64() - started < 500);
             if (aligned) ++samplesFollowed;
+            if (IsNativeTopmost(target) && GetPropW(target, kPinProperty) == border) ++samplesRepinned;
             if (observedLocations > locationsBefore) ++samplesDelivered;
             if (!aligned && sample == 1)
             {
@@ -296,6 +309,8 @@ int RunDockWindowPinTests()
             "each native motion sample aligns the ring before posted application work is dispatched");
         check(samplesDelivered == 8,
             "the posted-backlog fixture delivers native location events for every motion sample");
+        check(samplesRepinned == 8,
+            "each motion-induced TOPMOST reset is repaired without retiring the pin or waiting for the poll");
         std::cout << "Pin motion samples before posted dispatch: " << samplesFollowed
             << "/8; native event samples delivered: " << samplesDelivered
             << "/8; maximum native sample wait: " << slowestSampleMs << " ms\n";
@@ -314,12 +329,14 @@ int RunDockWindowPinTests()
         if (manager) SetTimer(manager, 1, 100, nullptr);
 
         ShowWindow(target, SW_SHOWMINNOACTIVE);
+        SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         pins.Refresh();
         check(!IsWindowVisible(border), "minimization hides the ring while retaining the pin");
         ShowWindow(target, SW_SHOWNOACTIVATE);
         pins.Refresh();
-        check(DockWindowPin::IsPinned(target) && IsWindowVisible(border),
-            "restoring a minimized window restores its border");
+        check(IsNativeTopmost(target) && GetPropW(target, kPinProperty) == border && IsWindowVisible(border),
+            "restoring a minimized window restores its lost native TOPMOST flag and original border");
         ShowWindow(target, SW_HIDE);
         pins.Refresh();
         check(!IsWindowVisible(border), "hidden windows do not leave a detached border");
@@ -330,13 +347,29 @@ int RunDockWindowPinTests()
 
     check(pins.Toggle(target) && pins.Toggle(other), "multiple windows can be pinned independently");
     border = static_cast<HWND>(GetPropW(target, kPinProperty));
-    // An app can cancel TOPMOST itself; the Dock must not fight that change.
+    // A native flag reset is not a user's request to cancel the Dock pin.
     SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    check(!IsNativeTopmost(target) && DockWindowPin::IsPinned(target),
+        "the pin indicator retains the user request while its native flag is temporarily lost");
     pins.Refresh();
-    check(!DockWindowPin::IsPinned(target) && !IsWindow(border) && DockWindowPin::IsPinned(other),
-        "external unpinning retires only the affected window's border");
-    check(pins.Toggle(target), "a window can be pinned again after external cancellation");
+    check(IsNativeTopmost(target) && GetPropW(target, kPinProperty) == border &&
+            IsWindow(border) && IsNativeTopmost(other),
+        "refresh repairs the reset flag while retaining both independent pins");
+    SetWindowPos(other, HWND_TOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    pins.Refresh();
+    check(IsAbove(other, target), "refreshing a stable pin does not raise it over another topmost window");
+
+    SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    check(pins.Toggle(target) && !DockWindowPin::IsPinned(target) && !IsWindow(border) &&
+            !GetPropW(target, kPinProperty),
+        "explicit cancellation works even while the native flag is lost");
+    pins.Refresh();
+    check(!IsNativeTopmost(target) && IsNativeTopmost(other),
+        "later refresh does not revive a cancelled request or cancel another pin");
+    check(pins.Toggle(target), "a window can be pinned again after explicit cancellation");
     border = static_cast<HWND>(GetPropW(target, kPinProperty));
     RemovePropW(target, kPinProperty);
     pins.Refresh();
@@ -344,6 +377,8 @@ int RunDockWindowPinTests()
         "lost ownership must not demote an unrelated or reused target handle");
     SetWindowPos(target, HWND_NOTOPMOST, 0, 0, 0, 0,
         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    pins.Refresh();
+    check(!IsNativeTopmost(target), "lost ownership never repairs TOPMOST on an untracked target");
     pins.Clear();
     check(!DockWindowPin::IsPinned(other), "session teardown restores only pins it still owns");
     SetWindowPos(other, HWND_TOPMOST, 0, 0, 0, 0,
