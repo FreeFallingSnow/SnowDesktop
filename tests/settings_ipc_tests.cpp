@@ -252,6 +252,9 @@ void TestCodec()
         restoredGuide.usageGuideExpanded == false,
         "host fold preference reaches the guide without inventing tutorial state");
     NavigationSettings navigation; navigation.lastCollapsed = true; navigation.layout.collapsedWidth = 700; navigation.colors["searchText"] = "#123456"; navigation.prefixes[0] = "applications";
+    navigation.desktopViewMode = QuickNavigationDesktopViewMode::Initial;
+    navigation.mappingViewMode = QuickNavigationDesktopViewMode::Tile;
+    navigation.widgetSortByInitial = {{"collection-a", true}, {"collection-b", false}};
     navigation.engines.push_back({"custom","Custom","custom","https://example.com/?q={query}"});
     Check(Unpack<NavigationSettings>(Pack(navigation)) == navigation,"all navigation settings survive the private process boundary");
     Check(Unpack<snowdesktop::SettingsRoute>(Pack(snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::QuickNavigation,"quickNav.layout.iconSize"))).page == snowdesktop::SettingsPage::QuickNavigation,"the appended navigation page crosses private IPC");
@@ -591,9 +594,9 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 33 omitted battery percentage and delayed tab-hover preferences.
+        // Version 34 omitted independent mapping modes and widget sorting.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{33},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{34},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),

@@ -819,7 +819,7 @@ void DesktopApp::UpdateQuickNavTabWidths()
         return;
 
     // Measure all modes once with the tab widths; hit tests reuse this slot.
-    // Switching modes or hiding the desktop-only button must not move tabs.
+    // Switching modes or pages must not move the following tabs.
     constexpr const char* keys[] = {
         "app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial" };
     for (const char* key : keys)

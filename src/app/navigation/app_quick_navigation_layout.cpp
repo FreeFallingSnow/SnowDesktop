@@ -97,8 +97,6 @@ RECT DesktopApp::GetQuickNavigationTabsRect(const RECT& overlay) const
 RECT DesktopApp::GetQuickNavigationViewModeButtonRect(
     const RECT& overlay) const
 {
-    if (quickNavigationActiveWidgetIndex_ != static_cast<size_t>(-1))
-        return MakeRect(0, 0, 0, 0);
     return GetQuickNavigationViewModeSlotRect(overlay);
 }
 
@@ -141,12 +139,22 @@ int DesktopApp::GetQuickNavigationTabsStart(
                 QuickNavScale(8));
 }
 
-void DesktopApp::SetQuickNavigationDesktopViewMode(
+void DesktopApp::SetQuickNavigationViewMode(
     QuickNavigationDesktopViewMode mode)
 {
-    if (navigationSettings_.desktopViewMode == mode)
+    if (GetQuickNavigationViewMode() == mode)
         return;
-    navigationSettings_.desktopViewMode = mode;
+    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+        navigationSettings_.desktopViewMode = mode;
+    else if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-2))
+        navigationSettings_.mappingViewMode = mode;
+    else if (quickNavigationActiveWidgetIndex_ < widgets_.size())
+    {
+        if (mode == QuickNavigationDesktopViewMode::Source) return;
+        navigationSettings_.widgetSortByInitial[WideToUtf8(widgets_[quickNavigationActiveWidgetIndex_].id)] =
+            mode == QuickNavigationDesktopViewMode::Initial;
+    }
+    else return;
     SaveNavigationSettings(
         GetNavigationSettingsPath().c_str(),
         navigationSettings_);
@@ -160,12 +168,10 @@ void DesktopApp::SetQuickNavigationDesktopViewMode(
 }
 
 bool DesktopApp::
-TrySetQuickNavigationDesktopViewModeAtPoint(
+TrySetQuickNavigationViewModeAtPoint(
     POINT point)
 {
-    if (UseQuickNavigationList() || !GetQuickNavigationEffectiveSearchText().empty() ||
-        quickNavigationActiveWidgetIndex_ !=
-            static_cast<size_t>(-1))
+    if (UseQuickNavigationList() || !GetQuickNavigationEffectiveSearchText().empty())
         return false;
 
     const RECT button =
@@ -174,7 +180,9 @@ TrySetQuickNavigationDesktopViewModeAtPoint(
     if (PtInRect(&button, point))
     {
         quickNavigationMenu_ = quickNavigationMenu_ == QuickNavigationMenu::Views ? QuickNavigationMenu::None : QuickNavigationMenu::Views;
-        quickNavigationMenuSelection_ = static_cast<int>(navigationSettings_.desktopViewMode);
+        const auto modes = GetQuickNavigationViewModeOptions();
+        const auto selected = std::find(modes.begin(), modes.end(), GetQuickNavigationViewMode());
+        quickNavigationMenuSelection_ = selected == modes.end() ? 0 : static_cast<int>(selected - modes.begin());
         PositionQuickNavigationWindow();
         InvalidateQuickNavigationWindow();
         return true;

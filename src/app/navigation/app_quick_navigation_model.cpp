@@ -459,6 +459,32 @@ DesktopApp::BuildQuickNavigationContentModel() const
             OrderIndicesByTabIds(
                 navTabOrder_, widgetIds, eligible);
     };
+    const auto groupByInitial = [&] {
+        auto entries = std::move(model.entries);
+        model.entries.clear();
+        model.sections.clear();
+        std::array<std::vector<QuickNavigationEntry>, 27> buckets;
+        for (auto& entry : entries)
+        {
+            const wchar_t initial = snowdesktop::quick_navigation_rules::InitialBucket(entry.name);
+            buckets[initial >= L'A' && initial <= L'Z' ? static_cast<size_t>(initial - L'A') : 26]
+                .push_back(std::move(entry));
+        }
+        for (size_t i = 0; i < buckets.size(); ++i)
+        {
+            auto& bucket = buckets[i];
+            std::stable_sort(bucket.begin(), bucket.end(), [](const auto& lhs, const auto& rhs) {
+                return snowdesktop::quick_navigation_rules::InitialNameLess(lhs.name, rhs.name);
+            });
+            appendSection(i < 26 ? std::wstring(1, static_cast<wchar_t>(L'A' + i)) : L"#", bucket);
+        }
+    };
+    const auto sortWidgetEntries = [&] {
+        if (GetQuickNavigationViewMode() == QuickNavigationDesktopViewMode::Initial)
+            std::stable_sort(model.entries.begin(), model.entries.end(), [](const auto& lhs, const auto& rhs) {
+                return snowdesktop::quick_navigation_rules::InitialNameLess(lhs.name, rhs.name);
+            });
+    };
 
     if (query.empty())
     {
@@ -593,55 +619,12 @@ DesktopApp::BuildQuickNavigationContentModel() const
             if (navigationSettings_.desktopViewMode ==
                 QuickNavigationDesktopViewMode::Initial)
             {
-                std::vector<QuickNavigationEntry> all;
                 for (size_t i = 0;
                     i < items_.size(); ++i)
                     appendDesktop(
-                        all, i,
+                        model.entries, i,
                         _LW("app.nav.tab_desktop"));
-                std::array<std::vector<
-                    QuickNavigationEntry>, 27>
-                    buckets;
-                for (auto& entry : all)
-                {
-                    const wchar_t bucket =
-                        snowdesktop::
-                            quick_navigation_rules::
-                                InitialBucket(
-                                    entry.name);
-                    const size_t bucketIndex =
-                        bucket >= L'A' &&
-                            bucket <= L'Z'
-                        ? static_cast<size_t>(
-                            bucket - L'A')
-                        : 26;
-                    buckets[bucketIndex].
-                        push_back(
-                            std::move(entry));
-                }
-                for (size_t i = 0;
-                    i < buckets.size(); ++i)
-                {
-                    auto& bucket = buckets[i];
-                    std::stable_sort(
-                        bucket.begin(), bucket.end(),
-                        [](const auto& lhs,
-                            const auto& rhs) {
-                            return snowdesktop::
-                                quick_navigation_rules::
-                                    InitialNameLess(
-                                        lhs.name,
-                                        rhs.name);
-                        });
-                    const std::wstring label =
-                        i < 26
-                        ? std::wstring(
-                            1, static_cast<wchar_t>(
-                                L'A' + i))
-                        : L"#";
-                    appendSection(
-                        label, bucket);
-                }
+                groupByInitial();
                 return model;
             }
 
@@ -728,8 +711,14 @@ DesktopApp::BuildQuickNavigationContentModel() const
                     if (CanPickLuaLogicalSlotEntry(entry))
                         entries.push_back(std::move(entry));
                 }
-                appendSection(source, entries);
+                if (navigationSettings_.mappingViewMode == QuickNavigationDesktopViewMode::Source)
+                    appendSection(source, entries);
+                else
+                    model.entries.insert(model.entries.end(), std::make_move_iterator(entries.begin()),
+                        std::make_move_iterator(entries.end()));
             }
+            if (navigationSettings_.mappingViewMode == QuickNavigationDesktopViewMode::Initial)
+                groupByInitial();
             return model;
         }
 
@@ -737,7 +726,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
             widgets_[quickNavigationActiveWidgetIndex_].type == DesktopWidgetType::FolderMapping)
         {
             const DesktopWidget& widget = widgets_[quickNavigationActiveWidgetIndex_];
-        std::wstring source = widget.title.empty() ? _LW("widget.folder_mapping") : widget.title;
+            std::wstring source = widget.title.empty() ? _LW("widget.folder_mapping") : widget.title;
             for (size_t ei = 0; ei < widget.folderEntries.size(); ++ei)
             {
                 const FolderEntry& entryData = widget.folderEntries[ei];
@@ -751,6 +740,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
                 if (CanPickLuaLogicalSlotEntry(entry))
                     model.entries.push_back(std::move(entry));
             }
+            sortWidgetEntries();
             return model;
         }
 
@@ -762,6 +752,7 @@ DesktopApp::BuildQuickNavigationContentModel() const
                 quickNavigationActiveWidgetIndex_ < widgets_.size()
                     ? quickNavigationActiveWidgetIndex_
                     : static_cast<size_t>(-1));
+        sortWidgetEntries();
         return model;
     }
 

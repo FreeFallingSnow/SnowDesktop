@@ -236,7 +236,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
     const bool searching = !GetQuickNavigationEffectiveSearchText().empty();
     if (!searching)
     {
-        if (TrySetQuickNavigationDesktopViewModeAtPoint(
+        if (TrySetQuickNavigationViewModeAtPoint(
                 point))
             return true;
 
@@ -253,9 +253,7 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         return true;
 
     if (!searching &&
-        quickNavigationActiveWidgetIndex_ ==
-            static_cast<size_t>(-1) &&
-        navigationSettings_.desktopViewMode ==
+        GetQuickNavigationViewMode() ==
             QuickNavigationDesktopViewMode::Initial)
     {
         const QuickNavigationContentModel model =

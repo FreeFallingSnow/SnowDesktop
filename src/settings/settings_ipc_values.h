@@ -44,7 +44,8 @@ SD_IPC_FIELDS(DockSettings,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
     v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme, v.trayApplications);
 SD_IPC_FIELDS(NavigationSettings,
-    v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors);
+    v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors,
+    v.mappingViewMode, v.widgetSortByInitial);
 SD_IPC_FIELDS(QuickNavigationLayout, v.expandedWidth, v.collapsedWidth, v.maximumHeight,
     v.visibleRows, v.padding, v.searchHeight, v.iconSize, v.gridGap, v.rowGap,
     v.fontSize, v.secondaryFontSize, v.searchFontSize, v.resultRowHeight, v.labelLines,

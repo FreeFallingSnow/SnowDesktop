@@ -88,6 +88,11 @@ struct NavigationSettings
     UINT virtualKey = VK_SPACE;
     QuickNavigationDesktopViewMode desktopViewMode =
         QuickNavigationDesktopViewMode::Tile;
+    QuickNavigationDesktopViewMode mappingViewMode =
+        QuickNavigationDesktopViewMode::Source;
+    // Stable widget IDs own independent Quick Navigation sorting choices.
+    // Missing/false means original (Tile) order; true means alphabetical order.
+    std::map<std::string, bool> widgetSortByInitial;
     bool lastCollapsed = false;
     QuickNavigationLayout layout;
     std::array<std::string, 6> prefixes{"app", "file", "web", "set", "run", "="};

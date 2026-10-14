@@ -210,6 +210,13 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
         QuickNavigationDesktopViewModeFromJson(
             desktopViewMode, parsedMode))
         settings.desktopViewMode = parsedMode;
+    if (const auto* value = document.Find("mappingViewMode"); value && value->IsString() &&
+        QuickNavigationDesktopViewModeFromJson(value->string, parsedMode))
+        settings.mappingViewMode = parsedMode;
+    if (const auto* value = document.Find("widgetSortByInitial"); value && value->IsObject())
+        for (const auto& [id, sort] : value->object)
+            if (!id.empty() && sort.IsBoolean())
+                settings.widgetSortByInitial[id] = sort.boolean;
     // Seed the remembered state from the former opening preference once.
     const auto* collapsed = document.Find("lastCollapsed");
     if (!collapsed || !collapsed->IsBoolean()) collapsed = document.Find("defaultCollapsed");
@@ -283,6 +290,8 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
          << QuickNavigationDesktopViewModeToJson(
                 settings.desktopViewMode)
          << "\",\n";
+    file << "  \"mappingViewMode\": \""
+         << QuickNavigationDesktopViewModeToJson(settings.mappingViewMode) << "\",\n";
     file << "  \"lastCollapsed\": " << (settings.lastCollapsed ? "true" : "false") << ",\n  \"layout\": {";
     bool first = true;
 #define SD_NAV_WRITE(name) if (!first) file << ','; first = false; file << "\"" #name "\":" << settings.layout.name
@@ -304,6 +313,14 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
         }
         return out + '"';
     };
+    file << "},\n  \"widgetSortByInitial\": {";
+    first = true;
+    for (const auto& [id, sort] : settings.widgetSortByInitial)
+    {
+        if (!first) file << ',';
+        first = false;
+        file << quoted(id) << ':' << (sort ? "true" : "false");
+    }
     file << "},\n  \"prefixesVersion\": 1,\n  \"prefixes\": [";
     for (size_t i = 0; i < settings.prefixes.size(); ++i) { if (i) file << ','; file << quoted(settings.prefixes[i]); }
     file << "],\n  \"defaultEngine\": " << quoted(settings.defaultEngine) << ",\n  \"engines\": [";

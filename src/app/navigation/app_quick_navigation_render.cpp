@@ -1030,9 +1030,7 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
                     header.top >= contentApp.bottom)
                     continue;
                 const bool initialJumpHeader =
-                    quickNavigationActiveWidgetIndex_ ==
-                        static_cast<size_t>(-1) &&
-                    navigationSettings_.desktopViewMode ==
+                    GetQuickNavigationViewMode() ==
                         QuickNavigationDesktopViewMode::
                             Initial;
                 if (initialJumpHeader)

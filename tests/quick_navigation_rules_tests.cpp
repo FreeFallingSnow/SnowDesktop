@@ -117,6 +117,9 @@ void TestViewModeFilePersistence()
     {
         NavigationSettings saved;
         saved.desktopViewMode = mode;
+        saved.mappingViewMode = mode == QuickNavigationDesktopViewMode::Tile
+            ? QuickNavigationDesktopViewMode::Initial : QuickNavigationDesktopViewMode::Tile;
+        saved.widgetSortByInitial = {{"collection-a", true}, {"collection-b", false}, {"escaped-\"id\\", true}};
         Check(
             SaveNavigationSettings(
                 path.c_str(), saved),
@@ -127,6 +130,9 @@ void TestViewModeFilePersistence()
                 path.c_str(), loaded) &&
                 loaded.desktopViewMode == mode,
             "navigation view mode must round trip");
+        Check(loaded.mappingViewMode == saved.mappingViewMode &&
+                loaded.widgetSortByInitial == saved.widgetSortByInitial,
+            "mapping and each stable widget ID retain independent choices after reload");
     }
 
     {
@@ -141,12 +147,17 @@ void TestViewModeFilePersistence()
     NavigationSettings legacyLoaded;
     legacyLoaded.desktopViewMode =
         QuickNavigationDesktopViewMode::Source;
+    legacyLoaded.mappingViewMode = QuickNavigationDesktopViewMode::Initial;
+    legacyLoaded.widgetSortByInitial = {{"old-widget", true}};
     Check(
         LoadNavigationSettings(
             path.c_str(), legacyLoaded) &&
             legacyLoaded.desktopViewMode ==
                 QuickNavigationDesktopViewMode::Tile,
         "legacy settings must default to tile");
+    Check(legacyLoaded.mappingViewMode == QuickNavigationDesktopViewMode::Source &&
+            legacyLoaded.widgetSortByInitial.empty(),
+        "old files default mapping to source and widgets to original order without stale reused state");
 
     {
         std::ofstream invalid(
@@ -154,7 +165,8 @@ void TestViewModeFilePersistence()
                 std::ios::trunc);
         invalid <<
             "{\"desktopViewMode\":"
-            "\"unsupported\"}";
+            "\"unsupported\",\"mappingViewMode\":\"unsupported\","
+            "\"widgetSortByInitial\":{\"valid\":true,\"invalid\":\"initial\"}}";
     }
     NavigationSettings invalidLoaded;
     invalidLoaded.desktopViewMode =
@@ -165,6 +177,9 @@ void TestViewModeFilePersistence()
             invalidLoaded.desktopViewMode ==
                 QuickNavigationDesktopViewMode::Tile,
         "invalid settings must default to tile");
+    Check(invalidLoaded.mappingViewMode == QuickNavigationDesktopViewMode::Source &&
+            invalidLoaded.widgetSortByInitial == std::map<std::string, bool>{{"valid", true}},
+        "invalid mapping modes use source and malformed sorting values cannot invent a choice");
     DeleteFileW(path.c_str());
 }
 

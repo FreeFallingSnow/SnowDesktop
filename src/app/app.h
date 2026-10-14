@@ -1722,6 +1722,8 @@ private:
     void SetQuickNavigationSearchScope(QuickNavigationSearchType type, std::string engine = {});
     std::wstring QuickNavigationTypeLabel() const;
     std::wstring QuickNavigationViewLabel() const;
+    QuickNavigationDesktopViewMode GetQuickNavigationViewMode() const;
+    std::vector<QuickNavigationDesktopViewMode> GetQuickNavigationViewModeOptions() const;
     void RefreshQuickNavigationTypedResults();
     struct QuickNavigationListRow
     {
@@ -1811,9 +1813,9 @@ private:
     bool ActivateQuickNavigationTab(size_t tab);
     void CancelQuickNavigationTabHover();
     void UpdateQuickNavigationTabHover(POINT point, bool allowSwitch = false);
-    bool TrySetQuickNavigationDesktopViewModeAtPoint(
+    bool TrySetQuickNavigationViewModeAtPoint(
         POINT point);
-    void SetQuickNavigationDesktopViewMode(
+    void SetQuickNavigationViewMode(
         QuickNavigationDesktopViewMode mode);
     RECT GetQuickNavigationInitialJumpBackRect(
         const RECT& overlay) const;
