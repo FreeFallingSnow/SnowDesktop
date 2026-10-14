@@ -113,7 +113,7 @@
 ---@field noResultsLabel? string Localized label shown after an application search returns no results.
 ---@field min? number
 ---@field max? number
----@field step? number Positive range increment; defaults to 1.
+---@field step? number Positive numeric editor increment; defaults to 0.1. Integer controls use whole-number increments; declare 1 explicitly for integer range increments.
 ---@field options? string[] Stable select or multiSelect values; multiSelect accepts 1-64 unique values.
 ---@field optionLabels? string[] Localized labels parallel to stable select or multiSelect option values.
 ---@field extensions? string[] Up to 16 safe file extensions for fileHandle; leading dots are optional. Not accepted by folderHandle.
@@ -2061,6 +2061,7 @@ function data.subscribe(topic, options) end
 ---@field source 'satellite'|'wifi'|'cellular'|'ip'|'default'|'obfuscated'|'unknown' System source; never assume GPS accuracy.
 
 ---@class SnowNetworkRequestArguments
+---@field retryDirect? boolean Opt in to one direct retry after transport failure or HTTP 4xx/5xx; bodyless GET/HEAD only. Requires task.network.retryDirect; defaults to false.
 ---@field url string HTTP/HTTPS URL including local services; optional widget.json networkDomains narrows it to exact declared hostnames. Requires task.network.standardHttp for HTTP/local targets and system proxy support.
 ---@field method? 'GET'|'HEAD'|'POST'|'PUT'|'PATCH'|'DELETE' Defaults to GET.
 ---@field headers? table<string, string|SnowNetworkSecretDescriptor> Up to 32 single-line headers and 32 KiB after host injection.

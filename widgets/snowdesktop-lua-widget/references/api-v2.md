@@ -2553,6 +2553,15 @@ HTTPS 且不使用系统代理。组件依赖 HTTP、本地服务或代理时应
 - `timeoutMs`：1000–30000，默认 15000；
 - `cacheSeconds`：0–86400，默认 0，缓存按实例、请求与响应上限隔离；
 - `maxBytes`：4096–1048576，默认 524288。
+- `retryDirect`：布尔值，默认 `false`；仅允许无请求体的 GET/HEAD。设为 `true` 时，首次按
+  Windows 代理设置请求；传输失败（含响应读取失败）或收到 HTTP 4xx/5xx 后，最多以无代理
+  WinHTTP 会话从原始 URL 重试一次。仍执行 TLS 证书校验、每跳域名/同源约束和响应大小限制；
+  取消、重定向被拒绝或响应超限不会触发重试。`timeoutMs` 应用于每次尝试，因此开启后可能
+  延长总等待时间。此选项绕过系统 HTTP 代理，不能绕过 TUN/VPN 路由；仅在用户接受直连时启用。
+  对应 feature 为 `task.network.retryDirect`。旧宿主拒绝未知参数；组件须探测该 feature，缺少时
+  省略 `retryDirect` 并沿用原请求方式，或将该 feature 声明为 required。无需提升 `apiVersion`。
+  官方社区组件应先发布支持该 feature 的宿主，再发布使用此选项的组件；同版本早期构建按
+  feature 探测降级。
 
 ```lua
 local requestId, err = task.start("network.request", {
@@ -2849,9 +2858,11 @@ API v2 还提供以下普通值设置控件：
 - `url`：空值或不超过 2048 字节、带 authority 且不含空白和反斜杠的 `http://` / `https://` URL；
 - `date`：空值或严格 Gregorian `YYYY-MM-DD`；
 - `time`：空值或 24 小时制 `HH:MM`；
-- `range`：声明有限的 `min <= max` 和正 `step`，宿主对值钳制并吸附到步长；
+- `range`：声明有限的 `min <= max` 和正 `step`，省略 `step` 时默认为 `0.1`，宿主对值钳制并吸附到步长；需要整数步长时显式声明 `step = 1`；
 - `multiSelect`：声明 1-64 个唯一稳定 `options`，可配等长本地化 `optionLabels`，`default`
   与 preset 值均为这些选项组成的无重复数组。
+
+`float` 设置的宿主滑杆和数字输入同样在省略 `step` 时使用 `0.1`；`int` 设置仍按整数调节。
 
 `url/date/time` 通过 `storage.get` 返回 string，`range` 返回 number，`multiSelect` 返回
 string[]；后两项使用 `storage.typed` 持久化，首次读取默认值、应用 preset、恢复默认以及用户修改
