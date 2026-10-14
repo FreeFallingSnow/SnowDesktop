@@ -2733,5 +2733,17 @@
   "start.section.layout": "桌面配置",
   "start.section.basics.description": "從啟動和基本操作開始，了解元件、網格、圖示、主題與右鍵選單。",
   "statusBar.showDesktop": "點擊右側邊緣顯示桌面",
-  "statusBar.showDesktopTip": "顯示桌面（Win+D）"
+  "statusBar.showDesktopTip": "顯示桌面（Win+D）",
+  "settings.dock.trayApplications": "優先透過系統匣開啟的程式",
+  "settings.dock.trayApplications.description": "有多個系統匣圖示時顯示選擇清單。",
+  "settings.dock.trayAction": "系統匣操作",
+  "settings.dock.trayMatch": "比對方式",
+  "settings.dock.trayMatchName": "程式名稱",
+  "settings.dock.trayMatchPath": "完整路徑",
+  "settings.dock.trayProgram": "程式",
+  "settings.dock.trayAdd": "新增",
+  "settings.dock.traySingleClick": "按一下系統匣圖示",
+  "settings.dock.trayDoubleClick": "按兩下系統匣圖示",
+  "settings.dock.trayLaunch": "啟動",
+  "settings.dock.trayInvalidTarget": "請輸入 EXE 檔案名稱或 EXE 的完整路徑。最多支援 128 項。"
 }

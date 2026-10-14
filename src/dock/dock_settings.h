@@ -3,6 +3,7 @@
 #include "dock_settings_rules.h"
 #include "dock_layout_settings.h"
 #include "dock_fullscreen_policy.h"
+#include "dock_tray_rules.h"
 #include "theme/personalization.h"
 #include "settings/animation_settings.h"
 #include "taskbar_hook/taskbar_autohide_trace.h"
@@ -82,6 +83,7 @@ struct DockSettings : DockLayoutSettings
     int edgeRevealGesture = 0; // 0=swipe, 1=hover; preserve existing swipe preferences.
     DockFullscreenPolicy fullscreenPolicy = DockFullscreenPolicy::FullProtection;
     std::vector<DockFullscreenException> fullscreenExceptions;
+    std::vector<DockTrayRule> trayApplications = snowdesktop::dock_tray::Defaults();
     // Running applications remain enabled; task thumbnails are optional.
     // Keep the persisted names for compatibility with existing preferences.
     bool showRunningApps = true;
@@ -165,6 +167,7 @@ inline void NormalizeDockSettings(DockSettings& settings)
     settings.edgeRevealGesture = settings.edgeRevealGesture == 1 ? 1 : 0;
     settings.fullscreenPolicy = snowdesktop::dock_fullscreen::Normalize(static_cast<int>(settings.fullscreenPolicy));
     snowdesktop::dock_fullscreen::NormalizeExceptions(settings.fullscreenExceptions);
+    snowdesktop::dock_tray::NormalizeRules(settings.trayApplications);
     snowdesktop::dock_settings_rules::NormalizeAlwaysEnabledFeatures(
         settings.showRunningApps,
         settings.showWindowPreviews);

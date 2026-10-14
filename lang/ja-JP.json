@@ -2733,5 +2733,17 @@
   "start.section.layout": "デスクトップ配置",
   "start.section.basics.description": "起動設定と基本操作から始め、コンポーネント、グリッド、アイコン、テーマ、右クリックメニューについて学びます。",
   "statusBar.showDesktop": "右端をクリックしてデスクトップを表示",
-  "statusBar.showDesktopTip": "デスクトップを表示（Win+D）"
+  "statusBar.showDesktopTip": "デスクトップを表示（Win+D）",
+  "settings.dock.trayApplications": "トレイから優先的に開くアプリ",
+  "settings.dock.trayApplications.description": "該当するトレイアイコンが複数ある場合は選択リストを表示します。",
+  "settings.dock.trayAction": "トレイ操作",
+  "settings.dock.trayMatch": "照合方法",
+  "settings.dock.trayMatchName": "実行ファイル名",
+  "settings.dock.trayMatchPath": "フルパス",
+  "settings.dock.trayProgram": "プログラム",
+  "settings.dock.trayAdd": "追加",
+  "settings.dock.traySingleClick": "トレイアイコンをクリック",
+  "settings.dock.trayDoubleClick": "トレイアイコンをダブルクリック",
+  "settings.dock.trayLaunch": "起動",
+  "settings.dock.trayInvalidTarget": "EXE ファイル名または EXE の絶対パスを入力してください。最大 128 件まで登録できます。"
 }

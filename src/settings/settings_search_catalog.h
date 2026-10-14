@@ -489,6 +489,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.dock.fullscreenDefaultPolicy", "settings.dock.fullscreenPolicy.description"},
     {SettingsPage::Dock, "dock.fullscreenExceptions",
         "settings.dock.fullscreenExceptions", "settings.dock.fullscreenExceptions.description"},
+    {SettingsPage::Dock, "dock.trayApplications",
+        "settings.dock.trayApplications", "settings.dock.trayApplications.description"},
     {SettingsPage::Taskbar, "taskbar.displayMode",
         "settings.bars.taskbarMode", "settings.dock.suppressTaskbar.description"},
     {SettingsPage::Dock, "dock.showWindowsButton",

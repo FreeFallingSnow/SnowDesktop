@@ -883,6 +883,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
 
 void DesktopApp::SyncStatusBar()
 {
+    if (generalSettings_.dockEnabled || generalSettings_.statusBar.enabled) EnsureDockTrayService();
+    else dockTrayService_.reset();
     if (!systemDataProvider_ || !dcompDevice_ || !dwriteFactory_) return;
     if (systemPanel_) systemPanel_->UpdateSettings(generalSettings_.statusBar);
     if (!generalSettings_.statusBar.enabled)
@@ -912,7 +914,7 @@ void DesktopApp::SyncStatusBar()
                     D2D1::ColorF(appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha),
                     D2D1::ColorF(0, 0.f), false, 0, &fillAppearance, false, 0, scale);
                 brushCache_.clear(); brushCacheContext_ = nullptr;
-             });
+             }, dockTrayService_);
         statusBar_->SetPointerPressed([this] {
             ClearSelection();
             InvalidateRect(hwnd_, nullptr, FALSE);

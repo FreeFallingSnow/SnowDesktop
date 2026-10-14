@@ -240,6 +240,7 @@ public:
         ApplyDesktopStylePreset,
         ApplyDesktopStyleAnimations,
         GetDockRunningApplications,
+        GetDockTrayApplications,
     };
 
     struct Request

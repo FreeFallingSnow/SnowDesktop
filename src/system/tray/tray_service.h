@@ -46,7 +46,10 @@ public:
     bool AcknowledgeChange(HWND window, std::uint64_t token);
     void SetGeometry(const std::string& key, RECT rect);
     void ClearGeometries();
-    bool Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin focus = {});
+    bool Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin focus = {},
+        std::optional<RECT> invocationBounds = {}, std::optional<Identity> expectedIdentity = {});
+    bool ActivatePrimary(const std::string& key, bool doubleClick, POINT anchor,
+        FocusOrigin focus = {}, std::optional<RECT> invocationBounds = {}, std::optional<Identity> expectedIdentity = {});
     void CancelFocusReturn(HWND origin = nullptr);
     void ObserveForeground(HWND window, DWORD eventTime);
     std::optional<FocusDelivery> TakeFocusReturn(HWND origin, std::uint64_t serial);

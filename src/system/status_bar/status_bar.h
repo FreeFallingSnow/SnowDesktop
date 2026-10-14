@@ -56,7 +56,8 @@ public:
     using DrawBackground = std::function<void(ID2D1DeviceContext*, RECT,
         const PersonalizationSettings&, float)>;
     StatusBar(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data,
-        Activate activate, Hidden hidden, Error error, DrawBackground drawBackground);
+        Activate activate, Hidden hidden, Error error, DrawBackground drawBackground,
+        std::shared_ptr<tray::Service> sharedTray = {});
     ~StatusBar();
     StatusBar(const StatusBar&) = delete;
     StatusBar& operator=(const StatusBar&) = delete;

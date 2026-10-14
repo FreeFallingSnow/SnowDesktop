@@ -2733,5 +2733,17 @@
   "start.section.layout": "桌面布局",
   "start.section.basics.description": "从启动和基础操作开始，了解组件、网格、图标、主题与右键菜单。",
   "statusBar.showDesktop": "点击右侧边缘显示桌面",
-  "statusBar.showDesktopTip": "显示桌面（Win+D）"
+  "statusBar.showDesktopTip": "显示桌面（Win+D）",
+  "settings.dock.trayApplications": "优先通过托盘打开的程序",
+  "settings.dock.trayApplications.description": "多个托盘图标时显示选择列表。",
+  "settings.dock.trayAction": "托盘操作",
+  "settings.dock.trayMatch": "匹配方式",
+  "settings.dock.trayMatchName": "程序名",
+  "settings.dock.trayMatchPath": "完整路径",
+  "settings.dock.trayProgram": "程序",
+  "settings.dock.trayAdd": "添加",
+  "settings.dock.traySingleClick": "单击托盘图标",
+  "settings.dock.trayDoubleClick": "双击托盘图标",
+  "settings.dock.trayLaunch": "启动",
+  "settings.dock.trayInvalidTarget": "请输入 EXE 文件名或 EXE 的完整路径。最多支持 128 项。"
 }

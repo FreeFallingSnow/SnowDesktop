@@ -2733,5 +2733,17 @@
   "start.section.layout": "Desktop-Layout",
   "start.section.basics.description": "Beginnen Sie mit Startoptionen und grundlegenden Funktionen und lernen Sie Komponenten, Raster, Symbole, Designs und Kontextmenüs kennen.",
   "statusBar.showDesktop": "Desktop durch Klicken auf den rechten Rand anzeigen",
-  "statusBar.showDesktopTip": "Desktop anzeigen (Win+D)"
+  "statusBar.showDesktopTip": "Desktop anzeigen (Win+D)",
+  "settings.dock.trayApplications": "Programme über den Infobereich öffnen",
+  "settings.dock.trayApplications.description": "Bei mehreren passenden Symbolen wird eine Auswahlliste angezeigt.",
+  "settings.dock.trayAction": "Aktion im Infobereich",
+  "settings.dock.trayMatch": "Abgleichen nach",
+  "settings.dock.trayMatchName": "EXE-Dateiname",
+  "settings.dock.trayMatchPath": "Vollständiger Pfad",
+  "settings.dock.trayProgram": "Programm",
+  "settings.dock.trayAdd": "Hinzufügen",
+  "settings.dock.traySingleClick": "Symbol einmal anklicken",
+  "settings.dock.trayDoubleClick": "Symbol doppelt anklicken",
+  "settings.dock.trayLaunch": "Starten",
+  "settings.dock.trayInvalidTarget": "Geben Sie einen EXE-Dateinamen oder einen absoluten EXE-Pfad ein. Bis zu 128 Einträge sind möglich."
 }

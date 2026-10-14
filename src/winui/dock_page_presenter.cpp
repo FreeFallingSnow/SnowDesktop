@@ -6,6 +6,7 @@
 #include "panel_gradient_editor.h"
 #include "panel_appearance_editor.h"
 #include "merged_bar_height_editor.h"
+#include "dock_tray_settings_editor.h"
 
 #include "dock/dock_settings.h"
 #include "theme/taskbar_appearance.h"
@@ -348,6 +349,7 @@ struct DockPagePresenter::Impl
     LocalizeCallback localize;
     DockPageActions actions;
     std::unique_ptr<MergedBarHeightEditor> mergedHeight;
+    std::unique_ptr<DockTraySettingsEditor> trayEditor;
     BarSettingsAvailability barAvailability;
     muxc::ToggleSwitch homeSize;
     presenter_controls::SettingRow homeSizeRow;
@@ -743,6 +745,17 @@ struct DockPagePresenter::Impl
         itemsCard.content.Children().Append(frequentItemCount.root);
         itemsCard.content.Children().Append(windowPreviewsRow.root);
         itemsCard.content.Children().Append(singleClickLaunchItemsRow.root);
+        trayEditor = std::make_unique<DockTraySettingsEditor>(
+            [this](std::string_view key, std::wstring_view fallback) { return L(key, fallback); },
+            [this](auto edit) { EmitDock(SettingsUpdateMode::PreviewAndCommit, std::move(edit)); },
+            [this] {
+                if (!actions.invokeHost || closed || !active) return std::vector<DockFullscreenApplication>{};
+                SettingsHostActions::Request request;
+                request.action = SettingsHostActions::Action::GetDockTrayApplications;
+                const auto result = actions.invokeHost(generation, request);
+                return result.Succeeded() ? result.dockApplications : std::vector<DockFullscreenApplication>{};
+            });
+        itemsCard.content.Children().Append(trayEditor->Content());
         for (auto* card : {&layoutCard, &mergedCard, &itemsCard, &behaviorCard, &edgeSwipeCard, &fullscreenCard})
         {
             auto overlay = mux::Markup::XamlReader::Load(
@@ -1951,6 +1964,7 @@ struct DockPagePresenter::Impl
         singleClickLaunchItems.IsOn(settings.singleClickLaunchItems);
         floatingShortcutToggle.IsOn(settings.floatingShortcutMode);
         fullscreenPolicyCombo.SelectedIndex(static_cast<int>(settings.fullscreenPolicy));
+        trayEditor->Update(settings);
         if (fullscreenExceptionValues != settings.fullscreenExceptions)
         {
             fullscreenExceptionValues = settings.fullscreenExceptions;
@@ -2768,6 +2782,7 @@ struct DockPagePresenter::Impl
         fullscreenExceptionsRow.SetText(
             L("settings.dock.fullscreenExceptions", L"Application exceptions"),
             L("settings.dock.fullscreenExceptions.description", L"Applies to every fullscreen window of the selected executable, including browser games."));
+        trayEditor->RefreshText();
         fullscreenExceptionsManagementTitle.Text(L("settings.dock.fullscreenExceptionManage", L"Manage application exceptions") +
             L" (" + std::to_wstring(fullscreenExceptionValues.size()) + L")");
         muxa::AutomationProperties::SetName(fullscreenExceptionsExpander, fullscreenExceptionsManagementTitle.Text());
@@ -3096,6 +3111,7 @@ struct DockPagePresenter::Impl
         }
         if (id == "dock.showWindowPreviews") return dockTarget(windowPreviews);
         if (id == "dock.singleClickLaunchItems") return dockTarget(singleClickLaunchItems);
+        if (id == "dock.trayApplications") return dockTarget(trayEditor->FocusTarget());
         if (id == "dock.fullscreenPolicy" || id == "dock.floatingEdgeSwipeBlockFullscreen")
             return dockTarget(fullscreenPolicyCombo);
         if (id == "dock.fullscreenExceptions")
@@ -3298,6 +3314,7 @@ struct DockPagePresenter::Impl
             fullscreenRunningApps.DropDownOpened(fullscreenRunningOpenToken);
             fullscreenRunningApps.SelectionChanged(fullscreenRunningSelectToken);
             ClearFullscreenExceptionRows();
+            trayEditor.reset();
             showWindowsButtonToggle.Toggled(showWindowsButtonToken);
             showQuickSearchButtonToggle.Toggled(showQuickSearchButtonToken);
             mergedHeight->Close();

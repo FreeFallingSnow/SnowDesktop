@@ -435,7 +435,8 @@ void Service::SetGeometry(const std::string& key, RECT rect)
 }
 void Service::ClearGeometries()
 { std::lock_guard guard(impl_->mutex); impl_->geometries.clear(); impl_->PublishGeometries(); }
-bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin)
+bool Service::Activate(const std::string& key, Activation action, POINT anchor, FocusOrigin origin,
+    std::optional<RECT> invocationBounds, std::optional<Identity> expectedIdentity)
 {
     Icon icon;
     RECT geometry{};
@@ -443,11 +444,13 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
         std::lock_guard guard(impl_->mutex);
         const auto found = std::find_if(impl_->snapshot.icons.begin(), impl_->snapshot.icons.end(), [&](const auto& item) { return item.key == key; });
         if (found == impl_->snapshot.icons.end() || (found->state & NIS_HIDDEN)) return false;
+        if (expectedIdentity && !SameFocusIdentity(found->identity, *expectedIdentity)) return false;
         icon = *found;
         if (const auto bounds = impl_->geometries.find(key); bounds != impl_->geometries.end() &&
             SameFocusIdentity(bounds->second.identity, icon.identity)) geometry = bounds->second.rect;
     }
     DWORD pid = 0;
+    if (invocationBounds) geometry = *invocationBounds;
     const HWND target = reinterpret_cast<HWND>(icon.identity.window);
     if (!GetWindowThreadProcessId(target, &pid) || pid != icon.identity.process || !icon.callback)
     {
@@ -524,6 +527,22 @@ bool Service::Activate(const std::string& key, Activation action, POINT anchor, 
     }
     if (!accepted) impl_->menuPlacement.Cancel();
     return accepted;
+}
+
+bool Service::ActivatePrimary(const std::string& key, bool doubleClick, POINT anchor,
+    FocusOrigin focus, std::optional<RECT> invocationBounds, std::optional<Identity> expectedIdentity)
+{
+    if (!expectedIdentity)
+    {
+        const auto snapshot = Current();
+        const auto icon = std::find_if(snapshot.icons.begin(), snapshot.icons.end(), [&](const auto& item) { return item.key == key; });
+        if (icon == snapshot.icons.end()) return false;
+        expectedIdentity = icon->identity;
+    }
+    if (!Activate(key, Activation::LeftDown, anchor, focus, invocationBounds, expectedIdentity) ||
+        !Activate(key, Activation::LeftUp, anchor, focus, invocationBounds, expectedIdentity)) return false;
+    return !doubleClick || (Activate(key, Activation::DoubleClick, anchor, focus, invocationBounds, expectedIdentity) &&
+        Activate(key, Activation::LeftUp, anchor, focus, invocationBounds, expectedIdentity));
 }
 void Service::CancelFocusReturn(HWND origin)
 {

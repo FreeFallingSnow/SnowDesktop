@@ -240,10 +240,12 @@ bool DesktopApp::LaunchPathWithShortcutPolicy(
 }
 
 bool DesktopApp::LaunchDesktopItem(
-    size_t itemIndex, bool animateDockLaunch)
+    size_t itemIndex, bool animateDockLaunch, bool allowDockTray)
 {
     if (itemIndex >= items_.size() || items_[itemIndex].parsingName.empty())
         return false;
+    if (animateDockLaunch && allowDockTray &&
+        TryActivateDockTray(ResolveDockAppIdentity(itemIndex).executablePath, itemIndex)) return true;
     if (animateDockLaunch)
     {
         const DockAppIdentity identity =

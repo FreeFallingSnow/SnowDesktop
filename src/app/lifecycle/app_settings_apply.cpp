@@ -1,5 +1,6 @@
 #include "shell/shell_extension_service.h"
 #include "app/app.h"
+#include "system/tray/tray_service.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "platform/single_instance.h"
@@ -1329,6 +1330,7 @@ public:
             app_.LayoutItems();
             break;
         case Action::GetDockRunningApplications:
+        case Action::GetDockTrayApplications:
         {
             auto result = snowdesktop::SettingsActionResult::Success();
             result.dockApplications = snowdesktop::dock_fullscreen::CollectApplications(
@@ -1347,6 +1349,18 @@ public:
                     if (name.empty()) name = std::filesystem::path(path).filename().wstring();
                     return DockFullscreenApplication{name, path};
                 });
+            if (request.action == Action::GetDockTrayApplications)
+            {
+                const auto snapshot = app_.EnsureDockTrayService()->Current();
+                for (const auto& icon : snapshot.icons)
+                {
+                    if (icon.application.empty() || (icon.state & NIS_HIDDEN)) continue;
+                    if (std::none_of(result.dockApplications.begin(), result.dockApplications.end(), [&](const auto& application) {
+                            return snowdesktop::dock_fullscreen::SameExecutable(application.executable, icon.application);
+                        }))
+                        result.dockApplications.push_back({std::filesystem::path(icon.application).filename().wstring(), icon.application});
+                }
+            }
             return result;
         }
         case Action::ApplyTaskbar:

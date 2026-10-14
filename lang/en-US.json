@@ -2733,5 +2733,17 @@
   "start.section.layout": "Desktop layout",
   "start.section.basics.description": "Start with launch options and basic controls, then learn about components, grids, icons, themes, and context menus.",
   "statusBar.showDesktop": "Click the right edge to show the desktop",
-  "statusBar.showDesktopTip": "Show desktop (Win+D)"
+  "statusBar.showDesktopTip": "Show desktop (Win+D)",
+  "settings.dock.trayApplications": "Applications to open through the tray",
+  "settings.dock.trayApplications.description": "Show a selection list when multiple tray icons match.",
+  "settings.dock.trayAction": "Tray action",
+  "settings.dock.trayMatch": "Match by",
+  "settings.dock.trayMatchName": "Executable name",
+  "settings.dock.trayMatchPath": "Full path",
+  "settings.dock.trayProgram": "Program",
+  "settings.dock.trayAdd": "Add",
+  "settings.dock.traySingleClick": "Single-click tray icon",
+  "settings.dock.trayDoubleClick": "Double-click tray icon",
+  "settings.dock.trayLaunch": "Launch",
+  "settings.dock.trayInvalidTarget": "Enter an EXE filename or an absolute EXE path. Up to 128 entries are supported."
 }

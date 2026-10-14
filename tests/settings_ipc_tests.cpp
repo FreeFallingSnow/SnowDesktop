@@ -326,6 +326,8 @@ void TestCodec()
     settings.values.dock.fullscreenExceptions = {{L"C:\\Apps\\播放器\\Player.exe", DockFullscreenPolicy::Allow},
         {L"D:\\Browser\\browser.exe", DockFullscreenPolicy::BlockGestures}};
     settings.values.dock.edgeRevealGesture = 1;
+    settings.values.dock.trayApplications = {{L"QQ.exe", false, true, false},
+        {L"D:\\应用\\Weixin.exe", true, false, true}};
     settings.values.dock.showWindowPreviews = false;
     settings.values.dock.hoverEffect = 1;
     settings.values.dock.hoverScale = 1.75f;
@@ -395,6 +397,12 @@ void TestCodec()
     }
     Check(restored.values.dock.edgeRevealGesture == 1 && !restored.values.dock.showWindowPreviews,
         "hover reveal and disabled task thumbnails survive settings IPC");
+    Check(restored.values.dock.trayApplications == settings.values.dock.trayApplications,
+        "tray matching mode, Unicode path, opt-out and click gesture survive IPC");
+    auto noTray = settings.values.dock;
+    noTray.trayApplications.clear();
+    Check(Unpack<DockSettings>(Pack(noTray)).trayApplications.empty(),
+        "an explicitly cleared tray list stays empty across IPC");
     Check(restored.values.dock.fullscreenPolicy == settings.values.dock.fullscreenPolicy &&
         restored.values.dock.fullscreenExceptions == settings.values.dock.fullscreenExceptions,
         "fullscreen policies and Unicode executable exceptions survive IPC");

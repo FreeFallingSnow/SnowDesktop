@@ -453,6 +453,17 @@ public:
         case WM_LBUTTONDOWN:
             pointerPressed_ = true;
             return 0;
+        case WM_RBUTTONDOWN:
+            if (options_.allowContextCommand) { pointerPressed_ = true; return 0; }
+            break;
+        case WM_RBUTTONUP:
+            if (options_.allowContextCommand)
+            {
+                pointerPressed_ = false;
+                ActivateItem(popup, HitTest(popup, {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)}), false, true);
+                return 0;
+            }
+            break;
         case WM_LBUTTONUP:
         {
             pointerPressed_ = false;
@@ -488,6 +499,12 @@ public:
             return 0;
         }
         case WM_KEYDOWN:
+            if (options_.allowContextCommand && (wParam == VK_APPS ||
+                (wParam == VK_F10 && (GetKeyState(VK_SHIFT) & 0x8000))))
+            {
+                ActivateItem(popup, popup.keyboardItem >= 0 ? popup.keyboardItem : popup.hoveredItem, true, true);
+                return 0;
+            }
             textDuplicateImeResult_.clear();
             if(textInputComposing_)return DefWindowProcW(hwnd,message,wParam,lParam);
             if (!HandleTextInputKey(wParam))
@@ -659,7 +676,7 @@ public:
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
-                item.quickIcon, item.image, item.builtinIcon,
+                item.quickIcon, item.image, item.builtinIcon, item.literalLabel,
             };
             UINT state = 0;
             if (!item.enabled)
@@ -908,6 +925,7 @@ private:
         std::vector<int> quickIndices;
         std::vector<int> regularIndices;
         std::vector<int> inlineWidths(popup.items->size(), 0);
+        std::vector<int> rowHeights(popup.items->size(), metrics_.rowHeight);
         int pendingSeparator = -1;
         for (size_t i = 0; i < popup.items->size(); ++i)
         {
@@ -972,11 +990,12 @@ private:
             const menu_icon::ItemView view{
                 item.label.c_str(), item.glyph.c_str(),
                 item.separator, !item.children.empty(), item.checked,
-                MenuQuickIcon::FontGlyph, item.image, item.builtinIcon,
+                MenuQuickIcon::FontGlyph, item.image, item.builtinIcon, item.literalLabel,
             };
             const SIZE measured = menu_icon::MeasureItem(
                 screenDc, textFont_, view, popup.rowMetrics);
             width = std::max(width, static_cast<int>(measured.cx));
+            rowHeights[i] = static_cast<int>(measured.cy);
         }
         for (size_t position = 0; position < regularIndices.size(); ++position)
         {
@@ -1163,7 +1182,7 @@ private:
                 continue;
             }
             const int height = item.separator
-                ? metrics_.separatorHeight : metrics_.rowHeight;
+                ? metrics_.separatorHeight : rowHeights[index];
             const int horizontalPadding = item.textInput || editorInset > 0
                 ? panelPadding_ : 0;
             popup.itemRects[index] = {
@@ -1427,7 +1446,7 @@ private:
         Render(popup);
     }
 
-    void ActivateItem(Popup& popup, int index, bool keyboard)
+    void ActivateItem(Popup& popup, int index, bool keyboard, bool context = false)
     {
         if (index < 0 || static_cast<size_t>(index) >= popup.items->size())
             return;
@@ -1441,6 +1460,7 @@ private:
         }
 
         const UINT command = item.command;
+        if (context && (!options_.allowContextCommand || !options_.allowContextCommand(command))) return;
         if (IsTextInputEditor(popup) && command == options_.textInputCancelCommand)
         {
             CancelTextInputEditor(popup);
@@ -1452,7 +1472,7 @@ private:
         OffsetRect(&rect,
             popup.panelScreenOrigin.x - shadowSize_,
             popup.panelScreenOrigin.y - shadowSize_ - popup.scrollOffset);
-        if (options_.onCommand &&
+        if (!context && options_.onCommand &&
             options_.onCommand(command, rootItems_))
         {
             if (!done_) RefreshAfterCommand(popup, command);
@@ -1460,6 +1480,7 @@ private:
         }
 
         result_.command = command;
+        result_.contextCommand = context;
         result_.itemScreenRect = rect;
         done_ = true;
     }

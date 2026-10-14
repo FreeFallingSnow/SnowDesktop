@@ -59,7 +59,7 @@
 #include "icons/website_icon.h"
 #include "icons/large_icon_motion.h"
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
-namespace snowdesktop::tray { struct Icon; }
+namespace snowdesktop::tray { struct Icon; class Service; }
 #include "navigation/navigation_settings.h"
 #include "settings/general_settings.h"
 #include "system/status_bar/status_bar.h"
@@ -1364,7 +1364,11 @@ private:
         size_t insertIndex, bool keepOnDesktop = false);
     bool CanPinExistingDesktopPaths(const std::vector<std::wstring>& paths) const;
     bool LaunchDesktopItem(
-        size_t itemIndex, bool animateDockLaunch = false);
+        size_t itemIndex, bool animateDockLaunch = false, bool allowDockTray = true);
+    std::shared_ptr<snowdesktop::tray::Service> EnsureDockTrayService();
+    bool HasDockTrayTarget(size_t itemIndex);
+    bool TryActivateDockTray(const std::wstring& executable, size_t itemIndex,
+        std::optional<RECT> anchor = {});
     /** @brief Open a path, honoring its shortcut, manifest and compatibility elevation marks. */
     bool LaunchPathWithShortcutPolicy(
         HWND owner, const std::wstring& path);
@@ -3619,6 +3623,7 @@ private:
     std::shared_ptr<snowdesktop::widget_runtime::WidgetSystemDataProvider>
         systemDataProvider_;
     std::unique_ptr<snowdesktop::StatusBar> statusBar_;
+    std::shared_ptr<snowdesktop::tray::Service> dockTrayService_;
     snowdesktop::UiScheduleToken statusBarActivationToken_ = 0;
     snowdesktop::TaskViewTransitionGuard statusBarTaskViewTransition_;
     std::shared_ptr<std::uint64_t> statusBarActivationGeneration_ = std::make_shared<std::uint64_t>(0);

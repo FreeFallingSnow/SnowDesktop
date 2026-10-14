@@ -682,6 +682,21 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     // second release for folders and closed items using double-click launch.
     // In single-click mode the first release already launched the item, so
     // consume the second release without launching it again.
+    if (appItemIndex < items_.size() && !folderEntry && HasDockTrayTarget(appItemIndex))
+    {
+        if (matchingPendingDoubleClick)
+        {
+            dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
+            dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
+            dockPendingDoubleClickTick_ = 0;
+            return true;
+        }
+        dockPendingDoubleClickEntry_ = pressedEntryIndex;
+        dockPendingDoubleClickFrequentItem_ = pressedFrequentItemIndex;
+        dockPendingDoubleClickTick_ = GetTickCount();
+        if (TryActivateDockTray(ResolveDockAppIdentity(appItemIndex).executablePath,
+                appItemIndex, pressedAnchorScreen)) return true;
+    }
     if (matchingPendingDoubleClick &&
         (folderEntry || waitForDoubleClick || dockSettings_.singleClickLaunchItems))
     {
@@ -756,6 +771,7 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         if (running != dockUnpinnedRunningApps_.end())
         {
             const HWND runningWindow = running->window;
+            if (TryActivateDockTray(running->executablePath, static_cast<size_t>(-1), pressedAnchorScreen)) return true;
             ActivateOrToggleDockWindow(
                 runningWindow, pressedWindowAction,
                 pressedTargetWindow, pressedAnchorScreen);

@@ -990,6 +990,7 @@ bool DesktopApp::ActivateOrToggleDockItem(
         return true;
 
     using snowdesktop::dock_window_rules::DockClickAction;
+    if (TryActivateDockTray(requestedIdentity.executablePath, itemIndex, pressedAnchorScreen)) return true;
     DockClickAction action =
         pressedAction.value_or(DockClickAction::None);
     if (action == DockClickAction::Launch)

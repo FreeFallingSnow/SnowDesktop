@@ -2,6 +2,7 @@
 #include "theme/taskbar_appearance.h"
 #include "dock_gradient_storage.h"
 #include "dock_fullscreen_storage.h"
+#include "dock_tray_storage.h"
 #include "common/utils.h"
 #include "theme/surface_theme.h"
 
@@ -1285,6 +1286,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         if (!snowdesktop::DecodePanelAppearance(*appearance, settings.customAppearance)) return false;
     settings.fullscreenPolicy = snowdesktop::dock_fullscreen::DecodePolicy(gradientDocument);
     if (!snowdesktop::dock_fullscreen::DecodeExceptions(gradientDocument, settings.fullscreenExceptions)) return false;
+    if (!snowdesktop::dock_tray::DecodeRules(gradientDocument, settings.trayApplications)) return false;
     NormalizeDockSettings(settings);
     return true;
 }
@@ -1300,6 +1302,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
         if (!validPolicy(entry.policy) || snowdesktop::dock_fullscreen::NormalizeExecutable(entry.executable).empty())
             return false;
     std::ostringstream gradientFields;
+    std::ostringstream trayFields;
+    if (!snowdesktop::dock_tray::WriteRules(trayFields, settings.trayApplications)) return false;
     if (!snowdesktop::WriteTaskbarGradients(gradientFields, settings)) return false;
     const auto customAppearance = snowdesktop::EncodePanelAppearance(settings.customAppearance);
     std::ostringstream materialFields;
@@ -1309,6 +1313,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
 
     const PersonalizationSettings& taskbarStyle = settings.systemTaskbarAppearance;
     file << "{\n";
+    file << trayFields.str();
     file << "  \"position\": " << static_cast<int>(settings.position) << ",\n";
     file << "  \"edgeAttached\": "
          << (settings.edgeAttached ? "true" : "false") << ",\n";

@@ -2733,5 +2733,17 @@
   "start.section.layout": "Layout da área de trabalho",
   "start.section.basics.description": "Comece pelas opções de inicialização e controles básicos; depois, conheça os componentes, a grade, os ícones, os temas e os menus de contexto.",
   "statusBar.showDesktop": "Clicar na borda direita para mostrar a área de trabalho",
-  "statusBar.showDesktopTip": "Mostrar área de trabalho (Win+D)"
+  "statusBar.showDesktopTip": "Mostrar área de trabalho (Win+D)",
+  "settings.dock.trayApplications": "Aplicativos abertos pela bandeja",
+  "settings.dock.trayApplications.description": "Mostrar uma lista de seleção quando vários ícones corresponderem.",
+  "settings.dock.trayAction": "Ação do ícone",
+  "settings.dock.trayMatch": "Correspondência por",
+  "settings.dock.trayMatchName": "Nome do executável",
+  "settings.dock.trayMatchPath": "Caminho completo",
+  "settings.dock.trayProgram": "Programa",
+  "settings.dock.trayAdd": "Adicionar",
+  "settings.dock.traySingleClick": "Um clique no ícone",
+  "settings.dock.trayDoubleClick": "Clique duplo no ícone",
+  "settings.dock.trayLaunch": "Iniciar",
+  "settings.dock.trayInvalidTarget": "Insira um nome de arquivo EXE ou um caminho absoluto para um EXE. São permitidas até 128 entradas."
 }

@@ -2733,5 +2733,17 @@
   "start.section.layout": "Disposition du bureau",
   "start.section.basics.description": "Commencez par les options de démarrage et les commandes de base, puis découvrez les composants, la grille, les icônes, les thèmes et les menus contextuels.",
   "statusBar.showDesktop": "Cliquer sur le bord droit pour afficher le Bureau",
-  "statusBar.showDesktopTip": "Afficher le Bureau (Win+D)"
+  "statusBar.showDesktopTip": "Afficher le Bureau (Win+D)",
+  "settings.dock.trayApplications": "Applications à ouvrir via la zone de notification",
+  "settings.dock.trayApplications.description": "Afficher une liste de sélection si plusieurs icônes correspondent.",
+  "settings.dock.trayAction": "Action sur l’icône",
+  "settings.dock.trayMatch": "Correspondance",
+  "settings.dock.trayMatchName": "Nom du fichier EXE",
+  "settings.dock.trayMatchPath": "Chemin complet",
+  "settings.dock.trayProgram": "Programme",
+  "settings.dock.trayAdd": "Ajouter",
+  "settings.dock.traySingleClick": "Clic sur l’icône",
+  "settings.dock.trayDoubleClick": "Double-clic sur l’icône",
+  "settings.dock.trayLaunch": "Lancer",
+  "settings.dock.trayInvalidTarget": "Saisissez un nom de fichier EXE ou son chemin absolu. La liste peut contenir jusqu’à 128 entrées."
 }

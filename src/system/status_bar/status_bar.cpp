@@ -1252,6 +1252,7 @@ struct StatusBar::Impl
     };
     std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data;
     std::shared_ptr<tray::Service> tray;
+    std::weak_ptr<tray::Service> sharedTray;
     std::unique_ptr<status_bar_input_method::Service> inputMethod;
     Activate activate;
     Hidden hidden;
@@ -1328,8 +1329,8 @@ struct StatusBar::Impl
         return false;
     }
     Impl(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> source,
-        Activate action, Hidden hide, Error report, DrawBackground draw)
-        : data(std::move(source)), activate(std::move(action)), hidden(std::move(hide)), error(std::move(report)), drawBackground(std::move(draw)) {}
+        Activate action, Hidden hide, Error report, DrawBackground draw, std::shared_ptr<tray::Service> shared)
+        : data(std::move(source)), sharedTray(std::move(shared)), activate(std::move(action)), hidden(std::move(hide)), error(std::move(report)), drawBackground(std::move(draw)) {}
     void Close()
     {
         for (auto hook : hooks) UnhookWinEvent(hook);
@@ -1354,8 +1355,8 @@ struct StatusBar::Impl
 };
 
 StatusBar::StatusBar(std::shared_ptr<widget_runtime::WidgetSystemDataProvider> data,
-    Activate activate, Hidden hidden, Error error, DrawBackground drawBackground)
-    : impl_(std::make_unique<Impl>(std::move(data), std::move(activate), std::move(hidden), std::move(error), std::move(drawBackground))) {}
+    Activate activate, Hidden hidden, Error error, DrawBackground drawBackground, std::shared_ptr<tray::Service> sharedTray)
+    : impl_(std::make_unique<Impl>(std::move(data), std::move(activate), std::move(hidden), std::move(error), std::move(drawBackground), std::move(sharedTray))) {}
 StatusBar::~StatusBar() { Close(); }
 void StatusBar::Close() { impl_->Close(); }
 void StatusBar::ReleaseGraphicsResources()
@@ -1698,6 +1699,7 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         ReleaseGraphicsResources();
     self.composition = composition; self.text = text;
     if (!self.settings.enabled || monitors.empty()) { self.Close(); return; }
+    if (!self.tray) self.tray = self.sharedTray.lock();
     if (!self.tray) self.tray = std::make_shared<tray::Service>();
     if (self.settings.inputMethod && !self.inputMethod)
         self.inputMethod = std::make_unique<status_bar_input_method::Service>();

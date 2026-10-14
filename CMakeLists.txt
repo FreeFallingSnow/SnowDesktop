@@ -174,6 +174,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/dock/app_dock_running_drag.cpp
     src/dock/dock_running_drag_rules.h
     src/app/dock/app_dock_launch.cpp
+    src/app/dock/app_dock_tray.cpp
     src/app/dock/app_dock_layout.cpp
     src/dock/dock_appbar.cpp
     src/dock/dock_appbar.h
@@ -410,6 +411,7 @@ set(SNOWDESKTOP_SOURCES
     src/winui/desktop_page_presenter.cpp
     src/winui/desktop_page_presenter.h
     src/winui/dock_page_presenter.cpp
+    src/winui/dock_tray_settings_editor.cpp
     src/winui/status_bar_page_presenter.cpp
     src/winui/desktop_style_page_presenter.cpp
     src/winui/desktop_style_page_presenter.h
@@ -434,6 +436,7 @@ set(SNOWDESKTOP_SOURCES
     src/winui/animation_performance_page_presenter.cpp
     src/winui/animation_performance_page_presenter.h
     src/winui/dock_page_presenter.h
+    src/winui/dock_tray_settings_editor.h
     src/winui/SettingsShell.xaml
     src/winui/SettingsShell.xaml.cpp
     src/winui/SettingsShell.xaml.h

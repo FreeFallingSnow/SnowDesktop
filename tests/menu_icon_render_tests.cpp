@@ -612,6 +612,17 @@ int wmain(int argc, wchar_t** argv)
         CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
         DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     Expect(font != nullptr, "test font is created");
+    {
+        // Native tooltip content must not become a menu accelerator or lose
+        // its line breaks when rendered by the shared Dock selector.
+        snowdesktop::menu_icon::ItemView tip;
+        tip.label = L"First & account\nSecond line\tverbatim";
+        tip.literalLabel = true;
+        const auto size = snowdesktop::menu_icon::MeasureItem(dc, font, tip, metrics96);
+        Expect(size.cy > metrics96.rowHeight, "literal multi-line tray tips reserve multiple text lines");
+        Expect(snowdesktop::menu_icon::DrawItem(dc, font, nullptr, tip, {0, 0, size.cx, size.cy}, 0,
+            snowdesktop::menu_icon::ResolvePalette(true), metrics96), "literal tray labels render through the shared item renderer");
+    }
     HFONT fluentFont = CreateFontW(-metrics96.quickActionFontHeight,
         0, 0, 0, FW_NORMAL,
         FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_ONLY_PRECIS,

@@ -4,6 +4,8 @@
 #include "system/status_bar/status_bar_notification.h"
 #include "system/status_bar/status_bar_input_method.h"
 #include "system/status_bar/status_bar_input_method_identity.h"
+#include "dock/dock_tray_targets.h"
+#include "dock/dock_tray_storage.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>
@@ -15,6 +17,57 @@ int RunTrayModelTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAIL tray: " << message << '\n'; }
     };
+    {
+        // Production selection consumes registered icons, not process counts
+        // or tooltip-derived account IDs. Two identical tips remain distinct.
+        namespace rules = snowdesktop::dock_tray;
+        auto preferences = rules::Defaults();
+        check(rules::FindRule(preferences, L"D:\\Apps\\qq.EXE") != nullptr &&
+            rules::FindRule(preferences, L"E:\\Weixin\\Weixin.exe") != nullptr &&
+            rules::FindRule(preferences, L"C:\\Old\\WeChat.exe") != nullptr &&
+            rules::FindRule(preferences, L"C:\\Feishu\\Feishu.exe") != nullptr,
+            "default tray applications follow exact case-insensitive executable names across install paths");
+        check(!rules::FindRule(preferences, L"D:\\Apps\\QQMusic.exe") &&
+            rules::NormalizeTarget(L"*.exe", false).empty(), "name matching cannot select similarly named or wildcard programs");
+        Snapshot snapshot;
+        snapshot.connected = true;
+        Icon first;
+        first.identity = {{}, 10, 1, 100};
+        first.key = Key(first.identity);
+        first.callback = WM_USER + 1;
+        first.application = L"D:\\Apps\\QQ.exe";
+        first.tip = L"QQ & name\nunchanged\t123";
+        Icon second = first;
+        second.identity.window = 20;
+        second.identity.id = 2;
+        second.key = Key(second.identity);
+        snapshot.icons = {first, second};
+        auto targets = rules::CollectTargets(snapshot, preferences, L"C:\\QQ\\QQ.exe");
+        check(targets.size() == 2 && targets[0].tip == first.tip && targets[1].tip == first.tip &&
+            targets[0].key != targets[1].key, "same-tooltip accounts remain independent and raw tooltip text is preserved");
+        preferences.push_back({first.application, true, false, false});
+        check(!rules::FindRule(preferences, first.application)->enabled &&
+            rules::CollectTargets(snapshot, preferences, first.application).empty(),
+            "a disabled exact-path override takes precedence over an enabled default name");
+        preferences = rules::Defaults();
+        snapshot.icons[1].state = NIS_HIDDEN;
+        check(rules::CollectTargets(snapshot, preferences, first.application).size() == 1, "hidden registered icons do not become selectable accounts");
+        check(rules::IsCurrentTarget(snapshot, first), "a current registered icon can be selected");
+        snapshot.icons[0].identity.process = 200;
+        check(!rules::IsCurrentTarget(snapshot, first), "an icon owner replaced while a selector is open cannot receive the stale account command");
+        snapshot.connected = false;
+        check(rules::CollectTargets(snapshot, preferences, first.application).empty(), "a disconnected tray snapshot cannot intercept launching");
+        JsonValue document;
+        check(ParseJson("{}", document) && rules::DecodeRules(document, preferences) && preferences == rules::Defaults(),
+            "old settings receive tray defaults once when the preference key is absent");
+        check(ParseJson("{\"trayApplications\":[]}", document) && rules::DecodeRules(document, preferences) && preferences.empty(),
+            "an explicitly empty saved list never restores defaults");
+        check(ParseJson("{\"trayApplications\":[{\"executable\":\"QQ.exe\",\"matchPath\":false,\"enabled\":false,\"doubleClick\":false}]}", document) &&
+            rules::DecodeRules(document, preferences) && preferences.size() == 1 && !preferences[0].enabled && !preferences[0].doubleClick,
+            "saved disabled rules and single-click selection remain disabled after loading");
+        check(ParseJson("{\"trayApplications\":[{\"executable\":\"QQ\",\"matchPath\":false,\"enabled\":true,\"doubleClick\":true}]}", document) &&
+            !rules::DecodeRules(document, preferences), "malformed tray preferences are rejected rather than guessed");
+    }
     {
         // Real Weixin trace: MODIFY/NIF_ICON alternates null and a normal
         // handle every ~500 ms. Do not confuse its blank frame with a failed

@@ -33,6 +33,7 @@ SD_IPC_FIELDS(SystemTaskbarDynamicRule,
     v.enabled, v.themeMode, v.contentTheme, v.appearance);
 SD_IPC_FIELDS(DockFullscreenException, v.executable, v.policy);
 SD_IPC_FIELDS(DockFullscreenApplication, v.name, v.executable);
+SD_IPC_FIELDS(DockTrayRule, v.executable, v.matchPath, v.enabled, v.doubleClick);
 SD_IPC_FIELDS(DockSettings,
     v.position, v.edgeAttached, v.floatingShortcutMode, v.floatingHotkeyModifiers,
     v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.edgeRevealGesture, v.fullscreenPolicy, v.fullscreenExceptions, v.monitorScope, v.showWindowsButton,
@@ -41,7 +42,7 @@ SD_IPC_FIELDS(DockSettings,
     v.systemTaskbarAutoHide, v.suppressSystemTaskbar, v.systemTaskbarAlignment, v.systemTaskbarBackdropEnabled, v.systemTaskbarFollowPersonalization,
     v.systemTaskbarContentTheme, v.systemTaskbarAppearance, v.systemTaskbarVisibleWindow, v.systemTaskbarMaximizedWindow,
     v.systemTaskbarShellUi, v.hoverEffect, v.hoverScale, v.launchEffect, v.windowEffect,
-    v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme);
+    v.followComponentAppearance, v.customAppearance, v.appearancePreset, v.classicTaskbarSystemTheme, v.trayApplications);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors);
 SD_IPC_FIELDS(QuickNavigationLayout, v.expandedWidth, v.collapsedWidth, v.maximumHeight,

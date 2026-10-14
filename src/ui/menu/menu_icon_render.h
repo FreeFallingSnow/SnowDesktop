@@ -62,6 +62,7 @@ struct ItemView
     /** Optional non-owning premultiplied package image for the icon column. */
     HBITMAP image = nullptr;
     BuiltinIcon builtinIcon = BuiltinIcon::None;
+    bool literalLabel = false;
 };
 
 struct ImageSourceView
