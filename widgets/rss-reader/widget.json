@@ -10,7 +10,7 @@
   "license": "GPL-3.0-only",
   "name": "RSS Reader",
   "nameKey": "lua_widget.rss_reader.name",
-  "version": "3.0.13",
+  "version": "3.0.14",
   "description": "Subscribes to RSS and Atom feeds, lists headlines and dates, and opens articles on double-click.",
   "descriptionKey": "lua_widget.rss_reader.description",
   "locales": {
@@ -114,7 +114,7 @@
       "lua_widget.rss_reader.request_failed": "リクエストに失敗しました。URL とネットワーク接続を確認してください。",
       "lua_widget.rss_reader.response_too_large": "フィードが受信上限の {0} MiB を超えています",
       "lua_widget.rss_reader.http_error": "フィードのサーバーが HTTP {0} を返しました",
-      "lua_widget.rss_reader.network_permission_required": "ネットワークへのアクセスを許可してから更新してください",
+      "lua_widget.rss_reader.network_permission_required": "ネットワークアクセスを許可し、更新してください",
       "lua_widget.rss_reader.redirect_rejected": "フィードのリダイレクトが拒否されました",
       "lua_widget.rss_reader.empty_response": "応答が空でした。",
       "lua_widget.rss_reader.no_articles_parsed": "記事を解析できませんでした。",

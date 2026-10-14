@@ -334,15 +334,13 @@ local function render(context, model)
         return
     end
     if model.error and #model.articles == 0 then
-        draw.text(pad, listTop + viewportHeight * 0.27,
-            errorText(model),
+        local message = errorText(model)
+        local measured = draw.measureText(message, bodyFont, width - pad * 2)
+        draw.text(pad, listTop + math.max(0,
+                (viewportHeight - measured.height) / 2),
+            message,
             bodyFont, colors.error,
-            width - pad * 2, false, false)
-        draw.text(pad, listTop + viewportHeight * 0.27 +
-                bodyFont + metrics.spacingSm,
-            l10n.tr("lua_widget.rss_reader.settings_hint"),
-            smallFont, colors.status,
-            width - pad * 2, false, true)
+            width - pad * 2, false, false, viewportHeight)
         return
     end
     if #model.articles == 0 then
