@@ -149,6 +149,7 @@ std::vector<std::wstring> DesktopApp::GetPopupItemKeys(const DesktopWidget& widg
 
 DesktopWidget* DesktopApp::GetOpenPopupWidget()
 {
+    if (dockTrayPopup_) return &dockTrayPopup_->widget;
     if (dockFolderPopupOpen_)
         return &dockFolderPopupWidget_;
     return popupWidgetIndex_ < widgets_.size()
@@ -157,6 +158,7 @@ DesktopWidget* DesktopApp::GetOpenPopupWidget()
 
 const DesktopWidget* DesktopApp::GetOpenPopupWidget() const
 {
+    if (dockTrayPopup_) return &dockTrayPopup_->widget;
     if (dockFolderPopupOpen_)
         return &dockFolderPopupWidget_;
     return popupWidgetIndex_ < widgets_.size()
@@ -475,7 +477,9 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     const int availableWidth = std::max(
         1, workWidth - metrics.edgeMargin * 2);
     const int maxWidth = std::min(
-        metrics.maximumWidth, availableWidth);
+        dockTrayPopup_ && &widget == &dockTrayPopup_->widget
+            ? std::min(metrics.maximumWidth, static_cast<int>(380 * metrics.scale)) : metrics.maximumWidth,
+        availableWidth);
     const int popupContentWidth = std::max(
         1, maxWidth - metrics.paddingX * 2);
     const int maxColumns = snowdesktop::collection_popup_layout::
@@ -550,6 +554,12 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
             ResolveFixedGridFrameWidth(metrics, columnCount);
     };
     auto popupHeightForRows = [&](int rowCount, int columnCount) {
+        if (dockTrayPopup_ && &widget == &dockTrayPopup_->widget)
+        {
+            int height = metrics.headerHeight + metrics.bottomPadding;
+            for (int rowHeight : dockTrayPopup_->rowHeights) height += rowHeight;
+            return height;
+        }
         if (groupView)
         {
             const auto sizing = measureGroupPopup(popupWidthForColumns(columnCount));
@@ -855,6 +865,12 @@ int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, c
 {
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT content = GetCollectionPopupContentRect(popup);
+    if (dockTrayPopup_ && &widget == &dockTrayPopup_->widget)
+    {
+        int height = 0;
+        for (int rowHeight : dockTrayPopup_->rowHeights) height += rowHeight;
+        return std::max(0, height - static_cast<int>(content.bottom - content.top));
+    }
     if (UsesCollectionPopupFan(widget)) return 0;
     if (UsesCollectionPopupList(widget))
     {
@@ -884,6 +900,13 @@ RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearInde
 {
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT content = GetCollectionPopupContentRect(popup);
+    if (dockTrayPopup_)
+    {
+        if (linearIndex >= dockTrayPopup_->rowHeights.size()) return {};
+        LONG top = content.top - popupScrollOffset_;
+        for (size_t row = 0; row < linearIndex; ++row) top += dockTrayPopup_->rowHeights[row];
+        return {content.left, top, content.right, top + dockTrayPopup_->rowHeights[linearIndex]};
+    }
     if (const DesktopWidget* widget = GetOpenPopupWidget(); widget && UsesCollectionPopupFan(*widget))
     {
         if (!IsCollectionPopupFanItemVisible(popup, linearIndex)) return {};

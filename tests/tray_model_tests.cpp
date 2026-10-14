@@ -19,9 +19,35 @@ int RunTrayModelTests()
     };
     {
         // Production selection consumes registered icons, not process counts
+        check(CollectedRegistrationFlags(NIF_TIP | NIF_ICON, NIM_ADD, false) == NIF_ICON &&
+            CollectedRegistrationFlags(NIF_TIP | NIF_ICON, NIM_ADD, true) == (NIF_TIP | NIF_ICON) &&
+            CollectedRegistrationFlags(NIF_TIP | NIF_ICON, NIM_MODIFY, true) == (NIF_TIP | NIF_ICON),
+            "a rejected duplicate ADD cannot advertise an authoritative empty tooltip over native bootstrap text");
         // or tooltip-derived account IDs. Two identical tips remain distinct.
         namespace rules = snowdesktop::dock_tray;
+        check(rules::ResolveClick(true, 2, false, false) == rules::ClickAction::NormalDock,
+            "a callable task window retains Dock activation and minimization despite tray accounts");
+        check(rules::ResolveClick(false, 1, false, false) == rules::ClickAction::WaitForDoubleClick &&
+            rules::ResolveClick(false, 1, false, true) == rules::ClickAction::ActivateTray,
+            "one tray instance honors Dock double-click launch preference");
+        check(rules::ResolveClick(false, 1, true, false) == rules::ClickAction::ActivateTray &&
+            rules::ResolveClick(false, 1, true, true) == rules::ClickAction::Consume,
+            "Dock single-click restore consumes the second half of its click pair");
+        check(rules::ResolveClick(false, 2, false, false) == rules::ClickAction::OpenPicker &&
+            rules::ResolveClick(false, 2, true, false) == rules::ClickAction::OpenPicker &&
+            rules::ResolveClick(false, 2, false, true) == rules::ClickAction::Consume,
+            "multiple accounts open the picker on the first click without double-click auto-selection");
         auto preferences = rules::Defaults();
+        {
+            const std::vector<std::wstring> payloads{L"D:\\Chat\\app\\Client.exe", L"D:\\Chat\\8.1\\Client.exe"};
+            std::vector<DockTrayRule> launcherRules{{L"D:\\Chat\\Client.exe", true, true, false}};
+            const auto* resolved = rules::TargetRule(launcherRules, L"D:\\Chat\\Client.exe", payloads[0], payloads);
+            check(resolved && !resolved->doubleClick && !rules::TargetRule(launcherRules, L"D:\\Chat\\Client.exe", L"E:\\Other\\Client.exe", payloads),
+                "a launcher path rule forwards its own gesture only to validated installed payloads");
+            launcherRules.push_back({payloads[0], true, false, true});
+            resolved = rules::TargetRule(launcherRules, L"D:\\Chat\\Client.exe", payloads[0], payloads);
+            check(resolved && !resolved->enabled, "an explicitly disabled payload path overrides its enabled launcher");
+        }
         check(rules::FindRule(preferences, L"D:\\Apps\\qq.EXE") != nullptr &&
             rules::FindRule(preferences, L"E:\\Weixin\\Weixin.exe") != nullptr &&
             rules::FindRule(preferences, L"C:\\Old\\WeChat.exe") != nullptr &&
@@ -478,6 +504,14 @@ int RunTrayModelTests()
         supplement.version = 4;
         check(!Apply(registrations, supplement) && registrations.size() == 1 && registrations.front().version == 3,
             "classic supplementation cannot duplicate or downgrade an authoritative GUID icon");
+        registrations.front().tip.clear(); registrations.front().tipKnown = false;
+        wcscpy_s(supplement.tip, L"QQ & original\nunchanged");
+        check(Apply(registrations, supplement) && registrations.front().tip == L"QQ & original\nunchanged" &&
+            registrations.front().version == 3 && HasGuid(registrations.front().identity.guid),
+            "late native bootstrap fills missing tooltip before hover without replacing owner or version");
+        Event emptyTip = registration; emptyTip.operation = NIM_MODIFY; emptyTip.flags = NIF_TIP; emptyTip.tip[0] = 0;
+        check(Apply(registrations, emptyTip) && !Apply(registrations, supplement) && registrations.front().tip.empty(),
+            "an explicitly empty live tooltip cannot be resurrected by a late supplement");
         registrations.clear();
         for (const DWORD protocol : {0u, 3u, 4u})
         {

@@ -704,7 +704,10 @@ struct DockPagePresenter::Impl
         exceptionActions.MaxWidth(520);
         exceptionActions.HorizontalAlignment(mux::HorizontalAlignment::Right);
         exceptionActions.VerticalAlignment(mux::VerticalAlignment::Center);
-        fullscreenExceptionsRow.Initialize(exceptionActions, 0);
+        fullscreenRunningApps.ClearValue(mux::FrameworkElement::WidthProperty());
+        fullscreenRunningApps.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        fullscreenExceptionsRow.Initialize(exceptionActions, 420);
+        presenter_controls::StyleSettingsSubrow(fullscreenExceptionsRow.root, true, 0);
         fullscreenExceptionsExpander = mux::Markup::XamlReader::Load(
             LR"(<Expander xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Background="{ThemeResource SubtleFillColorTransparentBrush}" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch" IsExpanded="False" />)")
             .as<muxc::Expander>();
@@ -718,7 +721,7 @@ struct DockPagePresenter::Impl
         fullscreenExceptionListHost.Content(fullscreenExceptionList);
         fullscreenExceptionListHost.Visibility(mux::Visibility::Collapsed);
         muxc::StackPanel exceptionManagement;
-        exceptionManagement.Spacing(8);
+        exceptionManagement.Spacing(0);
         exceptionManagement.Children().Append(fullscreenExceptionsRow.root);
         exceptionManagement.Children().Append(fullscreenExceptionListHost);
         fullscreenExceptionsExpander.Content(exceptionManagement);
@@ -2361,8 +2364,11 @@ struct DockPagePresenter::Impl
             editors.Children().Append(item.policy);
             muxc::Grid::SetColumn(item.remove, 1);
             editors.Children().Append(item.remove);
-            item.row.Initialize(editors);
-            item.row.root.Padding({0, 8, 0, 8});
+            item.policy.ClearValue(mux::FrameworkElement::WidthProperty());
+            item.policy.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            item.remove.VerticalAlignment(mux::VerticalAlignment::Center);
+            item.row.Initialize(editors, 380);
+            presenter_controls::StyleSettingsSubrow(item.row.root, false, 0);
             const auto name = std::filesystem::path(entry.executable).filename().wstring();
             item.row.SetText(name, entry.executable);
             item.row.help.FontSize(12);
@@ -2390,13 +2396,6 @@ struct DockPagePresenter::Impl
                     });
                 });
             });
-            if (!fullscreenExceptionRows.empty())
-            {
-                auto divider = mux::Markup::XamlReader::Load(
-                    LR"(<Border xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" />)")
-                    .as<muxc::Border>();
-                fullscreenExceptionList.Children().Append(divider);
-            }
             fullscreenExceptionList.Children().Append(item.row.root);
             fullscreenExceptionRows.push_back(std::move(item));
         }

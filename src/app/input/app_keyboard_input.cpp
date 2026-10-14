@@ -143,6 +143,7 @@ void DesktopApp::DispatchLuaWidgetViewKeyEvent(
 
 bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 {
+    if (DockTrayPopupKeyDown(key)) return true;
     CancelRenameClick();
     if (key == VK_ESCAPE && (dragSession_.HasContext() ||
             widgetAction_ != WidgetAction::None || largeIconGesture_))

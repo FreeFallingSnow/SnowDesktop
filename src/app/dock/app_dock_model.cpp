@@ -518,7 +518,7 @@ std::vector<size_t> DesktopApp::GetFrequentDockItemIndices()
                         identity.steamInstallDirectory,
                         running.executablePath,
                         running.appUserModelId,
-                        running.ancestorExecutablePaths);
+                        running.ancestorExecutablePaths, identity.validatedPayloadPaths);
             });
         if (isShownAsRunning) continue;
         result.push_back(candidate.itemIndex);
@@ -545,7 +545,7 @@ DesktopApp::FindDesktopItemForDockRunningApp(
                     identity.steamInstallDirectory,
                     running.executablePath,
                     running.appUserModelId,
-                    running.ancestorExecutablePaths))
+                    running.ancestorExecutablePaths, identity.validatedPayloadPaths))
             continue;
         if (match)
             return std::nullopt;

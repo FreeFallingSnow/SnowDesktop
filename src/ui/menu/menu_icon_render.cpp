@@ -940,15 +940,6 @@ SIZE MeasureItem(HDC dc, HFONT textFont, const ItemView& item,
         oldFont = SelectObject(dc, textFont);
 
     const std::wstring_view label = item.label ? item.label : L"";
-    if (item.literalLabel)
-    {
-        RECT text{0, 0, MulDiv(480, metrics.textFontHeight, 13), 0};
-        DrawTextW(dc, label.data(), static_cast<int>(label.size()), &text,
-            DT_CALCRECT | DT_NOPREFIX | DT_WORDBREAK);
-        if (oldFont) SelectObject(dc, oldFont);
-        return {std::max<LONG>(metrics.minimumWidth, ItemTextInset(metrics) + text.right + metrics.rightPadding),
-            std::max<LONG>(metrics.rowHeight, text.bottom + metrics.selectionInsetY * 4)};
-    }
     const size_t tab = label.find(L'\t');
     const std::wstring_view primary = label.substr(0, tab);
     const std::wstring_view shortcut = tab == std::wstring_view::npos
@@ -1058,7 +1049,7 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         (item.hasSubmenu ? metrics.arrowColumnWidth : 0);
 
     std::wstring_view label = item.label ? item.label : L"";
-    const size_t tab = item.literalLabel ? std::wstring_view::npos : label.find(L'\t');
+    const size_t tab = label.find(L'\t');
     std::wstring primary(label.substr(0, tab));
     std::wstring shortcut = tab == std::wstring_view::npos
         ? std::wstring{} : std::wstring(label.substr(tab + 1));
@@ -1068,26 +1059,15 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
         alignmentSample += L' ';
         alignmentSample += shortcut;
     }
-    if (item.literalLabel)
+    OpticallyCenterTextBounds(dc, alignmentSample, textBounds);
+    DrawTextW(dc, primary.c_str(), static_cast<int>(primary.size()),
+        &textBounds, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+            DT_END_ELLIPSIS | DT_HIDEPREFIX);
+    if (!shortcut.empty())
     {
-        RECT measured = textBounds;
-        DrawTextW(dc, primary.c_str(), static_cast<int>(primary.size()), &measured,
-            DT_CALCRECT | DT_NOPREFIX | DT_WORDBREAK);
-        textBounds.top += std::max(0L, (textBounds.bottom - textBounds.top - measured.bottom + measured.top) / 2);
-        DrawTextW(dc, primary.c_str(), static_cast<int>(primary.size()), &textBounds, DT_LEFT | DT_NOPREFIX | DT_WORDBREAK);
-    }
-    else
-    {
-        OpticallyCenterTextBounds(dc, alignmentSample, textBounds);
-        DrawTextW(dc, primary.c_str(), static_cast<int>(primary.size()),
-            &textBounds, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
+        DrawTextW(dc, shortcut.c_str(), static_cast<int>(shortcut.size()),
+            &textBounds, DT_RIGHT | DT_VCENTER | DT_SINGLELINE |
                 DT_END_ELLIPSIS | DT_HIDEPREFIX);
-        if (!shortcut.empty())
-        {
-            DrawTextW(dc, shortcut.c_str(), static_cast<int>(shortcut.size()),
-                &textBounds, DT_RIGHT | DT_VCENTER | DT_SINGLELINE |
-                    DT_END_ELLIPSIS | DT_HIDEPREFIX);
-        }
     }
     if (oldFont)
         SelectObject(dc, oldFont);

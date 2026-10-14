@@ -80,8 +80,6 @@ struct Item
     /** 为行内按钮组按文字和图标预留宽度，避免短操作的翻译被截断。 */
     bool measureInlineAction = false;
     menu_icon::BuiltinIcon builtinIcon = menu_icon::BuiltinIcon::None;
-    /** Host-supplied text: preserve ampersands, tabs and line breaks as text. */
-    bool literalLabel = false;
     /** 紧凑行内按钮按内容与绘制留白收窄，其余空间留给主操作。 */
     bool fitInlineActionToContent = false;
     friend bool operator==(const Item&, const Item&) = default;
@@ -170,8 +168,6 @@ struct Options
     /** Allow appended rows while hovering an unchanged, stationary prefix.
      * The controller still validates layout and protects presses/cascades. */
     bool pollItemsStablePrefix = false;
-    /** Optional host-private secondary action for an item, returned after dismissal. */
-    std::function<bool(UINT)> allowContextCommand;
     /** Optional application event pump used by the nested modal loop. */
     EventPump eventPump;
     /** Applies only to the popup containing this command: Enter submits,
@@ -199,7 +195,6 @@ struct Result
     // Internal host signal: a containing popup must not restore itself after
     // the user has activated a different window while its menu was open.
     ExitReason reason = ExitReason::None;
-    bool contextCommand = false;
 };
 
 /**

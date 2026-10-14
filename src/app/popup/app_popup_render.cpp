@@ -159,6 +159,13 @@ void DesktopApp::DrawCollectionPopup(
             DWRITE_TEXT_ALIGNMENT_LEADING,
             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 
+        if (dockTrayPopup_)
+        {
+            DrawDockTrayPopup(ctx, popupRect_);
+            if (animationApplied) ctx->SetTransform(previousTransform);
+            return;
+        }
+
         if (dockFolderPopupOpen_)
         {
             const RECT sortRect =

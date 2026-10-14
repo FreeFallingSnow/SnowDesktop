@@ -282,8 +282,11 @@ int TryRunTrayLiveTests()
                         if (icon.identity.window == reinterpret_cast<std::uint64_t>(fixture.value->window) &&
                             icon.identity.process == fixture.process.dwProcessId && icon.identity.id == kClassicIconId + i)
                             collected = icon;
-                    return collected && collected->version == kClassicVersions[i] && !collected->pixels.empty();
+                    return collected && collected->version == kClassicVersions[i] && !collected->pixels.empty() &&
+                        collected->tip == L"SnowDesktop isolated classic bootstrap fixture";
                 }), "classic bootstrap preserves the declared protocol without any re-registration");
+                Check(Read(fixture.value->classicCount[i]) == 0,
+                    "cold bootstrap reads the original tooltip without any hover or owner callback");
                 if (HasGuid(collected->identity.guid))
                 {
                     auto expectedGuid = kIconGuid; expectedGuid.Data1 += i + 1;

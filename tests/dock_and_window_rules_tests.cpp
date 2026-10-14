@@ -34,6 +34,7 @@
 #include "dock/dock_window_transition.h"
 #include "dock/dock_genie_rules.h"
 #include "dock/dock_app_identity_rules.h"
+#include "dock/dock_installed_application.h"
 #include "../src/app/dock/dock_running_app_pin_rules.h"
 #include "../src/app/dock/dock_explorer_pin.h"
 #include "layout/page_navigation_rules.h"
@@ -6532,6 +6533,27 @@ int main(int argc, char** argv)
                 Check(!rules::ShouldWaitForDockLaunchDoubleClick(enabled, action),
                     "running applications must keep immediate window commands in either area");
         }
+    }
+    {
+        const identityRules::ExecutableProduct launcher{L"EXAMPLE PUBLISHER", L"CHAT CLIENT LAUNCHER"};
+        const identityRules::ExecutableProduct payload{L"EXAMPLE PUBLISHER", L"CHAT CLIENT"};
+        Check(identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"D:\\CHAT\\APP\\CLIENT.EXE", payload),
+            "a stable launcher and its published payload share a pin after the launcher process exits");
+        Check(!identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"D:\\CHAT2\\APP\\CLIENT.EXE", payload) &&
+            !identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"E:\\CHAT\\APP\\CLIENT.EXE", payload) &&
+            !identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"D:\\CHAT\\APP\\OTHER.EXE", payload),
+            "the filename alone cannot merge another installation or another payload");
+        Check(!identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"D:\\CHAT\\APP\\CLIENT.EXE", {L"OTHER PUBLISHER", L"CHAT CLIENT"}) &&
+            !identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", launcher, L"D:\\CHAT\\APP\\CLIENT.EXE", {L"EXAMPLE PUBLISHER", L"OTHER PRODUCT"}) &&
+            !identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", {}, L"D:\\CHAT\\APP\\CLIENT.EXE", {}),
+            "missing or conflicting publisher/product evidence must preserve separate app identities");
+        Check(!identityRules::MatchesInstalledPayload(L"D:\\CHAT\\CLIENT.EXE", payload, L"D:\\CHAT\\APP\\CLIENT.EXE", payload),
+            "ordinary product metadata cannot reinterpret a program as a launcher merely because a child has the same filename");
+        const std::vector<std::wstring> aliases{L"D:\\CHAT\\APP\\CLIENT.EXE", L"D:\\CHAT\\8.1\\CLIENT.EXE"};
+        Check(identityRules::MatchesRunningApp(DockAppIdentityKind::Executable, L"D:\\CHAT\\CLIENT.EXE", {}, {}, aliases[0], {}, {}, aliases) &&
+            identityRules::MatchesRunningApp(DockAppIdentityKind::Executable, L"D:\\CHAT\\CLIENT.EXE", {}, {}, aliases[1], {}, {}, aliases) &&
+            !identityRules::MatchesRunningApp(DockAppIdentityKind::Executable, L"D:\\CHAT\\CLIENT.EXE", {}, {}, L"D:\\OTHER\\APP\\CLIENT.EXE", {}, {}, aliases),
+            "all validated installed payloads share the original launcher pin without absorbing another installation");
     }
     Check(identityRules::MatchesRunningApp(
             DockAppIdentityKind::Executable,

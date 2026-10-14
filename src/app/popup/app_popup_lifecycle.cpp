@@ -134,6 +134,7 @@ void DesktopApp::OpenDockFolderPopupAt(
 
     pendingCollectionPopupOpen_.reset();
     DismissActiveContextMenuForPopupTransition();
+    ResetDockTrayPopup();
 
     if (DockContainer* dock =
             GetDockContainerAtPoint(anchorPoint))
@@ -536,8 +537,9 @@ void DesktopApp::FinalizeCloseCollectionPopup()
     popupAnimation_.ResetHidden();
     ResetCollectionPopupAnimationCache();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
-        !dockFolderPopupOpen_)
+        !dockFolderPopupOpen_ && !dockTrayPopup_)
         return;
+    ResetDockTrayPopup();
     if (dockFolderPopupOpen_)
         CancelDockFolderPopupIconLoads();
     ClearPopupDragTarget();
@@ -611,7 +613,7 @@ void DesktopApp::BeginCollectionPopupClose(bool clearSelection)
 {
     CancelRenameClick();
     if (popupWidgetIndex_ == static_cast<size_t>(-1) &&
-        !dockFolderPopupOpen_)
+        !dockFolderPopupOpen_ && !dockTrayPopup_)
         return;
     if (popupAnimation_.IsClosing())
         return;

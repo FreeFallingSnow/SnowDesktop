@@ -52,8 +52,10 @@ struct DockTraySettingsEditor::Impl
         title.TextWrapping(mux::TextWrapping::Wrap);
         expander.Header(title);
         muxc::StackPanel content;
-        content.Spacing(8);
+        content.Spacing(0);
         matchRow.Initialize(match);
+        match.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        presenter_controls::StyleSettingsSubrow(matchRow.root, true, 0);
         content.Children().Append(matchRow.root);
         muxc::Grid input;
         muxc::ColumnDefinition textColumn, addColumn, browseColumn;
@@ -70,9 +72,12 @@ struct DockTraySettingsEditor::Impl
         input.Children().Append(add);
         muxc::Grid::SetColumn(browse, 2);
         input.Children().Append(browse);
-        targetRow.Initialize(input);
+        targetRow.Initialize(input, 440);
+        presenter_controls::StyleSettingsSubrow(targetRow.root, false, 0);
         content.Children().Append(targetRow.root);
         runningRow.Initialize(running);
+        running.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        presenter_controls::StyleSettingsSubrow(runningRow.root, false, 0);
         content.Children().Append(runningRow.root);
         error.IsClosable(false);
         error.IsOpen(false);
@@ -153,6 +158,11 @@ struct DockTraySettingsEditor::Impl
             row.action.SelectedIndex(value.doubleClick ? 1 : 0);
             row.enabled.OnContent(winrt::box_value(L""));
             row.enabled.OffContent(winrt::box_value(L""));
+            row.enabled.MinWidth(0);
+            row.enabled.VerticalAlignment(mux::VerticalAlignment::Center);
+            row.action.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+            row.action.VerticalAlignment(mux::VerticalAlignment::Center);
+            row.remove.VerticalAlignment(mux::VerticalAlignment::Center);
             row.enabled.IsOn(value.enabled);
             row.remove.Content(winrt::box_value(L("app.settings.delete", L"Delete")));
             muxc::Grid controls;
@@ -170,7 +180,7 @@ struct DockTraySettingsEditor::Impl
             muxc::Grid::SetColumn(row.remove, 2);
             controls.Children().Append(row.remove);
             row.row.Initialize(controls);
-            row.row.root.Padding({0, 8, 0, 8});
+            presenter_controls::StyleSettingsSubrow(row.row.root, false, 0);
             row.row.SetText(value.executable, L(value.matchPath ? "settings.dock.trayMatchPath" : "settings.dock.trayMatchName",
                 value.matchPath ? L"Full path" : L"Executable name"));
             row.row.label.TextWrapping(mux::TextWrapping::Wrap);

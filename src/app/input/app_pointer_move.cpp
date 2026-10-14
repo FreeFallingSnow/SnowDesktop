@@ -241,6 +241,7 @@ void DesktopApp::OnMouseMoveAt(
     if (dragPreviewSynced)
         *dragPreviewSynced = false;
     const POINT tracePoint = current;
+    if (DockTrayPopupPointerMove(current)) return;
     if (auto* view = GetCategorizedPopupView(); view &&
         (view->HasCategoryTabPress() || view->IsSearchPointerSelecting()))
     {

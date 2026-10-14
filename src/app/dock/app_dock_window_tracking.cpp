@@ -652,7 +652,7 @@ void DesktopApp::RefreshDockRunningWindows(
                             target.identity.steamInstallDirectory,
                             pathIt->second,
                             appUserModelId,
-                            ancestorIt->second);
+                            ancestorIt->second, target.identity.validatedPayloadPaths);
                 if (!identityMatches)
                     continue;
                 target.trackedWindows.push_back(window);
@@ -675,7 +675,7 @@ void DesktopApp::RefreshDockRunningWindows(
                             identity.steamInstallDirectory,
                             pathIt->second,
                             appUserModelId,
-                            ancestorIt->second);
+                            ancestorIt->second, identity.validatedPayloadPaths);
                 if (fixed) break;
             }
             if (fixed) return TRUE;

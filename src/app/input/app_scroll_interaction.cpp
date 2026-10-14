@@ -12,6 +12,14 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
 
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     ScreenToClient(hwnd_, &pt);
+    if (dockTrayPopup_ && IsPointOccludedByOpenPopup(pt))
+    {
+        const RECT popup = GetCollectionPopupRect(dockTrayPopup_->widget);
+        const int maximum = GetCollectionPopupMaxScrollOffset(dockTrayPopup_->widget, popup);
+        popupScrollOffset_ = std::clamp(popupScrollOffset_ - GET_WHEEL_DELTA_WPARAM(wp) / 2, 0, maximum);
+        InvalidateFloatingPopupWindow(false);
+        return;
+    }
     int currentMods = 0;
     if (GetAsyncKeyState(VK_CONTROL) & 0x8000) currentMods |= MK_CONTROL;
     if (GetAsyncKeyState(VK_MENU) & 0x8000)    currentMods |= MK_ALT;

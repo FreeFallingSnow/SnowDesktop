@@ -175,6 +175,8 @@ set(SNOWDESKTOP_SOURCES
     src/dock/dock_running_drag_rules.h
     src/app/dock/app_dock_launch.cpp
     src/app/dock/app_dock_tray.cpp
+    src/app/dock/dock_tray_popup_state.h
+    src/dock/dock_installed_application.h
     src/app/dock/app_dock_layout.cpp
     src/dock/dock_appbar.cpp
     src/dock/dock_appbar.h
@@ -2565,6 +2567,12 @@ if (BUILD_TESTING)
     add_test(NAME tray_live_integration
         COMMAND SnowDesktopDockAndWindowRulesTests --tray-live "$<TARGET_FILE:SnowDesktopTaskbarHook>")
     set_tests_properties(tray_live_integration PROPERTIES
+        TIMEOUT 90 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDockAndWindowRulesTests>"
+        LABELS "integration;shell;tray;manual")
+    add_test(NAME tray_bootstrap_integration
+        COMMAND SnowDesktopDockAndWindowRulesTests --tray-classic "$<TARGET_FILE:SnowDesktopTaskbarHook>")
+    set_tests_properties(tray_bootstrap_integration PROPERTIES
         TIMEOUT 90 SKIP_RETURN_CODE 77 RUN_SERIAL TRUE
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopDockAndWindowRulesTests>"
         LABELS "integration;shell;tray;manual")

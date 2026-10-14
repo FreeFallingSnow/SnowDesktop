@@ -75,6 +75,11 @@ bool DesktopApp::HandleShellContextMenuMessage(
 
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (msg >= 0xC000 && msg == snowdesktop::tray::ChangeMessage())
+    {
+        if (dockTrayService_ && dockTrayService_->AcknowledgeChange(hwnd, wp)) RefreshDockTrayPopup();
+        return 0;
+    }
     if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::RequestMessage())
         return HandleDockExternalMinimize(reinterpret_cast<HWND>(wp), static_cast<DWORD>(lp)) ? 1 : 0;
     if (msg >= 0xC000 && msg == snowdesktop::dock_minimize::CancelMessage())
@@ -595,6 +600,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         CancelRenameClick();
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (dockTrayPopup_ && IsPointOccludedByOpenPopup(pt))
+        { OnLeftButtonDown(wp, lp); return 0; }
         if (HandleUsageGuidePointerDown(pt)) return 0;
         const auto clearSelectionAfterAcceptedOpen =
             [this](bool accepted) {
@@ -757,7 +764,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         {
                             const size_t itemIndex =
                                 FindItemIndexByKey(dockEntries_[entryIndex].reference);
-                            if (itemIndex < items_.size())
+                            if (itemIndex < items_.size() && DockTrayTargetCount(itemIndex) <= 1 &&
+                                (!dockTrayPopup_ || dockTrayPopup_->itemKey != DockItemWindowKey(items_[itemIndex])))
                                 clearSelectionAfterAcceptedOpen(
                                     LaunchDesktopItem(
                                         itemIndex, true));
@@ -791,7 +799,8 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                         dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
                         dockPendingDoubleClickTick_ = 0;
-                        if (itemIndex < items_.size() &&
+                        if (itemIndex < items_.size() && DockTrayTargetCount(itemIndex) <= 1 &&
+                            (!dockTrayPopup_ || dockTrayPopup_->itemKey != DockItemWindowKey(items_[itemIndex])) &&
                             snowdesktop::dock_window_rules::ShouldWaitForDockLaunchDoubleClick(
                                 dockSettings_.singleClickLaunchItems,
                                 snowdesktop::dock_window_rules::DockClickAction::Launch))

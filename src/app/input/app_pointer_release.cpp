@@ -682,20 +682,26 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
     // second release for folders and closed items using double-click launch.
     // In single-click mode the first release already launched the item, so
     // consume the second release without launching it again.
-    if (appItemIndex < items_.size() && !folderEntry && HasDockTrayTarget(appItemIndex))
+    const size_t trayTargetCount = appItemIndex < items_.size() && !folderEntry ? DockTrayTargetCount(appItemIndex) : 0;
+    if (trayTargetCount)
     {
         if (matchingPendingDoubleClick)
         {
             dockPendingDoubleClickEntry_ = static_cast<size_t>(-1);
             dockPendingDoubleClickFrequentItem_ = static_cast<size_t>(-1);
             dockPendingDoubleClickTick_ = 0;
+            if (snowdesktop::dock_tray::ResolveClick(false, trayTargetCount, dockSettings_.singleClickLaunchItems, true) ==
+                snowdesktop::dock_tray::ClickAction::ActivateTray)
+                TryActivateDockTray(ResolveDockAppIdentity(appItemIndex).executablePath, appItemIndex, pressedAnchorScreen);
             return true;
         }
         dockPendingDoubleClickEntry_ = pressedEntryIndex;
         dockPendingDoubleClickFrequentItem_ = pressedFrequentItemIndex;
         dockPendingDoubleClickTick_ = GetTickCount();
-        if (TryActivateDockTray(ResolveDockAppIdentity(appItemIndex).executablePath,
-                appItemIndex, pressedAnchorScreen)) return true;
+        const auto trayClick = snowdesktop::dock_tray::ResolveClick(false, trayTargetCount, dockSettings_.singleClickLaunchItems, false);
+        if (trayClick == snowdesktop::dock_tray::ClickAction::ActivateTray || trayClick == snowdesktop::dock_tray::ClickAction::OpenPicker)
+            TryActivateDockTray(ResolveDockAppIdentity(appItemIndex).executablePath, appItemIndex, pressedAnchorScreen);
+        return true;
     }
     if (matchingPendingDoubleClick &&
         (folderEntry || waitForDoubleClick || dockSettings_.singleClickLaunchItems))
@@ -771,7 +777,6 @@ bool DesktopApp::HandleDockClickRelease(POINT point)
         if (running != dockUnpinnedRunningApps_.end())
         {
             const HWND runningWindow = running->window;
-            if (TryActivateDockTray(running->executablePath, static_cast<size_t>(-1), pressedAnchorScreen)) return true;
             ActivateOrToggleDockWindow(
                 runningWindow, pressedWindowAction,
                 pressedTargetWindow, pressedAnchorScreen);
@@ -837,6 +842,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     bool rightButtonRelease)
 {
     const bool rightDrop = rightButtonItemDrag_;
+    if (DockTrayPopupPointerUp(upPoint)) return;
     if (!snowdesktop::drag_input_rules::IsItemDragRelease(
             rightDrop, rightButtonRelease)) return;
     if (auto* view = GetCategorizedPopupView(); view &&

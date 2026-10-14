@@ -24,6 +24,7 @@ DesktopApp::~DesktopApp()
     CancelStatusBarActivation();
     dockAppBars_.reset();
     statusBar_.reset();
+    ResetDockTrayPopup();
     dockTrayService_.reset();
     // The shared service is constructed before the caches its asynchronous
     // scans use. Stop it before CRT static destruction reverses that order.

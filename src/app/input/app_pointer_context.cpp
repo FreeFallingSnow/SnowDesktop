@@ -180,6 +180,11 @@ void DesktopApp::OnRightButtonDown(
     // lookup: its delivery is fenced while a menu is active, and otherwise
     // captures the old menu HWND as a foreground that cannot survive teardown.
     DismissActiveContextMenuForPopupTransition();
+    if (DockTrayPopupPointerDown(point, true))
+    {
+        SetCapture(handlingFloatingPopupInput_ && floatingPopupHwnd_ ? floatingPopupHwnd_ : hwnd_);
+        return;
+    }
     POINT cursor{};
     if (quickNavigationOpen_ && GetCursorPos(&cursor))
     {
@@ -471,6 +476,8 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
  */
 void DesktopApp::OnRightButtonUp(LPARAM lp)
 {
+    if (DockTrayPopupPointerUp({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)})) return;
+    if (dockTrayPopup_ && IsPointOccludedByOpenPopup({GET_X_LPARAM(lp), GET_Y_LPARAM(lp)})) return;
     PersistentDockHost* const rightButtonPressDockHost =
         std::exchange(rightButtonDownDockHost_, nullptr);
     const bool consumeRelease = std::exchange(suppressRightButtonUp_, false);

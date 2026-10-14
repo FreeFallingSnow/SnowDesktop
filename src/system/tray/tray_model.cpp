@@ -20,11 +20,25 @@ std::string Key(const Identity& identity)
 bool Apply(std::vector<Icon>& icons, const Event& event)
 {
     const bool bootstrap = event.operation == kBootstrapIcon;
+    if (bootstrap && event.version > NOTIFYICON_VERSION_4) return false;
     auto found = std::find_if(icons.begin(), icons.end(), [&](const auto& icon) { return SameIdentity(icon.identity, event.identity); });
-    if (bootstrap && std::any_of(icons.begin(), icons.end(), [&](const auto& icon) {
-        return icon.identity.window == event.identity.window && icon.identity.process == event.identity.process &&
-            icon.identity.id == event.identity.id;
-    })) return false; // Never overwrite authoritative GUID/version/state data.
+    if (bootstrap)
+    {
+        auto existing = std::find_if(icons.begin(), icons.end(), [&](const auto& icon) {
+            return icon.identity.window == event.identity.window && icon.identity.process == event.identity.process &&
+                icon.identity.id == event.identity.id;
+        });
+        if (existing != icons.end())
+        {
+            // Classic supplementation knows the owner but may lack the text.
+            // Fill only unknown tooltip data, never negotiated protocol/state
+            // or an explicitly empty tooltip supplied by a live notification.
+            if (existing->tipKnown || !(event.flags & NIF_TIP)) return false;
+            existing->tip.assign(event.tip, wcsnlen_s(event.tip, std::size(event.tip)));
+            existing->tipKnown = true;
+            return true;
+        }
+    }
     if (event.operation == NIM_DELETE)
     {
         if (found == icons.end() || (event.identity.window &&
@@ -79,7 +93,11 @@ bool Apply(std::vector<Icon>& icons, const Event& event)
     // A duplicate ADD is observed even when Explorer rejects it because the
     // icon already exists. It must not silently downgrade a v4 registration.
     if (event.flags & NIF_MESSAGE) found->callback = event.callback;
-    if (event.flags & NIF_TIP) found->tip.assign(event.tip, wcsnlen_s(event.tip, std::size(event.tip)));
+    if (event.flags & NIF_TIP)
+    {
+        found->tip.assign(event.tip, wcsnlen_s(event.tip, std::size(event.tip)));
+        found->tipKnown = true;
+    }
     if (event.flags & NIF_STATE) found->state = (found->state & ~event.stateMask) | (event.state & event.stateMask);
     if ((event.flags & (NIF_ICON | kClearIcon)) == (NIF_ICON | kClearIcon))
     {

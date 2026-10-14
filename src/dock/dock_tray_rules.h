@@ -16,6 +16,15 @@ struct DockTrayRule
 
 namespace snowdesktop::dock_tray
 {
+enum class ClickAction { NormalDock, WaitForDoubleClick, OpenPicker, ActivateTray, Consume };
+inline ClickAction ResolveClick(bool normalWindow, size_t instances, bool singleClickLaunch, bool doubleGesture)
+{
+    if (normalWindow || !instances) return ClickAction::NormalDock;
+    if (instances > 1) return doubleGesture ? ClickAction::Consume : ClickAction::OpenPicker;
+    if (doubleGesture) return singleClickLaunch ? ClickAction::Consume : ClickAction::ActivateTray;
+    return singleClickLaunch ? ClickAction::ActivateTray : ClickAction::WaitForDoubleClick;
+}
+
 inline std::wstring ExecutableName(std::wstring_view path)
 {
     const auto at = path.find_last_of(L"\\/");

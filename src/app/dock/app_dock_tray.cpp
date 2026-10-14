@@ -1,32 +1,24 @@
 #include "app/app.h"
 #include "dock/dock_tray_targets.h"
-#include "ui/menu/modern_menu.h"
+#include "app/navigation/quick_navigation_theme.h"
 
 namespace
 {
-struct TrayMenuImages
+HBITMAP TrayBitmap(const snowdesktop::tray::Icon& icon)
 {
-    std::vector<HBITMAP> images;
-    ~TrayMenuImages() { for (auto image : images) DeleteObject(image); }
-    HBITMAP Add(const snowdesktop::tray::Icon& icon)
-    {
-        if (!icon.width || !icon.height || icon.width > 64 || icon.height > 64 ||
-            icon.pixels.size() != static_cast<size_t>(icon.width) * icon.height) return nullptr;
-        BITMAPINFO info{};
-        info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-        info.bmiHeader.biWidth = static_cast<LONG>(icon.width);
-        info.bmiHeader.biHeight = -static_cast<LONG>(icon.height);
-        info.bmiHeader.biPlanes = 1;
-        info.bmiHeader.biBitCount = 32;
-        info.bmiHeader.biCompression = BI_RGB;
-        void* pixels = nullptr;
-        const HBITMAP bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
-        if (!bitmap || !pixels) { if (bitmap) DeleteObject(bitmap); return nullptr; }
-        std::copy(icon.pixels.begin(), icon.pixels.end(), static_cast<std::uint32_t*>(pixels));
-        images.push_back(bitmap);
-        return bitmap;
-    }
-};
+    if (!icon.width || !icon.height || icon.width > 64 || icon.height > 64 ||
+        icon.pixels.size() != static_cast<size_t>(icon.width) * icon.height) return nullptr;
+    BITMAPINFO info{};
+    info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    info.bmiHeader.biWidth = static_cast<LONG>(icon.width);
+    info.bmiHeader.biHeight = -static_cast<LONG>(icon.height);
+    info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
+    void* pixels = nullptr;
+    const auto bitmap = CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &pixels, nullptr, 0);
+    if (!bitmap || !pixels) { if (bitmap) DeleteObject(bitmap); return nullptr; }
+    std::copy(icon.pixels.begin(), icon.pixels.end(), static_cast<std::uint32_t*>(pixels));
+    return bitmap;
+}
 }
 
 std::shared_ptr<snowdesktop::tray::Service> DesktopApp::EnsureDockTrayService()
@@ -36,32 +28,56 @@ std::shared_ptr<snowdesktop::tray::Service> DesktopApp::EnsureDockTrayService()
     return dockTrayService_;
 }
 
-bool DesktopApp::HasDockTrayTarget(size_t itemIndex)
+size_t DesktopApp::DockTrayTargetCount(size_t itemIndex)
 {
-    if (!dockTrayService_ || itemIndex >= items_.size()) return false;
-    return !snowdesktop::dock_tray::CollectTargets(dockTrayService_->Current(),
-        dockSettings_.trayApplications, ResolveDockAppIdentity(itemIndex).executablePath).empty();
+    if (!dockTrayService_ || itemIndex >= items_.size() ||
+        GetDockWindowVisualState(itemIndex) != DockWindowVisualState::Closed) return 0;
+    const auto identity = ResolveDockAppIdentity(itemIndex);
+    return snowdesktop::dock_tray::CollectTargets(dockTrayService_->Current(),
+        dockSettings_.trayApplications, identity.executablePath, identity.validatedPayloadPaths).size();
+}
+
+bool DesktopApp::ActivateDockTrayTarget(const snowdesktop::tray::Icon& target,
+    const std::wstring& executable, size_t itemIndex, RECT anchor, bool context)
+{
+    namespace rules = snowdesktop::dock_tray;
+    if (exitRequested_ || !generalSettings_.dockEnabled || !dockTrayService_ ||
+        !rules::IsCurrentTarget(dockTrayService_->Current(), target)) return false;
+    const auto identity = itemIndex < items_.size() ? ResolveDockAppIdentity(itemIndex) : DockAppIdentity{};
+    const auto* current = rules::TargetRule(dockSettings_.trayApplications, executable, target.application, identity.validatedPayloadPaths);
+    if (!current || !current->enabled) return false;
+    const POINT point{(anchor.left + anchor.right) / 2, (anchor.top + anchor.bottom) / 2};
+    const auto service = dockTrayService_;
+    if (context)
+    {
+        const HWND owner = ShellLaunchOwnerHwnd();
+        return service->Activate(target.key, snowdesktop::tray::Activation::RightDown, point, {owner, owner}, anchor, target.identity) &&
+            service->Activate(target.key, snowdesktop::tray::Activation::RightUp, point, {owner, owner}, anchor, target.identity);
+    }
+    if (itemIndex < items_.size()) StartDockLaunchBounce(itemIndex);
+    const bool accepted = service->ActivatePrimary(target.key, current->doubleClick, point, {}, anchor, target.identity);
+    if (accepted && itemIndex < items_.size()) RecordDockItemUsage(itemIndex);
+    return accepted;
 }
 
 bool DesktopApp::TryActivateDockTray(const std::wstring& executable, size_t itemIndex,
     std::optional<RECT> capturedAnchor)
 {
     namespace rules = snowdesktop::dock_tray;
-    namespace menu = snowdesktop::modern_menu;
-    const std::wstring path = executable;
-    const auto* rule = rules::FindRule(dockSettings_.trayApplications, path);
+    const auto* rule = rules::FindRule(dockSettings_.trayApplications, executable);
     if (!generalSettings_.dockEnabled || !rule || !rule->enabled || exitRequested_) return false;
-    DockAppIdentity identity;
-    identity.kind = DockAppIdentityKind::Executable;
-    identity.executablePath = path;
+    // Existing task windows retain normal Dock activation/restoration/minimize.
+    if (itemIndex < items_.size() && GetDockWindowVisualState(itemIndex) != DockWindowVisualState::Closed)
+    { if (dockTrayPopup_) CloseCollectionPopup(false); return false; }
+    DockAppIdentity identity = itemIndex < items_.size() ? ResolveDockAppIdentity(itemIndex) : DockAppIdentity{};
+    identity.kind = DockAppIdentityKind::Executable; identity.executablePath = executable;
     if (IsDockAppClosePending(identity)) return true;
     const auto service = EnsureDockTrayService();
-    const auto initial = service->Current();
-    const auto targets = rules::CollectTargets(initial, dockSettings_.trayApplications, path);
+    const auto targets = rules::CollectTargets(service->Current(), dockSettings_.trayApplications, executable, identity.validatedPayloadPaths);
     if (targets.empty()) return false;
     DismissDockWindowPreviewUntilLeave();
-    RECT anchor = capturedAnchor.value_or(RECT{});
     DockContainer* dock = GetDockContainerAtPoint(lastMousePoint_);
+    RECT anchor = capturedAnchor.value_or(RECT{});
     if (IsRectEmpty(&anchor) && dock)
     {
         RECT bounds{};
@@ -76,112 +92,258 @@ bool DesktopApp::TryActivateDockTray(const std::wstring& executable, size_t item
     }
     if (IsRectEmpty(&anchor))
     {
-        POINT cursor{};
-        GetCursorPos(&cursor);
+        POINT cursor{}; GetCursorPos(&cursor);
         anchor = {cursor.x, cursor.y, cursor.x + 1, cursor.y + 1};
     }
-    const HWND owner = ShellLaunchOwnerHwnd();
-    const auto activate = [&](const snowdesktop::tray::Icon& target, bool context, RECT bounds) {
-        if (exitRequested_ || !generalSettings_.dockEnabled || !rules::IsCurrentTarget(service->Current(), target)) return;
-        const auto* sourceRule = rules::FindRule(dockSettings_.trayApplications, path);
-        const auto* currentRule = rules::FindRule(dockSettings_.trayApplications, target.application);
-        if (!sourceRule || !sourceRule->enabled || !currentRule || !currentRule->enabled ||
-            !rules::Matches(*sourceRule, target.application)) return;
-        const POINT point{(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
-        if (context)
-        {
-            service->Activate(target.key, snowdesktop::tray::Activation::RightDown, point, {owner, owner}, bounds, target.identity);
-            service->Activate(target.key, snowdesktop::tray::Activation::RightUp, point, {owner, owner}, bounds, target.identity);
-        }
-        else service->ActivatePrimary(target.key, currentRule->doubleClick, point, {}, bounds, target.identity);
-    };
     if (targets.size() == 1)
+    { if (dockTrayPopup_) CloseCollectionPopup(false); ActivateDockTrayTarget(targets.front(), executable, itemIndex, anchor); return true; }
+    if (dockTrayPopup_ && dockTrayPopup_->executable == executable && IsCollectionPopupInteractive())
+    { CloseCollectionPopup(false); return true; }
+    CancelPopupHover(true);
+    pendingCollectionPopupOpen_.reset();
+    DismissActiveContextMenuForPopupTransition();
+    PreserveDockFolderPopupDragSourceForTransition();
+    FinalizeCloseCollectionPopup();
+    AdvanceFloatingPopupContentGeneration();
+    auto state = std::make_shared<DockTrayPopupState>();
+    ClearSelection();
+    state->executable = executable;
+    state->itemKey = itemIndex < items_.size() ? DockItemWindowKey(items_[itemIndex]) : L"";
+    state->launchTarget = itemIndex < items_.size() ? items_[itemIndex].parsingName : executable;
+    state->anchorScreen = anchor;
+    state->widget.type = DesktopWidgetType::Collection;
+    state->widget.id = L"__dock_tray_popup"; state->widget.listMode = true;
+    state->widget.title = itemIndex < items_.size() ? items_[itemIndex].name : rules::ExecutableName(executable);
+    dockTrayPopup_ = state;
+    popupWidgetIndex_ = static_cast<size_t>(-1); popupScrollOffset_ = 0;
+    popupHasAnchor_ = popupAnchoredToDock_ = true;
+    popupDockPosition_ = dockSettings_.position;
+    collectionPopupDockHost_ = FindPersistentDockHost(dock);
+    RECT desktopAnchor = anchor;
+    MapWindowPoints(nullptr, hwnd_, reinterpret_cast<POINT*>(&desktopAnchor), 2);
+    switch (popupDockPosition_)
     {
-        activate(targets.front(), false, anchor);
-        if (itemIndex < items_.size()) RecordDockItemUsage(itemIndex);
-        return true;
+    case DockPosition::Top: popupAnchorPoint_ = {(desktopAnchor.left + desktopAnchor.right) / 2, desktopAnchor.bottom}; break;
+    case DockPosition::Left: popupAnchorPoint_ = {desktopAnchor.right, (desktopAnchor.top + desktopAnchor.bottom) / 2}; break;
+    case DockPosition::Right: popupAnchorPoint_ = {desktopAnchor.left, (desktopAnchor.top + desktopAnchor.bottom) / 2}; break;
+    default: popupAnchorPoint_ = {(desktopAnchor.left + desktopAnchor.right) / 2, desktopAnchor.top}; break;
     }
-    const std::wstring itemKey = itemIndex < items_.size() ? DockItemWindowKey(items_[itemIndex]) : L"";
-    const std::wstring launchTarget = itemIndex < items_.size() ? items_[itemIndex].parsingName : path;
-    constexpr UINT launchCommand = 0x7fffffff;
-    TrayMenuImages images;
-    // Bind commands to live icon identities, never tooltip text or row indices.
-    // In particular a removed account cannot be replaced by a reordered row.
-    std::vector<snowdesktop::tray::Icon> bindings;
-    std::vector<HBITMAP> bindingImages;
-    const auto makeItems = [&](const snowdesktop::tray::Snapshot& snapshot) {
-        std::vector<menu::Item> entries;
-        menu::Item heading;
-        heading.label = rules::ExecutableName(path);
-        heading.enabled = false;
-        entries.push_back(std::move(heading));
-        for (const auto& icon : rules::CollectTargets(snapshot, dockSettings_.trayApplications, path))
-        {
-            const auto found = std::find_if(bindings.begin(), bindings.end(), [&](const auto& existing) {
-                return existing.key == icon.key && snowdesktop::tray::SameFocusIdentity(existing.identity, icon.identity);
-            });
-            const auto index = static_cast<size_t>(std::distance(bindings.begin(), found));
-            if (found == bindings.end())
-            {
-                bindings.push_back(icon);
-                bindingImages.push_back(images.Add(icon));
-            }
-            menu::Item entry;
-            entry.command = static_cast<UINT>(index + 1);
-            entry.label = icon.tip;
-            entry.literalLabel = true;
-            entry.image = bindingImages[index];
-            entries.push_back(std::move(entry));
-        }
-        menu::Item separator;
-        separator.separator = true;
-        entries.push_back(std::move(separator));
-        menu::Item launch;
-        launch.command = launchCommand;
-        launch.label = _LW("settings.dock.trayLaunch");
-        entries.push_back(std::move(launch));
-        return entries;
-    };
-    auto entries = makeItems(initial);
-    menu::Options options;
-    options.owner = owner;
-    options.anchor = {(anchor.left + anchor.right) / 2, (anchor.top + anchor.bottom) / 2};
-    options.anchorRect = anchor;
-    options.dpi = std::max<UINT>(96, GetDpiForWindow(owner));
-    options.lightTheme = IsLightContentTheme();
-    options.appearance = options.lightTheme ? menu::Appearance::OpaqueLight : menu::Appearance::OpaqueDark;
-    options.topmost = true;
-    if (const auto* host = dock ? FindPersistentDockHost(dock) : nullptr;
-        host && (host->container->IsMergedWithStatusBar() || IsPersistentDockHostEffectivelyFloating(*host)))
-        options.zOrderOwner = host->hwnd;
-    KeepDockTopmostForAction(anchor);
-    switch (dockSettings_.position)
-    {
-    case DockPosition::Top: options.rootPlacement = menu::RootPlacement::BelowAnchorRect; break;
-    case DockPosition::Left: options.rootPlacement = menu::RootPlacement::RightOfAnchorRect; break;
-    case DockPosition::Right: options.rootPlacement = menu::RootPlacement::LeftOfAnchorRect; break;
-    default: options.rootPlacement = menu::RootPlacement::AboveAnchorRect; break;
-    }
-    options.allowContextCommand = [&](UINT command) { return command && command != launchCommand; };
-    std::uint64_t revision = initial.revision;
-    options.pollItems = [&](const auto&, bool canApply) -> std::optional<std::vector<menu::Item>> {
-        if (!canApply) return {};
-        const auto snapshot = service->Current();
-        if (snapshot.revision == revision) return {};
-        revision = snapshot.revision;
-        return makeItems(snapshot);
-    };
-    options.pollItemsFinished = [] { return false; };
-    ConfigureModernMenuEventPump(options);
-    const auto selected = menu::Show(entries, options);
-    if (selected.command == launchCommand && !exitRequested_)
-    {
-        const auto current = FindItemIndexByKey(itemKey);
-        if (!itemKey.empty() && current < items_.size() && items_[current].parsingName == launchTarget)
-            LaunchDesktopItem(current, true, false);
-        else if (itemKey.empty()) LaunchPathWithShortcutPolicy(owner, launchTarget);
-    }
-    else if (selected.command && selected.command <= bindings.size())
-        activate(bindings[selected.command - 1], selected.contextCommand, selected.itemScreenRect);
+    popupPageId_.clear(); popupCategoryId_.clear();
+    for (const auto& page : gridPages_)
+        if (PtInRect(&page.bounds, popupAnchorPoint_)) { popupPageId_ = page.id; break; }
+    EnsureFloatingDockVisibleForAssociatedSurface({(anchor.left + anchor.right) / 2, (anchor.top + anchor.bottom) / 2});
+    service->SubscribeChanges(hwnd_);
+    RefreshDockTrayPopup();
+    StartCollectionPopupAnimation();
+    UpdateFloatingPopupWindowBounds(true);
+    InvalidateCollectionPopupAnimation(true);
     return true;
+}
+
+void DesktopApp::ResetDockTrayPopup()
+{
+    if (!dockTrayPopup_) return;
+    if (dockTrayService_) dockTrayService_->UnsubscribeChanges(hwnd_);
+    for (auto bitmap : dockTrayPopup_->images) EraseD2DIconCacheForBitmap(bitmap);
+    dockTrayPopup_.reset();
+}
+
+void DesktopApp::RefreshDockTrayPopup()
+{
+    if (!dockTrayPopup_ || !dockTrayService_ || popupAnimation_.IsClosing()) return;
+    const auto keepAlive = dockTrayPopup_;
+    auto& state = *keepAlive;
+    const auto snapshot = dockTrayService_->Current();
+    const auto focused = state.focused >= 0 && static_cast<size_t>(state.focused) < state.targets.size()
+        ? std::optional<snowdesktop::tray::Icon>(state.targets[state.focused]) : std::nullopt;
+    const bool launchFocused = state.focused >= 0 && static_cast<size_t>(state.focused) == state.targets.size();
+    for (auto bitmap : state.images) { EraseD2DIconCacheForBitmap(bitmap); if (bitmap) DeleteObject(bitmap); }
+    state.images.clear(); state.rowHeights.clear();
+    const auto identity = ResolveDockAppIdentity(FindItemIndexByKey(state.itemKey));
+    state.targets = snowdesktop::dock_tray::CollectTargets(snapshot, dockSettings_.trayApplications, state.executable, identity.validatedPayloadPaths);
+    const auto metrics = GetCollectionPopupLayoutMetrics(state.widget);
+    const float scale = metrics.scale;
+    const RECT geometry = GetCollectionPopupRect(state.widget);
+    const float textWidth = std::max(1.0f, geometry.right - geometry.left - metrics.paddingX * 2.0f - 68.0f * scale);
+    auto* format = GetCollectionPopupTextFormat(scale, false);
+    for (const auto& icon : state.targets)
+    {
+        state.images.push_back(TrayBitmap(icon));
+        float textHeight = 0;
+        ComPtr<IDWriteTextLayout> layout;
+        if (dwriteFactory_ && format && SUCCEEDED(dwriteFactory_->CreateTextLayout(icon.tip.data(),
+                static_cast<UINT32>(icon.tip.size()), format, textWidth, 4096 * scale, &layout)))
+        {
+            layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
+            DWRITE_TEXT_METRICS measured{};
+            if (SUCCEEDED(layout->GetMetrics(&measured))) textHeight = measured.height;
+        }
+        state.rowHeights.push_back(static_cast<int>(std::ceil(std::max(56 * scale, textHeight + 20 * scale))));
+    }
+    state.rowHeights.push_back(static_cast<int>(std::ceil(48 * scale)));
+    state.widget.itemKeys.resize(state.rowHeights.size());
+    state.hovered = -1;
+    state.focused = launchFocused ? static_cast<int>(state.targets.size()) : -1;
+    if (focused)
+        for (size_t row = 0; row < state.targets.size(); ++row)
+            if (state.targets[row].key == focused->key && snowdesktop::tray::SameFocusIdentity(state.targets[row].identity, focused->identity))
+                state.focused = static_cast<int>(row);
+    InvalidateCollectionPopupContent();
+    if (popupAnimation_.IsInteractive())
+    {
+        UpdateFloatingPopupWindowBounds(true);
+        InvalidateCollectionPopupAnimation(true);
+    }
+}
+
+int DesktopApp::DockTrayPopupHitTest(POINT point) const
+{
+    if (!dockTrayPopup_ || !IsCollectionPopupInteractive()) return -1;
+    const RECT popup = GetCollectionPopupRect(dockTrayPopup_->widget);
+    const RECT content = GetCollectionPopupContentRect(popup);
+    if (!PtInRect(&content, point)) return -1;
+    for (size_t row = 0; row < dockTrayPopup_->rowHeights.size(); ++row)
+    {
+        const RECT bounds = GetCollectionPopupItemRect(popup, row);
+        if (PtInRect(&bounds, point)) return static_cast<int>(row);
+    }
+    return -1;
+}
+
+bool DesktopApp::DockTrayPopupPointerDown(POINT point, bool context)
+{
+    if (!dockTrayPopup_ || !IsPointOccludedByOpenPopup(point)) return false;
+    auto& state = *dockTrayPopup_;
+    state.pointerDown = true; state.context = context;
+    state.pressedTarget.reset(); state.pressedLaunch = false;
+    const int row = DockTrayPopupHitTest(point);
+    if (row >= 0 && static_cast<size_t>(row) < state.targets.size()) state.pressedTarget = state.targets[row];
+    else if (row >= 0 && !context) state.pressedLaunch = true;
+    return true;
+}
+
+bool DesktopApp::DockTrayPopupPointerUp(POINT point)
+{
+    if (!dockTrayPopup_ || !dockTrayPopup_->pointerDown) return false;
+    const auto state = dockTrayPopup_;
+    state->pointerDown = false;
+    mouseDown_ = false; mouseDownHit_ = nullptr;
+    ReleaseCapture();
+    const int row = DockTrayPopupHitTest(point);
+    if (row >= 0)
+    {
+        const auto index = static_cast<size_t>(row);
+        const bool launch = state->pressedLaunch && index == state->targets.size();
+        const bool target = index < state->targets.size() && state->pressedTarget &&
+            state->targets[index].key == state->pressedTarget->key &&
+            snowdesktop::tray::SameFocusIdentity(state->targets[index].identity, state->pressedTarget->identity);
+        if (launch || target) ActivateDockTrayPopupRow(index, state->context);
+    }
+    state->pressedTarget.reset(); state->pressedLaunch = false;
+    return true;
+}
+
+bool DesktopApp::DockTrayPopupPointerMove(POINT point)
+{
+    if (!dockTrayPopup_) return false;
+    const auto state = dockTrayPopup_;
+    const int row = DockTrayPopupHitTest(point);
+    if (state->hovered != row)
+    { state->hovered = row; InvalidateFloatingPopupWindow(false); }
+    if (!IsPointOccludedByOpenPopup(point) && !state->pointerDown) return false;
+    lastMousePoint_ = point;
+    return true;
+}
+
+void DesktopApp::ActivateDockTrayPopupRow(size_t row, bool context)
+{
+    const auto state = dockTrayPopup_;
+    if (!state || !IsCollectionPopupInteractive() || row > state->targets.size()) return;
+    const size_t itemIndex = FindItemIndexByKey(state->itemKey);
+    RECT invocation = state->anchorScreen;
+    if (context)
+    {
+        const RECT popup = GetCollectionPopupRect(state->widget);
+        const RECT bounds = GetCollectionPopupItemRect(popup, row);
+        const RECT viewport = GetCollectionPopupContentRect(popup);
+        IntersectRect(&invocation, &bounds, &viewport);
+        MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&invocation), 2);
+    }
+    CloseCollectionPopup(false);
+    if (row == state->targets.size())
+    {
+        if (context) return;
+        if (itemIndex < items_.size() && items_[itemIndex].parsingName == state->launchTarget)
+            LaunchDesktopItem(itemIndex, true, false);
+        else if (state->itemKey.empty()) LaunchPathWithShortcutPolicy(ShellLaunchOwnerHwnd(), state->launchTarget);
+        return;
+    }
+    if (!context && itemIndex < items_.size() && GetDockWindowVisualState(itemIndex) != DockWindowVisualState::Closed)
+    { ActivateOrToggleDockItem(itemIndex); return; }
+    ActivateDockTrayTarget(state->targets[row], state->executable, itemIndex, invocation, context);
+}
+
+bool DesktopApp::DockTrayPopupKeyDown(WPARAM key)
+{
+    if (!dockTrayPopup_ || !IsCollectionPopupInteractive()) return false;
+    auto& state = *dockTrayPopup_;
+    const int count = static_cast<int>(state.targets.size()) + 1;
+    if (key == VK_ESCAPE) { CloseCollectionPopup(false); return true; }
+    if (key == VK_RETURN) { if (state.focused >= 0) ActivateDockTrayPopupRow(state.focused); return true; }
+    if ((key == VK_APPS || (key == VK_F10 && (GetKeyState(VK_SHIFT) & 0x8000))) &&
+        state.focused >= 0) { ActivateDockTrayPopupRow(state.focused, true); return true; }
+    if (key != VK_UP && key != VK_DOWN && key != VK_HOME && key != VK_END && key != VK_TAB)
+        return key == VK_DELETE || key == VK_F2 || key == VK_BACK;
+    if (key == VK_HOME) state.focused = 0;
+    else if (key == VK_END) state.focused = count - 1;
+    else
+    {
+        const int direction = key == VK_UP || (key == VK_TAB && (GetKeyState(VK_SHIFT) & 0x8000)) ? -1 : 1;
+        state.focused = state.focused < 0 ? 0 : (state.focused + direction + count) % count;
+    }
+    const RECT popup = GetCollectionPopupRect(state.widget);
+    const RECT content = GetCollectionPopupContentRect(popup);
+    const RECT row = GetCollectionPopupItemRect(popup, state.focused);
+    if (row.top < content.top) popupScrollOffset_ = std::max(0, popupScrollOffset_ + static_cast<int>(row.top - content.top));
+    else if (row.bottom > content.bottom) popupScrollOffset_ += static_cast<int>(row.bottom - content.bottom);
+    InvalidateFloatingPopupWindow(false);
+    return true;
+}
+
+void DesktopApp::DrawDockTrayPopup(ID2D1DeviceContext* context, const RECT& popup)
+{
+    if (!dockTrayPopup_) return;
+    const auto& state = *dockTrayPopup_;
+    const float scale = GetOpenCollectionPopupLayoutMetrics().scale;
+    const auto color = (collectionPopupLightTheme_ ? kQuickNavLight : kQuickNavDark).popupTitle;
+    const RECT content = GetCollectionPopupContentRect(popup);
+    context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(content.left), static_cast<float>(content.top),
+        static_cast<float>(content.right), static_cast<float>(content.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    for (size_t index = 0; index < state.rowHeights.size(); ++index)
+    {
+        const RECT row = GetCollectionPopupItemRect(popup, index);
+        if (row.bottom <= content.top || row.top >= content.bottom) continue;
+        if (state.hovered == static_cast<int>(index) || state.focused == static_cast<int>(index))
+            DrawD2DRoundedRectangle(context, row, 8 * scale, collectionPopupLightTheme_
+                ? D2D1::ColorF(0, 0, 0, 0.07f) : D2D1::ColorF(1, 1, 1, 0.11f), D2D1::ColorF(0, 0, 0, 0), 0);
+        RECT text = row;
+        text.left += static_cast<int>(12 * scale); text.right -= static_cast<int>(12 * scale);
+        if (index < state.targets.size())
+        {
+            const int iconSize = static_cast<int>(32 * scale);
+            const RECT icon{text.left, (row.top + row.bottom - iconSize) / 2,
+                text.left + iconSize, (row.top + row.bottom + iconSize) / 2};
+            if (auto* bitmap = GetOrCreateD2DBitmap(state.images[index], false)) DrawIconBitmap(context, bitmap, icon);
+            text.left = icon.right + static_cast<int>(12 * scale);
+            DrawD2DText(context, state.targets[index].tip, text, GetCollectionPopupTextFormat(scale, false), color, DWRITE_WORD_WRAPPING_WRAP);
+        }
+        else
+        {
+            RECT divider{row.left, row.top, row.right, row.top + std::max(1, static_cast<int>(scale))};
+            auto border = color; border.a = 0.14f;
+            DrawD2DRoundedRectangle(context, divider, 0, border, D2D1::ColorF(0, 0, 0, 0), 0);
+            DrawD2DText(context, _LW("settings.dock.trayLaunch"), text, GetCollectionPopupTextFormat(scale, false), color);
+        }
+    }
+    context->PopAxisAlignedClip();
 }

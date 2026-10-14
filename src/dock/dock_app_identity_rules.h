@@ -120,12 +120,14 @@ inline bool MatchesRunningApp(
     const std::wstring& runningExecutablePath,
     const std::wstring& runningAppUserModelId,
     std::span<const std::wstring>
-        ancestorExecutablePaths = {})
+        ancestorExecutablePaths = {},
+    std::span<const std::wstring> validatedPayloadPaths = {})
 {
     switch (kind)
     {
     case DockAppIdentityKind::Executable:
         return (!identityAppUserModelId.empty() && identityAppUserModelId == runningAppUserModelId) ||
+            std::find(validatedPayloadPaths.begin(), validatedPayloadPaths.end(), runningExecutablePath) != validatedPayloadPaths.end() ||
             MatchesExecutableProcessFamily(
             identityExecutablePath,
             runningExecutablePath,

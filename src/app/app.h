@@ -30,6 +30,7 @@
 #include "app/shell/shell_icon_work.h"
 #include "app/shell/shell_icon_request.h"
 #include "dock/dock_refresh_cache.h"
+#include "app/dock/dock_tray_popup_state.h"
 #include "dock/dock_running_animation.h"
 #include "dock/dock_external_minimize.h"
 #include "common/bounded_lru_cache.h"
@@ -326,6 +327,7 @@ struct DockAppIdentity
     std::wstring appUserModelId;
     std::wstring steamAppId;
     std::wstring steamInstallDirectory;
+    std::vector<std::wstring> validatedPayloadPaths;
 };
 
 struct DockWindowPreviewTarget
@@ -1366,9 +1368,20 @@ private:
     bool LaunchDesktopItem(
         size_t itemIndex, bool animateDockLaunch = false, bool allowDockTray = true);
     std::shared_ptr<snowdesktop::tray::Service> EnsureDockTrayService();
-    bool HasDockTrayTarget(size_t itemIndex);
+    size_t DockTrayTargetCount(size_t itemIndex);
     bool TryActivateDockTray(const std::wstring& executable, size_t itemIndex,
         std::optional<RECT> anchor = {});
+    void ResetDockTrayPopup();
+    void RefreshDockTrayPopup();
+    bool DockTrayPopupPointerDown(POINT point, bool context = false);
+    bool DockTrayPopupPointerUp(POINT point);
+    bool DockTrayPopupPointerMove(POINT point);
+    bool DockTrayPopupKeyDown(WPARAM key);
+    int DockTrayPopupHitTest(POINT point) const;
+    void ActivateDockTrayPopupRow(size_t row, bool context = false);
+    bool ActivateDockTrayTarget(const snowdesktop::tray::Icon& target,
+        const std::wstring& executable, size_t itemIndex, RECT anchor, bool context = false);
+    void DrawDockTrayPopup(ID2D1DeviceContext* context, const RECT& popup);
     /** @brief Open a path, honoring its shortcut, manifest and compatibility elevation marks. */
     bool LaunchPathWithShortcutPolicy(
         HWND owner, const std::wstring& path);
@@ -4559,6 +4572,7 @@ private:
         pendingCollectionPopupOpen_;
     std::unique_ptr<Item> popupMouseDownItem_;
     bool dockFolderPopupOpen_ = false;
+    std::shared_ptr<DockTrayPopupState> dockTrayPopup_;
     bool dockFolderPopupAvailable_ = false;
     bool dockFolderPopupLoading_ = false;
     size_t dockFolderPopupKnownItemCount_ = 0;

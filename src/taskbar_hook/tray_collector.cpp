@@ -115,6 +115,24 @@ void BootstrapClassic(Collector& collector)
             GetWindowThreadProcessId(item.window, &event.identity.process);
             event.callback = item.callback;
             event.version = item.version;
+            // Toolbar text is available before any hover. The collector runs
+            // in Explorer, so the output buffer belongs to the toolbar process.
+            TBBUTTONINFOW textInfo{};
+            textInfo.cbSize = sizeof(textInfo); textInfo.dwMask = TBIF_TEXT;
+            textInfo.pszText = event.tip; textInfo.cchText = static_cast<int>(std::size(event.tip));
+            DWORD_PTR textResult = 0;
+            SendMessageTimeoutW(child, TB_GETBUTTONINFOW, button.idCommand,
+                reinterpret_cast<LPARAM>(&textInfo), SMTO_ABORTIFHUNG | SMTO_BLOCK, 50, &textResult);
+            // A toolbar string-pool entry is not returned by GETBUTTONINFO.
+            // TB_GETBUTTON exposes an actual string pointer for native tray
+            // buttons; read it boundedly, without requesting a hover callback.
+            if (!event.tip[0] && static_cast<UINT_PTR>(button.iString) >= 0x10000)
+            {
+                for (size_t letter = 0; letter + 1 < std::size(event.tip); ++letter)
+                    if (!CopyBytes(reinterpret_cast<const wchar_t*>(button.iString) + letter, &event.tip[letter], sizeof(wchar_t)) || !event.tip[letter]) break;
+            }
+            event.tip[127] = 0;
+            if (event.tip[0]) event.flags |= NIF_TIP;
             // Internal state contains additional Explorer flags. Do not copy
             // it or the toolbar's overflow visibility into NIS_HIDDEN.
             if (auto copy = CopyIcon(item.icon)) { Pixels(copy, event); DestroyIcon(copy); }
@@ -259,6 +277,7 @@ LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp, UINT
                 // Duplicate ADD remains a useful registration supplement after
                 // our synthetic TaskbarCreated; the model preserves its version.
                 const LRESULT nativeResult = DefSubclassProc(window, message, wp, lp);
+                pending.flags = CollectedRegistrationFlags(pending.flags, pending.operation, nativeResult != FALSE);
                 bool duplicate = false;
                 if (!nativeResult && pending.icon && !Read(self.stopping) && !Read(self.shared->stop) &&
                     self.reregister.Eligible(pending, static_cast<std::uint64_t>(Read(self.shared->epoch)), GetTickCount64()))

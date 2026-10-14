@@ -26,6 +26,30 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     ClearPopupDragTarget();
     pendingWidgetButtonAction_ = WidgetHit::None;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+    if (DockTrayPopupPointerDown(pt))
+    {
+        mouseDown_ = true;
+        mouseDownPoint_ = pt;
+        mouseDownHit_ = nullptr;
+        HWND capture = handlingFloatingPopupInput_ && floatingPopupHwnd_ ? floatingPopupHwnd_ : hwnd_;
+        SetCapture(capture);
+        return;
+    }
+    // The normal collection popup's outside-click branch uses a saved widget
+    // index. Transient tray content has no saved index, but closes identically.
+    if (dockTrayPopup_ && IsCollectionPopupInteractive())
+    {
+        size_t sourceItem = static_cast<size_t>(-1);
+        if (auto* dock = GetDockContainerAtPoint(pt))
+        {
+            if (auto* frequent = dock->FrequentItemAtPoint(pt)) sourceItem = frequent->GetItemIndex();
+            else if (auto* entry = dock->EntryAtPoint(pt); entry && entry->GetEntryIndex() < dockEntries_.size() &&
+                dockEntries_[entry->GetEntryIndex()].type == DockEntryType::DesktopItem)
+                sourceItem = FindItemIndexByKey(dockEntries_[entry->GetEntryIndex()].reference);
+        }
+        if (sourceItem >= items_.size() || dockTrayPopup_->itemKey != DockItemWindowKey(items_[sourceItem]))
+            CloseCollectionPopup(false);
+    }
     if (HandleUsageGuidePointerDown(pt)) return;
     if (HandleLargeIconPointerDown(pt)) return;
     if (!luaWidgetPanelRequest_.widgetId.empty() &&

@@ -15,6 +15,7 @@ struct Icon
     Identity identity;
     std::string key, persistentKey;
     std::wstring tip, application;
+    bool tipKnown = false;
     DWORD callback = 0, version = 0, state = 0;
     DWORD width = 0, height = 0;
     std::vector<std::uint32_t> pixels;

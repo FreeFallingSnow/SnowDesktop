@@ -515,7 +515,7 @@ inline bool DockWindowMatchesAppIdentity(
             identity.steamInstallDirectory,
             executablePath,
             appUserModelId,
-            ancestorExecutablePaths);
+            ancestorExecutablePaths, identity.validatedPayloadPaths);
 }
 
 inline bool DockWindowsShareActivationGroup(HWND first, HWND second)
