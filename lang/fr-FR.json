@@ -2744,6 +2744,6 @@
   "settings.dock.trayAdd": "Ajouter",
   "settings.dock.traySingleClick": "Clic sur l’icône",
   "settings.dock.trayDoubleClick": "Double-clic sur l’icône",
-  "settings.dock.trayLaunch": "Lancer",
+  "settings.dock.trayLaunch": "Démarrer un nouveau processus",
   "settings.dock.trayInvalidTarget": "Saisissez un nom de fichier EXE ou son chemin absolu. La liste peut contenir jusqu’à 128 entrées."
 }

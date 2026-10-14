@@ -2744,6 +2744,6 @@
   "settings.dock.trayAdd": "Hinzufügen",
   "settings.dock.traySingleClick": "Symbol einmal anklicken",
   "settings.dock.trayDoubleClick": "Symbol doppelt anklicken",
-  "settings.dock.trayLaunch": "Starten",
+  "settings.dock.trayLaunch": "Neuen Prozess starten",
   "settings.dock.trayInvalidTarget": "Geben Sie einen EXE-Dateinamen oder einen absoluten EXE-Pfad ein. Bis zu 128 Einträge sind möglich."
 }

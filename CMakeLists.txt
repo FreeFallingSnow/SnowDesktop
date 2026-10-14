@@ -176,6 +176,8 @@ set(SNOWDESKTOP_SOURCES
     src/app/dock/app_dock_launch.cpp
     src/app/dock/app_dock_tray.cpp
     src/app/dock/dock_tray_popup_state.h
+    src/dock/dock_tray_popup_layout.h
+    src/system/tray/tray_native_tooltip.h
     src/dock/dock_installed_application.h
     src/app/dock/app_dock_layout.cpp
     src/dock/dock_appbar.cpp

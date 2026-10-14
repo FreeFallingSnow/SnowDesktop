@@ -42,6 +42,7 @@ public:
     Service(const Service&) = delete;
     Service& operator=(const Service&) = delete;
     Snapshot Current() const;
+    void RefreshNativeTooltips();
     void SubscribeChanges(HWND window);
     void UnsubscribeChanges(HWND window);
     bool AcknowledgeChange(HWND window, std::uint64_t token);

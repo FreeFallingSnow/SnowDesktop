@@ -133,6 +133,7 @@ bool DesktopApp::TryActivateDockTray(const std::wstring& executable, size_t item
         if (PtInRect(&page.bounds, popupAnchorPoint_)) { popupPageId_ = page.id; break; }
     EnsureFloatingDockVisibleForAssociatedSurface({(anchor.left + anchor.right) / 2, (anchor.top + anchor.bottom) / 2});
     service->SubscribeChanges(hwnd_);
+    service->RefreshNativeTooltips();
     RefreshDockTrayPopup();
     StartCollectionPopupAnimation();
     UpdateFloatingPopupWindowBounds(true);
@@ -164,30 +165,37 @@ void DesktopApp::RefreshDockTrayPopup()
     const auto metrics = GetCollectionPopupLayoutMetrics(state.widget);
     const float scale = metrics.scale;
     const RECT geometry = GetCollectionPopupRect(state.widget);
-    const float textWidth = std::max(1.0f, geometry.right - geometry.left - metrics.paddingX * 2.0f - 68.0f * scale);
+    state.footerHeight = static_cast<int>(std::ceil(52 * scale));
+    state.rowGap = static_cast<int>(std::ceil(8 * scale));
+    const float textWidth = std::max(1.0f, geometry.right - geometry.left - metrics.paddingX * 2.0f - 74.0f * scale);
     auto* format = GetCollectionPopupTextFormat(scale, false);
     for (const auto& icon : state.targets)
     {
         state.images.push_back(TrayBitmap(icon));
         float textHeight = 0;
         ComPtr<IDWriteTextLayout> layout;
-        if (dwriteFactory_ && format && SUCCEEDED(dwriteFactory_->CreateTextLayout(icon.tip.data(),
-                static_cast<UINT32>(icon.tip.size()), format, textWidth, 4096 * scale, &layout)))
+        const auto label = snowdesktop::dock_tray::popup::Label(icon.tip, state.widget.title);
+        if (dwriteFactory_ && format && SUCCEEDED(dwriteFactory_->CreateTextLayout(label.data(),
+                static_cast<UINT32>(label.size()), format, textWidth, 4096 * scale, &layout)))
         {
             layout->SetWordWrapping(DWRITE_WORD_WRAPPING_WRAP);
             DWRITE_TEXT_METRICS measured{};
             if (SUCCEEDED(layout->GetMetrics(&measured))) textHeight = measured.height;
         }
-        state.rowHeights.push_back(static_cast<int>(std::ceil(std::max(56 * scale, textHeight + 20 * scale))));
+        state.rowHeights.push_back(static_cast<int>(std::ceil(std::max(64 * scale, textHeight + 28 * scale))) + state.rowGap);
     }
-    state.rowHeights.push_back(static_cast<int>(std::ceil(48 * scale)));
-    state.widget.itemKeys.resize(state.rowHeights.size());
-    state.hovered = -1;
+    state.widget.itemKeys.resize(state.targets.size() + 1);
     state.focused = launchFocused ? static_cast<int>(state.targets.size()) : -1;
     if (focused)
         for (size_t row = 0; row < state.targets.size(); ++row)
             if (state.targets[row].key == focused->key && snowdesktop::tray::SameFocusIdentity(state.targets[row].identity, focused->identity))
                 state.focused = static_cast<int>(row);
+    const RECT popup = GetCollectionPopupRect(state.widget);
+    popupScrollOffset_ = std::clamp(popupScrollOffset_, 0, GetCollectionPopupMaxScrollOffset(state.widget, popup));
+    POINT pointer{};
+    if (GetCursorPos(&pointer) && ScreenToClient(hwnd_, &pointer))
+        state.hovered = DockTrayPopupHitTest(pointer);
+    else state.hovered = -1;
     InvalidateCollectionPopupContent();
     if (popupAnimation_.IsInteractive())
     {
@@ -201,24 +209,25 @@ int DesktopApp::DockTrayPopupHitTest(POINT point) const
     if (!dockTrayPopup_ || !IsCollectionPopupInteractive()) return -1;
     const RECT popup = GetCollectionPopupRect(dockTrayPopup_->widget);
     const RECT content = GetCollectionPopupContentRect(popup);
-    if (!PtInRect(&content, point)) return -1;
-    for (size_t row = 0; row < dockTrayPopup_->rowHeights.size(); ++row)
-    {
-        const RECT bounds = GetCollectionPopupItemRect(popup, row);
-        if (PtInRect(&bounds, point)) return static_cast<int>(row);
-    }
-    return -1;
+    const auto& state = *dockTrayPopup_;
+    const RECT launch = GetCollectionPopupItemRect(popup, state.targets.size());
+    return snowdesktop::dock_tray::popup::HitTest(point, content, launch,
+        state.rowHeights, popupScrollOffset_, state.rowGap);
 }
 
 bool DesktopApp::DockTrayPopupPointerDown(POINT point, bool context)
 {
     if (!dockTrayPopup_ || !IsPointOccludedByOpenPopup(point)) return false;
     auto& state = *dockTrayPopup_;
+    state.keyboardNavigation = false;
     state.pointerDown = true; state.context = context;
     state.pressedTarget.reset(); state.pressedLaunch = false;
     const int row = DockTrayPopupHitTest(point);
+    state.hovered = row; state.pointer = point;
     if (row >= 0 && static_cast<size_t>(row) < state.targets.size()) state.pressedTarget = state.targets[row];
     else if (row >= 0 && !context) state.pressedLaunch = true;
+    InvalidateCollectionPopupContent();
+    InvalidateFloatingPopupWindow(false);
     return true;
 }
 
@@ -240,6 +249,8 @@ bool DesktopApp::DockTrayPopupPointerUp(POINT point)
         if (launch || target) ActivateDockTrayPopupRow(index, state->context);
     }
     state->pressedTarget.reset(); state->pressedLaunch = false;
+    if (dockTrayPopup_ == state)
+    { InvalidateCollectionPopupContent(); InvalidateFloatingPopupWindow(false); }
     return true;
 }
 
@@ -247,9 +258,20 @@ bool DesktopApp::DockTrayPopupPointerMove(POINT point)
 {
     if (!dockTrayPopup_) return false;
     const auto state = dockTrayPopup_;
+    bool presentationChanged = false;
+    if (state->pointer.x != point.x || state->pointer.y != point.y)
+    {
+        state->pointer = point;
+        presentationChanged = state->keyboardNavigation;
+        state->keyboardNavigation = false;
+    }
     const int row = DockTrayPopupHitTest(point);
-    if (state->hovered != row)
-    { state->hovered = row; InvalidateFloatingPopupWindow(false); }
+    if (state->hovered != row || presentationChanged)
+    {
+        state->hovered = row;
+        InvalidateCollectionPopupContent();
+        InvalidateFloatingPopupWindow(false);
+    }
     if (!IsPointOccludedByOpenPopup(point) && !state->pointerDown) return false;
     lastMousePoint_ = point;
     return true;
@@ -294,6 +316,7 @@ bool DesktopApp::DockTrayPopupKeyDown(WPARAM key)
         state.focused >= 0) { ActivateDockTrayPopupRow(state.focused, true); return true; }
     if (key != VK_UP && key != VK_DOWN && key != VK_HOME && key != VK_END && key != VK_TAB)
         return key == VK_DELETE || key == VK_F2 || key == VK_BACK;
+    state.keyboardNavigation = true;
     if (key == VK_HOME) state.focused = 0;
     else if (key == VK_END) state.focused = count - 1;
     else
@@ -304,8 +327,14 @@ bool DesktopApp::DockTrayPopupKeyDown(WPARAM key)
     const RECT popup = GetCollectionPopupRect(state.widget);
     const RECT content = GetCollectionPopupContentRect(popup);
     const RECT row = GetCollectionPopupItemRect(popup, state.focused);
-    if (row.top < content.top) popupScrollOffset_ = std::max(0, popupScrollOffset_ + static_cast<int>(row.top - content.top));
-    else if (row.bottom > content.bottom) popupScrollOffset_ += static_cast<int>(row.bottom - content.bottom);
+    if (state.focused < static_cast<int>(state.targets.size()))
+    {
+        if (row.top < content.top || row.bottom - row.top > content.bottom - content.top)
+            popupScrollOffset_ = std::max(0, popupScrollOffset_ + static_cast<int>(row.top - content.top));
+        else if (row.bottom > content.bottom) popupScrollOffset_ += static_cast<int>(row.bottom - content.bottom);
+        popupScrollOffset_ = std::clamp(popupScrollOffset_, 0, GetCollectionPopupMaxScrollOffset(state.widget, popup));
+    }
+    InvalidateCollectionPopupContent();
     InvalidateFloatingPopupWindow(false);
     return true;
 }
@@ -319,31 +348,45 @@ void DesktopApp::DrawDockTrayPopup(ID2D1DeviceContext* context, const RECT& popu
     const RECT content = GetCollectionPopupContentRect(popup);
     context->PushAxisAlignedClip(D2D1::RectF(static_cast<float>(content.left), static_cast<float>(content.top),
         static_cast<float>(content.right), static_cast<float>(content.bottom)), D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
-    for (size_t index = 0; index < state.rowHeights.size(); ++index)
+    for (size_t index = 0; index < state.targets.size(); ++index)
     {
         const RECT row = GetCollectionPopupItemRect(popup, index);
         if (row.bottom <= content.top || row.top >= content.bottom) continue;
-        if (state.hovered == static_cast<int>(index) || state.focused == static_cast<int>(index))
-            DrawD2DRoundedRectangle(context, row, 8 * scale, collectionPopupLightTheme_
-                ? D2D1::ColorF(0, 0, 0, 0.07f) : D2D1::ColorF(1, 1, 1, 0.11f), D2D1::ColorF(0, 0, 0, 0), 0);
+        const bool hovered = !state.keyboardNavigation && state.hovered == static_cast<int>(index);
+        const bool focused = state.keyboardNavigation && state.focused == static_cast<int>(index);
+        const bool pressed = state.pointerDown && hovered && state.pressedTarget &&
+            state.targets[index].key == state.pressedTarget->key &&
+            snowdesktop::tray::SameFocusIdentity(state.targets[index].identity, state.pressedTarget->identity);
+        const float shade = pressed ? 0.16f : hovered || focused ? 0.10f : 0.035f;
+        const auto fill = collectionPopupLightTheme_ ? D2D1::ColorF(0, 0, 0, shade) : D2D1::ColorF(1, 1, 1, shade);
+        auto border = color; border.a = focused ? 0.4f : 0.08f;
+        DrawD2DRoundedRectangle(context, row, 9 * scale, fill, border, scale);
         RECT text = row;
-        text.left += static_cast<int>(12 * scale); text.right -= static_cast<int>(12 * scale);
-        if (index < state.targets.size())
-        {
-            const int iconSize = static_cast<int>(32 * scale);
-            const RECT icon{text.left, (row.top + row.bottom - iconSize) / 2,
-                text.left + iconSize, (row.top + row.bottom + iconSize) / 2};
-            if (auto* bitmap = GetOrCreateD2DBitmap(state.images[index], false)) DrawIconBitmap(context, bitmap, icon);
-            text.left = icon.right + static_cast<int>(12 * scale);
-            DrawD2DText(context, state.targets[index].tip, text, GetCollectionPopupTextFormat(scale, false), color, DWRITE_WORD_WRAPPING_WRAP);
-        }
-        else
-        {
-            RECT divider{row.left, row.top, row.right, row.top + std::max(1, static_cast<int>(scale))};
-            auto border = color; border.a = 0.14f;
-            DrawD2DRoundedRectangle(context, divider, 0, border, D2D1::ColorF(0, 0, 0, 0), 0);
-            DrawD2DText(context, _LW("settings.dock.trayLaunch"), text, GetCollectionPopupTextFormat(scale, false), color);
-        }
+        const int padding = static_cast<int>(14 * scale);
+        text.left += padding; text.right -= padding;
+        text.top += padding; text.bottom -= padding;
+        const int iconSize = static_cast<int>(32 * scale);
+        const RECT icon{text.left, row.top + padding, text.left + iconSize, row.top + padding + iconSize};
+        if (auto* bitmap = GetOrCreateD2DBitmap(state.images[index], false)) DrawIconBitmap(context, bitmap, icon);
+        text.left = icon.right + padding;
+        DrawD2DText(context, std::wstring(snowdesktop::dock_tray::popup::Label(state.targets[index].tip, state.widget.title)),
+            text, GetCollectionPopupTextFormat(scale, false), color, DWRITE_WORD_WRAPPING_WRAP);
     }
     context->PopAxisAlignedClip();
+    const auto launchIndex = static_cast<int>(state.targets.size());
+    const RECT launch = GetCollectionPopupItemRect(popup, state.targets.size());
+    const bool launchFocused = state.keyboardNavigation && state.focused == launchIndex;
+    const bool launchHovered = !state.keyboardNavigation && state.hovered == launchIndex;
+    const float shade = state.pointerDown && state.pressedLaunch && launchHovered ? 0.18f :
+        launchHovered || launchFocused ? 0.13f : 0.065f;
+    auto border = color; border.a = launchFocused ? 0.4f : 0.16f;
+    DrawD2DRoundedRectangle(context, launch, 8 * scale,
+        collectionPopupLightTheme_ ? D2D1::ColorF(0, 0, 0, shade) : D2D1::ColorF(1, 1, 1, shade), border, scale);
+    if (auto* format = GetCollectionPopupTextFormat(scale, false))
+    {
+        const auto alignment = format->GetTextAlignment();
+        format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        DrawD2DText(context, _LW("settings.dock.trayLaunch"), launch, format, color);
+        format->SetTextAlignment(alignment);
+    }
 }

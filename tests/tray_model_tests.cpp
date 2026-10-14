@@ -6,6 +6,8 @@
 #include "system/status_bar/status_bar_input_method_identity.h"
 #include "dock/dock_tray_targets.h"
 #include "dock/dock_tray_storage.h"
+#include "dock/dock_tray_popup_layout.h"
+#include "system/tray/tray_native_tooltip.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>
@@ -17,6 +19,52 @@ int RunTrayModelTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAIL tray: " << message << '\n'; }
     };
+    {
+        namespace popup = snowdesktop::dock_tray::popup;
+        const std::wstring raw = L"QQ & literal\n声音: 关闭\n会话消息: 原始文本";
+        check(popup::Label({}, L"My shortcut") == L"My shortcut" && popup::Label(raw, L"My shortcut") == raw,
+            "missing tooltip uses the shortcut name while available multiline text remains verbatim");
+        const RECT content{10, 20, 310, 260};
+        const auto viewport = popup::Viewport(content, 52);
+        const auto launch = popup::LaunchButton(content, 52, 14);
+        const int heights[]{108, 108, 108};
+        const auto maximum = popup::MaximumScroll(viewport, heights);
+        check(maximum > 0 && popup::HitTest({20, 230}, viewport, launch, heights, 0, 8) == 3 &&
+            popup::HitTest({20, 230}, viewport, launch, heights, maximum, 8) == 3,
+            "launch stays independently clickable above a scrolling list of accounts");
+        check(popup::HitTest({20, 125}, viewport, launch, heights, 0, 8) == -1 &&
+            popup::HitTest({20, 213}, viewport, launch, heights, maximum, 8) == -1,
+            "row gaps and the reserved footer gap cannot highlight or activate clipped accounts");
+        check(popup::HitTest({20, 30}, viewport, launch, heights, 0, 8) == 0 &&
+            popup::HitTest({20, 30}, viewport, launch, heights, maximum, 8) == 1,
+            "stationary pointer hover follows the visible account after scrolling");
+    }
+    {
+        Icon cached;
+        cached.identity = {{}, 10, 1, 100}; cached.key = Key(cached.identity);
+        cached.callback = WM_APP + 1; cached.version = 4; cached.tipKnown = true;
+        cached.width = cached.height = 1; cached.pixels = {0xff112233}; cached.application = L"Example.exe";
+        std::vector<Icon> icons{cached};
+        Event fresh;
+        fresh.operation = kBootstrapIcon; fresh.flags = NIF_TIP; fresh.identity = cached.identity;
+        fresh.callback = cached.callback; fresh.version = cached.version;
+        wcscpy_s(fresh.tip, L"Example & unchanged\n原始提示");
+        check(RefreshNativeTooltip(icons, fresh) && icons[0].tip == fresh.tip &&
+            icons[0].pixels == cached.pixels && icons[0].application == cached.application,
+            "an explicit fresh native read reconciles stale empty text without replacing icon or program identity");
+        check(!RefreshNativeTooltip(icons, fresh), "unchanged native tooltip does not publish another update");
+        ++fresh.identity.process;
+        check(!RefreshNativeTooltip(icons, fresh), "a replaced process cannot refresh a stale account label");
+        fresh.identity = cached.identity; ++fresh.callback;
+        check(!RefreshNativeTooltip(icons, fresh), "a different native callback cannot refresh an old registration");
+        fresh.callback = cached.callback; fresh.tip[0] = 0;
+        check(RefreshNativeTooltip(icons, fresh) && icons[0].tip.empty(), "a current explicitly empty native tip returns to the shortcut fallback");
+        Event live = fresh; live.operation = NIM_MODIFY;
+        wcscpy_s(live.tip, L"Newest notification");
+        check(Apply(icons, live) && icons[0].tip == live.tip, "live notifications drained after a native read take precedence");
+        icons.clear();
+        check(!RefreshNativeTooltip(icons, fresh) && icons.empty(), "tooltip refresh cannot resurrect a removed icon");
+    }
     {
         // Production selection consumes registered icons, not process counts
         check(CollectedRegistrationFlags(NIF_TIP | NIF_ICON, NIM_ADD, false) == NIF_ICON &&

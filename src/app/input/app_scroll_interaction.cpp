@@ -17,6 +17,9 @@ void DesktopApp::OnMouseWheel(WPARAM wp, LPARAM lp)
         const RECT popup = GetCollectionPopupRect(dockTrayPopup_->widget);
         const int maximum = GetCollectionPopupMaxScrollOffset(dockTrayPopup_->widget, popup);
         popupScrollOffset_ = std::clamp(popupScrollOffset_ - GET_WHEEL_DELTA_WPARAM(wp) / 2, 0, maximum);
+        dockTrayPopup_->keyboardNavigation = false;
+        DockTrayPopupPointerMove(pt);
+        InvalidateCollectionPopupContent();
         InvalidateFloatingPopupWindow(false);
         return;
     }

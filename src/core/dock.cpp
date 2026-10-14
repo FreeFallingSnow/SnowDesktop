@@ -1328,6 +1328,7 @@ RECT DockContainer::GetHoveredTitleBounds(
     POINT pointer) const
 {
     if (IsMagnificationSuppressed() ||
+        (app_ && app_->dockTrayPopup_ && !app_->popupAnimation_.IsHidden()) ||
         (app_ && ((app_->dockWindowPreview_ && app_->dockWindowPreview_->IsVisible()) ||
             !app_->quickNavigationAnimation_.IsHidden() ||
             app_->quickNavigationOpen_ || app_->HasActiveContextMenuSession())))

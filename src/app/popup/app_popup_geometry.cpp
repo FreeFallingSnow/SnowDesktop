@@ -556,7 +556,7 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
     auto popupHeightForRows = [&](int rowCount, int columnCount) {
         if (dockTrayPopup_ && &widget == &dockTrayPopup_->widget)
         {
-            int height = metrics.headerHeight + metrics.bottomPadding;
+            int height = metrics.headerHeight + metrics.bottomPadding + dockTrayPopup_->footerHeight;
             for (int rowHeight : dockTrayPopup_->rowHeights) height += rowHeight;
             return height;
         }
@@ -756,11 +756,12 @@ RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
         top += snowdesktop::collection_popup_layout::
             ResolveDetailsHeaderHeight(metrics, GetCategorizedWidgetTabHeight());
     }
-    return MakeRect(
+    const RECT content = MakeRect(
         popup.left + metrics.paddingX,
         top,
         popup.right - metrics.paddingX,
         popup.bottom - metrics.bottomPadding);
+    return dockTrayPopup_ ? snowdesktop::dock_tray::popup::Viewport(content, dockTrayPopup_->footerHeight) : content;
 }
 
 RECT DesktopApp::GetCollectionPopupDetailsHeaderRect(
@@ -867,9 +868,7 @@ int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, c
     RECT content = GetCollectionPopupContentRect(popup);
     if (dockTrayPopup_ && &widget == &dockTrayPopup_->widget)
     {
-        int height = 0;
-        for (int rowHeight : dockTrayPopup_->rowHeights) height += rowHeight;
-        return std::max(0, height - static_cast<int>(content.bottom - content.top));
+        return snowdesktop::dock_tray::popup::MaximumScroll(content, dockTrayPopup_->rowHeights);
     }
     if (UsesCollectionPopupFan(widget)) return 0;
     if (UsesCollectionPopupList(widget))
@@ -902,10 +901,14 @@ RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearInde
     RECT content = GetCollectionPopupContentRect(popup);
     if (dockTrayPopup_)
     {
-        if (linearIndex >= dockTrayPopup_->rowHeights.size()) return {};
-        LONG top = content.top - popupScrollOffset_;
-        for (size_t row = 0; row < linearIndex; ++row) top += dockTrayPopup_->rowHeights[row];
-        return {content.left, top, content.right, top + dockTrayPopup_->rowHeights[linearIndex]};
+        if (linearIndex == dockTrayPopup_->targets.size())
+        {
+            const RECT full{content.left, content.top, content.right, popup.bottom - metrics.bottomPadding};
+            return snowdesktop::dock_tray::popup::LaunchButton(full, dockTrayPopup_->footerHeight,
+                static_cast<int>(14 * metrics.scale));
+        }
+        return snowdesktop::dock_tray::popup::Row(content, dockTrayPopup_->rowHeights,
+            linearIndex, popupScrollOffset_, dockTrayPopup_->rowGap);
     }
     if (const DesktopWidget* widget = GetOpenPopupWidget(); widget && UsesCollectionPopupFan(*widget))
     {

@@ -3,6 +3,7 @@
 #include "diagnostics/diagnostic_log.h"
 #include "tray_menu_placement.h"
 #include "tray_modern_bootstrap.h"
+#include "tray_native_tooltip.h"
 #include "taskbar_hook/taskbar_symbol_resolver.h"
 #include "taskbar_hook/tray_connection.h"
 #include "platform/hook_registration_retry.h"
@@ -65,6 +66,7 @@ struct Service::Impl
 {
     mutable std::mutex mutex;
     Snapshot snapshot;
+    bool nativeTooltipsRequested = false;
     ChangeNotifications changes;
     hook_registration::Statistics registrationStatistics;
     void Changed() { ++snapshot.revision; changes.Publish(); }
@@ -291,6 +293,12 @@ struct Service::Impl
                     WriteDiagnosticLogEntry(message);
                 }
                 const auto epoch = static_cast<std::uint64_t>(Read(state.epoch));
+                bool refreshTooltips = false;
+                if (modernAdapter)
+                {
+                    std::lock_guard guard(mutex);
+                    refreshTooltips = std::exchange(nativeTooltipsRequested, false);
+                }
                 if (modernAdapter && supplementedEpoch != epoch)
                 {
                     // Capture before draining the live ring. Ordinary ADD,
@@ -311,50 +319,72 @@ struct Service::Impl
                         }
                         for (auto& icon : snapshot.icons) ResolveApplication(icon);
                         wchar_t message[192]{};
-                        swprintf_s(message, L"Tray modern bootstrap captured=%zu added=%zu epoch=%llu",
+                        swprintf_s(message, L"Tray modern native read captured=%zu changed=%zu epoch=%llu",
                             supplemented.size(), added, static_cast<unsigned long long>(epoch));
                         WriteDiagnosticLogEntry(message);
                         supplementedEpoch = epoch; supplementAttempts = 0;
                     }
                     else if (++supplementAttempts >= 3) { supplementedEpoch = epoch; supplementAttempts = 0; }
                 }
-                Event event;
-                while (Consume(state, event))
-                {
-                    if (event.epoch != static_cast<std::uint64_t>(Read(state.epoch))) continue;
-                    std::lock_guard guard(mutex);
-                    if (event.operation == NIM_SETFOCUS)
+                const auto drainEvents = [&] {
+                    Event event;
+                    while (Consume(state, event))
                     {
-                        if (FocusIconExists() && focus.Arrive(event, static_cast<std::uint64_t>(Read(state.epoch)),
-                            reinterpret_cast<std::uint64_t>(GetForegroundWindow())))
+                        if (event.epoch != static_cast<std::uint64_t>(Read(state.epoch))) continue;
+                        std::lock_guard guard(mutex);
+                        if (event.operation == NIM_SETFOCUS)
                         {
-                            const auto origin = reinterpret_cast<HWND>(focus.Current()->ticket.origin);
-                            if (!PostMessageW(origin, FocusReturnMessage(), static_cast<WPARAM>(event.focusSerial), 0)) CancelFocus();
-                        }
-                        continue;
-                    }
-                    if (focus.Current() && (event.operation == NIM_ADD || event.operation == NIM_DELETE) &&
-                        SameIdentity(event.identity, focus.Current()->ticket.identity)) CancelFocus();
-                    if (Apply(snapshot.icons, event))
-                    {
-                        for (auto& icon : snapshot.icons) ResolveApplication(icon);
-                        if (event.operation == NIM_ADD || event.operation == NIM_SETVERSION ||
-                            event.operation == kBootstrapIcon)
-                        {
-                            const auto registered = std::find_if(snapshot.icons.begin(), snapshot.icons.end(),
-                                [&](const auto& icon) { return SameIdentity(icon.identity, event.identity); });
-                            if (registered != snapshot.icons.end())
+                            if (FocusIconExists() && focus.Arrive(event, static_cast<std::uint64_t>(Read(state.epoch)),
+                                reinterpret_cast<std::uint64_t>(GetForegroundWindow())))
                             {
-                                wchar_t message[256]{};
-                                swprintf_s(message, L"Tray registration pid=%lu id=%lu hwnd=%p operation=%lu effectiveVersion=%lu callback=%lu",
-                                    registered->identity.process, registered->identity.id,
-                                    reinterpret_cast<HWND>(registered->identity.window), event.operation,
-                                    registered->version, registered->callback);
-                                WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+                                const auto origin = reinterpret_cast<HWND>(focus.Current()->ticket.origin);
+                                if (!PostMessageW(origin, FocusReturnMessage(), static_cast<WPARAM>(event.focusSerial), 0)) CancelFocus();
                             }
+                            continue;
                         }
-                        Changed();
+                        if (focus.Current() && (event.operation == NIM_ADD || event.operation == NIM_DELETE) &&
+                            SameIdentity(event.identity, focus.Current()->ticket.identity)) CancelFocus();
+                        if (Apply(snapshot.icons, event))
+                        {
+                            for (auto& icon : snapshot.icons) ResolveApplication(icon);
+                            if (event.operation == NIM_ADD || event.operation == NIM_SETVERSION ||
+                                event.operation == kBootstrapIcon)
+                            {
+                                const auto registered = std::find_if(snapshot.icons.begin(), snapshot.icons.end(),
+                                    [&](const auto& icon) { return SameIdentity(icon.identity, event.identity); });
+                                if (registered != snapshot.icons.end())
+                                {
+                                    wchar_t message[256]{};
+                                    swprintf_s(message, L"Tray registration pid=%lu id=%lu hwnd=%p operation=%lu effectiveVersion=%lu callback=%lu",
+                                        registered->identity.process, registered->identity.id,
+                                        reinterpret_cast<HWND>(registered->identity.window), event.operation,
+                                        registered->version, registered->callback);
+                                    WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Debug);
+                                }
+                            }
+                            Changed();
+                        }
                     }
+                };
+                drainEvents();
+                if (refreshTooltips && epoch == static_cast<std::uint64_t>(Read(state.epoch)))
+                {
+                    // First apply older queued notifications, then read native
+                    // text. Notifications arriving during the read are drained
+                    // afterwards, so DELETE/owner changes and newer tips win.
+                    const auto native = BootstrapModernTray(state.explorer, epoch, *modernAdapter);
+                    if (epoch == static_cast<std::uint64_t>(Read(state.epoch)))
+                    {
+                        std::lock_guard guard(mutex);
+                        std::size_t changed = 0;
+                        for (const auto& fresh : native)
+                            if (RefreshNativeTooltip(snapshot.icons, fresh)) { Changed(); ++changed; }
+                        wchar_t message[192]{};
+                        swprintf_s(message, L"Tray tooltip refresh captured=%zu changed=%zu epoch=%llu",
+                            native.size(), changed, static_cast<unsigned long long>(epoch));
+                        WriteDiagnosticLogEntry(message);
+                    }
+                    drainEvents();
                 }
                 if (!reportedCollection && GetTickCount64() - connectedAt >= 5000)
                 {
@@ -414,6 +444,12 @@ struct Service::Impl
 Service::Service() : impl_(std::make_unique<Impl>()) {}
 Service::~Service() = default;
 Snapshot Service::Current() const { std::lock_guard guard(impl_->mutex); return impl_->snapshot; }
+void Service::RefreshNativeTooltips()
+{
+    std::lock_guard guard(impl_->mutex);
+    impl_->nativeTooltipsRequested = true;
+    if (impl_->connection && impl_->connection->signal) SetEvent(impl_->connection->signal);
+}
 void Service::SubscribeChanges(HWND window)
 {
     std::lock_guard guard(impl_->mutex);

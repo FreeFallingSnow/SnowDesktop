@@ -2744,6 +2744,6 @@
   "settings.dock.trayAdd": "追加",
   "settings.dock.traySingleClick": "トレイアイコンをクリック",
   "settings.dock.trayDoubleClick": "トレイアイコンをダブルクリック",
-  "settings.dock.trayLaunch": "起動",
+  "settings.dock.trayLaunch": "新しいプロセスを起動",
   "settings.dock.trayInvalidTarget": "EXE ファイル名または EXE の絶対パスを入力してください。最大 128 件まで登録できます。"
 }

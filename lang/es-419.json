@@ -2744,6 +2744,6 @@
   "settings.dock.trayAdd": "Agregar",
   "settings.dock.traySingleClick": "Un clic en el ícono",
   "settings.dock.trayDoubleClick": "Doble clic en el ícono",
-  "settings.dock.trayLaunch": "Iniciar",
+  "settings.dock.trayLaunch": "Iniciar un nuevo proceso",
   "settings.dock.trayInvalidTarget": "Ingresa un nombre de archivo EXE o una ruta absoluta a un EXE. Se admiten hasta 128 entradas."
 }

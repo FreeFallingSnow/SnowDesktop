@@ -41,7 +41,11 @@ void DesktopApp::OnMouseLeave()
     POINT popupPoint{};
     if (hwnd_ && IsWindow(hwnd_) && GetCursorPos(&popupPoint) &&
         ScreenToClient(hwnd_, &popupPoint))
+    {
+        DockTrayPopupPointerMove(popupPoint);
         UpdatePopupCloseOnMouseLeave(popupPoint);
+    }
+    else DockTrayPopupPointerMove({LONG_MIN, LONG_MIN});
     POINT hoverPoint{};
     if (TryGetDesktopHoverPointFromCursor(hoverPoint)) UpdatePopupHover(hoverPoint);
     else CancelPopupHover();

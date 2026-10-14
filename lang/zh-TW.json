@@ -2744,6 +2744,6 @@
   "settings.dock.trayAdd": "新增",
   "settings.dock.traySingleClick": "按一下系統匣圖示",
   "settings.dock.trayDoubleClick": "按兩下系統匣圖示",
-  "settings.dock.trayLaunch": "啟動",
+  "settings.dock.trayLaunch": "啟動新處理程序",
   "settings.dock.trayInvalidTarget": "請輸入 EXE 檔案名稱或 EXE 的完整路徑。最多支援 128 項。"
 }

@@ -111,6 +111,13 @@ LRESULT CALLBACK ClientProc(HWND hwnd, UINT message, WPARAM wp, LPARAM lp)
             iconData.hIcon = wp == 8 ? nullptr : LoadIcon(nullptr, IDI_WARNING);
             Notify(NIM_MODIFY);
         }
+        else if (wp == 10)
+        {
+            auto& data = classicIconData[0];
+            data.uFlags = NIF_GUID | NIF_TIP;
+            wcscpy_s(data.szTip, L"SnowDesktop isolated classic bootstrap fixture");
+            if (!Shell_NotifyIconW(NIM_MODIFY, &data)) InterlockedIncrement(&state->errors);
+        }
         return 1;
     }
     if (message == WM_TIMER)
@@ -147,6 +154,7 @@ int Client(const wchar_t* mapping)
             data.guidItem = kIconGuid; data.guidItem.Data1 += i + 1;
             data.uCallbackMessage = kClassicCallback + i; data.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
             wcscpy_s(data.szTip, L"SnowDesktop isolated classic bootstrap fixture");
+            if (i == 0) data.szTip[0] = 0; // Some owners publish their text later.
             classicPresent[i] = Shell_NotifyIconW(NIM_ADD, &data) != FALSE;
             if (!classicPresent[i]) InterlockedIncrement(&state->errors);
             data.uVersion = kClassicVersions[i];
@@ -274,6 +282,15 @@ int TryRunTrayLiveTests()
         {
             Check(Read(fixture.value->errors) == 0, "classic fixtures register before the collector exists");
             Service service;
+            Check(Await([&] {
+                for (const auto& icon : service.Current().icons)
+                    if (icon.identity.process == fixture.process.dwProcessId && icon.identity.id == kClassicIconId)
+                        return !icon.pixels.empty() && icon.tip.empty();
+                return false;
+            }), "a native icon with no published tooltip is collected before any hover");
+            service.RefreshNativeTooltips();
+            Check(Read(fixture.value->classicCount[0]) == 0, "opening metadata refresh sends no synthetic hover callback");
+            fixture.Command(10);
             for (unsigned i = 0; i < std::size(kClassicVersions); ++i)
             {
                 std::optional<Icon> collected;
