@@ -142,7 +142,8 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
         Require(notification.right >= width - static_cast<LONG>(12.f * scale) && notification.right <= width,
             "merged notifications must be anchored to the complete bar's right edge");
         for (const auto& item : items)
-            if (item.key != "clock" && item.key != "notifications" && !IsRectEmpty(&item.bounds))
+            if (item.key != "clock" && item.key != "notifications" &&
+                item.action != StatusBarAction::ShowDesktop && !IsRectEmpty(&item.bounds))
                 Require(item.bounds.right <= (dateVisible ? clock->bounds.left : notification.left),
                     "a tray or system item was placed after the merged date and notifications");
     }
@@ -182,6 +183,16 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
     {
         const auto& item = items[i]; const auto& r = item.bounds;
         if (IsRectEmpty(&r)) continue;
+        const bool showDesktop = item.action == StatusBarAction::ShowDesktop;
+        if (showDesktop)
+        {
+            Require(r.left == width - static_cast<LONG>(std::ceil(8.f * scale)) && r.right == width &&
+                r.top == 0 && r.bottom == height && item.text.empty() && item.glyph.empty() && !item.tip.empty(),
+                "show desktop must have an invisible full-height right-edge target with a tooltip");
+            const auto invocation = ResolveStatusBarInvocation(items, i, false);
+            Require(invocation && invocation->action == StatusBarAction::ShowDesktop,
+                "the rendered right edge must resolve to the show-desktop action");
+        }
         if (merged)
         {
             const auto center = MergedStatusBarCenter(width, height, scale); RECT overlap{};
@@ -198,7 +209,7 @@ void CheckLayout(IDWriteFactory* text, const std::vector<StatusBarItem>& items, 
                     "system information wastes horizontal space");
         }
         Require(r.left >= 0 && r.top >= 0 && r.right <= width && r.bottom <= height, "status bar item escaped its viewport");
-        if (merged)
+        if (merged && !showDesktop)
         {
             Require(r.bottom - r.top <= std::ceil((item.key == "clock" ? 40.f : 32.f) * scale) &&
                 std::abs(r.top + r.bottom - height) <= 1,
@@ -322,6 +333,12 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
             Require(height + 2 * request.padding <= request.canvasHeight, "status bar preview canvas is too short");
             const int left = (request.canvasWidth - width) / 2, top = (request.canvasHeight - height) / 2;
             auto items = BuildStatusBarItems(settings, data);
+            auto disabledEdge = settings; disabledEdge.showDesktop = false;
+            const auto disabledItems = BuildStatusBarItems(disabledEdge, data);
+            Require(std::none_of(disabledItems.begin(), disabledItems.end(), [](const auto& item) {
+                return item.action == StatusBarAction::ShowDesktop;
+            }) && !SameStatusBarContent(items, disabledItems),
+                "disabling show desktop must remove its target and refresh hit geometry");
             if (settings.batteryPercentage)
             {
                 const auto& control = Item(items, "controlCenter");
@@ -582,8 +599,9 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 const auto compactLayout = [&](bool date, bool merged, int logicalWidth, float testScale,
                     bool search = true, bool taskView = true, int mergedHeight = 64,
                     bool rightAligned = false, bool seconds = false, bool dockQuickSearch = true,
-                    bool percentage = false) {
+                    bool percentage = false, bool showDesktop = true) {
                     auto compactSettings = settings; compactSettings.clock = date;
+                    compactSettings.showDesktop = showDesktop;
                     compactSettings.batteryPercentage = percentage;
                     compactSettings.timeNotificationRightAligned = rightAligned;
                     compactSettings.clockShowSeconds = seconds;
@@ -604,8 +622,13 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     Require(context->CreateBitmap(D2D1::SizeU(testWidth, testHeight), nullptr, 0, targetProperties, &scratch));
                     context->SetTarget(scratch.Get()); context->SetTransform(D2D1::Matrix3x2F::Identity());
                     context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
+                    std::optional<std::size_t> desktopIndex;
+                    for (std::size_t i = 0; i < compact.size(); ++i)
+                        if (compact[i].action == StatusBarAction::ShowDesktop) desktopIndex = i;
+                    Require(desktopIndex.has_value() == showDesktop, "show-desktop target must respect the setting");
                     const auto content = DrawStatusBarContent(context.Get(), text, compact, testWidth, testHeight,
-                        testScale, appearance, palette, {}, false, 0, merged, compactSettings.timeNotificationRightAligned,
+                        testScale, appearance, palette, desktopIndex, desktopIndex.has_value(), desktopIndex.value_or(0),
+                        merged, compactSettings.timeNotificationRightAligned,
                         nullptr, dockQuickSearch);
                     const auto end = context->EndDraw(); context->SetTarget(nullptr); Require(content); Require(end);
                     const auto dockCenter = MergedStatusBarCenter(static_cast<LONG>(testWidth), static_cast<LONG>(testHeight), testScale);
@@ -614,6 +637,31 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                         static_cast<LONG>(std::ceil(28.f * testScale)) + controls.right - controls.left;
                     CheckLayout(text, compact, static_cast<int>(testWidth), static_cast<int>(testHeight), testScale, merged,
                         notificationFits, rightAligned, dockQuickSearch);
+                    if (desktopIndex)
+                    {
+                        // Inspect the actual content surface, including hover and
+                        // keyboard focus, rather than relying on empty glyph text.
+                        ComPtr<ID2D1Bitmap1> edgeReadback;
+                        const auto read = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ |
+                            D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96);
+                        Require(context->CreateBitmap(D2D1::SizeU(testWidth, testHeight), nullptr, 0, read, &edgeReadback));
+                        Require(edgeReadback->CopyFromBitmap(nullptr, scratch.Get(), nullptr));
+                        D2D1_MAPPED_RECT edgeMapped{}; Require(edgeReadback->Map(D2D1_MAP_OPTIONS_READ, &edgeMapped));
+                        bool invisible = true;
+                        const auto& bounds = compact[*desktopIndex].bounds;
+                        for (LONG y = bounds.top; y < bounds.bottom; ++y)
+                        {
+                            const auto* row = reinterpret_cast<const std::uint32_t*>(
+                                edgeMapped.bits + static_cast<std::size_t>(y) * edgeMapped.pitch);
+                            for (LONG x = bounds.left; x < bounds.right; ++x)
+                                invisible = invisible && (row[x] >> 24) == 0;
+                        }
+                        edgeReadback->Unmap();
+                        Require(invisible, "show desktop must not paint a button, strip, hover fill or focus outline");
+                    }
+                    else Require(!HitTestStatusBarItems(compact,
+                        {static_cast<LONG>(testWidth) - 1, static_cast<LONG>(testHeight) / 2}),
+                        "disabled show-desktop edge must return to blank-area behavior");
                     if (search && (!merged || !dockQuickSearch) && logicalWidth >= 640)
                     {
                         const auto& entry = Item(compact, "quickSearch");
@@ -648,6 +696,8 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                     compactLayout(true, true, 1920, rightScale, false, true, 64, false, true, false);
                 }
                 compactLayout(false, false, 640, scale);
+                compactLayout(true, false, 1920, scale, true, true, 64, false, false, true, false, false);
+                compactLayout(true, true, 1920, scale, true, true, 64, false, false, true, false, false);
                 compactLayout(false, false, 640, scale, false);
                 compactLayout(false, true, 640, scale);
                 compactLayout(false, true, 640, scale, false);
@@ -760,7 +810,7 @@ native_component_preview::Result ExportStatusBarPreview(const native_component_p
                 };
                 for (const auto& item : items)
                 {
-                    if (item.icon || item.key == "controlCenter") continue;
+                    if (item.icon || item.key == "controlCenter" || item.action == StatusBarAction::ShowDesktop) continue;
                     centeredInk(item.bounds, item.key,
                         item.key == "notifications" && item.glyph != status_bar_glyphs::kUnknown,
                         item.key == "clock" || item.key == "cpu" || item.key == "memory" ||
