@@ -96,6 +96,7 @@ Result StreamHttpGet(const Options& options,
 
 struct HttpRequestOptions
 {
+    static constexpr std::uint32_t MaximumResponseBytes = 4u * 1024u * 1024u;
     std::wstring widgetId;
     std::wstring url;
     std::wstring method = L"GET";

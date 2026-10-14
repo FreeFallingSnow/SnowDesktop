@@ -125,8 +125,10 @@ private:
             }
             else
             {
-                const std::string body = request.starts_with("GET /large ")
-                    ? std::string(6000, 'x') : "<rss><channel><title>Local feed</title></channel></rss>";
+                const std::string body = path == "/large" ? std::string(6000, 'x') :
+                    path == "/rss-large" ? std::string(2 * 1024 * 1024, 'r') :
+                    path == "/rss-too-large" ? std::string(4 * 1024 * 1024 + 1, 'r') :
+                    "<rss><channel><title>Local feed</title></channel></rss>";
                 response = "HTTP/1.1 200 OK\r\nContent-Length: " +
                     std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
             }
@@ -235,6 +237,21 @@ inline int RunHttpNetworkIntegrationTests()
     response = Fetch(options);
     expect(response.error == "Response too large" && response.body.size() == 4096,
         "local responses remain bounded by the caller's response limit", response);
+
+    options.url = origin.Url(L"/rss-large");
+    options.maximumResponseBytes = 1024 * 1024;
+    response = Fetch(options);
+    expect(response.error == "Response too large" && response.body.size() == 1024 * 1024,
+        "existing one-MiB callers keep their response ceiling", response);
+    options.maximumResponseBytes = 4 * 1024 * 1024;
+    response = Fetch(options);
+    expect(response.error.empty() && response.status == 200 &&
+        response.body == std::string(2 * 1024 * 1024, 'r'),
+        "explicit large-response requests can receive a two-MiB feed", response);
+    options.url = origin.Url(L"/rss-too-large");
+    response = Fetch(options);
+    expect(response.error == "Response too large" && response.body.size() == 4 * 1024 * 1024,
+        "the extended response ceiling still rejects over-limit feeds", response);
 
     // Real requests protect against duplicate writes, endless retries and
     // returning a partial/old failure body after a successful direct attempt.

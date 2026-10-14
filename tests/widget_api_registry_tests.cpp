@@ -461,6 +461,8 @@ void TestV2Contract()
             snowdesktop::widget_api::SupportsFeature(
                 "task.network.request") &&
             snowdesktop::widget_api::SupportsFeature(
+                "task.network.largeResponse") &&
+            snowdesktop::widget_api::SupportsFeature(
                 "task.network.standardHttp") &&
             snowdesktop::widget_api::SupportsFeature(
                 "task.network.retryDirect") &&

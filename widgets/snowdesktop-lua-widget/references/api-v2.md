@@ -2552,7 +2552,12 @@ HTTPS 且不使用系统代理。组件依赖 HTTP、本地服务或代理时应
 - `body`：普通字符串字节或一个 secret descriptor，注入后不超过 64 KiB；
 - `timeoutMs`：1000–30000，默认 15000；
 - `cacheSeconds`：0–86400，默认 0，缓存按实例、请求与响应上限隔离；
-- `maxBytes`：4096–1048576，默认 524288。
+- `maxBytes`：4096–4194304，默认 524288。大于 1048576 的上限对应
+  `task.network.largeResponse`；组件须探测该 feature，旧宿主和同版本早期构建缺少时
+  将请求上限保持在 1048576 以内，或将该 feature 声明为 required。现有调用的默认值、
+  调用方较小上限及 `responseTooLarge` 行为不变，无需提升 `apiVersion`。组件仍须在
+  16 MiB Lua 内存和执行配额内处理响应，避免保存不需要的全文内容。官方社区组件应先
+  发布支持该 feature 的宿主，再发布使用更大上限的组件。
 - `retryDirect`：布尔值，默认 `false`；仅允许无请求体的 GET/HEAD。设为 `true` 时，首次按
   Windows 代理设置请求；传输失败（含响应读取失败）或收到 HTTP 4xx/5xx 后，最多以无代理
   WinHTTP 会话从原始 URL 重试一次。仍执行 TLS 证书校验、每跳域名/同源约束和响应大小限制；

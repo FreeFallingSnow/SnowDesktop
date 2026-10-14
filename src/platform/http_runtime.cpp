@@ -19,8 +19,6 @@
 
 namespace
 {
-constexpr DWORD kMaxResponseBytes = 1024 * 1024;
-
 bool IsBlockedIpv4(const IN_ADDR& address)
 {
     const std::uint32_t value = ntohl(address.S_un.S_addr);
@@ -1035,7 +1033,8 @@ HttpResponse AsyncHttpService::ExecuteAttempt(int id, const HttpRequestOptions& 
         }
 
         const DWORD maximumResponseBytes = std::clamp<DWORD>(
-            options.maximumResponseBytes, 4096, kMaxResponseBytes);
+            options.maximumResponseBytes, 4096,
+            HttpRequestOptions::MaximumResponseBytes);
         while (!token.stop_requested() &&
             response.body.size() <= maximumResponseBytes)
         {

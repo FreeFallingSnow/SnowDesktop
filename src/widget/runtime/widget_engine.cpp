@@ -7224,7 +7224,8 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
             !readBoundedInteger(
                 "cacheSeconds", 0, 0, 86400, cacheSeconds) ||
             !readBoundedInteger(
-                "maxBytes", 512 * 1024, 4096, 1024 * 1024,
+                "maxBytes", 512 * 1024, 4096,
+                HttpRequestOptions::MaximumResponseBytes,
                 maxBytes))
         {
             return luaL_error(state,

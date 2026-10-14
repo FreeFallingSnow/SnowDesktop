@@ -2068,7 +2068,7 @@ function data.subscribe(topic, options) end
 ---@field body? string|SnowNetworkSecretDescriptor Raw bytes up to 64 KiB; a descriptor injects one host-managed secret segment.
 ---@field timeoutMs? integer 1000 through 30000; defaults to 15000.
 ---@field cacheSeconds? integer 0 through 86400; defaults to 0.
----@field maxBytes? integer 4096 through 1048576; defaults to 524288.
+---@field maxBytes? integer 4096 through 4194304; defaults to 524288. Values above 1048576 require task.network.largeResponse; omit or cap at 1048576 on older hosts.
 
 ---@class SnowNetworkSecretDescriptor
 ---@field secretRef string Opaque reference returned by storage.get for a declared password setting in this instance.

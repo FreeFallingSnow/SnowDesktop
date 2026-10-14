@@ -1285,6 +1285,40 @@ return widget.define({
         "production Lua accepts optional empty secret header affixes and rejects invalid affixes");
 }
 
+void CheckNetworkResponseBounds(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root)
+{
+    const auto source = root / L"network-bounds-widget";
+    Check(std::filesystem::create_directory(source), "network bounds fixture is isolated");
+    Write(source / L"widget.json", R"json({
+  "schemaVersion":2, "apiVersion":2, "dataVersion":1,
+  "id":"286c0e36-1cd0-47ba-b523-d4b92776e42f",
+  "slug":"network-bounds-fixture", "version":"1.0.0", "entry":"main.lua",
+  "minHostVersion":"1.0.11.0", "name":"Network bounds fixture",
+  "author":"SnowDesktop", "license":"MIT", "permissions":[],
+  "defaultSize":{"columns":2,"rows":1},
+  "requiredFeatures":["draw.immediate","lifecycle.model","task.network.request","task.network.largeResponse"]
+})json");
+    for (const int maximum : {4096, 1048576, 4194304, 4194305})
+    {
+        // The real Lua argument parser runs before permission rejection.
+        // This fixture needs no internet access; all acceptance assertions are C++.
+        Write(source / L"main.lua", "return widget.define({setup=function() "
+            "task.start('network.request',{url='https://example.com/rss',maxBytes=" +
+            std::to_string(maximum) + "}); return {} end, render=function() end})");
+        const auto output = root / (L"network-bounds-" + std::to_wstring(maximum) + L".png");
+        const auto [code, json] = Run(snowwidget,
+            {L"preview", source.wstring(), output.wstring(), L"--host", host.wstring()});
+        if (maximum <= 4194304)
+            Check(code == 0 && json.find("\"ok\":true") != std::string::npos &&
+                    std::filesystem::is_regular_file(output),
+                "production task parser accepts the declared response bounds");
+        else
+            Check(code != 0 && json.find("numeric options are out of range") != std::string::npos,
+                "production task parser rejects one byte above the four-MiB ceiling");
+    }
+}
+
 void CheckWhaleSettingsChanges(const std::filesystem::path& snowwidget,
     const std::filesystem::path& host, const std::filesystem::path& root,
     const std::filesystem::path& repository)
@@ -3030,6 +3064,7 @@ int wmain(int argc, wchar_t** argv) try
         CheckRemindersInteraction(snowwidget, host, temporary.path, repository);
         CheckTextInkMetrics(snowwidget, host, temporary.path);
         CheckSecretHeaderDescriptors(snowwidget, host, temporary.path);
+        CheckNetworkResponseBounds(snowwidget, host, temporary.path);
         CheckWhaleSettingsChanges(snowwidget, host, temporary.path, repository);
 
         const auto environmentSource =

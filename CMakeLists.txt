@@ -2234,7 +2234,12 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopBuiltinWidgetSourceContractTests
         builtin_widget_source_contract
-        SOURCES tests/builtin_widget_source_contract_tests.cpp
+        SOURCES
+            tests/builtin_widget_source_contract_tests.cpp
+            tests/widget/rss_reader_tests.cpp
+            src/widget/runtime/lua_runtime.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopLua
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract lua render storage widget)
 
