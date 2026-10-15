@@ -317,15 +317,15 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
             // The settings caller freezes its local strategy separately from the
             // shared package. Offline callers default to showing every background.
             auto style = rootTheme->icon; style.mode = iconProcessingMode == 0 ? 0 : 1;
-            const auto rendered = icon_beautify::Render(source, side, side, style,
-                style.mode == 0 ? icon_beautify::DetectEdgeFill(source, side, side) : std::nullopt);
+            const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(source, side, side) : std::nullopt;
+            const auto rendered = icon_beautify::Render(source, side, side, style, edge);
             const int left = 160 + sample % 2 * 448, top = 160 + sample / 2 * 448;
             for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
             {
                 const auto pixel = rendered[static_cast<std::size_t>(y) * side + x];
                 const auto offset = static_cast<std::size_t>(top + y) * kCoverSize + left + x;
                 auto& destination = canvas.pixels[offset];
-                if (glass)
+                if (glass && !edge)
                 {
                     const unsigned coverage = icon_beautify::ShapeMaskAlpha(rootTheme->icon.shape, x, y, side, side);
                     std::uint32_t backgroundPixel = 0xff000000u;

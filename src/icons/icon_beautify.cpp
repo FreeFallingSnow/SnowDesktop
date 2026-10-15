@@ -530,9 +530,14 @@ std::uint32_t ApplyFilter(std::uint32_t pixel,
     }
     else if (settings.filterMode == 2)
     { r = settings.filterTintR; g = settings.filterTintG; b = settings.filterTintB; }
-    r = originalR + (r - originalR) * settings.filterStrength;
-    g = originalG + (g - originalG) * settings.filterStrength;
-    b = originalB + (b - originalB) * settings.filterStrength;
+    // Preserve the legacy byte rounding for migrated settings. New treatments
+    // keep their exact endpoint, avoiding one-byte variation in flat mono.
+    if (settings.filterMode == 0 || settings.filterStrength < 1.f)
+    {
+        r = originalR + (r - originalR) * settings.filterStrength;
+        g = originalG + (g - originalG) * settings.filterStrength;
+        b = originalB + (b - originalB) * settings.filterStrength;
+    }
     return PackPremultiplied(
         static_cast<int>(std::round(std::clamp(r, 0.0f, 1.0f) * 255.0f)),
         static_cast<int>(std::round(std::clamp(g, 0.0f, 1.0f) * 255.0f)),
