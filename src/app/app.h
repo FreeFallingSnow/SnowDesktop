@@ -786,6 +786,7 @@ private:
         snowdesktop::InlineTooltipPaintDamage tooltipPaintDamage;
         RECT guideOcclusionRect{};
         bool active = false;
+        snowdesktop::desktop_hover_rules::RetainedDockLeaveTracking retainedLeaveTracking;
         // Promotion is per monitor. Selection only identifies the Host that
         // currently owns pointer/keyboard-associated actions.
         bool promoted = false;

@@ -1171,6 +1171,46 @@ void TestDockDesktopHoverHandoff()
         "negative control must reject the old route that restarts hover and leaves desktop tracking unarmed");
 }
 
+void TestRetainedDockLeaveDoesNotFeedBack()
+{
+    hoverRules::RetainedDockLeaveTracking tracking;
+    snowdesktop::dock_magnification::HoverEntryAnimation entry;
+    entry.SetHovered(true, 1000.0, 1.0);
+    entry.Advance(1160.0);
+    int contentSubscriptions = 0, desktopSubscriptions = 0;
+    const auto leave = [&](bool content, bool backdrop, bool desktop, int x, int y) {
+        const bool retained = hoverRules::RetainDockSurfaceMouseLeave(
+            content, backdrop, desktop, [&](bool trackContent) {
+                if (!hoverRules::TryRearmRetainedDockLeave(tracking, trackContent, x, y)) return;
+                if (trackContent) ++contentSubscriptions;
+                else ++desktopSubscriptions;
+            });
+        if (!retained) entry.SetHovered(false, 1200.0, 1.0);
+        return retained;
+    };
+    // Model User32 immediately posting another WM_MOUSELEAVE after each
+    // subscription at the recorded stationary bottom-edge position.
+    for (int i = 0; i < 256; ++i)
+        Check(leave(true, false, false, 1402, 1439),
+            "repeated native leaves must retain the logical Dock hover");
+    Check(contentSubscriptions == 1 && entry.FocusScale(2.0f) == 2.0f,
+        "stationary retained leaves must not continuously resubscribe or restart magnification");
+    hoverRules::ObserveRetainedDockLeavePointer(tracking, 1402, 1439);
+    Check(leave(true, false, false, 1402, 1439) && contentSubscriptions == 1,
+        "a synthetic move at the same position must not reopen the leave loop");
+    Check(leave(false, true, false, 1402, 1439) && contentSubscriptions == 1 &&
+        desktopSubscriptions == 0, "backdrop handoff retains hover without subscribing content");
+    for (int i = 0; i < 256; ++i)
+        Check(leave(false, false, true, 1402, 1439), "desktop handoff must retain hover");
+    Check(desktopSubscriptions == 1,
+        "the desktop surface gets one independent subscription at a stationary handoff");
+    hoverRules::ObserveRetainedDockLeavePointer(tracking, 1403, 1439);
+    Check(leave(true, false, false, 1403, 1439) && contentSubscriptions == 2,
+        "real pointer movement restores the next native leave subscription");
+    Check(!leave(false, false, false, 1403, 1439) && entry.FocusScale(2.0f) == 1.0f,
+        "a real exit still clears Dock magnification");
+}
+
 void TestDragInputSampling()
 {
     Check(
@@ -2154,6 +2194,7 @@ int main()
     TestWidgetPreviewSourceVisibility();
     TestDesktopHoverDeactivation();
     TestDockDesktopHoverHandoff();
+    TestRetainedDockLeaveDoesNotFeedBack();
     TestDragInputSampling();
     TestPopupIconLoadCancellationRules();
     TestDragHintPlacementRules();
