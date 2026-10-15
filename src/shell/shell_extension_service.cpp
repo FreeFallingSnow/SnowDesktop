@@ -5,7 +5,7 @@
 #include "shell_extension_demand.h"
 #include "shell_extension_nvidia_compat.h"
 #include "shell_context_menu_invoke.h"
-#include <atomic>
+#include "shell_catalogue_workers.h"
 #include <condition_variable>
 #include <fstream>
 #include <future>
@@ -209,7 +209,7 @@ struct MenuService::Impl
     Key inspectedSelection;
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false, catalogueStale = false;
     bool foregroundScanRequested = false;
-    std::atomic_bool foregroundScanDemand{false};
+    CatalogueForegroundDemand foregroundScanDemand;
     std::uint64_t clock = 0;
     std::uint64_t registryRevision = 0, checkedRegistryRevision = 0, failedRegistryRevision = 0, scanRegistryRevision = 0;
     struct ScopeVerification { std::future<std::uint64_t> scan; std::uint64_t checked = 0, signature = 0, attempt = 0, scanRevision = 0; };
@@ -249,7 +249,7 @@ struct MenuService::Impl
     // only an outstanding later scan retains demand for its own launch.
     void RequestForegroundScan()
     {
-        if (scanning) foregroundScanDemand.store(true, std::memory_order_release);
+        if (scanning) foregroundScanDemand.Promote();
         if (scanRequested || catalogueStale || (!scanning && !catalogue.revision))
             foregroundScanRequested = true;
     }
@@ -1000,7 +1000,7 @@ struct MenuService::Impl
                 scanRegistryRevision = registryRevision;
                 scanStarted = GetTickCount64();
                 failedRegistryRevision = 0;
-                foregroundScanDemand.store(foregroundScanRequested, std::memory_order_release);
+                foregroundScanDemand.Reset(foregroundScanRequested);
                 foregroundScanRequested = false;
                 scanRequested = catalogueStale = false; scanning = requested = true;
             }

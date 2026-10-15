@@ -1,6 +1,5 @@
 #pragma once
 #include "shell_extension_menu.h"
-#include <atomic>
 #include <filesystem>
 #include <array>
 
@@ -51,8 +50,9 @@ constexpr unsigned ContextBit(Context context) { return 1u << static_cast<unsign
 Catalogue ReadCatalogue(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
 // Background refresh uses fewer workers and expands to the normal limit when
 // a foreground query raises demand. The ordinary reader keeps its full budget.
+class CatalogueForegroundDemand;
 Catalogue ReadCatalogueWithForegroundDemand(HKEY classes, bool packages,
-                                            const std::atomic_bool &foreground);
+                                            CatalogueForegroundDemand &foreground);
 // Same complete folder registration inputs as the full scan, without
 // enumerating unrelated file classes. Metadata only; no handler activation.
 std::uint64_t ReadFolderCatalogueRevision(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);

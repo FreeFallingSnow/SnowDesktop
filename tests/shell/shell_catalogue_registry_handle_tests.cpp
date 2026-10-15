@@ -195,9 +195,9 @@ std::vector<std::wstring> Types(const ext::Catalogue &catalogue, const std::stri
     return row->types;
 }
 
-void CheckCatalogueWorkerBudget(bool foregroundAtStart, bool promote, int expected)
+void CheckCatalogueWorkerBudget(bool foregroundAtStart, bool promote, int expected, bool fail = false)
 {
-    std::atomic_bool foreground{foregroundAtStart};
+    ext::CatalogueForegroundDemand foreground{foregroundAtStart};
     std::atomic_int entered{0};
     std::mutex mutex;
     std::condition_variable changed;
@@ -208,6 +208,7 @@ void CheckCatalogueWorkerBudget(bool foregroundAtStart, bool promote, int expect
             changed.notify_all();
             std::unique_lock lock(mutex);
             changed.wait(lock, [&] { return release; });
+            if (fail) throw std::runtime_error("injected catalogue worker failure");
         });
     });
     auto waitFor = [&](int count) {
@@ -216,7 +217,7 @@ void CheckCatalogueWorkerBudget(bool foregroundAtStart, bool promote, int expect
             [&] { return entered.load() >= count; });
     };
     const bool initialReady = waitFor(foregroundAtStart ? 8 : 2);
-    if (promote) foreground.store(true);
+    if (promote) foreground.Promote();
     const bool promoted = !promote || waitFor(8);
     {
         std::lock_guard lock(mutex);
@@ -224,7 +225,7 @@ void CheckCatalogueWorkerBudget(bool foregroundAtStart, bool promote, int expect
     }
     changed.notify_all();
     const bool completed = scan.get();
-    Check(initialReady && promoted && completed && entered.load() == expected,
+    Check(initialReady && promoted && completed == !fail && entered.load() == expected,
         "background catalogue uses two workers and foreground demand restores eight");
 }
 }
@@ -234,6 +235,7 @@ void TestCatalogueRegistryHandles()
     CheckCatalogueWorkerBudget(false, false, 2);
     CheckCatalogueWorkerBudget(false, true, 8);
     CheckCatalogueWorkerBudget(true, false, 8);
+    CheckCatalogueWorkerBudget(false, false, 2, true);
     PrivateRegistry registry;
     {
         OwnedKey classes(registry.value, L"Classes"), user(registry.value, L"User");
@@ -259,7 +261,7 @@ void TestCatalogueRegistryHandles()
             "isolated classes mapping is active before production catalogue reads");
 
         const auto first = ext::ReadCatalogue(HKEY_CLASSES_ROOT, false);
-        std::atomic_bool foreground{false};
+        ext::CatalogueForegroundDemand foreground;
         Check(snowdesktop::settings_ipc::Pack(ext::ReadCatalogueWithForegroundDemand(
             HKEY_CLASSES_ROOT, false, foreground)) == snowdesktop::settings_ipc::Pack(first),
             "throttled background catalogue preserves the full association inventory");

@@ -649,7 +649,7 @@ struct FileRoot
 std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
     HKEY classes, const std::vector<std::wstring> &roots,
     std::map<std::wstring, std::vector<std::wstring>> &sourceValues,
-    const std::atomic_bool *foreground)
+    CatalogueForegroundDemand *foreground)
 {
     std::map<std::wstring, std::vector<std::wstring>> types;
     std::optional<Key> choices;
@@ -715,7 +715,7 @@ std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
     return types;
 }
 void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
-                   const std::atomic_bool *foreground)
+                   CatalogueForegroundDemand *foreground)
 {
     const auto files = ContextBit(Context::File);
     auto serial = [&] { for (const auto &root : roots) scanner.Root(root.path, files, root.types); };
@@ -747,7 +747,7 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
         for (auto &row : result) scanner.Add(std::move(row.first), row.second);
 }
 }
-static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, const std::atomic_bool *foreground)
+static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegroundDemand *foreground)
 {
     MenuTiming timing("catalogue");
     Scanner scanner{classes};
@@ -799,7 +799,7 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
     return ReadCatalogueImpl(classes, packages, nullptr);
 }
 Catalogue ReadCatalogueWithForegroundDemand(HKEY classes, bool packages,
-                                            const std::atomic_bool &foreground)
+                                            CatalogueForegroundDemand &foreground)
 {
     return ReadCatalogueImpl(classes, packages, &foreground);
 }
