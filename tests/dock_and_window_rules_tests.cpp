@@ -14,6 +14,7 @@
 #include "dock/dock_folder_rules.h"
 #include "dock/dock_refresh_cache.h"
 #include "dock/dock_folder_order_cases.h"
+#include "dock/dock_task_window_filter_tests.h"
 #include "dock/dock_process_snapshot.h"
 #include "common/bounded_lru_cache.h"
 #include "diagnostics/slow_call_limiter.h"
@@ -1949,12 +1950,21 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 &&
+        (std::string_view(argv[1]) == "--dock-taskbar-exclusion" ||
+         std::string_view(argv[1]) == "--dock-taskbar-exclusion-negative-control"))
+    {
+        snowdesktop::tests::dock_task_window_filter::Run(Check,
+            std::string_view(argv[1]) == "--dock-taskbar-exclusion-negative-control");
+        return failures == 0 ? 0 : 1;
+    }
     if (argc == 2 && std::string_view(argv[1]) == "--dock-folder-order-negative-control")
     {
         snowdesktop::tests::dock_folder_order::Run(Check, true);
         return failures == 0 ? 0 : 1;
     }
     snowdesktop::tests::dock_folder_order::Run(Check);
+    snowdesktop::tests::dock_task_window_filter::Run(Check);
     {
         namespace attention = snowdesktop::dock_window_attention;
         attention::Tracker tracker;

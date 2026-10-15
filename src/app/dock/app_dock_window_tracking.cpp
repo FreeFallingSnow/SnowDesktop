@@ -393,6 +393,12 @@ void DesktopApp::PruneDockWindowAttention(HWND acknowledgedWindow)
 
 void DesktopApp::HandleDockShellHook(WPARAM event, HWND window)
 {
+    // AddTab/DeleteTab can change taskbar membership without showing, hiding,
+    // or destroying the HWND. Coalesce their Shell notifications into the
+    // ordinary discovery pass so an already visible task is reclassified too.
+    if (event == HSHELL_WINDOWCREATED || event == HSHELL_WINDOWDESTROYED)
+        dockWindowListChangedTick_.fetch_add(1, std::memory_order_relaxed);
+
     if (event == HSHELL_FLASH)
     {
         if (!window || !IsWindow(window)) return;
