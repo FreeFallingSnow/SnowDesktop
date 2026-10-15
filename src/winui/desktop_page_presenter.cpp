@@ -688,6 +688,7 @@ struct DesktopPagePresenter::Impl
     std::uint64_t categoryRevision = 0;
     std::uint64_t personalizationRevision = 0;
     bool hasSnapshot = false;
+    bool beautifyEnabled = false;
     bool updatingControls = false;
     bool active = false;
     bool categoryPageActive = false;
@@ -879,6 +880,7 @@ struct DesktopPagePresenter::Impl
             beautifyCard, cardStyle, iconBeautificationRoot);
         beautifyCard.title.Visibility(mux::Visibility::Collapsed);
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
+        AppendCombo(beautifyCard, beautifyModeRow, beautifyMode);
         iconThemes = std::make_unique<ThemeLibraryControls>(localize, "icon", false, beautifyPreset, 6, 5, cardStyle);
         beautifyPresetRow.controlHost.Content(nullptr);
         beautifyPresetRow.controlHost.Content(iconThemes->SelectionContent());
@@ -889,7 +891,6 @@ struct DesktopPagePresenter::Impl
         beautifyCard.content.Children().Append(iconThemes->SaveContent());
         iconThemes->SetCustomContent({beautifyAdvanced});
 
-        AppendAdvancedCombo(beautifyModeRow, beautifyMode);
         backgroundStart = MakeBeautifyColor(
             [](IconBeautifySettings& settings,
                const winrt::Windows::UI::Color& color) {
@@ -1055,7 +1056,6 @@ struct DesktopPagePresenter::Impl
         muxc::StackPanel geometry;
         geometry.Spacing(8);
         beautifyAdvanced.Children().Append(geometry);
-        beautifyCard.content.Children().InsertAt(0, beautifyModeRow.root);
         geometry.Children().Append(shapeRow.root);
         geometry.Children().Append(contentScale->root);
         beautifySections.Initialize(beautifyAdvanced, true, false, false);
@@ -1684,6 +1684,7 @@ struct DesktopPagePresenter::Impl
 
     void UpdateConditionalStates()
     {
+        SetDependentVisibility(beautifyModeRow.root, beautifyEnabled, beautifyPreset);
         SetDependentVisibility(edgeLightEditor->Content(), edgeReflection.IsOn(), edgeReflection);
         SetDependentVisibility(glassBlurRadius->root, glassEnabled.IsOn(), glassEnabled);
         SetDependentVisibility(reflectionWidth->root, edgeReflection.IsOn(), edgeReflection);
@@ -1717,6 +1718,7 @@ struct DesktopPagePresenter::Impl
             std::clamp(settings.shortcutArrowMode, 0, 2));
 
         const IconBeautifySettings& value = settings.iconBeautify;
+        beautifyEnabled = value.enabled;
         beautifyPreset.SelectedIndex(IndexOf(kBeautifyPresets, value.preset));
         beautifyMode.SelectedIndex(std::clamp(value.mode, 0, 1));
         backgroundStart->SetColor(MakeColor(
@@ -2128,7 +2130,12 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.iconBeautify" ||
             id == "desktop.iconBeautify.preset")
             return beautifyPreset;
-        if (id == "desktop.iconBeautify.mode") return beautifyMode;
+        if (id == "desktop.iconBeautify.mode")
+        {
+            if (!beautifyEnabled)
+                return prerequisiteTarget(beautifyPreset, "enable", beautifyPresetRow.label.Text().c_str());
+            return beautifyMode;
+        }
         if (id == "desktop.iconBeautify.backgroundSource") return appearanceTarget(backgroundSource);
         if (id == "desktop.iconBeautify.filterMode") return dependentTarget(filterEnabled.IsOn(), filterMode, filterEnabled);
         if (id == "desktop.iconBeautify.backgroundColor")
