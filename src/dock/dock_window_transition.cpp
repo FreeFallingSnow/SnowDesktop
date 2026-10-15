@@ -1115,15 +1115,17 @@ bool DockWindowTransition::CreateSharedWindowImage()
 
 void DockWindowTransition::ClearGenieStrips()
 {
-    if (genieStrips_.empty())
+    if (genieStrips_.empty() && attractionTriangles_.empty())
         return;
     if (compositionVisual_)
         compositionVisual_->RemoveAllVisuals();
     for (auto& strip : genieStrips_)
         strip->SetContent(nullptr);
     genieStrips_.clear();
+    for (auto &triangle : attractionTriangles_)
+        triangle->RemoveAllVisuals();
+    attractionTriangles_.clear();
     genieWindowImages_.clear();
-    attractionCellEffects_.clear();
     if (compositionVisual_)
     {
         compositionVisual_->SetContent(nullptr);
@@ -1135,13 +1137,14 @@ void DockWindowTransition::ClearGenieStrips()
 
 bool DockWindowTransition::CreateGenieStrips()
 {
+    if (effect_ == 4)
+        return CreateAttractionMesh();
     if (!compositionVisual_ || !compositionSharedWindowActive_ || !compositionDevice_)
     {
         imageResult_ = E_UNEXPECTED;
         return false;
     }
-    const std::size_t count =
-        effect_ == 4 ? snowdesktop::dock_attraction::CellCount : snowdesktop::dock_genie::StripCount;
+    const std::size_t count = snowdesktop::dock_genie::StripCount;
     genieStrips_.reserve(count);
     for (std::size_t i = 0; i < count; ++i)
     {
@@ -1156,6 +1159,8 @@ bool DockWindowTransition::CreateGenieStrips()
             compositionSourceRegion_.left + crop.right, compositionSourceRegion_.top + crop.bottom};
         snowdesktop::dock_thumbnail::SharedVisual image;
         HRESULT hr = image.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), size, &source);
+        if (SUCCEEDED(hr) && !image.visual)
+            hr = E_UNEXPECTED;
         Microsoft::WRL::ComPtr<IDCompositionVisual3> strip = image.visual;
         if (FAILED(hr) || !strip)
         {
@@ -1172,21 +1177,97 @@ bool DockWindowTransition::CreateGenieStrips()
         if (SUCCEEDED(hr)) hr = strip->SetBorderMode(DCOMPOSITION_BORDER_MODE_SOFT);
         if (SUCCEEDED(hr)) hr = strip->SetBitmapInterpolationMode(
             DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
-        if (SUCCEEDED(hr) && effect_ == 4)
-        {
-            Microsoft::WRL::ComPtr<IDCompositionEffectGroup> effect;
-            hr = compositionDevice_->CreateEffectGroup(&effect);
-            if (SUCCEEDED(hr))
-                hr = strip->SetEffect(effect.Get());
-            if (SUCCEEDED(hr))
-                attractionCellEffects_.push_back(std::move(effect));
-        }
-        if (SUCCEEDED(hr)) hr = compositionVisual_->AddVisual(strip.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr))
+            hr = compositionVisual_->AddVisual(strip.Get(), TRUE, nullptr);
         if (FAILED(hr))
         {
             imageResult_ = hr;
             return false;
         }
+    }
+    HRESULT hr = compositionVisual_->SetContent(nullptr);
+    if (SUCCEEDED(hr))
+        hr = compositionVisual_->SetTransform(D2D1::Matrix3x2F::Identity());
+    if (SUCCEEDED(hr))
+        hr = compositionVisual_->SetClip(static_cast<IDCompositionClip *>(nullptr));
+    if (SUCCEEDED(hr))
+        hr = compositionVisual_->SetOffsetX(0.0f);
+    if (SUCCEEDED(hr))
+        hr = compositionVisual_->SetOffsetY(0.0f);
+    imageResult_ = hr;
+    return SUCCEEDED(hr);
+}
+
+bool DockWindowTransition::CreateAttractionMesh()
+{
+    namespace attraction = snowdesktop::dock_attraction;
+    if (!compositionVisual_ || !compositionSharedWindowActive_ || !compositionDevice_)
+    {
+        imageResult_ = E_UNEXPECTED;
+        return false;
+    }
+    attractionTriangles_.reserve(attraction::TriangleCount);
+    genieWindowImages_.reserve(attraction::TriangleCount);
+    for (std::size_t triangle = 0; triangle < attraction::TriangleCount; ++triangle)
+    {
+        const auto cell = attraction::SourceCell(triangle / 2);
+        const auto band = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, triangle / 2, true);
+        const RECT crop = band.crop;
+        const SIZE size{crop.right - crop.left, crop.bottom - crop.top};
+        const RECT source{compositionSourceRegion_.left + crop.left, compositionSourceRegion_.top + crop.top,
+                          compositionSourceRegion_.left + crop.right, compositionSourceRegion_.top + crop.bottom};
+        snowdesktop::dock_thumbnail::SharedVisual image;
+        HRESULT hr = image.Create(hwnd_, sourceWindow_, compositionDevice_.Get(), size, &source);
+        Microsoft::WRL::ComPtr<IDCompositionVisual2> clipper;
+        if (SUCCEEDED(hr) && !image.visual)
+            hr = E_UNEXPECTED;
+        if (SUCCEEDED(hr))
+            hr = compositionDevice_->CreateVisual(&clipper);
+        const float width = static_cast<float>((cell.right - cell.left) * compositionImageSize_.cx);
+        const float height = static_cast<float>((cell.bottom - cell.top) * compositionImageSize_.cy);
+        const float left = static_cast<float>(cell.left * compositionImageSize_.cx - crop.left);
+        const float top = static_cast<float>(cell.top * compositionImageSize_.cy - crop.top);
+        const float sign = triangle % 2 == 0 ? 1.0f : -1.0f;
+        const float offsetS = triangle % 2 == 0 ? 0.0f : 2.0f;
+        const float offsetT = triangle % 2 == 0 ? 0.0f : 1.0f;
+        const D2D1_MATRIX_3X2_F toTriangle{sign / width,
+                                           0,
+                                           sign / height,
+                                           sign / height,
+                                           offsetS - sign * (left / width + top / height),
+                                           offsetT - sign * top / height};
+        if (SUCCEEDED(hr))
+            hr = static_cast<IDCompositionVisual *>(image.visual.Get())->SetTransform(toTriangle);
+        const float cropLeft = static_cast<float>(crop.left), cropTop = static_cast<float>(crop.top);
+        if (SUCCEEDED(hr))
+            hr = image.visual->SetClip(D2D1::RectF(band.clip.left - cropLeft, band.clip.top - cropTop,
+                                                   band.clip.right - cropLeft, band.clip.bottom - cropTop));
+        if (SUCCEEDED(hr))
+            hr = image.visual->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+        if (SUCCEEDED(hr))
+            hr = image.visual->SetBitmapInterpolationMode(DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+        // The source rectangle becomes a parallelogram in (s,t). Clipping
+        // s<=1 selects an affine triangle without any perspective division.
+        // Tiny overlap covers float roundoff; internal clips must not add AA
+        // transparency independently on either side of a shared edge.
+        const float diagonalGuard = std::min(0.02f, 0.25f / std::max(width, height));
+        if (SUCCEEDED(hr))
+            hr = clipper->SetClip(D2D1::RectF(-16, -16, 1 + diagonalGuard, 16));
+        if (SUCCEEDED(hr))
+            hr = clipper->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+        if (SUCCEEDED(hr))
+            hr = clipper->SetBackFaceVisibility(DCOMPOSITION_BACKFACE_VISIBILITY_VISIBLE);
+        if (SUCCEEDED(hr))
+            hr = clipper->AddVisual(image.visual.Get(), TRUE, nullptr);
+        if (SUCCEEDED(hr))
+            hr = compositionVisual_->AddVisual(clipper.Get(), TRUE, nullptr);
+        if (FAILED(hr))
+        {
+            imageResult_ = hr;
+            return false;
+        }
+        genieWindowImages_.push_back(std::move(image));
+        attractionTriangles_.push_back(std::move(clipper));
     }
     HRESULT hr = compositionVisual_->SetContent(nullptr);
     if (SUCCEEDED(hr)) hr = compositionVisual_->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -1330,36 +1411,17 @@ RECT DockWindowTransition::ResolveImageHostRect() const
 bool DockWindowTransition::ApplyAttractionFrame(double collapsed, BYTE opacity)
 {
     namespace attraction = snowdesktop::dock_attraction;
-    if (genieStrips_.size() != attraction::CellCount || attractionCellEffects_.size() != genieStrips_.size())
+    if (attractionTriangles_.size() != attraction::TriangleCount)
         return false;
-    const auto window = DeformationRect(windowRect_), dock = DeformationRect(dockRect_);
-    const attraction::Frame frame{attraction::ControlPoints(window, dock, collapsed), collapsed};
+    const auto frame = attraction::MeshFrame(DeformationRect(windowRect_), DeformationRect(dockRect_), collapsed);
     HRESULT hr = S_OK;
-    for (std::size_t i = 0; i < genieStrips_.size() && SUCCEEDED(hr); ++i)
+    for (std::size_t triangle = 0; triangle < attractionTriangles_.size() && SUCCEEDED(hr); ++triangle)
     {
-        const RECT crop = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, i, true).crop;
-        const auto value = attraction::SampleCell(frame, window, dock, attraction::SourceCell(i),
-                                                  compositionImageSize_.cx, compositionImageSize_.cy, crop.left,
-                                                  crop.top, imageHostRect_.left, imageHostRect_.top);
-        const D2D1_MATRIX_4X4_F matrix{static_cast<float>(value[0]),
-                                       static_cast<float>(value[1]),
-                                       0,
-                                       static_cast<float>(value[2]),
-                                       static_cast<float>(value[3]),
-                                       static_cast<float>(value[4]),
-                                       0,
-                                       static_cast<float>(value[5]),
-                                       0,
-                                       0,
-                                       1,
-                                       0,
-                                       static_cast<float>(value[6]),
-                                       static_cast<float>(value[7]),
-                                       0,
-                                       static_cast<float>(value[8])};
-        hr = genieStrips_[i]->SetTransform(matrix);
-        if (SUCCEEDED(hr))
-            hr = attractionCellEffects_[i]->SetOpacity(static_cast<float>(value[9]));
+        const auto value = attraction::TriangleValues(frame, triangle, imageHostRect_.left, imageHostRect_.top);
+        const D2D1_MATRIX_3X2_F matrix{static_cast<float>(value[0]), static_cast<float>(value[1]),
+                                       static_cast<float>(value[2]), static_cast<float>(value[3]),
+                                       static_cast<float>(value[4]), static_cast<float>(value[5])};
+        hr = attractionTriangles_[triangle]->SetTransform(matrix);
     }
     if (SUCCEEDED(hr))
         hr = compositionEffect_->SetOpacity(static_cast<float>(opacity) / 255.0f);
@@ -1371,54 +1433,48 @@ bool DockWindowTransition::ApplyAttractionFrame(double collapsed, BYTE opacity)
 bool DockWindowTransition::StartAttractionTimeline()
 {
     namespace attraction = snowdesktop::dock_attraction;
-    if (genieStrips_.size() != attraction::CellCount || attractionCellEffects_.size() != genieStrips_.size())
+    if (attractionTriangles_.size() != attraction::TriangleCount)
         return false;
     const auto window = DeformationRect(windowRect_), dock = DeformationRect(dockRect_);
     std::array<attraction::Frame, attraction::TimelineSteps + 1> frames{};
-    for (std::size_t i = 0; i < frames.size(); ++i)
-        frames[i] = attraction::TimelineFrame(window, dock, collapseFrom_, collapseTo_,
-                                              static_cast<double>(i) / attraction::TimelineSteps);
-    constexpr std::array<std::array<int, 2>, 9> elements{
-        {{0, 0}, {0, 1}, {0, 3}, {1, 0}, {1, 1}, {1, 3}, {3, 0}, {3, 1}, {3, 3}}};
+    for (std::size_t step = 0; step < frames.size(); ++step)
+        frames[step] = attraction::TimelineFrame(window, dock, collapseFrom_, collapseTo_,
+                                                 static_cast<double>(step) / attraction::TimelineSteps);
+    const auto tangents = attraction::MeshTangents(frames);
+    constexpr std::array<std::array<int, 2>, 6> elements{{{0, 0}, {0, 1}, {1, 0}, {1, 1}, {2, 0}, {2, 1}}};
     std::vector<Microsoft::WRL::ComPtr<IDCompositionAnimation>> owned;
     std::vector<IDCompositionAnimation *> animations;
-    owned.reserve(genieStrips_.size() * 10 + 1);
+    owned.reserve(attractionTriangles_.size() * 6 + 1);
     animations.reserve(owned.capacity());
     const double duration = animationDurationMs_ / 1000.0, stepSeconds = duration / attraction::TimelineSteps;
     HRESULT hr = S_OK;
-    for (std::size_t i = 0; i < genieStrips_.size() && SUCCEEDED(hr); ++i)
+    for (std::size_t triangle = 0; triangle < attractionTriangles_.size() && SUCCEEDED(hr); ++triangle)
     {
-        Microsoft::WRL::ComPtr<IDCompositionMatrixTransform3D> transform;
-        hr = compositionDevice_->CreateMatrixTransform3D(&transform);
-        const RECT crop = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, i, true).crop;
-        std::array<attraction::Values, attraction::TimelineSteps + 1> samples{};
-        for (std::size_t step = 0; step < samples.size(); ++step)
-            samples[step] = attraction::SampleCell(frames[step], window, dock, attraction::SourceCell(i),
-                                                   compositionImageSize_.cx, compositionImageSize_.cy, crop.left,
-                                                   crop.top, imageHostRect_.left, imageHostRect_.top);
-        attraction::StabilizeInactiveGeometry(samples);
-        const auto band = ResolveGenieSourceBand(compositionImageSize_, genieEdge_, i, true);
-        const auto tangents = attraction::CellTangents(samples, band.clip.left - crop.left, band.clip.top - crop.top,
-                                                       band.clip.right - crop.left, band.clip.bottom - crop.top);
-        for (std::size_t element = 0; element < (i == 0 ? 11u : 10u) && SUCCEEDED(hr); ++element)
+        Microsoft::WRL::ComPtr<IDCompositionMatrixTransform> transform;
+        hr = compositionDevice_->CreateMatrixTransform(&transform);
+        std::array<attraction::Values, attraction::TimelineSteps + 1> values{}, slopes{};
+        for (std::size_t step = 0; step < frames.size(); ++step)
+        {
+            values[step] = attraction::TriangleValues(frames[step], triangle, imageHostRect_.left, imageHostRect_.top);
+            slopes[step] = attraction::TriangleValues(tangents[step], triangle, 0, 0);
+        }
+        for (std::size_t element = 0; element < (triangle == 0 ? 7u : 6u) && SUCCEEDED(hr); ++element)
         {
             Microsoft::WRL::ComPtr<IDCompositionAnimation> animation;
             hr = compositionDevice_->CreateAnimation(&animation);
             for (std::size_t step = 0; step < attraction::TimelineSteps && SUCCEEDED(hr); ++step)
             {
-                const auto curve = attraction::TimelineSegment(samples[step], samples[step + 1], tangents[step],
-                                                               tangents[step + 1], element, duration);
+                const auto curve = attraction::TimelineSegment(values[step], values[step + 1], slopes[step],
+                                                               slopes[step + 1], element, duration);
                 hr =
                     animation->AddCubic(step * stepSeconds, curve.constant, curve.linear, curve.quadratic, curve.cubic);
             }
             if (SUCCEEDED(hr))
-                hr = animation->End(duration, static_cast<float>(samples.back()[element]));
+                hr = animation->End(duration, static_cast<float>(values.back()[element]));
             if (SUCCEEDED(hr))
             {
-                if (element == 10)
+                if (element == 6)
                     hr = compositionEffect_->SetOpacity(animation.Get());
-                else if (element == 9)
-                    hr = attractionCellEffects_[i]->SetOpacity(animation.Get());
                 else
                     hr = transform->SetMatrixElement(elements[element][0], elements[element][1], animation.Get());
             }
@@ -1429,7 +1485,7 @@ bool DockWindowTransition::StartAttractionTimeline()
             }
         }
         if (SUCCEEDED(hr))
-            hr = genieStrips_[i]->SetTransform(transform.Get());
+            hr = attractionTriangles_[triangle]->SetTransform(transform.Get());
     }
     return SUCCEEDED(hr) && CommitCompositionTimeline(animations);
 }

@@ -5,19 +5,17 @@
  *
  * Adapted from OpenHarmony RSAttractionEffectFilter, commit
  * e72069008cd4762ddd150d164861c43f8183e439. SnowDesktop supplies the
- * Coons sampling, cropped-image projection, bounds and endpoint handling.
+ * Coons sampling, shared affine mesh, bounds and endpoint handling.
  */
 #pragma once
 
 #include "dock_genie_rules.h"
 
 #include <array>
-#include <optional>
 
 namespace snowdesktop::dock_attraction
 {
 using Rect = dock_genie::Rect;
-using Matrix = dock_genie::ProjectiveMatrix;
 struct Point
 {
     double x = 0, y = 0;
@@ -167,74 +165,9 @@ inline Cell SourceCell(std::size_t index) noexcept
     return {static_cast<double>(x) / GridSize, static_cast<double>(y) / GridSize, static_cast<double>(x + 1) / GridSize,
             static_cast<double>(y + 1) / GridSize};
 }
-inline std::optional<Matrix> Projection(const Patch &patch, Cell cell, double sourceWidth, double sourceHeight,
-                                        double cropX, double cropY, double hostX, double hostY) noexcept
-{
-    const Point offset{hostX, hostY};
-    const Point a = Surface(patch, cell.left, cell.top) - offset;
-    const Point b = Surface(patch, cell.right, cell.top) - offset;
-    const Point c = Surface(patch, cell.right, cell.bottom) - offset;
-    const Point d = Surface(patch, cell.left, cell.bottom) - offset;
-    const Point e = b - c, f = d - c, delta = a - b + c - d;
-    const double determinant = e.x * f.y - f.x * e.y;
-    if (std::abs(determinant) < 1e-12)
-        return std::nullopt;
-    const double g = (delta.x * f.y - f.x * delta.y) / determinant;
-    const double h = (e.x * delta.y - delta.x * e.y) / determinant;
-    // A local fold is a zero-area patch boundary, not an unbounded projective
-    // image. Hide only that cell instead of introducing a perspective pole.
-    const double w = sourceWidth * (cell.right - cell.left), height = sourceHeight * (cell.bottom - cell.top);
-    double smallest = 1, largest = 1;
-    for (const double u : {-0.5 / w, 1 + 0.5 / w})
-        for (const double v : {-0.5 / height, 1 + 0.5 / height})
-        {
-            const double den = 1 + g * u + h * v;
-            smallest = std::min(smallest, den);
-            largest = std::max(largest, den);
-        }
-    if (smallest / largest < 0.005)
-        return std::nullopt;
-    const double x = sourceWidth * cell.left - cropX, y = sourceHeight * cell.top - cropY;
-    const double scale = 1.0 / std::max({1.0, 1 + g, 1 + h, 1 + g + h});
-    Matrix m;
-    m.m11 = (b.x - a.x + g * b.x) / w * scale;
-    m.m12 = (b.y - a.y + g * b.y) / w * scale;
-    m.m21 = (d.x - a.x + h * d.x) / height * scale;
-    m.m22 = (d.y - a.y + h * d.y) / height * scale;
-    m.m14 = g / w * scale;
-    m.m24 = h / height * scale;
-    m.dx = a.x * scale - m.m11 * x - m.m21 * y;
-    m.dy = a.y * scale - m.m12 * x - m.m22 * y;
-    m.w = scale - m.m14 * x - m.m24 * y;
-    return m;
-}
 inline double Opacity(double collapsed) noexcept
 {
     return 1 - dock_genie::Smooth((collapsed - 0.88) / 0.12);
-}
-inline double CellVisibility(const Patch &patch, Cell cell) noexcept
-{
-    const std::array<Point, 4> corners{Surface(patch, cell.left, cell.top), Surface(patch, cell.right, cell.top),
-                                       Surface(patch, cell.right, cell.bottom), Surface(patch, cell.left, cell.bottom)};
-    double area = 2;
-    for (std::size_t i = 0; i < corners.size(); ++i)
-    {
-        const auto a = corners[(i + 1) % 4] - corners[i];
-        const auto b = corners[(i + 2) % 4] - corners[(i + 1) % 4];
-        area = std::min(area, a.x * b.y - a.y * b.x);
-    }
-    // Retire a tile smoothly before it folds or becomes a subpixel sliver.
-    // Its finite endpoint matrix must never make a tiny remnant visible again.
-    return dock_genie::Smooth(area / 2);
-}
-inline double CellOpacity(Rect window, Rect dock, double collapsed, Cell cell) noexcept
-{
-    const bool right = window.left + window.right > dock.left + dock.right;
-    const bool below = window.top + window.bottom > dock.top + dock.bottom;
-    const double u = (cell.left + cell.right) * 0.5, v = (cell.top + cell.bottom) * 0.5;
-    const double w = window.right - window.left, h = window.bottom - window.top;
-    const double gradient = below ? ((right ? u : 1 - u) * w * w + v * h * h) / (w * w + h * h) : 1 - v;
-    return 1 - std::min(1.0, collapsed * 2) * gradient;
 }
 inline Rect Bounds(Rect window, Rect dock) noexcept
 {

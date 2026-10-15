@@ -197,6 +197,7 @@ private:
         return compositionSharedWindowActive_;
     }
     bool CreateGenieStrips();
+    bool CreateAttractionMesh();
     bool ApplyGenieFrame(double progress, BYTE opacity);
     bool ApplyAttractionFrame(double collapsed, BYTE opacity);
     void ClearGenieStrips();
@@ -254,7 +255,7 @@ private:
     bool compositionImageActive_ = false;
     bool compositionTimelineActive_ = false;
     std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual3>> genieStrips_;
-    std::vector<Microsoft::WRL::ComPtr<IDCompositionEffectGroup>> attractionCellEffects_;
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual2>> attractionTriangles_;
     snowdesktop::dock_thumbnail::SharedVisual compositionWindowImage_;
     std::vector<snowdesktop::dock_thumbnail::SharedVisual> genieWindowImages_;
     snowdesktop::dock_thumbnail::SharedVisual retiredWindowImage_;

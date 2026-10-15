@@ -7,12 +7,13 @@
 #include "dock/dock_window_transition.h"
 #include "settings/animation_settings.h"
 
-#include <d3d11.h>
-#include <dxgi.h>
 #include <array>
 #include <atomic>
 #include <cmath>
+#include <d3d11.h>
+#include <dxgi.h>
 #include <iostream>
+#include <map>
 #include <string>
 
 struct DockWindowTransitionTestAccess
@@ -154,10 +155,8 @@ struct DockWindowTransitionTestAccess
                           host.bottom - host.top, SWP_NOACTIVATE))
             return nullptr;
         transition.collapseFrom_ = transition.collapseTo_ = collapsed;
-        if (timeline ? !transition.StartAttractionTimeline() : !transition.ApplyAttractionFrame(collapsed, 255))
-            return nullptr;
-        if (timeline && collapsed > 0.9 &&
-            (FAILED(transition.compositionEffect_->SetOpacity(1.0f)) || FAILED(transition.compositionDevice_->Commit())))
+        const auto opacity = static_cast<BYTE>(std::lround(snowdesktop::dock_attraction::Opacity(collapsed) * 255));
+        if (timeline ? !transition.StartAttractionTimeline() : !transition.ApplyAttractionFrame(collapsed, opacity))
             return nullptr;
         transition.presenting_ = true;
         ShowWindow(transition.hwnd_, SW_SHOWNOACTIVATE);
@@ -348,137 +347,146 @@ void CheckTimelineGeometry()
 
 void CheckAttractionGeometry()
 {
+    namespace a = snowdesktop::dock_attraction;
     // Individual cell accuracy cannot establish shared-edge continuity between
     // compositor keys; that requires a separate adjacency check.
-    namespace a = snowdesktop::dock_attraction;
     const auto golden = a::ControlPoints({0, 0, 320, 200}, {336, 208, 400, 272}, 0.5);
-    // Independently evaluated upstream top-left trajectory: p0=(0,0),
-    // p1=(370.368,-25.4), p2=(395.93,228), p3=(368,240), parameter=0.5.
     Check(std::hypot(golden[0].x - 333.3605, golden[0].y - 105.97421875) < 0.001,
-          "attraction retains the upstream asymmetric control-point trajectory");
-    bool bounded = true, positive = true, curved = false;
-    double maxCornerError = 0;
+          "attraction retains the independently evaluated upstream control-point trajectory");
+    const std::array<a::Point, 3> local{{{0, 0}, {1, 0}, {1, 1}}};
+    const auto transform = [](const a::Values &value, a::Point point) {
+        return a::Point{static_cast<float>(value[0]) * point.x + static_cast<float>(value[2]) * point.y +
+                            static_cast<float>(value[4]),
+                        static_cast<float>(value[1]) * point.x + static_cast<float>(value[3]) * point.y +
+                            static_cast<float>(value[5])};
+    };
+    struct Edge
+    {
+        std::size_t triangle;
+        a::Point first, last;
+    };
+    std::map<std::pair<std::size_t, std::size_t>, Edge> owners;
+    std::vector<std::pair<Edge, Edge>> neighbours;
+    for (std::size_t triangle = 0; triangle < a::TriangleCount; ++triangle)
+    {
+        const auto indices = a::TriangleVertices(triangle);
+        for (std::size_t side = 0; side < 3; ++side)
+        {
+            const auto next = (side + 1) % 3;
+            const bool forward = indices[side] < indices[next];
+            const auto key = std::minmax(indices[side], indices[next]);
+            Edge edge{triangle, local[forward ? side : next], local[forward ? next : side]};
+            const auto inserted = owners.emplace(std::pair{key.first, key.second}, edge);
+            if (!inserted.second)
+                neighbours.emplace_back(inserted.first->second, edge);
+        }
+    }
+    Check(!neighbours.empty(), "shared-edge regression actually inspects incident triangles");
+    double maximumCornerError = 0, maximumSeam = 0;
+    bool finite = true, bounded = true, curved = false;
     for (const double width : {320.0, 2560.0, 7680.0})
     {
+        const a::Rect window{0, 0, width, width * 0.625};
         const std::array<a::Rect, 4> targets{{{width + 30, width * 0.6, width + 94, width * 0.6 + 64},
                                               {-1600, 800, -1536, 864},
                                               {100, -800, 164, -736},
                                               {-900, -600, -836, -536}}};
-        for (const auto target : targets)
+        for (const auto dock : targets)
         {
-            const a::Rect window{0, 0, width, width * 0.625};
-            const auto bounds = a::Bounds(window, target);
-            for (int phase = 0; phase <= 192; ++phase)
+            const auto bounds = a::Bounds(window, dock);
+            for (int phase = 0; phase <= 64; ++phase)
             {
-                const double collapse = phase / 192.0;
-                const auto patch = a::ControlPoints(window, target, collapse);
-                for (std::size_t i = 0; i < a::CellCount; ++i)
+                const auto frame = a::MeshFrame(window, dock, phase / 64.0);
+                for (std::size_t triangle = 0; triangle < a::TriangleCount; ++triangle)
                 {
-                    const auto cell = a::SourceCell(i);
-                    for (const double u : {cell.left, cell.right})
-                        for (const double v : {cell.top, cell.bottom})
-                        {
-                            const auto p = a::Surface(patch, u, v);
-                            bounded = bounded && p.x >= bounds.left && p.x <= bounds.right && p.y >= bounds.top &&
-                                      p.y <= bounds.bottom;
-                        }
-                    const double cropX = std::max(0.0, std::floor(cell.left * width - 0.5));
-                    const double cropY = std::max(0.0, std::floor(cell.top * width * 0.625 - 0.5));
-                    const auto matrix =
-                        a::Projection(patch, cell, width, width * 0.625, cropX, cropY, bounds.left, bounds.top);
-                    if (matrix)
-                        for (const double u : {cell.left, cell.right})
-                            for (const double v : {cell.top, cell.bottom})
-                            {
-                                const double x = u * width - cropX, y = v * width * 0.625 - cropY;
-                                const auto actual = Transform(*matrix, x, y);
-                                const auto p = a::Surface(patch, u, v);
-                                const double den = matrix->m14 * x + matrix->m24 * y + matrix->w;
-                                positive = positive && den > 0 && std::isfinite(actual.x) && std::isfinite(actual.y);
-                                maxCornerError = std::max(maxCornerError, std::hypot(actual.x - p.x + bounds.left,
-                                                                                     actual.y - p.y + bounds.top));
-                            }
+                    const auto indices = a::TriangleVertices(triangle);
+                    const auto value = a::TriangleValues(frame, triangle, bounds.left, bounds.top);
+                    for (std::size_t corner = 0; corner < 3; ++corner)
+                    {
+                        const auto actual = transform(value, local[corner]);
+                        const auto expected = frame.vertices[indices[corner]];
+                        maximumCornerError =
+                            std::max(maximumCornerError, std::hypot(actual.x + bounds.left - expected.x,
+                                                                    actual.y + bounds.top - expected.y));
+                        finite = finite && std::isfinite(actual.x) && std::isfinite(actual.y);
+                        bounded = bounded && expected.x >= bounds.left && expected.x <= bounds.right &&
+                                  expected.y >= bounds.top && expected.y <= bounds.bottom;
+                    }
                 }
+                const auto patch = a::ControlPoints(window, dock, phase / 64.0);
                 const auto middle = a::Surface(patch, 0.5, 0.5);
                 const auto affine = (patch[0] + patch[3] + patch[6] + patch[9]) * 0.25;
                 curved = curved || std::hypot(middle.x - affine.x, middle.y - affine.y) > 2;
             }
-            const auto first = a::ControlPoints(window, target, 0);
-            Check(Gap({first[0].x, first[0].y}, {window.left, window.top}) < 0.001 &&
-                      Gap({first[6].x, first[6].y}, {window.right, window.bottom}) < 0.001,
-                  "attraction restore endpoint preserves the exact source frame");
-        }
-    }
-    std::cout << "Attraction cropped projective corner error=" << maxCornerError << "px\n";
-    Check(bounded, "complete attraction bounds contain sampled curves through 8K on both sides and above the source");
-    Check(positive && maxCornerError < 0.5,
-          "attraction cropped cells have finite positive perspective and subpixel corners");
-    Check(curved && a::Opacity(0) == 1 && a::Opacity(1) == 0,
-          "attraction deforms a curved patch and reaches a transparent collapsed endpoint");
-    const a::Rect window{0, 0, 2560, 1600}, dock{2700, 800, 2764, 864};
-    bool timelineFinite = true, timelineBounded = true;
-    for (const auto range : {std::array<double, 2>{0, 1}, {0.6, 0}, {0.6, 1}})
-    {
-        std::array<a::Frame, a::TimelineSteps + 1> frames{};
-        for (std::size_t step = 0; step < frames.size(); ++step)
-            frames[step] =
-                a::TimelineFrame(window, dock, range[0], range[1], static_cast<double>(step) / a::TimelineSteps);
-        for (std::size_t i = 0; i < a::CellCount; ++i)
-        {
-            const auto cell = a::SourceCell(i);
-            const double cropX = std::max(0.0, std::floor(cell.left * 2560 - 0.5));
-            const double cropY = std::max(0.0, std::floor(cell.top * 1600 - 0.5));
-            std::array<a::Values, a::TimelineSteps + 1> samples{};
-            for (std::size_t step = 0; step < samples.size(); ++step)
-                samples[step] = a::SampleCell(frames[step], window, dock, cell, 2560, 1600, cropX, cropY, -500, -500);
-            a::StabilizeInactiveGeometry(samples);
-            const auto tangents =
-                a::CellTangents(samples, cell.left * 2560 - cropX - 0.5, cell.top * 1600 - cropY - 0.5,
-                                cell.right * 2560 - cropX + 0.5, cell.bottom * 1600 - cropY + 0.5);
-            for (std::size_t step = 0; step < a::TimelineSteps; ++step)
-                for (const double fraction : {0.0, 0.19, 0.51, 0.83, 1.0})
+            for (const auto range : {std::array<double, 2>{0, 1}, {0.6, 0}, {0.6, 1}})
+            {
+                std::array<a::Frame, a::TimelineSteps + 1> frames{};
+                for (std::size_t step = 0; step < frames.size(); ++step)
+                    frames[step] = a::TimelineFrame(window, dock, range[0], range[1],
+                                                    static_cast<double>(step) / a::TimelineSteps);
+                const auto tangents = a::MeshTangents(frames);
+                struct Track
                 {
-                    a::Values value{};
-                    for (std::size_t element = 0; element < value.size(); ++element)
-                        value[element] = a::TimelineSegment(samples[step], samples[step + 1], tangents[step],
-                                                            tangents[step + 1], element, 0.42)
-                                             .Evaluate(fraction * 0.42 / a::TimelineSteps);
-                    for (const double u : {cell.left, cell.right})
-                        for (const double v : {cell.top, cell.bottom})
+                    std::array<a::Values, a::TimelineSteps + 1> values{}, slopes{};
+                };
+                std::vector<Track> tracks(a::TriangleCount);
+                for (std::size_t triangle = 0; triangle < a::TriangleCount; ++triangle)
+                    for (std::size_t step = 0; step < frames.size(); ++step)
+                    {
+                        tracks[triangle].values[step] = a::TriangleValues(frames[step], triangle, -500, -500);
+                        tracks[triangle].slopes[step] = a::TriangleValues(tangents[step], triangle, 0, 0);
+                    }
+                for (std::size_t step = 0; step < a::TimelineSteps; ++step)
+                    for (const double fraction : {0.0, 0.19, 0.51, 0.83, 1.0})
+                    {
+                        std::vector<a::Values> values(a::TriangleCount);
+                        for (std::size_t triangle = 0; triangle < a::TriangleCount; ++triangle)
                         {
-                            const double x = u * 2560 - cropX + (u == cell.left ? -0.5 : 0.5);
-                            const double y = v * 1600 - cropY + (v == cell.top ? -0.5 : 0.5);
-                            const double w = value[2] * x + value[5] * y + value[8];
-                            timelineFinite = timelineFinite && w > 0 &&
-                                             std::isfinite((value[0] * x + value[3] * y + value[6]) / w) &&
-                                             std::isfinite((value[1] * x + value[4] * y + value[7]) / w) &&
-                                             value[9] >= -0.00001 && value[9] <= 1.00001 && value[10] >= -0.00001 &&
-                                             value[10] <= 1.00001;
-                            for (const int axis : {0, 1})
+                            const auto &track = tracks[triangle];
+                            auto &value = values[triangle];
+                            for (std::size_t element = 0; element < value.size(); ++element)
+                                value[element] =
+                                    a::TimelineSegment(track.values[step], track.values[step + 1], track.slopes[step],
+                                                       track.slopes[step + 1], element, 0.42)
+                                        .Evaluate(fraction * 0.42 / a::TimelineSteps);
+                            finite = finite && value[6] >= -0.00001 && value[6] <= 1.00001;
+                            const auto indices = a::TriangleVertices(triangle);
+                            for (std::size_t corner = 0; corner < 3; ++corner)
                             {
-                                const auto project = [&](const a::Values &sample) {
-                                    return (sample[axis] * x + sample[axis + 3] * y + sample[axis + 6]) /
-                                           (sample[2] * x + sample[5] * y + sample[8]);
-                                };
-                                const double first = project(samples[step]), last = project(samples[step + 1]);
-                                timelineBounded = timelineBounded && project(value) >= std::min(first, last) - 0.55 &&
-                                                  project(value) <= std::max(first, last) + 0.55;
+                                const auto actual = transform(value, local[corner]) - a::Point{500, 500};
+                                const auto first = frames[step].vertices[indices[corner]];
+                                const auto last = frames[step + 1].vertices[indices[corner]];
+                                finite = finite && std::isfinite(actual.x) && std::isfinite(actual.y);
+                                bounded = bounded && actual.x >= std::min(first.x, last.x) - 0.05 &&
+                                          actual.x <= std::max(first.x, last.x) + 0.05 &&
+                                          actual.y >= std::min(first.y, last.y) - 0.05 &&
+                                          actual.y <= std::max(first.y, last.y) + 0.05;
                             }
                         }
-                }
+                        for (const auto &[first, second] : neighbours)
+                            for (const double edgeFraction : {0.0, 0.37, 1.0})
+                            {
+                                const auto p = first.first * (1 - edgeFraction) + first.last * edgeFraction;
+                                const auto q = second.first * (1 - edgeFraction) + second.last * edgeFraction;
+                                const auto actual = transform(values[first.triangle], p);
+                                const auto adjacent = transform(values[second.triangle], q);
+                                maximumSeam =
+                                    std::max(maximumSeam, std::hypot(actual.x - adjacent.x, actual.y - adjacent.y));
+                            }
+                    }
+            }
         }
     }
-    Check(timelineFinite,
-          "actual float compositor curves retain finite positive perspective between samples and on reversals");
-    Check(timelineBounded, "cropped corner playback cannot throw fragments beyond adjacent trajectory samples");
-    const auto sourcePatch = a::ControlPoints(window, dock, 0);
-    auto folded = sourcePatch;
-    for (auto &point : folded)
-        point.x = -point.x;
-    const auto tiny = a::ControlPoints({0, 0, 2, 2}, {30, 30, 32, 32}, 0);
-    Check(a::CellVisibility(sourcePatch, a::SourceCell(0)) == 1 && a::CellVisibility(folded, a::SourceCell(0)) == 0 &&
-              a::CellVisibility(tiny, a::SourceCell(0)) < 0.001,
-          "folded and subpixel slivers retire without revealing a finite endpoint remnant");
+    std::cout << "Attraction affine corner error=" << maximumCornerError << "px inter-key seam=" << maximumSeam
+              << "px\n";
+    Check(finite && maximumCornerError < 0.05,
+          "folded attraction triangles stay finite and preserve their shared corners through 8K");
+    Check(maximumSeam < 0.05,
+          "adjacent attraction triangles remain joined between compositor keys and through reversals");
+    Check(bounded, "shared vertex cubics stay in their sampled envelopes without throwing fragments");
+    Check(curved && a::Opacity(0) == 1 && a::Opacity(1) == 0,
+          "attraction retains its curved patch and a fully transparent collapsed endpoint");
+    const a::Rect window{0, 0, 2560, 1600};
     const std::vector<RECT> monitors{{0, 0, 2560, 1600}, {2560, 510, 4480, 1590}};
     const RECT fullWindow{0, 0, 2560, 1600}, farDock{4400, 1450, 4464, 1514};
     const auto requested = DockWindowTransitionTestAccess::AttractionHost(fullWindow, farDock, monitors);
@@ -489,21 +497,19 @@ void CheckAttractionGeometry()
         bool covered = true;
         for (int phase = 0; phase <= 128; ++phase)
         {
-            const auto patch = a::ControlPoints(window, {4400, 1450, 4464, 1514}, phase / 128.0);
-            for (int y = 0; y <= 16; ++y)
-                for (int x = 0; x <= 16; ++x)
-                {
-                    const auto point = a::Surface(patch, x / 16.0, y / 16.0);
-                    const bool visible = std::any_of(monitors.begin(), monitors.end(), [&](RECT monitor) {
-                        return point.x >= monitor.left && point.x <= monitor.right && point.y >= monitor.top &&
-                               point.y <= monitor.bottom;
-                    });
-                    if (visible)
-                        covered = covered && point.x >= safe->left - 1 && point.x <= safe->right + 1 &&
-                                  point.y >= safe->top - 1 && point.y <= safe->bottom + 1;
-                }
+            const auto frame = a::MeshFrame(window, {4400, 1450, 4464, 1514}, phase / 128.0);
+            for (const auto point : frame.vertices)
+            {
+                const bool visible = std::any_of(monitors.begin(), monitors.end(), [&](RECT monitor) {
+                    return point.x >= monitor.left && point.x <= monitor.right && point.y >= monitor.top &&
+                           point.y <= monitor.bottom;
+                });
+                if (visible)
+                    covered = covered && point.x >= safe->left - 1 && point.x <= safe->right + 1 &&
+                              point.y >= safe->top - 1 && point.y <= safe->bottom + 1;
+            }
         }
-        Check(covered, "both displays' visible attraction surface fits the host with its one-pixel Shell guard");
+        Check(covered, "both displays' visible attraction mesh fits the host with its one-pixel Shell guard");
     }
 }
 
@@ -515,8 +521,9 @@ LRESULT CALLBACK FrameFixtureProc(HWND window, UINT message, WPARAM wParam, LPAR
         HDC dc = BeginPaint(window, &paint);
         RECT client{};
         GetClientRect(window, &client);
-        FillRect(dc, &client, static_cast<HBRUSH>(GetStockObject(WHITE_BRUSH)));
-        if (GetWindowLongPtrW(window, GWLP_USERDATA))
+        const auto content = GetWindowLongPtrW(window, GWLP_USERDATA);
+        FillRect(dc, &client, static_cast<HBRUSH>(GetStockObject(content == -1 ? BLACK_BRUSH : WHITE_BRUSH)));
+        if (content > 0)
         {
             RECT marker{20, 20, 36, 60};
             HBRUSH brush = CreateSolidBrush(RGB(220, 20, 40));
@@ -600,6 +607,158 @@ std::array<double, 2> FrameMarkerCenters(HWND ownedDestination)
     DeleteDC(memory);
     ReleaseDC(nullptr, screen);
     return {counts[0] ? sums[0] / counts[0] : -1, counts[1] ? sums[1] / counts[1] : -1};
+}
+
+void CheckAttractionSeamPixels(HINSTANCE instance, IDCompositionDesktopDevice *device, HWND backing)
+{
+    namespace a = snowdesktop::dock_attraction;
+    const HWND source =
+        CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"SnowDesktopGenieFramePixelFixture",
+                        L"Owned solid seam fixture", WS_POPUP, 500, 32, 320, 200, nullptr, nullptr, instance, nullptr);
+    Check(source != nullptr, "solid seam fixture creates its own borderless source");
+    if (!source)
+        return;
+    ShowWindow(source, SW_SHOWNOACTIVATE);
+    UpdateWindow(source);
+    RECT frame{};
+    GetWindowRect(source, &frame);
+    const RECT dock{frame.right + 8, frame.bottom + 8, frame.right + 72, frame.bottom + 72};
+    SetWindowLongPtrW(backing, GWLP_USERDATA, -1);
+    InvalidateRect(backing, nullptr, TRUE);
+    UpdateWindow(backing);
+    for (const bool timeline : {false, true})
+        for (const double collapse : {0.18, 0.35, 0.58})
+        {
+            DockWindowTransition overlay;
+            const bool initialized = overlay.Initialize(instance, nullptr, nullptr, device);
+            const HWND presented = initialized ? DockWindowTransitionTestAccess::PresentAttraction(
+                                                     overlay, source, frame, dock, timeline, collapse)
+                                               : nullptr;
+            Check(presented != nullptr, "solid attraction seam fixture binds its actual DWM triangles");
+            if (!presented)
+                continue;
+            RECT area{};
+            GetWindowRect(presented, &area);
+            SetWindowPos(backing, presented, area.left, area.top, area.right - area.left, area.bottom - area.top,
+                         SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            UpdateWindow(backing);
+            const int width = area.right - area.left, height = area.bottom - area.top;
+            Check(width > 0 && height > 0 && width < 1024 && height < 1024,
+                  "seam readback stays inside the fixture's bounded black backing");
+            if (width <= 0 || height <= 0 || width >= 1024 || height >= 1024)
+                continue;
+            const auto mesh = a::MeshFrame({static_cast<double>(frame.left), static_cast<double>(frame.top),
+                                            static_cast<double>(frame.right), static_cast<double>(frame.bottom)},
+                                           {static_cast<double>(dock.left), static_cast<double>(dock.top),
+                                            static_cast<double>(dock.right), static_cast<double>(dock.bottom)},
+                                           collapse);
+            std::vector<unsigned char> covered(static_cast<std::size_t>(width) * height);
+            std::vector<unsigned char> nearEdge(covered.size());
+            const auto local = [&](a::Point p) {
+                return p - a::Point{static_cast<double>(area.left), static_cast<double>(area.top)};
+            };
+            const auto cross = [](a::Point p, a::Point q) { return p.x * q.y - p.y * q.x; };
+            for (std::size_t triangle = 0; triangle < a::TriangleCount; ++triangle)
+            {
+                const auto indices = a::TriangleVertices(triangle);
+                const std::array<a::Point, 3> points{local(mesh.vertices[indices[0]]), local(mesh.vertices[indices[1]]),
+                                                     local(mesh.vertices[indices[2]])};
+                const double signedArea = cross(points[1] - points[0], points[2] - points[0]);
+                if (std::abs(signedArea) < 0.01)
+                    continue;
+                const double sign = signedArea > 0 ? 1.0 : -1.0;
+                const int left =
+                    std::max(0, static_cast<int>(std::floor(std::min({points[0].x, points[1].x, points[2].x}))));
+                const int right =
+                    std::min(width - 1, static_cast<int>(std::ceil(std::max({points[0].x, points[1].x, points[2].x}))));
+                const int top =
+                    std::max(0, static_cast<int>(std::floor(std::min({points[0].y, points[1].y, points[2].y}))));
+                const int bottom = std::min(
+                    height - 1, static_cast<int>(std::ceil(std::max({points[0].y, points[1].y, points[2].y}))));
+                for (int y = top; y <= bottom; ++y)
+                    for (int x = left; x <= right; ++x)
+                    {
+                        const a::Point center{x + 0.5, y + 0.5};
+                        bool inside = true;
+                        for (std::size_t edge = 0; edge < 3; ++edge)
+                        {
+                            const auto direction = points[(edge + 1) % 3] - points[edge];
+                            inside = inside && sign * cross(direction, center - points[edge]) >=
+                                                   -0.005 * std::hypot(direction.x, direction.y);
+                        }
+                        if (inside)
+                            covered[static_cast<std::size_t>(y) * width + x] = 1;
+                    }
+                // Sample the actual shared-edge neighbourhood, including the
+                // cell diagonal, rather than only checking triangle interiors.
+                for (std::size_t edge = 0; edge < 3; ++edge)
+                    for (const double fraction : {0.17, 0.37, 0.61, 0.83})
+                    {
+                        const auto point = points[edge] * (1 - fraction) + points[(edge + 1) % 3] * fraction;
+                        for (int dy = -1; dy <= 1; ++dy)
+                            for (int dx = -1; dx <= 1; ++dx)
+                            {
+                                const int x = static_cast<int>(std::floor(point.x)) + dx;
+                                const int y = static_cast<int>(std::floor(point.y)) + dy;
+                                if (x >= 0 && y >= 0 && x < width && y < height)
+                                    nearEdge[static_cast<std::size_t>(y) * width + x] = 1;
+                            }
+                    }
+            }
+            std::size_t probes = 0;
+            for (std::size_t pixel = 0; pixel < covered.size(); ++pixel)
+                if (covered[pixel] && nearEdge[pixel])
+                    ++probes;
+            Check(probes >= 20, "white-on-black seam check samples nonempty covered edge neighbourhoods");
+            HDC screen = GetDC(nullptr), memory = CreateCompatibleDC(screen);
+            BITMAPINFO info{};
+            info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+            info.bmiHeader.biWidth = width;
+            info.bmiHeader.biHeight = -height;
+            info.bmiHeader.biPlanes = 1;
+            info.bmiHeader.biBitCount = 32;
+            void *bits = nullptr;
+            HBITMAP bitmap = CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+            std::size_t dark = probes;
+            unsigned peak = 0;
+            if (bitmap)
+            {
+                const auto previous = SelectObject(memory, bitmap);
+                const auto luminance = [](unsigned pixel) {
+                    return std::min({(pixel >> 16) & 255, (pixel >> 8) & 255, pixel & 255});
+                };
+                const ULONGLONG deadline = GetTickCount64() + 400;
+                do
+                {
+                    DwmFlush();
+                    if (!BitBlt(memory, 0, 0, width, height, screen, area.left, area.top, SRCCOPY | CAPTUREBLT))
+                        break;
+                    const auto *pixels = static_cast<const unsigned *>(bits);
+                    peak = 0;
+                    for (std::size_t pixel = 0; pixel < covered.size(); ++pixel)
+                        if (covered[pixel])
+                            peak = std::max(peak, luminance(pixels[pixel]));
+                    dark = 0;
+                    for (std::size_t pixel = 0; pixel < covered.size(); ++pixel)
+                        if (covered[pixel] && nearEdge[pixel] &&
+                            luminance(pixels[pixel]) < std::max(32u, peak * 85 / 100))
+                            ++dark;
+                } while ((dark || peak < 64) && GetTickCount64() < deadline);
+                SelectObject(memory, previous);
+                DeleteObject(bitmap);
+            }
+            DeleteDC(memory);
+            ReleaseDC(nullptr, screen);
+            std::cout << "Attraction seam pixels timeline=" << timeline << " collapse=" << collapse
+                      << " probes=" << probes << " dark=" << dark << " white=" << peak << '\n';
+            Check(peak >= 64 && dark == 0,
+                  "shared attraction edges have no background gaps or independent alpha seams");
+            overlay.Cancel();
+        }
+    SetWindowLongPtrW(backing, GWLP_USERDATA, 0);
+    InvalidateRect(backing, nullptr, TRUE);
+    UpdateWindow(backing);
+    DestroyWindow(source);
 }
 
 void CheckFramePixelAlignment()
@@ -870,12 +1029,12 @@ void CheckFramePixelAlignment()
                 }
                 attraction.Cancel();
                 const HWND tail = DockWindowTransitionTestAccess::PresentAttraction(attraction, source, frame,
-                                                                                    displacedDock, timeline, 0.96);
+                                                                                    displacedDock, timeline, 1.0);
                 Check(tail != nullptr, "owned attraction tail prepares with finite geometry");
                 if (tail)
                 {
-                    // Force the parent fully visible: cell retirement alone
-                    // must suppress tiny end fragments, including GPU playback.
+                    // Finite endpoint geometry must be completely transparent
+                    // in both direct and compositor rendering.
                     const ULONGLONG deadline = GetTickCount64() + 250;
                     std::array<double, 2> markers{};
                     do
@@ -890,6 +1049,7 @@ void CheckFramePixelAlignment()
             }
             snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn, 2, 0, 60, false, false, 4);
             ShowWindow(source, SW_SHOWNOACTIVATE);
+            CheckAttractionSeamPixels(type.hInstance, composition.Get(), backing);
             const ULONGLONG attractionStarted = GetTickCount64();
             const bool attractionStart = transition.StartMinimize(source, displacedDock);
             std::cout << "Attraction compositor preparation: " << GetTickCount64() - attractionStarted << "ms\n";
