@@ -1,4 +1,5 @@
 #include "shell_extension_catalogue.h"
+#include "shell_catalogue_workers.h"
 #include <atomic>
 #include <future>
 #include <thread>
@@ -647,7 +648,8 @@ struct FileRoot
 };
 std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
     HKEY classes, const std::vector<std::wstring> &roots,
-    std::map<std::wstring, std::vector<std::wstring>> &sourceValues)
+    std::map<std::wstring, std::vector<std::wstring>> &sourceValues,
+    const std::atomic_bool *foreground)
 {
     std::map<std::wstring, std::vector<std::wstring>> types;
     std::optional<Key> choices;
@@ -689,24 +691,18 @@ std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
     else
     {
         std::atomic_size_t next = 0;
-        std::vector<std::future<void>> workers;
-        try
+        const bool completed = detail::RunCatalogueWorkers(
+            std::clamp(std::thread::hardware_concurrency() / 2u, 2u, 8u), foreground, [&] {
+                while (true)
+                {
+                    const auto index = next.fetch_add(1, std::memory_order_relaxed);
+                    if (index >= fileTypes.size()) break;
+                    associated[index] = readAssociation(fileTypes[index]);
+                }
+            });
+        if (!completed)
         {
-            for (unsigned i = 0; i < std::clamp(std::thread::hardware_concurrency() / 2u, 2u, 8u); ++i)
-                workers.push_back(std::async(std::launch::async, [&] {
-                    while (true)
-                    {
-                        const auto index = next.fetch_add(1, std::memory_order_relaxed);
-                        if (index >= fileTypes.size()) break;
-                        associated[index] = readAssociation(fileTypes[index]);
-                    }
-                }));
-            for (auto &worker : workers) worker.get();
-        }
-        catch (...)
-        {
-            // Drain writers before a clean serial read replaces every result.
-            workers.clear();
+            // The helper drains writers before a clean serial replacement.
             for (size_t i = 0; i < fileTypes.size(); ++i) associated[i] = readAssociation(fileTypes[i]);
         }
     }
@@ -718,7 +714,8 @@ std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
     }
     return types;
 }
-void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots)
+void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
+                   const std::atomic_bool *foreground)
 {
     const auto files = ContextBit(Context::File);
     auto serial = [&] { for (const auto &root : roots) scanner.Root(root.path, files, root.types); };
@@ -727,37 +724,30 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots)
     if (roots.size() < 64) { serial(); return; }
     std::vector<std::vector<std::pair<Registration, std::wstring>>> results(roots.size());
     std::atomic_size_t next = 0;
-    std::vector<std::future<void>> workers;
     const unsigned workerCount = std::clamp(std::thread::hardware_concurrency() / 2u, 2u, 8u);
-    try
+    const bool completed = detail::RunCatalogueWorkers(workerCount, foreground, [&] {
+        const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        if (FAILED(initialized)) throw std::runtime_error("metadata COM initialization");
+        struct Cleanup { ~Cleanup() { CoUninitialize(); } } cleanup;
+        Scanner local{scanner.classes}; local.capture = true;
+        while (true)
+        {
+            const auto index = next.fetch_add(1, std::memory_order_relaxed);
+            if (index >= roots.size()) break;
+            local.Root(roots[index].path, files, roots[index].types);
+            results[index] = std::move(local.captured); local.captured.clear();
+        }
+    });
+    if (!completed)
     {
-        for (unsigned i = 0; i < workerCount; ++i)
-            workers.push_back(std::async(std::launch::async, [&] {
-                const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-                if (FAILED(initialized)) throw std::runtime_error("metadata COM initialization");
-                struct Cleanup { ~Cleanup() { CoUninitialize(); } } cleanup;
-                Scanner local{scanner.classes}; local.capture = true;
-                while (true)
-                {
-                    const auto index = next.fetch_add(1, std::memory_order_relaxed);
-                    if (index >= roots.size()) break;
-                    local.Root(roots[index].path, files, roots[index].types);
-                    results[index] = std::move(local.captured); local.captured.clear();
-                }
-            }));
-        for (auto &worker : workers) worker.get();
-    }
-    catch (...)
-    {
-        // Futures drain before their inputs/results can be released. No
-        // worker row has entered the inventory, so fallback starts cleanly.
-        workers.clear(); results.clear(); serial(); return;
+        // No worker row has entered the inventory, so fallback starts cleanly.
+        results.clear(); serial(); return;
     }
     for (auto &result : results)
         for (auto &row : result) scanner.Add(std::move(row.first), row.second);
 }
 }
-Catalogue ReadCatalogue(HKEY classes, bool packages)
+static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, const std::atomic_bool *foreground)
 {
     MenuTiming timing("catalogue");
     Scanner scanner{classes};
@@ -767,7 +757,7 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
     scanner.Root(L"Directory\\Background", ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop));
     scanner.Root(L"DesktopBackground", ContextBit(Context::Desktop));
     const auto roots = Children(classes, L"");
-    auto types = ReadTypeAssociations(classes, roots, scanner.associations);
+    auto types = ReadTypeAssociations(classes, roots, scanner.associations, foreground);
     const std::set<std::wstring> special{L"*", L"allfilesystemobjects", L"directory", L"folder", L"drive", L"desktopbackground", L"clsid", L"interface", L"typelib"};
     std::vector<FileRoot> fileRoots;
     for (const auto &name : roots)
@@ -779,7 +769,7 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
         }
     for (const auto &name : Children(classes, L"SystemFileAssociations"))
         fileRoots.push_back({L"SystemFileAssociations\\" + name, types[L"systemfileassociations\\" + Lower(name)]});
-    ReadFileRoots(scanner, fileRoots);
+    ReadFileRoots(scanner, fileRoots, foreground);
     if (packages) scanner.Packages();
     for (auto &row : scanner.result.rows)
     {
@@ -803,6 +793,15 @@ Catalogue ReadCatalogue(HKEY classes, bool packages)
     scanner.result.backgroundRevisions = {scanner.BackgroundRevision(Context::FolderBackground), scanner.BackgroundRevision(Context::Desktop)};
     timing.Record("complete", static_cast<unsigned>(scanner.result.rows.size()));
     return std::move(scanner.result);
+}
+Catalogue ReadCatalogue(HKEY classes, bool packages)
+{
+    return ReadCatalogueImpl(classes, packages, nullptr);
+}
+Catalogue ReadCatalogueWithForegroundDemand(HKEY classes, bool packages,
+                                            const std::atomic_bool &foreground)
+{
+    return ReadCatalogueImpl(classes, packages, &foreground);
 }
 std::uint64_t ReadFolderCatalogueRevision(HKEY classes, bool packages)
 {

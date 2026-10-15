@@ -2,11 +2,17 @@
 #include <sddl.h>
 #include <objbase.h>
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <cstdio>
+#include <future>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <vector>
 #include "shell/shell_extension_catalogue.h"
+#include "shell/shell_catalogue_workers.h"
 
 namespace
 {
@@ -188,10 +194,46 @@ std::vector<std::wstring> Types(const ext::Catalogue &catalogue, const std::stri
     Check(row != catalogue.rows.end(), "expected private command exists");
     return row->types;
 }
+
+void CheckCatalogueWorkerBudget(bool foregroundAtStart, bool promote, int expected)
+{
+    std::atomic_bool foreground{foregroundAtStart};
+    std::atomic_int entered{0};
+    std::mutex mutex;
+    std::condition_variable changed;
+    bool release = false;
+    auto scan = std::async(std::launch::async, [&] {
+        return ext::detail::RunCatalogueWorkers(8, &foreground, [&] {
+            entered.fetch_add(1);
+            changed.notify_all();
+            std::unique_lock lock(mutex);
+            changed.wait(lock, [&] { return release; });
+        });
+    });
+    auto waitFor = [&](int count) {
+        std::unique_lock lock(mutex);
+        return changed.wait_for(lock, std::chrono::seconds(5),
+            [&] { return entered.load() >= count; });
+    };
+    const bool initialReady = waitFor(foregroundAtStart ? 8 : 2);
+    if (promote) foreground.store(true);
+    const bool promoted = !promote || waitFor(8);
+    {
+        std::lock_guard lock(mutex);
+        release = true;
+    }
+    changed.notify_all();
+    const bool completed = scan.get();
+    Check(initialReady && promoted && completed && entered.load() == expected,
+        "background catalogue uses two workers and foreground demand restores eight");
+}
 }
 
 void TestCatalogueRegistryHandles()
 {
+    CheckCatalogueWorkerBudget(false, false, 2);
+    CheckCatalogueWorkerBudget(false, true, 8);
+    CheckCatalogueWorkerBudget(true, false, 8);
     PrivateRegistry registry;
     {
         OwnedKey classes(registry.value, L"Classes"), user(registry.value, L"User");
@@ -217,6 +259,10 @@ void TestCatalogueRegistryHandles()
             "isolated classes mapping is active before production catalogue reads");
 
         const auto first = ext::ReadCatalogue(HKEY_CLASSES_ROOT, false);
+        std::atomic_bool foreground{false};
+        Check(snowdesktop::settings_ipc::Pack(ext::ReadCatalogueWithForegroundDemand(
+            HKEY_CLASSES_ROOT, false, foreground)) == snowdesktop::settings_ipc::Pack(first),
+            "throttled background catalogue preserves the full association inventory");
         Check(first.rows.size() == 3 && Types(first, "reg:choice.a\\shell\\inspect").size() == 80 &&
             Types(first, "reg:choice.b\\shell\\inspect") == std::vector<std::wstring>{L".snapshot0"} &&
             Types(first, "reg:choice.c\\shell\\inspect") == std::vector<std::wstring>{L".snapshot0"},

@@ -1,5 +1,6 @@
 #pragma once
 #include "shell_extension_menu.h"
+#include <atomic>
 #include <filesystem>
 #include <array>
 
@@ -48,6 +49,10 @@ struct Catalogue
 constexpr unsigned ContextBit(Context context) { return 1u << static_cast<unsigned>(context); }
 // Read-only, intended for the metadata worker. No Shell extension is activated.
 Catalogue ReadCatalogue(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
+// Background refresh uses fewer workers and expands to the normal limit when
+// a foreground query raises demand. The ordinary reader keeps its full budget.
+Catalogue ReadCatalogueWithForegroundDemand(HKEY classes, bool packages,
+                                            const std::atomic_bool &foreground);
 // Same complete folder registration inputs as the full scan, without
 // enumerating unrelated file classes. Metadata only; no handler activation.
 std::uint64_t ReadFolderCatalogueRevision(HKEY classes = HKEY_CLASSES_ROOT, bool packages = true);
