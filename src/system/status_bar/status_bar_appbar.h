@@ -1,4 +1,5 @@
 #pragma once
+#include "platform/foreground_fullscreen.h"
 #include <windows.h>
 #include <shellapi.h>
 #include <algorithm>
@@ -91,13 +92,13 @@ inline bool StatusBarFullscreenClient(RECT client, RECT monitor, bool visible,
         client.right >= monitor.right && client.bottom >= monitor.bottom;
 }
 
-inline bool StatusBarFullscreenCandidate(LONG_PTR /*style*/, LONG_PTR extendedStyle,
+inline bool StatusBarFullscreenCandidate(LONG_PTR style, LONG_PTR extendedStyle,
     bool maximized, bool shellWindow)
 {
-    // Custom-chrome maximized windows need not have WS_CAPTION. Their client
-    // can fill the monitor without owning its fullscreen presentation.
+    // Use the same frame distinction as the foreground focus guard: browser
+    // fullscreen can retain WS_MAXIMIZE after removing its native frame.
     return !shellWindow && !(extendedStyle & (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT)) &&
-        !maximized;
+        !fullscreen::IsWindowedMaximization(style, maximized);
 }
 
 // Shared by the production fullscreen observer and its lifecycle regression.

@@ -2,6 +2,7 @@
 #include "dock/dock_fullscreen_storage.h"
 #include "dock/dock_running_animation.h"
 #include "platform/foreground_fullscreen.h"
+#include "system/status_bar/status_bar_appbar.h"
 
 #include <iostream>
 #include <map>
@@ -156,7 +157,12 @@ int RunFullscreenFocusTests()
         if (!SetThreadDesktop(desktop)) { check(false, "attach isolated fixture thread"); return; }
         const auto instance = GetModuleHandleW(nullptr);
         WNDCLASSW cls{};
-        cls.lpfnWndProc = DefWindowProcW;
+        // Custom browser chrome owns the nonclient calculation, even while
+        // WS_THICKFRAME remains set on an ordinary maximized window.
+        cls.lpfnWndProc = [](HWND window, UINT message, WPARAM wp, LPARAM lp) -> LRESULT {
+            if (message == WM_NCCALCSIZE) return 0;
+            return DefWindowProcW(window, message, wp, lp);
+        };
         cls.hInstance = instance;
         cls.lpszClassName = L"SnowFullscreenFixture";
         if (!RegisterClassW(&cls)) { check(false, "register fixture window"); return; }
@@ -176,15 +182,19 @@ int RunFullscreenFocusTests()
             check(!fullscreen::GuardFocusRequest(false, [&]() { return fullscreen::ObserveWindow(window, 0); },
                 [&]() { ++nativeActivationCalls; SetFocus(window); }) && nativeActivationCalls == 0,
                 "native fullscreen observation blocks the production focus boundary before SetFocus");
-            // Reproduce a custom-chrome app whose maximized client covers
-            // the monitor. Only the external-process boundary is substituted;
-            // geometry, maximization, observation and reveal policy are real.
+            // Reproduce custom chrome with a retained resize frame. Only the
+            // external-process boundary is substituted; geometry, maximization,
+            // observation and reveal policy use the production implementation.
+            SetWindowLongPtrW(window, GWL_STYLE, GetWindowLongPtrW(window, GWL_STYLE) | WS_THICKFRAME);
             ShowWindow(window, SW_SHOWMAXIMIZED);
             SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
                 SWP_NOACTIVATE | SWP_NOZORDER);
             check(IsZoomed(window) != FALSE, "custom-chrome fixture is actually maximized");
             const auto maximized = fullscreen::ObserveWindow(window, 0);
             check(!maximized, "monitor-sized maximized clients without WS_CAPTION are not fullscreen");
+            check(!snowdesktop::StatusBarFullscreenCandidate(
+                GetWindowLongPtrW(window, GWL_STYLE), 0, IsZoomed(window) != FALSE, false),
+                "ordinary maximized custom chrome retains its status bar");
             for (const auto source : {S::Gesture, S::AssociatedSurface, S::Hotkey})
                 check(!policy::BlocksReveal(P::FullProtection, source, maximized.has_value(), false),
                     "a maximized app on another monitor cannot suppress Dock reveal, promotion or preview interaction");
@@ -192,9 +202,50 @@ int RunFullscreenFocusTests()
             check(fullscreen::GuardFocusRequest(false, [&]() { return fullscreen::ObserveWindow(window, 0); },
                 [&]() { ++maximizedFocusCalls; }) && maximizedFocusCalls == 1,
                 "maximized custom-chrome apps do not block the Dock keyboard focus boundary");
-            ShowWindow(window, SW_RESTORE);
+
+            // Chromium removes WS_CAPTION/WS_THICKFRAME on entering page or
+            // F11 fullscreen, retaining WS_MAXIMIZE from the saved style.
+            const auto maximizedStyle = GetWindowLongPtrW(window, GWL_STYLE);
+            SetWindowLongPtrW(window, GWL_STYLE, maximizedStyle & ~(WS_CAPTION | WS_THICKFRAME));
             SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
-                SWP_NOACTIVATE | SWP_NOZORDER);
+                SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            check(IsZoomed(window) != FALSE, "browser fullscreen fixture retains its real maximized state");
+            const auto browserFullscreen = fullscreen::ObserveWindow(window, 0);
+            check(browserFullscreen.has_value(), "maximized browser entering frameless fullscreen is observed");
+            check(policy::BlocksReveal(P::FullProtection, S::AssociatedSurface, browserFullscreen.has_value(), true),
+                "browser fullscreen still protects Dock interaction and focus");
+            check(!fullscreen::GuardFocusRequest(false, [&]() { return fullscreen::ObserveWindow(window, 0); },
+                [&]() { ++maximizedFocusCalls; }) && maximizedFocusCalls == 1,
+                "browser fullscreen blocks activation even with WS_MAXIMIZE retained");
+            POINT clientOrigin{}, clientEnd{};
+            RECT browserClient{};
+            check(GetClientRect(window, &browserClient) != FALSE, "read browser fullscreen client geometry");
+            clientEnd = {browserClient.right, browserClient.bottom};
+            check(ClientToScreen(window, &clientOrigin) && ClientToScreen(window, &clientEnd),
+                "map browser fullscreen client to screen coordinates");
+            browserClient = {clientOrigin.x, clientOrigin.y, clientEnd.x, clientEnd.y};
+            const bool browserCandidate = snowdesktop::StatusBarFullscreenCandidate(
+                GetWindowLongPtrW(window, GWL_STYLE), 0, IsZoomed(window) != FALSE, false);
+            const bool hidesBar = browserCandidate && snowdesktop::StatusBarFullscreenClient(
+                browserClient, rect, true, false, false, false);
+            snowdesktop::StatusBarFullscreenState barState;
+            barState.Observe(hidesBar ? window : nullptr, false, false, false);
+            check(barState.ShouldHide(false), "browser fullscreen hides its monitor's independent status bar");
+            RECT otherMonitor = rect;
+            OffsetRect(&otherMonitor, rect.right - rect.left, 0);
+            check(!snowdesktop::StatusBarFullscreenClient(browserClient, otherMonitor, true, false, false, false),
+                "browser fullscreen does not hide the status bar on another monitor");
+
+            SetWindowLongPtrW(window, GWL_STYLE, maximizedStyle);
+            SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
+            check(!fullscreen::ObserveWindow(window, 0) && !snowdesktop::StatusBarFullscreenCandidate(
+                GetWindowLongPtrW(window, GWL_STYLE), 0, IsZoomed(window) != FALSE, false),
+                "exiting browser fullscreen restores ordinary maximized classification");
+            ShowWindow(window, SW_RESTORE);
+            SetWindowLongPtrW(window, GWL_STYLE, WS_POPUP | WS_VISIBLE);
+            SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED);
             check(fullscreen::ObserveWindow(window, 0).has_value(),
                 "leaving maximized state restores protection for an actual borderless fullscreen client");
             SetWindowLongPtrW(window, GWL_EXSTYLE, WS_EX_NOACTIVATE);

@@ -2477,12 +2477,13 @@ int main(int argc, char** argv)
         using snowdesktop::StatusBarFullscreenCandidate;
         Check(StatusBarFullscreenCandidate(WS_POPUP,0,false,false) &&
                 !StatusBarFullscreenCandidate(WS_OVERLAPPEDWINDOW,0,true,false) &&
-                !StatusBarFullscreenCandidate(WS_POPUP,0,true,false) &&
+                StatusBarFullscreenCandidate(WS_POPUP | WS_MAXIMIZE,0,true,false) &&
+                StatusBarFullscreenCandidate((WS_OVERLAPPEDWINDOW | WS_MAXIMIZE) & ~(WS_CAPTION | WS_THICKFRAME),0,true,false) &&
                 !StatusBarFullscreenCandidate(WS_POPUP | WS_THICKFRAME,0,true,false) &&
                 !StatusBarFullscreenCandidate(WS_POPUP,WS_EX_NOACTIVATE,false,false) &&
                 !StatusBarFullscreenCandidate(WS_POPUP,WS_EX_TRANSPARENT,false,false) &&
                 !StatusBarFullscreenCandidate(WS_POPUP,0,false,true),
-            "fullscreen candidates exclude inactive overlays, shell helpers and maximized windows with or without native chrome");
+            "fullscreen candidates accept browser fullscreen retaining WS_MAXIMIZE, while excluding overlays, shell helpers and maximized windows retaining caption or resize frames");
         Check(StatusBarFullscreenClient({1920, 0, 4480, 1440}, {1920, 0, 4480, 1440}, true, false, false, false) &&
                 !StatusBarFullscreenClient({1920, 32, 4480, 1400}, {1920, 0, 4480, 1440}, true, false, false, false) &&
                 !StatusBarFullscreenClient({0, 0, 1920, 1080}, {1920, 0, 4480, 1440}, true, false, false, false) &&

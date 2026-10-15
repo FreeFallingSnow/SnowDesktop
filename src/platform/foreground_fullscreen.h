@@ -17,6 +17,14 @@ inline bool ClientCoversMonitor(const RECT& client, const RECT& monitor) noexcep
         client.right >= monitor.right && client.bottom >= monitor.bottom;
 }
 
+inline bool IsWindowedMaximization(LONG_PTR style, bool maximized) noexcept
+{
+    // Chromium retains WS_MAXIMIZE when fullscreen removes the caption and
+    // resize frame. Custom-chrome maximization retains its resize frame even
+    // without WS_CAPTION. Geometry still has to cover the complete monitor.
+    return maximized && (style & (WS_CAPTION | WS_THICKFRAME)) != 0;
+}
+
 struct WindowSnapshot
 {
     HWND window = nullptr;
@@ -36,11 +44,10 @@ inline std::optional<WindowSnapshot> ObserveWindow(
     snapshot.window = window;
     GetWindowThreadProcessId(window, &snapshot.process);
     if (!snapshot.process || snapshot.process == ignoredProcess) return std::nullopt;
+    const auto style = GetWindowLongPtrW(window, GWL_STYLE);
     const auto extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
-    // Custom-chrome applications can maximize without WS_CAPTION and expose
-    // a monitor-sized client. Maximization still does not own fullscreen.
     if ((extended & (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT)) ||
-        IsZoomed(window) ||
+        IsWindowedMaximization(style, IsZoomed(window) != FALSE) ||
         GetPropW(window, L"NonRudeHWND")) return std::nullopt;
     wchar_t name[128]{};
     GetClassNameW(window, name, static_cast<int>(std::size(name)));
