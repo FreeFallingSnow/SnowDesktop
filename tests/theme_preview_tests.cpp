@@ -11,6 +11,8 @@
 #include <fstream>
 #include <iostream>
 #include <thread>
+#include <wincodec.h>
+#include <wrl/client.h>
 
 namespace
 {
@@ -35,6 +37,58 @@ Difference Compare(const snowdesktop::widget_preview::Wallpaper& a, const snowde
         result.alpha &= (a.pixels[i] >> 24) == (b.pixels[i] >> 24);
     }
     return result;
+}
+snowdesktop::widget_preview::Wallpaper EnlargeNativeScene(const std::filesystem::path& path)
+{
+    // Independent WIC reconstruction of the complete native scene, not a
+    // second copy of the preview's material/alpha composition.
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory;
+    ComPtr<IWICBitmapDecoder> decoder;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICBitmapScaler> scaler;
+    ComPtr<IWICFormatConverter> converter;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) ||
+        FAILED(decoder->GetFrame(0, &frame)) || FAILED(factory->CreateBitmapScaler(&scaler)) ||
+        FAILED(scaler->Initialize(frame.Get(), 1024, 1024, WICBitmapInterpolationModeHighQualityCubic)) ||
+        FAILED(factory->CreateFormatConverter(&converter)) || FAILED(converter->Initialize(scaler.Get(),
+            GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom))) return {};
+    snowdesktop::widget_preview::Wallpaper result;
+    result.width = result.height = 1024; result.pixels.resize(1024 * 1024);
+    if (FAILED(converter->CopyPixels(nullptr, 1024 * 4, 1024 * 1024 * 4,
+        reinterpret_cast<BYTE*>(result.pixels.data())))) return {};
+    return result;
+}
+bool PublishedBorderMatches(const std::filesystem::path& directory, const std::filesystem::path& cover,
+    snowdesktop::IconBeautifyShape shape)
+{
+    using namespace snowdesktop;
+    const auto nativeCover = EnlargeNativeScene(directory / L"icon-scene.png");
+    const auto published = widget_preview::LoadWallpaperImage(cover);
+    if (nativeCover.pixels.size() != 1024 * 1024 || published.pixels.size() != 1024 * 1024) return false;
+    std::array<bool, 256 * 256> perimeter{};
+    for (int y = 0; y < 256; ++y) for (int x = 0; x < 256; ++x)
+        perimeter[y * 256 + x] = icon_beautify::ShapeMaskAlpha(shape, x, y, 256, 256, 12.f) == 0;
+    unsigned borderMaximum = 0;
+    std::size_t crispInterior = 0;
+    for (int sample = 0; sample < 9; ++sample)
+        for (int y = 0; y < 256; ++y) for (int x = 0; x < 256; ++x)
+        {
+            const auto offset = (64 + sample / 3 * 320 + y) * 1024 + 64 + sample % 3 * 320 + x;
+            unsigned delta = 0;
+            for (unsigned shift : {0u, 8u, 16u})
+            {
+                const auto a = (published.pixels[offset] >> shift) & 255u;
+                const auto b = (nativeCover.pixels[offset] >> shift) & 255u;
+                delta = std::max(delta, a > b ? a - b : b - a);
+            }
+            if (perimeter[y * 256 + x]) borderMaximum = std::max(borderMaximum, delta);
+            else if (x >= 64 && x < 192 && y >= 64 && y < 192 && delta > 8) ++crispInterior;
+        }
+    std::cout << "Published complete icon border: maximum channel difference=" << borderMaximum
+        << ", independently sampled interior pixels=" << crispInterior << '\n';
+    return borderMaximum <= 2 && crispInterior > 1000;
 }
 }
 
@@ -74,12 +128,18 @@ int wmain(int argc, wchar_t** argv)
     {
         const std::filesystem::path output(argv[3]); std::filesystem::create_directories(output);
         bool ok = true;
-        for (const std::string variant : {"glass", "smart", "gradient", "automatic", "tonal", "duotone"})
+        for (const std::string variant : {"glass", "glass-dark", "glass-zero", "smart", "gradient", "automatic", "tonal", "duotone"})
         {
             Theme icon; icon.id = "theme/icon-evidence"; icon.name = "Icon preview"; icon.kind = Kind::Icon;
-            icon.icon = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassLight);
+            icon.icon = icon_beautify::MakePreset(variant == "glass-dark"
+                ? IconBeautifyPreset::FrostedGlassDark : IconBeautifyPreset::FrostedGlassLight);
             icon.icon.preset = IconBeautifyPreset::Custom;
-            if (variant != "glass" && variant != "smart")
+            if (variant == "glass-zero")
+            {
+                icon.icon.edgeHighlightWidth = 4; icon.icon.edgeHighlightStrength = 0;
+                icon.icon.edgeLight.shadowFalloff = 1;
+            }
+            if (!variant.starts_with("glass") && variant != "smart")
             {
                 icon.icon.glassEnabled = false; icon.icon.edgeHighlightEnabled = false; icon.icon.backgroundOpacity = 1;
                 icon.icon.backgroundGradient = {true, 135, 0, 1,
@@ -93,6 +153,8 @@ int wmain(int argc, wchar_t** argv)
                 output / variant, images, cover, detail, nullptr, {}, variant == "smart" ? 0 : 1);
             ok = ok && rendered;
             std::cout << variant << ": " << (rendered ? cover.string() : detail) << '\n';
+            if (rendered && variant.starts_with("glass"))
+                ok = PublishedBorderMatches(output / variant, cover, icon.icon.shape) && ok;
         }
         if (SUCCEEDED(initialized)) CoUninitialize();
         return ok ? 0 : 1;
@@ -291,7 +353,7 @@ int wmain(int argc, wchar_t** argv)
             bool rimMatches = nativeScene.width == 256 && nativeScene.height == 256 && nativeScene.pixels.size() == 256 * 256;
             std::size_t visibleRim = 0;
             if (rimMatches)
-                for (int sample = 0; sample < 4; ++sample)
+                for (int sample = 0; sample < 9; ++sample)
                     for (int y = 0; y < 6; ++y) for (int x = 16; x < 48; ++x)
                     {
                         const auto pixel = nativeReflection[y * 64 + x];
@@ -299,12 +361,34 @@ int wmain(int argc, wchar_t** argv)
                         std::uint32_t expected = 0xff000000u;
                         for (unsigned shift : {0u, 8u, 16u}) expected |= std::min(255u,
                             ((pixel >> shift) & 255u) + (((0xff303038u >> shift) & 255u) * (255u - alpha) + 127u) / 255u) << shift;
-                        const auto actual = nativeScene.pixels[(40 + sample / 2 * 112 + y) * 256 + 40 + sample % 2 * 112 + x];
+                        const auto actual = nativeScene.pixels[(16 + sample / 3 * 80 + y) * 256 + 16 + sample % 3 * 80 + x];
                         rimMatches &= expected == actual;
                         visibleRim += pixel != 0;
                     }
             check(rimOk && rimMatches && visibleRim > 100,
                 "gallery native-size reflection agrees with the production vector/bitmap rim before whole-scene enlargement");
+            // The reported difference remained after the reflection-only check
+            // passed. Exercise the published perimeter, including rounded corners,
+            // glass fill, texture seam and a fractional outline on all nine tiles.
+            auto completeBorder = icons;
+            auto& borderStyle = completeBorder.at(icon.id).icon;
+            borderStyle = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassLight);
+            borderStyle.preset = IconBeautifyPreset::Custom;
+            borderStyle.shape = IconBeautifyShape::ContinuousRounded;
+            borderStyle.outlineEnabled = true; borderStyle.outlineWidth = .75f;
+            borderStyle.outlineOpacity = .5f; borderStyle.textureEdgeHighlight = .5f;
+            const auto borderDirectory = directory / L"icon-complete-border";
+            const bool borderOk = preview::RenderGallery(argv[1], completeBorder, icon.id, Components,
+                borderDirectory, gallery, cover, error, nullptr, flatPath);
+            check(borderOk && PublishedBorderMatches(borderDirectory, cover, borderStyle.shape),
+                "all nine published borders retain the complete native edge while glyph interiors retain independent vector detail");
+            borderStyle.edgeHighlightWidth = 4; borderStyle.edgeHighlightStrength = 0;
+            borderStyle.edgeLight.shadowFalloff = 1;
+            const auto zeroDirectory = directory / L"icon-zero-reflection";
+            const bool zeroOk = preview::RenderGallery(argv[1], completeBorder, icon.id, Components,
+                zeroDirectory, gallery, cover, error, nullptr, flatPath);
+            check(zeroOk && PublishedBorderMatches(zeroDirectory, cover, borderStyle.shape),
+                "zero-strength reflection cannot enlarge the reconstruction band and soften vector artwork");
             const bool smartOk = preview::RenderGallery(argv[1], icons, icon.id, Components,
                 directory / L"icon-gallery-smart", gallery, cover, error, nullptr, {}, 0);
             check(smartOk && Compare(original, widget_preview::LoadWallpaperImage(cover)).material > 10000 &&

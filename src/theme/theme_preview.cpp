@@ -4,6 +4,7 @@
 #include "steam/steam_child_environment.h"
 #include "resources/resource.h"
 #include "icons/icon_beautify_preview.h"
+#include "theme/flat_glass_rim.h"
 #include <fstream>
 #include <thread>
 #include <wincodec.h>
@@ -296,6 +297,23 @@ static bool ResizeIconScene(const widget_preview::Wallpaper& source, int side,
     return SUCCEEDED(scaler->CopyPixels(nullptr, side * 4, static_cast<UINT>(output.pixels.size() * 4),
         reinterpret_cast<BYTE*>(output.pixels.data()))) || Fail(error, "previewFailed");
 }
+static float IconBorderSupport(const IconBeautifySettings& value)
+{
+    const auto style = icon_beautify::Normalize(value);
+    float support = 2.f; // Native contour coverage and reconstruction footprint.
+    if (style.outlineEnabled && style.outlineOpacity > 0.f)
+        support = std::max(support, style.outlineWidth * (style.glassEnabled ? 64.f / 52.f : 1.f));
+    if (style.edgeHighlightEnabled && style.edgeHighlightStrength > 0.f)
+    {
+        const flat_glass_rim::Evaluator material(style.edgeLight);
+        const float depth = style.edgeHighlightWidth * 64.f / 52.f;
+        const float inner = material.settings.shadowStrength > 0.f
+            ? std::max(material.InnerSupport(depth, false), material.InnerSupport(depth, true))
+            : material.InnerSupport(depth, false);
+        support = std::max(support, depth * .5f + inner);
+    }
+    return support + 1.f;
+}
 static bool RenderImages(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
     std::string& error, const std::atomic_bool* cancel, std::vector<Image>* images,
@@ -331,14 +349,18 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
     const auto rootTheme = Resolve(package, root);
     if (rootTheme && rootTheme->kind == Kind::Icon)
     {
-        // Keep a native 64px reference and supersample the whole gallery scene
-        // at 4x. Both use native material units: fixed rim support, blur, glyph
-        // shadows, texture seams and outlines scale with the sampling density.
-        // The SVG artwork stays crisp without enlarging the reference bitmap.
+        // Render nine 64px samples, with only one original app backplate.
+        // The finished native contour is authoritative: recomputing coverage
+        // at 4x changes the combined fill/texture/stroke/reflection cross-section.
+        // Preserve that complete composite around the perimeter, while keeping
+        // the vector artwork and surrounding wallpaper at cover resolution.
         // No desktop shortcuts, application paths or user icons are enumerated.
-        constexpr int resources[]{IDR_ICON_PREVIEW_BROWSER, IDR_ICON_PREVIEW_FOLDER, IDR_ICON_PREVIEW_MAIL, IDR_ICON_PREVIEW_MEDIA};
+        constexpr int resources[]{IDR_ICON_PREVIEW_BROWSER, IDR_ICON_PREVIEW_FOLDER, IDR_ICON_PREVIEW_MAIL,
+            IDR_ICON_PREVIEW_MEDIA, IDR_ICON_PREVIEW_TERMINAL, IDR_ICON_PREVIEW_TRASH,
+            IDR_ICON_PREVIEW_SETTINGS, IDR_ICON_PREVIEW_CALENDAR, IDR_ICON_PREVIEW_APPS};
         const bool glass = rootTheme->icon.enabled && rootTheme->icon.glassEnabled;
         const auto coverPath = directory / L"cover.png";
+        widget_preview::Wallpaper nativeScene;
         for (int rasterScale : {1, 4})
         {
             const int side = 64 * rasterScale, stageSide = 256 * rasterScale;
@@ -351,7 +373,7 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
             canvas = sceneBackdrop;
             widget_preview::Wallpaper blurred;
             if (glass && !BlurIconBackdrop(sceneBackdrop, rootTheme->icon.glassBlurRadius, rasterScale, blurred, error)) return false;
-            for (int sample = 0; sample < 4; ++sample)
+            for (int sample = 0; sample < 9; ++sample)
             {
                 if (cancel && cancel->load()) return Fail(error, "cancelled");
                 std::vector<std::uint32_t> source;
@@ -362,7 +384,7 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
                 auto style = rootTheme->icon; style.mode = iconProcessingMode == 0 ? 0 : 1;
                 const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(source, side, side) : std::nullopt;
                 const auto rendered = icon_beautify::RenderPreview(source, side, side, style, edge, rasterScale);
-                const int left = (40 + sample % 2 * 112) * rasterScale, top = (40 + sample / 2 * 112) * rasterScale;
+                const int left = (16 + sample % 3 * 80) * rasterScale, top = (16 + sample / 3 * 80) * rasterScale;
                 for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
                 {
                     const auto pixel = rendered[static_cast<std::size_t>(y) * side + x];
@@ -389,8 +411,39 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
             if (rasterScale == 1)
             {
                 if (!preview_png::Save(directory / L"icon-scene.png", stageSide, stageSide, canvas.pixels, error)) return false;
+                nativeScene = canvas;
             }
-            else if (!SaveCover(coverPath, std::move(canvas), error)) return false;
+            else
+            {
+                if (rootTheme->icon.enabled)
+                {
+                    widget_preview::Wallpaper nativeCover;
+                    if (!ResizeIconScene(nativeScene, stageSide, nativeCover, error)) return false;
+                    const float support = IconBorderSupport(rootTheme->icon);
+                    // Two native pixels feather the interior transition. Blending
+                    // completed opaque scenes avoids resampling independent alpha
+                    // layers, whose subsequent composition changes the edge again.
+                    for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
+                    {
+                        unsigned inner = 0;
+                        for (int step = 0; step <= 8; ++step)
+                            inner += icon_beautify::ShapeMaskAlpha(rootTheme->icon.shape,
+                                x, y, side, side, (support + step * .25f) * rasterScale);
+                        inner /= 9u;
+                        for (int sample = 0; sample < 9; ++sample)
+                        {
+                            const int left = (16 + sample % 3 * 80) * rasterScale, top = (16 + sample / 3 * 80) * rasterScale;
+                            const auto offset = static_cast<std::size_t>(top + y) * stageSide + left + x;
+                            std::uint32_t blended = 0xff000000u;
+                            for (unsigned shift : {0u, 8u, 16u}) blended |=
+                                ((((canvas.pixels[offset] >> shift) & 255u) * inner +
+                                    ((nativeCover.pixels[offset] >> shift) & 255u) * (255u - inner) + 127u) / 255u) << shift;
+                            canvas.pixels[offset] = blended;
+                        }
+                    }
+                }
+                if (!SaveCover(coverPath, std::move(canvas), error)) return false;
+            }
         }
         if (images)
         {

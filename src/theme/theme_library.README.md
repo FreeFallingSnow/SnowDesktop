@@ -45,13 +45,19 @@ New tint defaults to 35% luminosity-preserving coloring; duotone gradient-maps b
 Background color is resolved per icon: original plate (accent fallback) or a
 chroma-weighted dominant color cluster. Automatic gradient colors form a lighter
 to-original ramp; custom gradients retain 2–5 stops, opacity, angle and range.
-Icon galleries keep a 256-pixel reference scene with 64-pixel vector samples and
-supersample the complete scene at 4x for a crisp 1024-pixel cover. The shared icon
-renderer evaluates fixed rim support in native units; blur, shadow offsets,
-texture seams and outlines scale with the sampling density. Native desktop
-rendering stays at 1x. The private `icon-scene.png` retains the reference for pixel
-comparisons and is not a published gallery filename. Both renders use the host
-plate detector; the cover does not enlarge the small reference bitmap.
+Icon galleries arrange nine 64-pixel samples in a 256-pixel reference scene.
+Only the browser sample has an original app backplate; eight transparent glyphs
+show the theme's own background. Artwork and provenance are listed in
+`assets/preview/icons/README.md`. A second render samples the artwork at 4x for
+a crisp 1024-pixel cover. Its perimeter uses the complete native composite,
+including contour coverage, texture, outline and reflection, enlarged together.
+The replacement band follows active material layers' inward support and feathers
+over two native pixels into the crisp interior. Zero-strength reflection and
+transparent outlines do not widen it. Recomputing those separate alpha
+layers at 4x had made the combined border look thicker and more raised. Native
+desktop rendering and presets are unchanged. The private `icon-scene.png`
+retains the reference for pixel comparisons and is not a published gallery
+filename. Both renders use the host plate detector and local processing mode.
 
 Custom themes contain an opaque stable `id`, a display-only `name` and an
 `appearance` object encoded by the panel material codec plus
