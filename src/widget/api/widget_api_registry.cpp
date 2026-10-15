@@ -43,6 +43,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "data.audio.output.volume",
     "data.calendar.events",
     "data.calendar.events.byId",
+    "data.calendar.events.query",
     "data.calendar.selectedDate",
     "data.desktop.changes",
     "data.desktop.items",

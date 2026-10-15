@@ -49,6 +49,25 @@ function M.weekday(v)
     local c=math.floor(y/100);local k=y%100
     return (d+math.floor((m+1)*26/10)+k+math.floor(k/4)+math.floor(c/4)+5*c+6)%7
 end
+function M.nextDate(v)
+    if not M.validDate(v) then return nil end
+    local y,m,d=v:match("^(%d%d%d%d)%-(%d%d)%-(%d%d)$")
+    y,m,d=tonumber(y),tonumber(m),tonumber(d)+1
+    local candidate=string.format("%04d-%02d-%02d",y,m,d)
+    if M.validDate(candidate) then return candidate end
+    m=m+1;if m>12 then y=y+1;m=1 end
+    if y>9999 then return nil end
+    return string.format("%04d-%02d-01",y,m)
+end
+function M.currentDays(data)
+    local today=type(data.localTime)=="string" and data.localTime:sub(1,10) or ""
+    local tomorrow=M.nextDate(today)
+    local first,second
+    for _,day in ipairs(data.days or {}) do
+        if day.date==today then first=day elseif day.date==tomorrow then second=day end
+    end
+    return first,second
+end
 function M.condition(code,night)
     if code==0 then return conditionKeys[1],night and "moon" or "sun" end
     if code==1 then return conditionKeys[2],night and "cloudMoon" or "cloudSun" end

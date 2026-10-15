@@ -780,7 +780,12 @@ int RunThemeLibraryTests()
     const auto packagePath = root / "export.snowtheme";
     check(WritePackage(packagePath, package, error) && ReadPackage(packagePath, decoded, error), "production file export and import parser round-trip");
     auto renamedPath = packagePath; renamedPath.replace_extension(L".json");
-    check(!ReadPackage(renamedPath, decoded, error), "file parser refuses a renamed unsupported suffix");
+    std::error_code copyError;
+    const bool copied = std::filesystem::copy_file(packagePath, renamedPath, copyError);
+    check(copied && !copyError && std::filesystem::is_regular_file(renamedPath) && bytes(renamedPath) == bytes(packagePath),
+        "unsupported-suffix fixture contains the exported valid theme package");
+    check(!ReadPackage(renamedPath, decoded, error) && error == "unsupportedExtension",
+        "file parser refuses a valid theme package with an unsupported suffix");
     const auto directoryPath = root / "blocked.snowtheme"; std::filesystem::create_directory(directoryPath);
     check(!WritePackage(directoryPath, package, error) && std::filesystem::is_directory(directoryPath), "failed atomic replacement leaves its destination intact");
     const auto generalPath = root / "general.json";

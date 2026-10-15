@@ -1,5 +1,12 @@
 local M=module.require("modules/timer.lua")
 return {
+ ["Long countdown wakeups stay bounded without changing the monotonic deadline"]=function()
+    local t=M.new().countdown;t.value=359999000;M.start(t,100)
+    assert(M.deadlineDelay(t,100)==86400000)
+    assert(M.deadlineDelay(t,86400100)==86400000)
+    assert(M.deadlineDelay(t,345600100)==14399000)
+    assert(M.tick(t,360000100) and not M.tick(t,360000101))
+ end,
  ["delayed callbacks finish once without accumulating tick drift"]=function()
     local t=M.new().countdown;t.value=60000;M.start(t,100)
     assert(M.value(t,30100,true)==30000)

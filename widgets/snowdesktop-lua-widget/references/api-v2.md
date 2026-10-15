@@ -935,7 +935,9 @@ rowGap/columns/overscan`、返回的 `firstIndex` 和窗口 children 提交给�
 ```lua
 local itemExtent = 44
 local rowGap = 4
-local viewportExtent = math.max(1, context.logicalHeight - 8)
+local viewportExtent = math.max(1, context.layoutSize.height)
+local initialScrollIndex = #articles > 0
+    and math.min(#articles, math.max(1, model.initialArticleIndex or 1)) or nil
 local range = view.virtualRange({
     key = "feed-virtual",
     itemCount = #articles,
@@ -943,20 +945,22 @@ local range = view.virtualRange({
     viewportExtent = viewportExtent,
     rowGap = rowGap,
     overscan = 2,
-    initialScrollIndex = model.initialArticleIndex,
+    initialScrollIndex = initialScrollIndex,
 })
 local children = {}
-for index = range.firstIndex, range.lastIndex do
-    local article = articles[index]
-    children[#children + 1] = view.listItem({
-        key = "article:" .. article.id,
-        action = { id = "article.open", value = { index = index } },
-        accessibility = { label = article.title },
-        children = {
-            view.text({ key = "title:" .. article.id,
-                text = article.title }),
-        },
-    })
+if range.firstIndex > 0 then
+    for index = range.firstIndex, range.lastIndex do
+        local article = articles[index]
+        children[#children + 1] = view.listItem({
+            key = "article:" .. article.id,
+            action = { id = "article.open", value = { index = index } },
+            accessibility = { label = article.title },
+            children = {
+                view.text({ key = "title:" .. article.id,
+                    text = article.title }),
+            },
+        })
+    end
 end
 return view.virtualList({
     key = "feed-virtual",
@@ -966,7 +970,7 @@ return view.virtualList({
     firstIndex = range.firstIndex,
     rowGap = rowGap,
     overscan = 2,
-    initialScrollIndex = model.initialArticleIndex,
+    initialScrollIndex = initialScrollIndex,
     children = children,
 })
 ```
@@ -1969,6 +1973,15 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 返回相同事件结构、最多一项，`fromDate/toDate` 为空字符串，`truncated=false`。
 成功读取但 ID 不存在时返回空 events；权限不足或 provider 不可用仍返回错误状态，不能解释为删除。
 此能力需要支持它的宿主；仅比较版本号不能识别同版本的早期构建。
+探测 `data.calendar.events.query` 后，还可在范围订阅中使用 `query`（忽略大小写的标题字面子串，
+最多 512 字节有效 UTF-8、无 NUL）、`offset`（非负整数，默认 0）和 `limit`
+（1–512，默认 512）。宿主先筛选完整日期范围的事件，再按既有稳定顺序分页；
+value 额外返回筛选后的 `total`、`hasMore` 和 `nextOffset`。没有下一页时
+`hasMore=false`、`nextOffset=total`；下一页使用返回的偏移，
+变更日期范围或标题后从 0 开始。`eventId` 与这些查询参数互斥；未传任何查询参数时，
+保持原有最多 512 项及 `truncated` 语义。权限不足、不可用或读取失败不能当作空结果。
+此能力不增加权限或 API 版本。组件必须先探测 feature；旧宿主和同版本早期构建只能
+使用原范围订阅，并如实显示截断限制，不能用本地标题过滤承诺找回未返回的事件。
 selectedDate value 返回 `date/revision`。创建、修改和删除日程仍不由这些只读 topic
 执行；`calendar.selectDate(date)` 只改变 SnowDesktop 内部共享选中日期，不修改事件，
 因此不要求 `calendar.write`。纯 `calendar.dateInfo/addDays` 也不读取用户数据、不要求

@@ -2447,6 +2447,8 @@ void TestGpuDiagnosticsCli(const std::filesystem::path& tool, const std::filesys
         "the actual CLI preserves existing diagnostic files");
 }
 
+#include "widget/authoring/widget_doc_recipe_tests.h"
+
 int wmain(int argc, wchar_t** argv) try
 {
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
@@ -3228,6 +3230,7 @@ int wmain(int argc, wchar_t** argv) try
         CheckSecretHeaderDescriptors(snowwidget, host, temporary.path);
         CheckNetworkResponseBounds(snowwidget, host, temporary.path);
         CheckWhaleSettingsChanges(snowwidget, host, temporary.path, repository);
+        CheckPublishedVirtualListRecipe(snowwidget, host, temporary.path, repository);
 
         const auto environmentSource =
             CreateEnvironmentFixture(temporary.path);

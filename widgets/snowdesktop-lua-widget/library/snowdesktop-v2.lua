@@ -1316,9 +1316,12 @@ function animation.cancelFrame(id) end
 ---@field whenHidden? SnowDataHiddenPolicy
 
 ---@class SnowCalendarEventsSubscribeOptions: SnowDataSubscribeOptions
----@field eventId? string Stable event ID, 1-128 bytes without NUL; requires data.calendar.events.byId, mutually exclusive with fromDate/toDate.
+---@field eventId? string Stable event ID, 1-128 bytes without NUL; requires data.calendar.events.byId, excludes range and query pagination options.
 ---@field fromDate? string YYYY-MM-DD; must be paired with toDate.
 ---@field toDate? string YYYY-MM-DD; range is limited to 366 days.
+---@field query? string Literal title substring, at most 512 UTF-8 bytes without NUL; requires data.calendar.events.query and excludes eventId.
+---@field offset? integer Nonnegative filtered-result offset, default 0; requires data.calendar.events.query and excludes eventId.
+---@field limit? integer Filtered page size 1..512, default 512; requires data.calendar.events.query and excludes eventId.
 
 ---@class SnowFilesystemWatchSubscribeOptions: SnowDataSubscribeOptions
 ---@field handle string Opaque folder handle returned by filesystem.pickFolder.
@@ -1658,6 +1661,9 @@ function animation.cancelFrame(id) end
 ---@field toDate string Inclusive range end.
 ---@field revision integer
 ---@field truncated boolean
+---@field total? integer Total matching events, present for query pagination.
+---@field hasMore? boolean Whether another filtered page exists.
+---@field nextOffset? integer Offset of the next filtered page.
 
 ---@class SnowCalendarSelectedDateDataValue
 ---@field date string YYYY-MM-DD.

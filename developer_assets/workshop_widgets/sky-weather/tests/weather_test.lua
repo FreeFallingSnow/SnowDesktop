@@ -16,6 +16,16 @@ local function model(retryDirect)
     return m,c,requests,canceled,function()return saved end,function(n,p)mono=n;now=n;permission=p end
 end
 return {
+    ["Today and tomorrow are calendar dates rather than compact forecast indexes"]=function()
+        local data=w.forecast(j.decode(fixture()))
+        local today,tomorrow=w.currentDays(data)
+        assert(today.date=="2026-10-02" and tomorrow==nil)
+        data.localTime="2026-10-03T23:30"
+        today,tomorrow=w.currentDays(data);assert(today==nil and tomorrow.date=="2026-10-04")
+        assert(w.nextDate("2024-02-28")=="2024-02-29")
+        assert(w.nextDate("2024-02-29")=="2024-03-01")
+        assert(w.nextDate("2026-12-31")=="2027-01-01")
+    end,
     ["Weather and city queries enable direct retry only on supporting hosts"]=function()
         for _,supported in ipairs({false,true}) do
             local flag=supported and true or nil

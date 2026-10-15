@@ -67,6 +67,9 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/storage/widget_storage_persistence.h"
 #include "widget/tasks/widget_filesystem_watch_origin.h"
 #include "widget_host_control_projection.h"
+#include "widget_timer_dispatch.h"
+#include "widget_calendar_provider.h"
+#include "widget/api/widget_calendar_query_options.h"
 #include "widget/storage/widget_storage_value.h"
 #include "widget/storage/widget_storage_write_budget.h"
 #include "widget/storage/widget_secret_store.h"
@@ -4177,7 +4180,7 @@ static int LuaScheduleSet(lua_State* state, bool repeat,
     }
     auto* d2d = GetD2D(state);
     lua_pushboolean(state, d2d && d2d->engine &&
-        d2d->engine->RuntimeSetTimer(BoundWidgetId(state),
+        d2d->engine->RuntimeSetTimer(BoundWidgetId(state), BoundWidgetRuntimeToken(state),
             std::string(name, nameLength), static_cast<int>(delay),
             repeat, hiddenPolicy));
     return 1;
@@ -4230,7 +4233,7 @@ static int lua_ScheduleAt(lua_State* state)
     }
     auto* d2d = GetD2D(state);
     lua_pushboolean(state, d2d && d2d->engine &&
-        d2d->engine->RuntimeSetTimerAt(BoundWidgetId(state),
+        d2d->engine->RuntimeSetTimerAt(BoundWidgetId(state), BoundWidgetRuntimeToken(state),
             std::string(name, nameLength),
             static_cast<std::int64_t>(epochMilliseconds), hiddenPolicy));
     return 1;
@@ -4400,7 +4403,7 @@ static int lua_ScheduleTimeline(lua_State* state)
 
     auto* d2d = GetD2D(state);
     lua_pushboolean(state, d2d && d2d->engine &&
-        d2d->engine->RuntimeSetTimeline(BoundWidgetId(state),
+        d2d->engine->RuntimeSetTimeline(BoundWidgetId(state), BoundWidgetRuntimeToken(state),
             std::string(name, nameLength), std::move(entries),
             hiddenPolicy, reloadAtEnd));
     return 1;
@@ -4428,7 +4431,7 @@ static int lua_ScheduleCancel(lua_State* state)
     }
     auto* d2d = GetD2D(state);
     lua_pushboolean(state, d2d && d2d->engine &&
-        d2d->engine->RuntimeCancelTimer(BoundWidgetId(state),
+        d2d->engine->RuntimeCancelTimer(BoundWidgetId(state), BoundWidgetRuntimeToken(state),
             std::string(name, nameLength)));
     return 1;
 }
@@ -5111,6 +5114,15 @@ static void PushDataSnapshotEnvelope(lua_State* state,
         lua_setfield(state, -2, "revision");
         lua_pushboolean(state, snapshot->calendarTruncated);
         lua_setfield(state, -2, "truncated");
+        if (snapshot->calendarTotal)
+        {
+            lua_pushinteger(state, static_cast<lua_Integer>(*snapshot->calendarTotal));
+            lua_setfield(state, -2, "total");
+            lua_pushboolean(state, snapshot->calendarHasMore);
+            lua_setfield(state, -2, "hasMore");
+            lua_pushinteger(state, static_cast<lua_Integer>(snapshot->calendarNextOffset));
+            lua_setfield(state, -2, "nextOffset");
+        }
     }
     else if (snapshot->topic == "calendar.selectedDate")
     {
@@ -5185,330 +5197,7 @@ static void RegisterDataSubscriptionHandle(lua_State* state)
     lua_pop(state, 1);
 }
 
-static int lua_DataSubscribe(lua_State* state)
-{
-    size_t topicLength = 0;
-    const char* topic = luaL_checklstring(state, 1, &topicLength);
-    if (topicLength == 0 || topicLength > 128)
-        return luaL_error(state,
-            "data.subscribe: topic must contain 1 to 128 bytes");
-    if (lua_gettop(state) > 2)
-        return luaL_error(state,
-            "data.subscribe: expected topic and optional options");
-
-    const std::string topicValue(topic, topicLength);
-    const bool audioAnalysisTopic =
-        topicValue == "audio.output.analysis";
-    lua_Integer maxAgeMs = audioAnalysisTopic ? 33 : 1000;
-    bool maxAgeSpecified = false;
-    bool includeGpuDetails = false;
-    bool updateHzSpecified = false;
-    bool waveformPointsSpecified = false;
-    bool spectrumBinsSpecified = false;
-    snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
-        audioAnalysis;
-    std::string rangeStart;
-    std::string rangeEnd;
-    std::string eventId;
-    std::string scopeHandle;
-    auto hiddenPolicy = topicValue == "filesystem.watch" ||
-            audioAnalysisTopic
-        ? snowdesktop::widget_runtime::DataHiddenPolicy::Pause
-        : snowdesktop::widget_runtime::DataHiddenPolicy::Throttle;
-    if (!lua_isnoneornil(state, 2))
-    {
-        luaL_checktype(state, 2, LUA_TTABLE);
-        lua_pushnil(state);
-        while (lua_next(state, 2) != 0)
-        {
-            if (lua_type(state, -2) != LUA_TSTRING)
-                return luaL_error(state,
-                    "data.subscribe: option keys must be strings");
-            size_t keyLength = 0;
-            const char* keyRaw = lua_tolstring(state, -2, &keyLength);
-            const std::string_view key(keyRaw, keyLength);
-            const bool common = key == "maxAgeMs" ||
-                key == "whenHidden";
-            const bool calendar = topicValue == "calendar.events" &&
-                (key == "fromDate" || key == "toDate" || key == "eventId");
-            const bool filesystem = topicValue == "filesystem.watch" &&
-                key == "handle";
-            const bool audio = audioAnalysisTopic &&
-                (key == "features" || key == "updateHz" ||
-                    key == "waveformPoints" || key == "spectrumBins");
-            const bool gpu = topicValue == "system.gpu" && key == "includeDetails";
-            if (!common && !calendar && !filesystem && !audio && !gpu)
-            {
-                return luaL_error(state,
-                    "data.subscribe: option '%.*s' is not valid for topic '%s'",
-                    static_cast<int>(keyLength), keyRaw,
-                    topicValue.c_str());
-            }
-            lua_pop(state, 1);
-        }
-        lua_getfield(state, 2, "includeDetails");
-        if (!lua_isnil(state, -1))
-        {
-            if (!lua_isboolean(state, -1))
-                return luaL_error(state, "data.subscribe: includeDetails must be a boolean");
-            includeGpuDetails = lua_toboolean(state, -1) != 0;
-        }
-        lua_pop(state, 1);
-        lua_getfield(state, 2, "maxAgeMs");
-        if (!lua_isnil(state, -1))
-        {
-            maxAgeSpecified = true;
-            int isInteger = 0;
-            maxAgeMs = lua_tointegerx(state, -1, &isInteger);
-            if (!isInteger || maxAgeMs <= 0 || maxAgeMs > 86400000)
-                return luaL_error(state,
-                    "data.subscribe: maxAgeMs must be an integer from 1 to 86400000");
-        }
-        lua_pop(state, 1);
-
-        lua_getfield(state, 2, "whenHidden");
-        if (!lua_isnil(state, -1))
-        {
-            size_t policyLength = 0;
-            const char* policy = luaL_checklstring(
-                state, -1, &policyLength);
-            const std::string_view value(policy, policyLength);
-            if (value == "pause")
-                hiddenPolicy = snowdesktop::widget_runtime::DataHiddenPolicy::Pause;
-            else if (value == "throttle")
-                hiddenPolicy = snowdesktop::widget_runtime::DataHiddenPolicy::Throttle;
-            else if (value == "continue")
-                hiddenPolicy = snowdesktop::widget_runtime::DataHiddenPolicy::Continue;
-            else
-                return luaL_error(state,
-                    "data.subscribe: whenHidden must be 'pause', 'throttle', or 'continue'");
-            if (audioAnalysisTopic && value != "pause")
-                return luaL_error(state,
-                    "data.subscribe: audio.output.analysis requires whenHidden='pause'");
-        }
-        lua_pop(state, 1);
-
-        const auto readDateOption = [&](const char* name,
-                                        std::string& output) {
-            lua_getfield(state, 2, name);
-            if (!lua_isnil(state, -1))
-            {
-                size_t length = 0;
-                const char* value = luaL_checklstring(
-                    state, -1, &length);
-                output.assign(value, length);
-            }
-            lua_pop(state, 1);
-        };
-        readDateOption("fromDate", rangeStart);
-        readDateOption("toDate", rangeEnd);
-        lua_getfield(state, 2, "eventId");
-        if (!lua_isnil(state, -1))
-        {
-            if (lua_type(state, -1) != LUA_TSTRING)
-                return luaL_error(state, "data.subscribe: eventId must be a string");
-            size_t length = 0;
-            const char* raw = lua_tolstring(state, -1, &length);
-            eventId.assign(raw, length);
-            if (length == 0 || length > 128 || eventId.find('\0') != std::string::npos)
-                return luaL_error(state, "data.subscribe: eventId must contain 1 to 128 bytes without NUL");
-            lua_getfield(state, 2, "fromDate");
-            const bool hasStart = !lua_isnil(state, -1);
-            lua_pop(state, 1);
-            lua_getfield(state, 2, "toDate");
-            const bool hasEnd = !lua_isnil(state, -1);
-            lua_pop(state, 1);
-            if (hasStart || hasEnd)
-                return luaL_error(state, "data.subscribe: eventId and date range are mutually exclusive");
-        }
-        lua_pop(state, 1);
-
-        lua_getfield(state, 2, "handle");
-        if (!lua_isnil(state, -1))
-        {
-            size_t handleLength = 0;
-            const char* handle = luaL_checklstring(
-                state, -1, &handleLength);
-            if (handleLength == 0 || handleLength > 128)
-                return luaL_error(state,
-                    "data.subscribe: handle must contain 1 to 128 bytes");
-            scopeHandle.assign(handle, handleLength);
-        }
-        lua_pop(state, 1);
-
-        if (audioAnalysisTopic)
-        {
-            lua_getfield(state, 2, "features");
-            if (!lua_isnil(state, -1))
-            {
-                luaL_checktype(state, -1, LUA_TTABLE);
-                const int featuresTable = lua_absindex(state, -1);
-                if (lua_getmetatable(state, featuresTable) != 0)
-                {
-                    lua_pop(state, 1);
-                    return luaL_error(state,
-                        "data.subscribe: audio features must be a plain array");
-                }
-                const size_t featureCount = lua_rawlen(
-                    state, featuresTable);
-                if (featureCount == 0 || featureCount > 4)
-                    return luaL_error(state,
-                        "data.subscribe: audio features must contain 1 to 4 entries");
-                size_t actualCount = 0;
-                lua_pushnil(state);
-                while (lua_next(state, featuresTable) != 0)
-                {
-                    if (!lua_isinteger(state, -2))
-                        return luaL_error(state,
-                            "data.subscribe: audio features must be a dense array");
-                    const lua_Integer key = lua_tointeger(state, -2);
-                    if (key < 1 || static_cast<size_t>(key) > featureCount)
-                        return luaL_error(state,
-                            "data.subscribe: audio features must be a dense array");
-                    ++actualCount;
-                    lua_pop(state, 1);
-                }
-                if (actualCount != featureCount)
-                    return luaL_error(state,
-                        "data.subscribe: audio features must be a dense array");
-
-                audioAnalysis.waveform = false;
-                audioAnalysis.spectrum = false;
-                audioAnalysis.rms = false;
-                audioAnalysis.peak = false;
-                std::unordered_set<std::string> seen;
-                for (size_t index = 1; index <= featureCount; ++index)
-                {
-                    lua_rawgeti(state, featuresTable,
-                        static_cast<lua_Integer>(index));
-                    size_t featureLength = 0;
-                    const char* featureRaw = luaL_checklstring(
-                        state, -1, &featureLength);
-                    const std::string feature(featureRaw, featureLength);
-                    lua_pop(state, 1);
-                    if (!seen.insert(feature).second)
-                        return luaL_error(state,
-                            "data.subscribe: audio features must be unique");
-                    if (feature == "waveform")
-                        audioAnalysis.waveform = true;
-                    else if (feature == "spectrum")
-                        audioAnalysis.spectrum = true;
-                    else if (feature == "rms")
-                        audioAnalysis.rms = true;
-                    else if (feature == "peak")
-                        audioAnalysis.peak = true;
-                    else
-                        return luaL_error(state,
-                            "data.subscribe: unsupported audio feature '%s'",
-                            feature.c_str());
-                }
-            }
-            lua_pop(state, 1);
-
-            const auto readAudioInteger = [&](const char* field,
-                lua_Integer minimum, lua_Integer maximum,
-                std::size_t& output, bool& specified) {
-                lua_getfield(state, 2, field);
-                if (!lua_isnil(state, -1))
-                {
-                    specified = true;
-                    if (!lua_isinteger(state, -1))
-                        luaL_error(state,
-                            "data.subscribe: %s must be an integer",
-                            field);
-                    const lua_Integer value = lua_tointeger(state, -1);
-                    if (value < minimum || value > maximum)
-                        luaL_error(state,
-                            "data.subscribe: %s must be between %lld and %lld",
-                            field, static_cast<long long>(minimum),
-                            static_cast<long long>(maximum));
-                    output = static_cast<std::size_t>(value);
-                }
-                lua_pop(state, 1);
-            };
-            readAudioInteger("waveformPoints", 16, 256,
-                audioAnalysis.waveformPoints, waveformPointsSpecified);
-            readAudioInteger("spectrumBins", 16, 128,
-                audioAnalysis.spectrumBins, spectrumBinsSpecified);
-
-            lua_getfield(state, 2, "updateHz");
-            if (!lua_isnil(state, -1))
-            {
-                updateHzSpecified = true;
-                if (!lua_isinteger(state, -1))
-                    return luaL_error(state,
-                        "data.subscribe: updateHz must be an integer");
-                const lua_Integer updateHz = lua_tointeger(state, -1);
-                if (updateHz < 1 || updateHz > 60)
-                    return luaL_error(state,
-                        "data.subscribe: updateHz must be between 1 and 60");
-                maxAgeMs = (1000 + updateHz - 1) / updateHz;
-            }
-            lua_pop(state, 1);
-
-            if (maxAgeSpecified && updateHzSpecified)
-                return luaL_error(state,
-                    "data.subscribe: maxAgeMs and updateHz are mutually exclusive");
-            if (waveformPointsSpecified && !audioAnalysis.waveform)
-                return luaL_error(state,
-                    "data.subscribe: waveformPoints requires the waveform feature");
-            if (spectrumBinsSpecified && !audioAnalysis.spectrum)
-                return luaL_error(state,
-                    "data.subscribe: spectrumBins requires the spectrum feature");
-        }
-    }
-
-    if (topicValue == "filesystem.watch")
-    {
-        if (scopeHandle.empty())
-            return luaL_error(state,
-                "data.subscribe: filesystem.watch requires a folder handle");
-    }
-    else if (!scopeHandle.empty())
-    {
-        return luaL_error(state,
-            "data.subscribe: handle is only valid for filesystem.watch");
-    }
-
-    if (!rangeStart.empty() || !rangeEnd.empty())
-    {
-        if (topicValue != "calendar.events" || rangeStart.empty() ||
-            rangeEnd.empty() || rangeEnd < rangeStart ||
-            !snowdesktop::calendar::CalendarService::
-                GetDateInfo(rangeStart) ||
-            !snowdesktop::calendar::CalendarService::
-                GetDateInfo(rangeEnd))
-        {
-            return luaL_error(state,
-                "data.subscribe: fromDate/toDate require a valid calendar.events range");
-        }
-        const auto maximumEnd = snowdesktop::calendar::CalendarService::
-            AddDays(rangeStart, 366);
-        if (!maximumEnd || rangeEnd > *maximumEnd)
-        {
-            return luaL_error(state,
-                "data.subscribe: calendar.events range cannot exceed 366 days");
-        }
-    }
-
-    auto* d2d = GetD2D(state);
-    if (!d2d || !d2d->engine)
-        return luaL_error(state, "data.subscribe: host is unavailable");
-    auto result = d2d->engine->RuntimeSubscribeData(
-        BoundWidgetId(state), topicValue,
-        std::chrono::milliseconds(maxAgeMs), hiddenPolicy,
-        std::move(rangeStart), std::move(rangeEnd),
-        std::move(scopeHandle), audioAnalysis, std::move(eventId));
-    if (!result)
-        return luaL_error(state, "data.subscribe: %s", result.error.c_str());
-
-    auto* handle = static_cast<LuaDataSubscriptionHandle*>(
-        lua_newuserdata(state, sizeof(LuaDataSubscriptionHandle)));
-    *handle = { d2d->engine, result.id, includeGpuDetails };
-    luaL_getmetatable(state, kDataSubscriptionHandleMetatable);
-    lua_setmetatable(state, -2);
-    return 1;
-}
+#include "widget_data_subscribe_lua.inc"
 
 static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* state)
 {
@@ -15778,7 +15467,8 @@ bool WidgetEngine::Init(ID2D1DeviceContext* d2dContext, IDWriteFactory* dwriteFa
                 {}, _LW("calendar.notification_title"),
                 Utf8ToWideLocal(event.title) });
         });
-    (void)calendarService_->Load();
+    calendarServiceLoaded_ = snowdesktop::widget_runtime::LoadWidgetCalendarProvider(
+        *calendarService_, GetDataFilePath(L"SnowDesktop.calendar.json"));
     systemSnapshotService_ = std::make_unique<SystemSnapshotService>();
     httpService_ = std::make_unique<AsyncHttpService>();
     InitializeWidgetDataBroker();
@@ -15863,6 +15553,7 @@ void WidgetEngine::Shutdown()
         httpService_.reset();
     }
     calendarService_.reset();
+    calendarServiceLoaded_ = false;
     pendingCalendarSelectionChange_ = false;
     pendingCalendarEventsChange_ = false;
     for (auto& widget : widgets_)
@@ -21776,7 +21467,7 @@ void WidgetEngine::TickRuntime()
         }
     }
     DrainAudioAnalysisChanges();
-    if (calendarService_)
+    if (calendarService_ && calendarServiceLoaded_)
         calendarService_->Tick();
     const bool eventsChanged =
         std::exchange(
@@ -23309,7 +23000,8 @@ WidgetEngine::RuntimeSubscribeData(
     std::string rangeStart, std::string rangeEnd,
     std::string scopeHandle,
     snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
-        audioAnalysis, std::string eventId)
+        audioAnalysis, std::string eventId,
+    std::optional<snowdesktop::widget_runtime::CalendarEventQueryOptions> calendarQuery)
 {
     using snowdesktop::widget_runtime::DataSubscriptionOptions;
     if (!dataBroker_)
@@ -23369,6 +23061,7 @@ WidgetEngine::RuntimeSubscribeData(
     options.rangeStart = std::move(rangeStart);
     options.rangeEnd = std::move(rangeEnd);
     options.eventId = std::move(eventId);
+    options.calendarQuery = std::move(calendarQuery);
     options.audioWaveform = audioAnalysis.waveform;
     options.audioSpectrum = audioAnalysis.spectrum;
     options.audioRms = audioAnalysis.rms;
@@ -23455,7 +23148,8 @@ WidgetEngine::RuntimeGetDataSnapshot(
         if (snowdesktop::widget_runtime::IsSystemControlDataTopic(result.topic))
             result.systemControl = snowdesktop::widget_runtime::PreviewSystemControlData(
                 result.topic, previewState == LuaWidgetPreviewDataState::Empty);
-        if (previewState == LuaWidgetPreviewDataState::Empty)
+        if (previewState == LuaWidgetPreviewDataState::Empty &&
+            result.topic != "calendar.events")
         {
             if (result.topic == "audio.input.volume") result.available = false;
             return result;
@@ -23741,11 +23435,12 @@ WidgetEngine::RuntimeGetDataSnapshot(
             };
             for (const auto& event : samples)
             {
-                if ((!binding->options.eventId.empty() &&
+                if (previewState != LuaWidgetPreviewDataState::Empty &&
+                    ((!binding->options.eventId.empty() &&
                         event.id == binding->options.eventId) ||
                     (binding->options.eventId.empty() &&
                         event.date >= result.calendarRangeStart &&
-                        event.date <= result.calendarRangeEnd))
+                        event.date <= result.calendarRangeEnd)))
                 {
                     result.calendarEvents.push_back(event);
                 }
@@ -23756,6 +23451,16 @@ WidgetEngine::RuntimeGetDataSnapshot(
                 result.calendarRangeEnd.clear();
             }
             result.calendarRevision = 1;
+            if (binding->options.calendarQuery)
+            {
+                auto page = snowdesktop::widget_runtime::QueryCalendarEvents(
+                    result.calendarEvents, *binding->options.calendarQuery);
+                result.calendarEvents = std::move(page.events);
+                result.calendarTotal = page.total;
+                result.calendarHasMore = page.hasMore;
+                result.calendarNextOffset = page.nextOffset;
+                result.calendarTruncated = page.total > result.calendarEvents.size();
+            }
         }
         else if (result.topic == "calendar.selectedDate")
         {
@@ -24115,18 +23820,17 @@ WidgetEngine::RuntimeGetDataSnapshot(
     {
         result.calendarRangeStart = binding->options.rangeStart;
         result.calendarRangeEnd = binding->options.rangeEnd;
-        if (!binding->options.eventId.empty())
+        if (!calendarService_ || !calendarServiceLoaded_)
         {
-            if (!calendarService_)
-                result.error = "providerUnavailable";
-            else
-            {
-                const auto event = calendarService_->EventById(binding->options.eventId);
-                if (event) result.calendarEvents.push_back(*event);
-                result.calendarRevision = calendarEventsRevision_;
-                result.available = true;
-                setFreshness(timestampNow);
-            }
+            result.error = "providerUnavailable";
+        }
+        else if (!binding->options.eventId.empty())
+        {
+            const auto event = calendarService_->EventById(binding->options.eventId);
+            if (event) result.calendarEvents.push_back(*event);
+            result.calendarRevision = calendarEventsRevision_;
+            result.available = true;
+            setFreshness(timestampNow);
         }
         else
         {
@@ -24153,10 +23857,23 @@ WidgetEngine::RuntimeGetDataSnapshot(
                 result.calendarEvents = RuntimeCalendarEvents(
                     result.calendarRangeStart, result.calendarRangeEnd);
                 constexpr std::size_t MaximumEvents = 512;
-                result.calendarTruncated =
-                    result.calendarEvents.size() > MaximumEvents;
-                if (result.calendarTruncated)
-                    result.calendarEvents.resize(MaximumEvents);
+                if (binding->options.calendarQuery)
+                {
+                    auto page = snowdesktop::widget_runtime::QueryCalendarEvents(
+                        result.calendarEvents, *binding->options.calendarQuery);
+                    result.calendarEvents = std::move(page.events);
+                    result.calendarTotal = page.total;
+                    result.calendarHasMore = page.hasMore;
+                    result.calendarNextOffset = page.nextOffset;
+                    result.calendarTruncated = page.total > result.calendarEvents.size();
+                }
+                else
+                {
+                    result.calendarTruncated =
+                        result.calendarEvents.size() > MaximumEvents;
+                    if (result.calendarTruncated)
+                        result.calendarEvents.resize(MaximumEvents);
+                }
                 result.calendarRevision = calendarEventsRevision_;
                 result.available = true;
                 setFreshness(timestampNow);
@@ -26763,27 +26480,24 @@ bool WidgetEngine::RuntimeCancelTask(
 }
 
 bool WidgetEngine::RuntimeSetTimer(const std::wstring& widgetId,
+    std::uint64_t ownerToken,
     const std::string& name, int intervalMs, bool repeat,
     snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy)
 {
     if (snowdesktop::widget_runtime::IsDryLoad() &&
         !snowdesktop::widget_runtime::IsPreviewExecution())
         return false;
-    int index = FindWidget(widgetId);
-    if (index < 0 || name.empty()) return false;
-    const bool preview = widgets_[index].preview;
-    const auto now = preview
-        ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
-            std::chrono::milliseconds(snowdesktop::widget_runtime::
-                PreviewMonotonicMilliseconds) }
-        : std::chrono::steady_clock::now();
-    if (!widgets_[index].namedTimers.Set(
-            name, intervalMs, repeat, now, hiddenPolicy))
-    {
-        return false;
-    }
-    if (!preview) RescheduleNamedTimer(widgets_[index]);
-    return true;
+    using namespace snowdesktop::widget_runtime;
+    WidgetTimerMutation mutation;
+    mutation.kind = WidgetTimerMutation::Kind::Set;
+    mutation.name = name;
+    mutation.intervalMs = intervalMs;
+    mutation.repeat = repeat;
+    mutation.hiddenPolicy = hiddenPolicy;
+    return DispatchWidgetTimerMutation(widgets_, widgetId, ownerToken,
+        std::move(mutation), NamedTimerSchedule::Clock::now(),
+        NamedTimerSchedule::WallClock::now(),
+        [this](auto& owner) { RescheduleNamedTimer(owner); });
 }
 
 void WidgetEngine::SetCalendarDisplayPreferences(snowdesktop::calendar::DisplayPreferences preferences)
@@ -26902,7 +26616,7 @@ snowdesktop::calendar::MutationResult WidgetEngine::RuntimeCalendarSeriesCreate(
 {
     if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, {}, 0, "previewReadOnly" };
-    return calendarService_ ? calendarService_->CreateSeries(std::move(series)) :
+    return calendarService_ && calendarServiceLoaded_ ? calendarService_->CreateSeries(std::move(series)) :
         snowdesktop::calendar::MutationResult{ false, {}, 0, "unavailable" };
 }
 
@@ -26912,7 +26626,7 @@ snowdesktop::calendar::MutationResult WidgetEngine::RuntimeCalendarSeriesUpdate(
 {
     if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, id, 0, "previewReadOnly" };
-    return calendarService_ ? calendarService_->UpdateSeries(id, expectedRevision, std::move(series)) :
+    return calendarService_ && calendarServiceLoaded_ ? calendarService_->UpdateSeries(id, expectedRevision, std::move(series)) :
         snowdesktop::calendar::MutationResult{ false, id, 0, "unavailable" };
 }
 
@@ -26921,7 +26635,7 @@ snowdesktop::calendar::MutationResult WidgetEngine::RuntimeCalendarSeriesRemove(
 {
     if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, id, 0, "previewReadOnly" };
-    return calendarService_ ? calendarService_->RemoveSeries(id, expectedRevision) :
+    return calendarService_ && calendarServiceLoaded_ ? calendarService_->RemoveSeries(id, expectedRevision) :
         snowdesktop::calendar::MutationResult{ false, id, 0, "unavailable" };
 }
 
@@ -26932,7 +26646,7 @@ WidgetEngine::RuntimeCalendarCreate(
     if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, {}, 0,
             _L("app.widget_preview.api.read_only") };
-    return calendarService_
+    return calendarService_ && calendarServiceLoaded_
         ? calendarService_->Create(std::move(event))
         : snowdesktop::calendar::MutationResult{
             false, {}, 0, "unavailable"
@@ -26948,7 +26662,7 @@ WidgetEngine::RuntimeCalendarUpdate(
     if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, id, 0,
             _L("app.widget_preview.api.read_only") };
-    return calendarService_
+    return calendarService_ && calendarServiceLoaded_
         ? calendarService_->Update(
             id, expectedRevision, std::move(event))
         : snowdesktop::calendar::MutationResult{
@@ -26963,21 +26677,24 @@ WidgetEngine::RuntimeCalendarRemove(
     if (snowdesktop::widget_runtime::IsDryLoad())
         return { false, id, 0,
             _L("app.widget_preview.api.read_only") };
-    return calendarService_
+    return calendarService_ && calendarServiceLoaded_
         ? calendarService_->Remove(id, expectedRevision)
         : snowdesktop::calendar::MutationResult{
             false, id, 0, "unavailable"
         };
 }
 
-bool WidgetEngine::RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name)
+bool WidgetEngine::RuntimeCancelTimer(const std::wstring& widgetId,
+    std::uint64_t ownerToken, const std::string& name)
 {
-    int index = FindWidget(widgetId);
-    if (index < 0) return false;
-    const bool removed = widgets_[index].namedTimers.Cancel(name);
-    if (removed)
-        RescheduleNamedTimer(widgets_[index]);
-    return removed;
+    using namespace snowdesktop::widget_runtime;
+    WidgetTimerMutation mutation;
+    mutation.kind = WidgetTimerMutation::Kind::Cancel;
+    mutation.name = name;
+    return DispatchWidgetTimerMutation(widgets_, widgetId, ownerToken,
+        std::move(mutation), NamedTimerSchedule::Clock::now(),
+        NamedTimerSchedule::WallClock::now(),
+        [this](auto& owner) { RescheduleNamedTimer(owner); });
 }
 
 std::string WidgetEngine::RuntimeRequestAnimationFrame(
@@ -27211,35 +26928,27 @@ void WidgetEngine::ClearNativeMarqueeComposition(LuaWidget& widget)
 }
 
 bool WidgetEngine::RuntimeSetTimerAt(const std::wstring& widgetId,
+    std::uint64_t ownerToken,
     const std::string& name, std::int64_t epochMilliseconds,
     snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy)
 {
     if (snowdesktop::widget_runtime::IsDryLoad() &&
         !snowdesktop::widget_runtime::IsPreviewExecution())
         return false;
-    int index = FindWidget(widgetId);
-    if (index < 0 || name.empty()) return false;
-    const bool preview = widgets_[index].preview;
-    const auto steadyNow = preview
-        ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
-            std::chrono::milliseconds(snowdesktop::widget_runtime::
-                PreviewMonotonicMilliseconds) }
-        : std::chrono::steady_clock::now();
-    const auto wallNow = preview
-        ? snowdesktop::widget_runtime::NamedTimerSchedule::WallTimePoint{
-            std::chrono::milliseconds(snowdesktop::widget_runtime::
-                PreviewWallClockMilliseconds) }
-        : std::chrono::system_clock::now();
-    if (!widgets_[index].namedTimers.SetAt(name, epochMilliseconds,
-            steadyNow, wallNow, hiddenPolicy))
-    {
-        return false;
-    }
-    if (!preview) RescheduleNamedTimer(widgets_[index]);
-    return true;
+    using namespace snowdesktop::widget_runtime;
+    WidgetTimerMutation mutation;
+    mutation.kind = WidgetTimerMutation::Kind::At;
+    mutation.name = name;
+    mutation.epochMilliseconds = epochMilliseconds;
+    mutation.hiddenPolicy = hiddenPolicy;
+    return DispatchWidgetTimerMutation(widgets_, widgetId, ownerToken,
+        std::move(mutation), NamedTimerSchedule::Clock::now(),
+        NamedTimerSchedule::WallClock::now(),
+        [this](auto& owner) { RescheduleNamedTimer(owner); });
 }
 
 bool WidgetEngine::RuntimeSetTimeline(const std::wstring& widgetId,
+    std::uint64_t ownerToken,
     const std::string& name,
     std::vector<snowdesktop::widget_runtime::
         NamedTimerSchedule::TimelineEntry> entries,
@@ -27249,27 +26958,17 @@ bool WidgetEngine::RuntimeSetTimeline(const std::wstring& widgetId,
     if (snowdesktop::widget_runtime::IsDryLoad() &&
         !snowdesktop::widget_runtime::IsPreviewExecution())
         return false;
-    const int index = FindWidget(widgetId);
-    if (index < 0 || name.empty()) return false;
-    const bool preview = widgets_[index].preview;
-    const auto steadyNow = preview
-        ? snowdesktop::widget_runtime::NamedTimerSchedule::TimePoint{
-            std::chrono::milliseconds(snowdesktop::widget_runtime::
-                PreviewMonotonicMilliseconds) }
-        : std::chrono::steady_clock::now();
-    const auto wallNow = preview
-        ? snowdesktop::widget_runtime::NamedTimerSchedule::WallTimePoint{
-            std::chrono::milliseconds(snowdesktop::widget_runtime::
-                PreviewWallClockMilliseconds) }
-        : std::chrono::system_clock::now();
-    if (!widgets_[index].namedTimers.SetTimeline(name,
-            std::move(entries), steadyNow, wallNow,
-            hiddenPolicy, reloadAtEnd))
-    {
-        return false;
-    }
-    if (!preview) RescheduleNamedTimer(widgets_[index]);
-    return true;
+    using namespace snowdesktop::widget_runtime;
+    WidgetTimerMutation mutation;
+    mutation.kind = WidgetTimerMutation::Kind::Timeline;
+    mutation.name = name;
+    mutation.entries = std::move(entries);
+    mutation.hiddenPolicy = hiddenPolicy;
+    mutation.reloadAtEnd = reloadAtEnd;
+    return DispatchWidgetTimerMutation(widgets_, widgetId, ownerToken,
+        std::move(mutation), NamedTimerSchedule::Clock::now(),
+        NamedTimerSchedule::WallClock::now(),
+        [this](auto& owner) { RescheduleNamedTimer(owner); });
 }
 
 int WidgetEngine::RuntimeHttpRequest(const std::wstring& widgetId, HttpRequestOptions options)

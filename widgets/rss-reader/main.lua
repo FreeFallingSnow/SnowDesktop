@@ -234,7 +234,16 @@ local function errorText(model)
     return l10n.tr("lua_widget.rss_reader.request_failed")
 end
 
-local function registerRegion(key, shape, events, label, enabled)
+local function registerRegion(key, shape, events, label, enabled, viewport)
+    if viewport then
+        local left, top = math.max(shape.x, viewport.x), math.max(shape.y, viewport.y)
+        local right = math.min(shape.x + shape.width, viewport.x + viewport.width)
+        local bottom = math.min(shape.y + shape.height, viewport.y + viewport.height)
+        if right <= left or bottom <= top then return end
+        if left ~= shape.x or top ~= shape.y or right ~= shape.x + shape.width or bottom ~= shape.y + shape.height then
+            shape = { type = "rect", x = left, y = top, width = right - left, height = bottom - top }
+        end
+    end
     interaction.region({
         key = key, shape = shape,
         cursor = enabled == false and "default" or "hand",
@@ -389,7 +398,7 @@ local function render(context, model)
             radius = metrics.controlRadius }, {
             doubleClick = { id = "rss.open", value = article.link },
             contextMenu = { id = "rss.menu", value = article.link },
-        }, article.title, article.link ~= "")
+        }, article.title, article.link ~= "", scrollViewport)
         local titleY = y + rowPadding
         if hovered then
             draw.marqueeText({

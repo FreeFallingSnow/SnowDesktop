@@ -234,7 +234,16 @@ local function syncQueryAndSources(model)
     end
 end
 
-local function registerRegion(key, shape, events, label)
+local function registerRegion(key, shape, events, label, viewport)
+    if viewport then
+        local left, top = math.max(shape.x, viewport.x), math.max(shape.y, viewport.y)
+        local right = math.min(shape.x + shape.width, viewport.x + viewport.width)
+        local bottom = math.min(shape.y + shape.height, viewport.y + viewport.height)
+        if right <= left or bottom <= top then return end
+        if left ~= shape.x or top ~= shape.y or right ~= shape.x + shape.width or bottom ~= shape.y + shape.height then
+            shape = { type = "rect", x = left, y = top, width = right - left, height = bottom - top }
+        end
+    end
     interaction.region({
         key = key, shape = shape, cursor = "hand", events = events,
         accessibility = { role = "listitem", label = label },
@@ -381,7 +390,7 @@ local function render(context, model)
                     click = { id = "quick.select", value = actionValue },
                     doubleClick = { id = "quick.open", value = actionValue },
                     contextMenu = { id = "quick.menu", value = actionValue },
-                }, item.title)
+                }, item.title, viewport)
                 local iconX = contentInset + metrics.spacingSm
                 local iconY = y + math.max(0, (itemHeight - iconSize) / 2)
                 if item.preview then

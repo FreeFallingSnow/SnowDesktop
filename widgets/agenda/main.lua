@@ -481,7 +481,16 @@ local function editorErrorText(error)
     return nil
 end
 
-local function registerRegion(key, shape, eventsValue, label, enabled)
+local function registerRegion(key, shape, eventsValue, label, enabled, viewport)
+    if viewport then
+        local left, top = math.max(shape.x, viewport.x), math.max(shape.y, viewport.y)
+        local right = math.min(shape.x + shape.width, viewport.x + viewport.width)
+        local bottom = math.min(shape.y + shape.height, viewport.y + viewport.height)
+        if right <= left or bottom <= top then return end
+        if left ~= shape.x or top ~= shape.y or right ~= shape.x + shape.width or bottom ~= shape.y + shape.height then
+            shape = { type = "rect", x = left, y = top, width = right - left, height = bottom - top }
+        end
+    end
     interaction.region({
         key = key,
         shape = shape,
@@ -687,7 +696,7 @@ local function render(context, model)
             click = { id = "agenda.select", value = item.id },
             doubleClick = { id = "agenda.edit", value = item.id },
             contextMenu = { id = "agenda.menu", value = item.id },
-        }, item.title or l10n.tr("lua_widget.agenda.untitled"), true)
+        }, item.title or l10n.tr("lua_widget.agenda.untitled"), true, viewport)
 
         local textX = pad + metrics.spacingSm
         local textWidth = width - pad * 2 - metrics.spacingLg

@@ -215,8 +215,8 @@ local function render(_context,m)
         local numberInk=measure.ink
         local heroVisibleHeight=math.max(numberInk.height,icon*(kind=="moon" and moonScale*2*math.sin(moonAngle) or 0.9))
         local infoSize=short*(wide and 0.054 or 0.037)
-        local today=data.days[1]
-        local range=weather.temperature(today.high,cfg.unit).." / "..weather.temperature(today.low,cfg.unit)
+        local today,tomorrow=weather.currentDays(data)
+        local range=weather.temperature(today and today.high,cfg.unit).." / "..weather.temperature(today and today.low,cfg.unit)
         local feels=l10n.tr("lua_widget.sky_weather.feels",weather.temperature(data.feels,cfg.unit))
         if wide then
             local rangeInk=draw.measureText(range,infoSize,0,false).ink
@@ -266,8 +266,8 @@ local function render(_context,m)
             fy=listTop;fh=listHeight
         elseif not wide then
             local hint=l10n.tr("lua_widget.sky_weather.five_days")
-            if data.days[2] and data.days[2].high<today.high-2 then
-                local delta=today.high-data.days[2].high
+            if today and tomorrow and tomorrow.high<today.high-2 then
+                local delta=today.high-tomorrow.high
                 hint=l10n.tr("lua_widget.sky_weather.cooler",weather.temperature(cfg.unit=="f" and delta*9/5 or delta,"c"))
             end
             local hintTop=weatherBottom+short*0.032

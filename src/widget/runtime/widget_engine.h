@@ -456,6 +456,9 @@ struct LuaWidgetDataSnapshot
     std::string calendarRangeEnd;
     std::uint64_t calendarRevision = 0;
     bool calendarTruncated = false;
+    std::optional<std::uint64_t> calendarTotal;
+    bool calendarHasMore = false;
+    std::uint64_t calendarNextOffset = 0;
     std::string appIndexState;
     std::uint64_t appIndexRevision = 0;
     std::vector<FilesystemWatchEvent> filesystemWatchEvents;
@@ -1272,7 +1275,9 @@ public:
             std::string rangeStart = {}, std::string rangeEnd = {},
             std::string scopeHandle = {},
             snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration
-                audioAnalysis = {}, std::string eventId = {});
+                audioAnalysis = {}, std::string eventId = {},
+            std::optional<snowdesktop::widget_runtime::CalendarEventQueryOptions>
+                calendarQuery = {});
     bool RuntimeUnsubscribeData(std::uint64_t subscriptionId);
     std::optional<LuaWidgetDataSnapshot> RuntimeGetDataSnapshot(
         std::uint64_t subscriptionId, bool includeGpuDetails = false) const;
@@ -1596,20 +1601,24 @@ public:
         const std::wstring& widgetId, std::uint64_t ownerToken,
         std::uint64_t taskId);
     bool RuntimeSetTimer(const std::wstring& widgetId,
+        std::uint64_t ownerToken,
         const std::string& name, int intervalMs, bool repeat,
         snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy =
             snowdesktop::widget_runtime::ScheduleHiddenPolicy::Continue);
     bool RuntimeSetTimerAt(const std::wstring& widgetId,
+        std::uint64_t ownerToken,
         const std::string& name, std::int64_t epochMilliseconds,
         snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy =
             snowdesktop::widget_runtime::ScheduleHiddenPolicy::Continue);
     bool RuntimeSetTimeline(const std::wstring& widgetId,
+        std::uint64_t ownerToken,
         const std::string& name,
         std::vector<snowdesktop::widget_runtime::
             NamedTimerSchedule::TimelineEntry> entries,
         snowdesktop::widget_runtime::ScheduleHiddenPolicy hiddenPolicy,
         bool reloadAtEnd);
-    bool RuntimeCancelTimer(const std::wstring& widgetId, const std::string& name);
+    bool RuntimeCancelTimer(const std::wstring& widgetId,
+        std::uint64_t ownerToken, const std::string& name);
     std::string RuntimeRequestAnimationFrame(
         const std::wstring& widgetId, const std::string& name);
     bool RuntimeCancelAnimationFrame(
@@ -1994,6 +2003,7 @@ private:
     std::unique_ptr<
         snowdesktop::calendar::CalendarService>
         calendarService_;
+    bool calendarServiceLoaded_ = false;
     snowdesktop::calendar::DisplayPreferences calendarDisplay_;
     std::string calendarAnnotationCacheKey_;
     std::vector<snowdesktop::calendar::DayAnnotation> calendarAnnotationCache_;

@@ -13,6 +13,7 @@
 #include <vector>
 
 void TestRssReaderBehavior(const std::filesystem::path& repository);
+void TestBuiltinInteractionTimers(const std::filesystem::path& repository);
 
 namespace
 {
@@ -233,6 +234,7 @@ int main(int argc, char** argv)
     TestPublishedV2Catalog(root);
     TestBuiltinPackages(root);
     TestRssReaderBehavior(root);
+    TestBuiltinInteractionTimers(root);
     Check(snowdesktop::test::CheckSourceBoundaries(root, {
         {"widgets/reminders/main.lua", "local function render(", "local function event(",
          {"storage.set(", "storage.remove(", "storage.transaction("}},

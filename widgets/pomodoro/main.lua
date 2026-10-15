@@ -217,7 +217,7 @@ local function completePhase(model, config, notify)
     return true
 end
 
-local function reconcile(model, notify)
+local function reconcile(model, notify, deadlineExpired)
     local config = loadConfig()
     local signature = configSignature(config)
     local changed = signature ~= model.configSignature
@@ -226,7 +226,7 @@ local function reconcile(model, notify)
     if (state == "work" or state == "break") and
         remainingSeconds(config, nowSeconds()) <= 0 then
         completePhase(model, config, notify)
-    elseif changed then
+    elseif changed or deadlineExpired then
         configureSchedules(model, config)
     end
 end
@@ -573,7 +573,7 @@ end
 local function event(_context, model, value)
     if value.kind == "schedule" then
         if value.id == "visual" or value.id == "deadline" then
-            reconcile(model, true)
+            reconcile(model, true, value.id == "deadline")
         end
         return
     end

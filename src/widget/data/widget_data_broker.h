@@ -1,5 +1,7 @@
 #pragma once
 
+#include "widget_calendar_event_query.h"
+
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -66,6 +68,7 @@ struct DataSubscriptionOptions
     std::string rangeStart;
     std::string rangeEnd;
     std::string eventId;
+    std::optional<CalendarEventQueryOptions> calendarQuery;
     bool audioWaveform = true;
     bool audioSpectrum = true;
     bool audioRms = true;

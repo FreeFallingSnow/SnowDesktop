@@ -12,6 +12,9 @@ function M.tick(t,now)
     if t.running and M.value(t,now,true)==0 then t.value=0;t.running=false;t.done=true;return true end
     return false
 end
+function M.deadlineDelay(t,now)
+    return math.max(1,math.min(86400000,M.value(t,now,true)))
+end
 function M.parse(text)
     if type(text)~="string" then return nil end
     local m,s=text:match("^%s*(%d+):(%d%d)%s*$")

@@ -522,6 +522,10 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_time.cpp
     src/widget/preview/widget_preview_context.cpp
     src/widget/data/widget_data_broker.cpp
+    src/widget/data/widget_calendar_event_query.cpp
+    src/widget/data/widget_calendar_event_query.h
+    src/widget/api/widget_calendar_query_options.cpp
+    src/widget/api/widget_calendar_query_options.h
     src/widget/tasks/widget_task_broker.cpp
     src/widget/tasks/widget_location_task_executor.cpp
     src/widget/tasks/widget_notification_runtime.cpp
@@ -566,6 +570,9 @@ set(SNOWDESKTOP_SOURCES
     src/widget/runtime/widget_runtime_diagnostics.cpp
     src/diagnostics/performance_capture.cpp
     src/widget/runtime/widget_runtime_scheduler.cpp
+    src/widget/runtime/widget_timer_dispatch.h
+    src/widget/runtime/widget_calendar_provider.h
+    src/widget/runtime/widget_data_subscribe_lua.inc
     src/widget/runtime/widget_engine.cpp
     src/widget/permissions/widget_permission_broker.cpp
     src/widget/permissions/widget_permission_state.cpp
@@ -1481,8 +1488,23 @@ if (BUILD_TESTING)
         SOURCES
             tests/widget_data_broker_tests.cpp
             src/widget/data/widget_data_broker.cpp
+            src/widget/data/widget_calendar_event_query.cpp
         INCLUDE_DIRECTORIES src
         LABELS contract data lua widget)
+
+    snowdesktop_add_test(
+        SnowDesktopWidgetDataSubscribeCallbackTests
+        widget_data_subscribe_callback
+        SOURCES
+            tests/widget/widget_data_subscribe_callback_tests.cpp
+            src/widget/api/widget_calendar_query_options.cpp
+            src/widget/runtime/lua_runtime.cpp
+            src/widget/data/widget_data_broker.cpp
+            src/widget/data/widget_calendar_event_query.cpp
+            src/system/calendar/calendar_service.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopLua ole32
+        LABELS contract data lua widget lifecycle)
 
     snowdesktop_add_test(
         SnowDesktopWidgetTaskBrokerTests
@@ -2127,7 +2149,9 @@ if (BUILD_TESTING)
         SnowDesktopWidgetAuthorPreviewCliTests
         widget_author_preview_cli
         NATIVE_WINDOW_COMPATIBILITY
-        SOURCES tests/widget_author_preview_cli_tests.cpp
+        SOURCES
+            tests/widget_author_preview_cli_tests.cpp
+            tests/widget/authoring/widget_doc_recipe_tests.h
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 windowscodecs
         COMMAND_ARGUMENTS
@@ -2267,14 +2291,39 @@ if (BUILD_TESTING)
         LABELS contract lua security storage widget)
 
     snowdesktop_add_test(
+        SnowDesktopCommunityComponentRuntimeTests
+        community_component_runtime
+        SOURCES
+            tests/widget/community_component_runtime_tests.cpp
+            src/widget/runtime/widget_lua_lifecycle.cpp
+            src/widget/runtime/lua_runtime.cpp
+            src/widget/runtime/widget_runtime_scheduler.cpp
+            src/widget/storage/widget_storage_transaction.cpp
+            src/widget/storage/widget_storage_value.cpp
+            src/widget/storage/widget_storage_write_budget.cpp
+            src/widget/data/widget_calendar_event_query.cpp
+            src/widget/api/widget_calendar_query_options.cpp
+            src/system/calendar/calendar_service.cpp
+            src/common/l10n.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES SnowDesktopLua ole32
+        COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
+        LABELS contract lua calendar widget community)
+
+    snowdesktop_add_test(
         SnowDesktopBuiltinWidgetSourceContractTests
         builtin_widget_source_contract
         SOURCES
             tests/builtin_widget_source_contract_tests.cpp
             tests/widget/rss_reader_tests.cpp
+            tests/widget/builtin_interaction_timer_tests.cpp
+            src/system/calendar/calendar_service.cpp
+            src/widget/runtime/widget_runtime_scheduler.cpp
+            src/widget/runtime/widget_lua_lifecycle.cpp
+            src/widget/view/widget_interaction_region.cpp
             src/widget/runtime/lua_runtime.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES SnowDesktopLua
+        LINK_LIBRARIES SnowDesktopLua ole32
         COMMAND_ARGUMENTS "${CMAKE_CURRENT_SOURCE_DIR}"
         LABELS core contract lua render storage widget)
 
