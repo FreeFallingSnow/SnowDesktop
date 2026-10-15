@@ -2,6 +2,7 @@
 
 #include "settings/settings_controller.h"
 #include "settings_focus_feedback.h"
+#include "theme_library_actions.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -17,6 +18,8 @@ namespace snowdesktop::winui
 /** Commands emitted by the cached Desktop settings presenter. */
 struct DesktopPageActions
 {
+    ThemeLibraryAction themeLibrary;
+    ThemeLibraryAsyncAction themeAsync;
     using DesktopEdit = std::function<void(DesktopDisplaySettings&)>;
     using CategoryEdit = std::function<void(CategorySettings&)>;
     using PersonalizationEdit =

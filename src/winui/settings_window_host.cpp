@@ -548,7 +548,7 @@ struct SettingsWindowHost::Impl
             const char* key = image.component == "folder-mapping" ? "app.menu.folder_mapping" :
                 image.component == "dock" ? "themeLibrary.dock" : image.component == "status-bar" ? "themeLibrary.statusBar" :
                 image.component == "taskbar" ? "themeLibrary.taskbar" : image.component == "quick-navigation" ? "themeLibrary.quickPanel" :
-                image.component == "control-panel" ? "statusBar.controlCenter" : "themeLibrary.popup";
+                image.component == "icon" ? "themeLibrary.icon" : image.component == "control-panel" ? "statusBar.controlCenter" : "themeLibrary.popup";
             dialog.previewImages.push_back({L(key), image.path.wstring()});
         }
         const bool share = task->request.command == ThemeLibraryCommand::Share;
@@ -2224,6 +2224,15 @@ struct SettingsWindowHost::Impl
         shell->SetPersonalizationPageActions(std::move(personalization));
 
         DesktopPageActions desktop;
+        desktop.themeLibrary = [weak](std::uint64_t generation, const ThemeLibraryRequest& request) {
+            const auto state = weak.lock();
+            return state && state->alive.load() && state->owner ? state->owner->ThemeOperation(generation, request) : ThemeLibraryResult{};
+        };
+        desktop.themeAsync = [weak](std::uint64_t generation, ThemeLibraryRequest request, auto completed) {
+            if (const auto state = weak.lock(); state && state->alive.load() && state->owner)
+                state->owner->BeginThemeTask(generation, std::move(request), std::move(completed));
+            else if (completed) completed({});
+        };
         desktop.updateDesktop = [weak](
             std::uint64_t generation,
             SettingsUpdateMode mode,
@@ -2703,6 +2712,7 @@ struct SettingsWindowHost::Impl
         if (request.command == ThemeLibraryCommand::Apply)
         {
             const auto apply = [&](const SettingsValues& values) {
+                if (request.target == "icon") controller->UpdateDesktop(values.desktop, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdatePersonalization(values.personalization, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdateDock(values.dock, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdateNavigation(values.navigation, SettingsUpdateMode::PreviewAndCommit);
@@ -2740,7 +2750,8 @@ struct SettingsWindowHost::Impl
             if (request.command == ThemeLibraryCommand::CopyLocal)
                 return themes::workshop::CopyLocal(library, request.id, result.savedId, detail);
             auto theme = themes::CaptureTarget(request.target, current->values);
-            theme.id = request.id; theme.name = request.name; theme.scopes = request.scopes;
+            theme.id = request.id; theme.name = request.name;
+            theme.scopes = theme.kind == themes::Kind::Global ? request.scopes : themes::Components;
             std::array<themes::BindingDraft, 2> bindings;
             if (theme.kind == themes::Kind::Global && themes::FullScope(theme.scopes))
             {
@@ -2764,6 +2775,7 @@ struct SettingsWindowHost::Impl
             bool applied = true;
             if (!targets.empty())
             {
+                controller->UpdateDesktop(next.desktop, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdatePersonalization(next.personalization, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdateDock(next.dock, SettingsUpdateMode::PreviewAndCommit);
                 controller->UpdateNavigation(next.navigation, SettingsUpdateMode::PreviewAndCommit);
@@ -2771,6 +2783,7 @@ struct SettingsWindowHost::Impl
                 applied = controller->FlushAll().Succeeded();
                 if (!applied)
                 {
+                    controller->UpdateDesktop(current->values.desktop, SettingsUpdateMode::PreviewAndCommit);
                     controller->UpdatePersonalization(current->values.personalization, SettingsUpdateMode::PreviewAndCommit);
                     controller->UpdateDock(current->values.dock, SettingsUpdateMode::PreviewAndCommit);
                     controller->UpdateNavigation(current->values.navigation, SettingsUpdateMode::PreviewAndCommit);

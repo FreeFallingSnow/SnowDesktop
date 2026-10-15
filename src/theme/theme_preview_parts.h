@@ -11,6 +11,7 @@ inline std::vector<Part> Parts(const Package& package, std::string_view root, un
     if (!Validate(package, error)) return {};
     const auto theme = Resolve(package, root);
     if (!theme) { error = "themeNotFound"; return {}; }
+    if (theme->kind == Kind::Icon) return {{"icon", std::string(root)}};
     if (theme->kind == Kind::QuickPanel) return {{"quick-navigation", std::string(root)}};
     if (theme->kind == Kind::Popup) return {{"popup", std::string(root)}, {"control-panel", std::string(root)}};
     if (!scope || (scope & ~All) || (theme->scopes & scope) != scope) { error = "invalidSelection"; return {}; }
@@ -33,7 +34,7 @@ inline bool ManagedGalleryFilename(std::string_view name, std::string_view prefi
 {
     if (prefix.empty() || !name.starts_with(prefix)) return false;
     name.remove_prefix(prefix.size());
-    for (const auto component : {"folder-mapping.png", "dock.png", "status-bar.png", "taskbar.png", "quick-navigation.png", "popup.png", "control-panel.png"})
+    for (const auto component : {"folder-mapping.png", "dock.png", "status-bar.png", "taskbar.png", "quick-navigation.png", "popup.png", "control-panel.png", "icon.png"})
         if (name == component) return true;
     return false;
 }

@@ -4,6 +4,7 @@
 #include "edge_light_editor.h"
 #include "appearance_sections.h"
 #include "settings_presenter_controls.h"
+#include "theme_library_controls.h"
 
 #include "common/constants.h"
 #include "ui/render/font_weight_rules.h"
@@ -626,6 +627,7 @@ struct DesktopPagePresenter::Impl
     muxc::TextBlock beautifyPresetLabel{nullptr};
     muxc::ComboBox beautifyPreset{nullptr};
     SettingRow beautifyPresetRow;
+    std::unique_ptr<ThemeLibraryControls> iconThemes;
     muxc::StackPanel beautifyAdvanced{nullptr};
     muxc::TextBlock beautifyModeLabel{nullptr};
     muxc::ComboBox beautifyMode{nullptr};
@@ -880,9 +882,15 @@ struct DesktopPagePresenter::Impl
             beautifyCard, cardStyle, iconBeautificationRoot);
         beautifyCard.title.Visibility(mux::Visibility::Collapsed);
         AppendCombo(beautifyCard, beautifyPresetRow, beautifyPreset);
+        iconThemes = std::make_unique<ThemeLibraryControls>(localize, "icon", false, beautifyPreset, 6, 5, cardStyle);
+        beautifyPresetRow.controlHost.Content(nullptr);
+        beautifyPresetRow.controlHost.Content(iconThemes->SelectionContent());
+        beautifyCard.content.Children().Append(iconThemes->Content());
         beautifyAdvanced = muxc::StackPanel{};
         beautifyAdvanced.Spacing(8.0);
         beautifyCard.content.Children().Append(beautifyAdvanced);
+        beautifyCard.content.Children().Append(iconThemes->SaveContent());
+        iconThemes->SetCustomContent({beautifyAdvanced});
 
         AppendAdvancedCombo(beautifyModeRow, beautifyMode);
         backgroundStart = MakeBeautifyColor(
@@ -1228,6 +1236,8 @@ struct DesktopPagePresenter::Impl
             });
         beautifyPresetToken = beautifyPreset.SelectionChanged(
             [this](const auto&, const auto&) {
+                if (updatingControls || !active || !hasSnapshot || iconThemes->Synchronizing()) return;
+                if (iconThemes->ApplySelection()) { UpdateConditionalStates(); return; }
                 const int selection = beautifyPreset.SelectedIndex();
                 if (selection < 0 ||
                     static_cast<std::size_t>(selection) >=
@@ -1688,8 +1698,6 @@ struct DesktopPagePresenter::Impl
 
     void UpdateConditionalStates()
     {
-        const bool custom = beautifyPreset.SelectedIndex() == IndexOf(kBeautifyPresets, IconBeautifyPreset::Custom);
-        SetDependentVisibility(beautifyAdvanced, custom, beautifyPreset);
         SetDependentVisibility(edgeLightEditor->Content(), edgeReflection.IsOn(), edgeReflection);
         SetDependentVisibility(glassBlurRadius->root, glassEnabled.IsOn(), glassEnabled);
         SetDependentVisibility(reflectionWidth->root, edgeReflection.IsOn(), edgeReflection);
@@ -1882,6 +1890,8 @@ struct DesktopPagePresenter::Impl
             if (newGeneration || !desktopEditActive)
             {
                 PatchDesktop(snapshot.values.desktop);
+                iconThemes->SetGeneration(generation);
+                iconThemes->SyncSelection(IndexOf(kBeautifyPresets, snapshot.values.desktop.iconBeautify.preset), snapshot.values);
                 desktopRevision = snapshot.domainRevisions.desktop;
             }
         }
@@ -1990,7 +2000,8 @@ struct DesktopPagePresenter::Impl
             L("app.settings.dark_glass", L"Dark glass"),
             L("app.settings.light_glass", L"Light glass"),
             L("app.settings.custom", L"Custom"),
-        }, std::max(0, beautifyPreset.SelectedIndex()));
+        }, std::clamp(iconThemes->NativeSelection(), 0, 5));
+        iconThemes->LocalizeText();
         beautifyModeRow.SetText(
             L("app.settings.beautify_mode", L"Beautification mode"));
         muxa::AutomationProperties::SetName(
@@ -2244,6 +2255,7 @@ struct DesktopPagePresenter::Impl
             CommitContinuousEdits();
         active = false;
         closed = true;
+        if (iconThemes) iconThemes->Close();
         CloseRuleRows();
         CloseEditors();
         try
@@ -2287,7 +2299,14 @@ DesktopPagePresenter::~DesktopPagePresenter()
 void DesktopPagePresenter::SetActions(DesktopPageActions actions)
 {
     if (impl_ && !impl_->closed)
+    {
         impl_->actions = std::move(actions);
+        impl_->iconThemes->SetActions(impl_->actions.themeLibrary, impl_->actions.themeAsync, [state = impl_.get()] {
+            if (state->closed || !state->active || !state->hasSnapshot) return false;
+            state->CommitContinuousEdits(); state->CommitOpenColorEditors(); return true;
+        });
+        impl_->iconThemes->SetChanged([state = impl_.get()] { state->UpdateConditionalStates(); });
+    }
 }
 
 mux::FrameworkElement DesktopPagePresenter::Content() const noexcept

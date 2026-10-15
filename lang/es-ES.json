@@ -2755,5 +2755,6 @@
   "settings.animation.option.attraction": "Atracción",
   "settings.animation.option.slower": "Más lenta (0.5×)",
   "settings.animation.option.verySlow": "Muy lenta (0.33×)",
-  "settings.animation.option.slowest": "La más lenta (0.25×)"
+  "settings.animation.option.slowest": "La más lenta (0.25×)",
+  "themeLibrary.icon": "Tema de iconos"
 }

@@ -105,6 +105,11 @@ bool Colors(const std::map<std::string, std::string>& colors)
 std::string EncodeTheme(const Theme& theme)
 {
     if (Builtin(theme.id)) return "{\"id\":" + Quote(theme.id) + '}';
+    if (theme.kind == Kind::Icon)
+    {
+        const auto icon = EncodeIconTheme(theme.icon);
+        return icon.empty() ? std::string{} : "{\"id\":" + Quote(theme.id) + ",\"name\":" + Quote(theme.name) + ",\"icon\":" + icon + '}';
+    }
     const auto appearance = EncodePanelAppearance(theme.appearance, true);
     if (appearance.empty()) return {};
     std::string out = "{\"id\":" + Quote(theme.id) + ",\"name\":" + Quote(theme.name) +
@@ -142,6 +147,12 @@ bool DecodeTheme(const JsonValue& json, Kind kind, Theme& theme)
         return true;
     }
     if (!String(json, "name", out.name) || !Text(out.name, 256)) return false;
+    if (kind == Kind::Icon)
+    {
+        const auto* icon = json.Find("icon");
+        if (!Keys(json, {"id", "name", "icon"}) || !icon || !DecodeIconTheme(*icon, out.icon)) return false;
+        out.scopes = Components; theme = std::move(out); return true;
+    }
     if (kind == Kind::Global && !Keys(json, {"id", "name", "appearance", "scopes", "quickPanel", "popup"})) return false;
     if (kind == Kind::QuickPanel && !Keys(json, {"id", "name", "appearance", "layout", "colors"})) return false;
     if (kind == Kind::Popup && !Keys(json, {"id", "name", "appearance"})) return false;
@@ -182,11 +193,19 @@ bool DecodeTheme(const JsonValue& json, Kind kind, Theme& theme)
     theme = std::move(out);
     return true;
 }
-std::string Sections(const Package& package)
+int PackageVersion(const Package& package)
+{
+    for (const auto& [id, theme] : package) { (void)id; if (theme.kind == Kind::Icon) return kPackageVersion; }
+    return 1;
+}
+bool SupportedVersion(const JsonValue* version)
+{ return version && version->IsNumber() && (version->number == 1 || version->number == kPackageVersion); }
+std::string Sections(const Package& package, bool includeIcon = false)
 {
     std::string out;
-    for (const auto kind : {Kind::Global, Kind::QuickPanel, Kind::Popup})
+    for (const auto kind : {Kind::Global, Kind::QuickPanel, Kind::Popup, Kind::Icon})
     {
+        if (kind == Kind::Icon && !includeIcon && PackageVersion(package) == 1) continue;
         out += "," + Quote(KindName(kind)) + ":[";
         bool first = true;
         for (const auto& [id, theme] : package)
@@ -203,9 +222,19 @@ std::string Sections(const Package& package)
 bool ReadSections(const JsonValue& document, Package& package, std::string& error, bool allowEmpty)
 {
     Package out;
-    for (const auto kind : {Kind::Global, Kind::QuickPanel, Kind::Popup})
+    for (const auto kind : {Kind::Global, Kind::QuickPanel, Kind::Popup, Kind::Icon})
     {
         const auto* section = document.Find(KindName(kind));
+        if (kind == Kind::Icon && !section)
+        {
+            const auto* version = document.Find("version");
+            if (version && version->IsNumber() && version->number == 1) continue;
+        }
+        if (kind == Kind::Icon && section)
+        {
+            const auto* version = document.Find("version");
+            if (!version || !version->IsNumber() || version->number != kPackageVersion) return Fail(error, "unsupportedVersion");
+        }
         if (!section || !section->IsArray() || section->array.size() > 512) return Fail(error, "invalidPackage");
         for (const auto& entry : section->array)
         {
@@ -266,7 +295,7 @@ std::string CreateId()
 }
 std::string KindName(Kind kind)
 {
-    switch (kind) { case Kind::Global: return "global"; case Kind::QuickPanel: return "quickPanel"; default: return "popup"; }
+    switch (kind) { case Kind::Global: return "global"; case Kind::QuickPanel: return "quickPanel"; case Kind::Icon: return "icon"; default: return "popup"; }
 }
 std::string ErrorLocalizationKey(std::string_view error)
 {
@@ -339,7 +368,7 @@ bool Validate(const Package& package, std::string& error)
     if (package.size() > 1536) return Fail(error, "invalidPackage");
     for (const auto& [id, theme] : package)
     {
-        if ((theme.kind != Kind::Global && theme.kind != Kind::QuickPanel && theme.kind != Kind::Popup) ||
+        if ((theme.kind != Kind::Global && theme.kind != Kind::QuickPanel && theme.kind != Kind::Popup && theme.kind != Kind::Icon) ||
             id != theme.id || !Id(id) || (!Builtin(id) && (id.starts_with("builtin/") || !Text(theme.name, 256))) ||
             EncodeTheme(theme).empty()) return Fail(error, "invalidPackage");
         if (theme.kind == Kind::Global)
@@ -362,15 +391,15 @@ bool Validate(const Package& package, std::string& error)
 std::string EncodePackage(const Package& package, std::string& error)
 {
     if (package.empty() || !Validate(package, error)) { if (error.empty()) error = "emptyPackage"; return {}; }
-    return "{\"format\":\"snowdesktop.theme\",\"version\":1" + Sections(package) + '}';
+    return "{\"format\":\"snowdesktop.theme\",\"version\":" + std::to_string(PackageVersion(package)) + Sections(package) + '}';
 }
 bool DecodePackage(std::string_view text, Package& package, std::string& error)
 {
     JsonValue json;
-    if (!Document(text, json, error) || !Keys(json, {"format", "version", "global", "quickPanel", "popup"})) return Fail(error, "invalidPackage");
+    if (!Document(text, json, error) || !Keys(json, {"format", "version", "global", "quickPanel", "popup", "icon"})) return Fail(error, "invalidPackage");
     std::string format; const auto* version = json.Find("version");
     if (!String(json, "format", format) || format != "snowdesktop.theme") return Fail(error, "invalidPackage");
-    if (!version || !version->IsNumber() || version->number != kPackageVersion) return Fail(error, "unsupportedVersion");
+    if (!SupportedVersion(version)) return Fail(error, "unsupportedVersion");
     return ReadSections(json, package, error, false);
 }
 bool Export(const Library& library, std::string_view id, Package& package, std::string& error)
@@ -397,7 +426,7 @@ bool Import(Library& library, const Package& package, std::map<std::string, std:
     Library next = library;
     std::map<std::string, std::string> remap;
     // Children first: a reused global must also reference the remapped children.
-    for (const auto kind : {Kind::QuickPanel, Kind::Popup, Kind::Global})
+    for (const auto kind : {Kind::QuickPanel, Kind::Popup, Kind::Icon, Kind::Global})
         for (const auto& [id, input] : package)
         {
             if (input.kind != kind) continue;
@@ -546,7 +575,7 @@ Theme Capture(Kind kind, const PersonalizationSettings& appearance, const Naviga
 std::string EncodeLibrary(const Library& library, std::string& error)
 {
     if (!Validate(library.themes, error)) return {};
-    std::string out = "{\"format\":\"snowdesktop.theme-library\",\"version\":1" + Sections(library.themes) + ",\"references\":{";
+    std::string out = "{\"format\":\"snowdesktop.theme-library\",\"version\":2" + Sections(library.themes, true) + ",\"references\":{";
     bool first = true;
     for (const auto& [target, ref] : library.references)
     {
@@ -589,10 +618,10 @@ std::string EncodeLibrary(const Library& library, std::string& error)
 bool DecodeLibrary(std::string_view text, Library& library, std::string& error)
 {
     JsonValue json;
-    if (!Document(text, json, error) || !Keys(json, {"format", "version", "global", "quickPanel", "popup", "references", "workshop", "subscriptionAccounts"})) return Fail(error, "invalidPackage");
+    if (!Document(text, json, error) || !Keys(json, {"format", "version", "global", "quickPanel", "popup", "icon", "references", "workshop", "subscriptionAccounts"})) return Fail(error, "invalidPackage");
     std::string format; const auto* version = json.Find("version");
     if (!String(json, "format", format) || format != "snowdesktop.theme-library" ||
-        !version || !version->IsNumber() || version->number != 1) return Fail(error, "unsupportedVersion");
+        !SupportedVersion(version)) return Fail(error, "unsupportedVersion");
     Library out;
     if (!ReadSections(json, out.themes, error, true)) return false;
     const auto* refs = json.Find("references");
@@ -608,12 +637,13 @@ bool DecodeLibrary(std::string_view text, Library& library, std::string& error)
         if (kind == "global") ref.kind = Kind::Global;
         else if (kind == "quickPanel") ref.kind = Kind::QuickPanel;
         else if (kind == "popup") ref.kind = Kind::Popup;
+        else if (kind == "icon") ref.kind = Kind::Icon;
         else return Fail(error, "invalidPackage");
         std::string snapshotFormat;
         const auto* snapshotVersion = snapshot->Find("version");
-        if (!Keys(*snapshot, {"format", "version", "global", "quickPanel", "popup"}) ||
+        if (!Keys(*snapshot, {"format", "version", "global", "quickPanel", "popup", "icon"}) ||
             !String(*snapshot, "format", snapshotFormat) || snapshotFormat != "snowdesktop.theme" ||
-            !snapshotVersion || !snapshotVersion->IsNumber() || snapshotVersion->number != kPackageVersion)
+            !SupportedVersion(snapshotVersion))
             return Fail(error, "unsupportedVersion");
         unsigned roots = 0;
         for (const auto& [id, theme] : ref.snapshot)

@@ -197,6 +197,51 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
         if (backdrop.pixels.size() != kCoverSize * kCoverSize) return Fail(error, "previewFailed");
     }
     auto canvas = backdrop;
+    const auto rootTheme = Resolve(package, root);
+    if (rootTheme && rootTheme->kind == Kind::Icon)
+    {
+        // Fixed transparent/solid sample glyphs use the actual icon renderer.
+        // No desktop shortcuts, application paths or user icons are enumerated.
+        constexpr int side = 224;
+        constexpr std::uint32_t colors[]{0xff53a6f0u, 0xfff5b43cu, 0xff62c098u, 0xffa888dfu};
+        for (int sample = 0; sample < 4; ++sample)
+        {
+            if (cancel && cancel->load()) return Fail(error, "cancelled");
+            std::vector<std::uint32_t> source(side * side);
+            for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
+            {
+                const int dx = x - side / 2, dy = y - side / 2;
+                const bool plate = sample % 2 == 0 && dx * dx + dy * dy < 94 * 94;
+                const bool glyph = sample % 2 == 0 ? (std::abs(dx) < 17 || std::abs(dy) < 17) && std::abs(dx) < 57 && std::abs(dy) < 57 :
+                    (x >= 43 && x < 181 && y >= 71 && y < 164) || (x >= 43 && x < 107 && y >= 51 && y < 71);
+                if (plate) source[static_cast<std::size_t>(y) * side + x] = colors[sample];
+                if (glyph) source[static_cast<std::size_t>(y) * side + x] = plate ? 0xffffffffu : colors[sample];
+            }
+            const auto rendered = icon_beautify::Render(source, side, side, rootTheme->icon,
+                icon_beautify::DetectEdgeFill(source, side, side));
+            const int left = 176 + sample % 2 * 448, top = 176 + sample / 2 * 448;
+            for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
+            {
+                const auto pixel = rendered[static_cast<std::size_t>(y) * side + x];
+                auto& destination = canvas.pixels[static_cast<std::size_t>(top + y) * kCoverSize + left + x];
+                const unsigned alpha = pixel >> 24;
+                std::uint32_t blended = 0xff000000u;
+                for (unsigned shift : {0u, 8u, 16u}) blended |= std::min(255u,
+                    ((pixel >> shift) & 255u) + (((destination >> shift) & 255u) * (255u - alpha) + 127u) / 255u) << shift;
+                destination = blended;
+            }
+        }
+        const auto destination = directory / L"cover.png";
+        if (!SaveCover(destination, std::move(canvas), error)) return false;
+        if (images)
+        {
+            const auto imagePath = directory / GalleryFilename(steam_bridge::ThemeSha256(root), "icon");
+            std::filesystem::copy_file(destination, imagePath, std::filesystem::copy_options::none, ec);
+            if (ec) return Fail(error, "writeFailed");
+            images->push_back({"icon", imagePath});
+        }
+        cover = destination; cleanup.keep = true; return true;
+    }
     const int columns = parts.size() > 1 ? 2 : 1, rows = static_cast<int>((parts.size() + columns - 1) / columns);
     for (std::size_t index = 0; index < parts.size(); ++index)
     {

@@ -7,7 +7,7 @@ the existing `.snowwidget` parser. Hosts without theme package support reject
 `.snowtheme`; a bridge file or matching application version does not prove
 that future online theme operations are supported.
 
-## Package version 1
+## Package versions 1 and 2
 
 The package is a UTF-8 JSON document, at most 4 MiB, with these required fields:
 
@@ -26,6 +26,16 @@ versions, duplicate IDs or JSON properties, invalid UTF-8, excessive nesting,
 invalid parameters and missing/wrong-kind dependencies reject the entire
 package. The filename suffix selects the parser and does not bypass content
 validation. A successful installation does not apply any theme.
+
+Independent icon themes use version 2 with an additional required `icon` array.
+Each entry contains only `id`, `name` and an `icon` object. The strict icon codec
+includes the shape, background, glass, reflection, gradient, texture, filter,
+outline, shadow and enablement values. It excludes application paths, icon
+replacements, size, typography and layout. Preset identity is local; applying an
+icon theme selects the custom preset and changes only icon beautification.
+Packages without icon themes continue to export version 1. New readers accept
+both versions; old readers reject version 2. The private library writes version
+2 and reads version 1, retaining old references and immutable snapshots.
 
 Custom themes contain an opaque stable `id`, a display-only `name` and an
 `appearance` object encoded by the panel material codec plus
@@ -104,6 +114,9 @@ layout without changing personal search settings.
 and passes that file to the host's private offscreen renderer. Component cards,
 quick panel, popup, Dock and status bar call their production renderers; taskbar
 material uses the production panel fill and taskbar physical-edge rasterizer.
+Icon previews run fixed transparent and solid sample glyphs through the production
+icon beautification renderer, with the same immutable package and approved
+background. They do not enumerate user desktop icons or application paths.
 Taskbar buttons are fixed stock fixtures because Explorer owns real buttons.
 No desktop enumeration, notifications, search history or personal shortcuts are
 loaded. The fixed background and demonstration data are repeatable.
@@ -126,14 +139,15 @@ Sharing prepares the same immutable package and cover, displays a confirmation,
 and rechecks the saved snapshot before invoking the bridge. Closing the session,
 cancelling or receiving a stale generation prevents a later confirmation from
 publishing. Every operation has a single active request. Steam capability
-`workshop.theme.v1`, `workshop.theme.tags.v1`, `workshop.theme.gallery.v1` and workflow protocol 1 are required independently of bridge
-presence and the application version. Old component commands and package format
-`snowdesktop.theme` version 1 are unchanged; taskbar protocol remains version 13.
+`workshop.theme.v1`, `workshop.theme.tags.v1`, `workshop.theme.gallery.v1`,
+`workshop.theme.color-alpha.v1`, `workshop.theme.icon.v1` and workflow protocol 1
+are required independently of bridge presence and the application version.
+Old component commands and version 1 packages remain readable; taskbar protocol remains version 13.
 
 Sharing first opens a classification/cover dialog, then generates an immutable
-preview and asks for explicit create/update confirmation. The six canonical
+preview and asks for explicit create/update confirmation. The seven canonical
 Steamworks values live in `theme_workshop_tags.h`: `Global Theme`, `Dock Theme`,
-`Status Bar Theme`, `Taskbar Theme`, `Quick Panel Theme`, `Popup Theme`. Every
+`Status Bar Theme`, `Taskbar Theme`, `Quick Panel Theme`, `Popup Theme`, `Icon Theme`. Every
 actually applicable scope is required; full global themes carry the global tag
 and three bar tags, while partial multi-bar themes carry only their base tags.
 Localized names are never uploaded as tag values. The bridge adds `Theme` as a
@@ -141,8 +155,8 @@ content marker. There is no official/community category in this change.
 Preparation records and CLI confirmation include a classification hash in
 addition to package/cover hashes. Old preparations without tags are rejected;
 these temporary development records are regenerated, never migrated. An older
-bridge lacking the additive tags capability cannot offer sharing. External
-theme packages and component APIs keep their existing compatibility.
+bridge lacking the required additive capabilities cannot offer sharing.
+Component APIs keep their existing compatibility.
 
 Publication URLs are read from the durable journal keyed by the local theme ID
 and shown on that theme's card. Renaming or updating the theme keeps the binding;
@@ -212,7 +226,7 @@ change the named global source or its immutable dependency snapshot.
 The private library adds optional `workshop` and `subscriptionAccounts` fields;
 new readers accept old libraries. Old strict readers reject libraries with these
 fields, so downgrading requires exporting packages or retaining the previous
-private-library backup. External `.snowtheme` compatibility is unchanged.
+private-library backup. External version 1 packages keep their existing compatibility.
 
 `theme_workflow` tests cover codecs, retry journals, authorship, agreement state,
 locks, cancellation, stale preparations and real offscreen rendering. Passing

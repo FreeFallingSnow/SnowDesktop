@@ -2755,5 +2755,6 @@
   "settings.animation.option.attraction": "吸引效果",
   "settings.animation.option.slower": "更慢（0.5×）",
   "settings.animation.option.verySlow": "很慢（0.33×）",
-  "settings.animation.option.slowest": "最慢（0.25×）"
+  "settings.animation.option.slowest": "最慢（0.25×）",
+  "themeLibrary.icon": "圖示主題"
 }

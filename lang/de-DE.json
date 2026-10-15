@@ -2755,5 +2755,6 @@
   "settings.animation.option.attraction": "Anziehungseffekt",
   "settings.animation.option.slower": "Langsamer (0.5×)",
   "settings.animation.option.verySlow": "Sehr langsam (0.33×)",
-  "settings.animation.option.slowest": "Am langsamsten (0.25×)"
+  "settings.animation.option.slowest": "Am langsamsten (0.25×)",
+  "themeLibrary.icon": "Symboldesign"
 }

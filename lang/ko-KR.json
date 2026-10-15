@@ -2755,5 +2755,6 @@
   "settings.animation.option.attraction": "흡인 효과",
   "settings.animation.option.slower": "더 느리게 (0.5×)",
   "settings.animation.option.verySlow": "매우 느리게 (0.33×)",
-  "settings.animation.option.slowest": "가장 느리게 (0.25×)"
+  "settings.animation.option.slowest": "가장 느리게 (0.25×)",
+  "themeLibrary.icon": "아이콘 테마"
 }

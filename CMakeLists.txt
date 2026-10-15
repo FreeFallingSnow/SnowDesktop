@@ -1715,6 +1715,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/theme_preview_tests.cpp
             tests/theme_workshop_tests.cpp
+            src/icons/icon_beautify.cpp
             src/theme/theme_preview.cpp
             src/theme/theme_workshop.cpp
             src/ui/preview/preview_png_writer.cpp

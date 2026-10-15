@@ -64,7 +64,7 @@ int wmain(int argc, wchar_t** argv)
                 std::ofstream marker(count, std::ios::binary | std::ios::app); marker << '1';
             }
         }
-        std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\"]}\n";
+        std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\"]}\n";
         return 0;
     }
     const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -224,6 +224,30 @@ int wmain(int argc, wchar_t** argv)
         check(!preview::Render(directory / L"missing.exe",package,global.id,All,directory / L"failed",cover,error) && cover.empty() &&
             !std::filesystem::exists(directory / L"failed"), "renderer failure cannot publish stale output");
         std::vector<preview::Image> gallery;
+        {
+            Theme icon; icon.id = "theme/icon-preview"; icon.name = "Icon preview"; icon.kind = Kind::Icon; icon.scopes = Components;
+            icon.icon = icon_beautify::MakePreset(IconBeautifyPreset::DefaultBeautify); icon.icon.preset = IconBeautifyPreset::Custom;
+            const Package icons{{icon.id, icon}};
+            const auto iconDirectory = directory / L"icon-gallery";
+            const bool iconOk = preview::RenderGallery(argv[1], icons, icon.id, Components, iconDirectory, gallery, cover, error);
+            check(iconOk && gallery.size() == 1 && gallery.front().component == "icon" &&
+                preview::ManagedGalleryFilename(gallery.front().path.filename().string(), preview::GalleryPrefix(steam_bridge::ThemeSha256(icon.id))) &&
+                std::filesystem::file_size(cover) < preview::kCoverMaximumBytes,
+                "icon gallery renders a complete production effect under the Workshop image limit");
+            const auto original = iconOk ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
+            auto different = icons; auto& effect = different.at(icon.id).icon;
+            effect.shape = IconBeautifyShape::Circle; effect.backgroundOpacity = 1.f;
+            effect.backgroundStartR = 1.f; effect.backgroundStartG = effect.backgroundStartB = 0.f;
+            const bool changedIcon = preview::RenderGallery(argv[1], different, icon.id, Components,
+                directory / L"icon-gallery-changed", gallery, cover, error);
+            check(changedIcon && Compare(original, widget_preview::LoadWallpaperImage(cover)).material > 10000,
+                "icon preview changes with the frozen shape and material values");
+            steam_bridge::ThemePublishPlan iconPlan;
+            check(iconOk && steam_bridge::WriteThemePreparation(iconDirectory, icon.id, icon.name, 1700000000, error, tags::Applicable(icon)) &&
+                steam_bridge::BuildThemePublishPlan(iconDirectory, directory / L"icon-publish-data", iconPlan, error) &&
+                iconPlan.tags == std::vector<std::string>{"Icon Theme"},
+                "actual bridge preparation accepts icon packages, their gallery and canonical tag");
+        }
         const auto galleryDirectory = directory / L"gallery";
         const bool galleryOk = preview::RenderGallery(argv[1],package,global.id,All,galleryDirectory,gallery,cover,error);
         check(galleryOk && gallery.size() == 7 && gallery.front().component == "folder-mapping" &&

@@ -86,7 +86,7 @@ public:
             const auto token = filterChoice_.SelectionChanged([this](const auto&, const auto&) {
                 if (syncing_ || closed_ || busy_) return;
                 const int index = filterChoice_.SelectedIndex();
-                if (index < 0 || index > 6) return;
+                if (index < 0 || index > static_cast<int>(FilterTab::Icon)) return;
                 filter_ = static_cast<FilterTab>(index);
                 RefreshChoices();
             });
@@ -351,7 +351,7 @@ public:
         {
             empty_.Text(L("themeLibrary.empty"));
             constexpr const char* keys[]{"themeLibrary.all", "themeLibrary.global", "themeLibrary.dock", "themeLibrary.statusBar",
-                "themeLibrary.taskbar", "themeLibrary.quickPanel", "themeLibrary.popup"};
+                "themeLibrary.taskbar", "themeLibrary.quickPanel", "themeLibrary.popup", "themeLibrary.icon"};
             const bool previous = syncing_; syncing_ = true;
             filterLabel_.Text(L("themeLibrary.type"));
             x::Automation::AutomationProperties::SetName(filterChoice_, filterLabel_.Text());
@@ -462,7 +462,7 @@ private:
         {
             std::wstring label(winrt::to_hstring(theme.name).c_str());
             if (transfer_) label += L" · " + (theme.kind == themes::Kind::Global ? ScopeLabel(theme.scopes) :
-                L(theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup"));
+                L(theme.kind == themes::Kind::Icon ? "themeLibrary.icon" : theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup"));
             return label;
         }
         static const std::map<std::string, const char*> keys = {{"dark", "app.settings.dark"}, {"light", "app.settings.light"},
@@ -491,7 +491,8 @@ private:
             if (nativeIndex_ == customIndex_ && current_ && reference != library_.references.end() && !reference->second.id.empty())
             {
                 const auto saved = themes::Resolve(reference->second.snapshot, reference->second.id);
-                if (saved && themes::AppliedAppearanceMatches(saved->appearance, current_->appearance) &&
+                if (saved && (saved->kind == themes::Kind::Icon ? themes::SameIconTheme(saved->icon, current_->icon) :
+                    themes::AppliedAppearanceMatches(saved->appearance, current_->appearance)) &&
                     (saved->kind != themes::Kind::QuickPanel || (saved->layout == current_->layout && saved->colors == current_->colors)))
                     preferred = saved->id;
             }
@@ -686,7 +687,7 @@ private:
         };
         line(std::wstring(winrt::to_hstring(theme.name).c_str()), true);
         auto tags = theme.kind == themes::Kind::Global ? ScopeLabel(theme.scopes) :
-            L(theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup");
+            L(theme.kind == themes::Kind::Icon ? "themeLibrary.icon" : theme.kind == themes::Kind::QuickPanel ? "themeLibrary.quickPanel" : "themeLibrary.popup");
         if (theme.kind == themes::Kind::Global && themes::FullScope(theme.scopes))
             tags += L" · " + L("themeLibrary.dock") + L" · " + L("themeLibrary.statusBar") + L" · " + L("themeLibrary.taskbar");
         bool installed = false;
@@ -953,7 +954,7 @@ private:
         const auto selected = Selected(); request.id = id.empty() && selected ? selected->id : std::move(id);
         if (transfer_ && command == ThemeLibraryCommand::Apply)
             if (const auto applied = themes::Find(library_.themes, request.id))
-                request.target = applied->kind == themes::Kind::QuickPanel ? "quickPanel" : applied->kind == themes::Kind::Popup ? "popup" : "global";
+                request.target = applied->kind == themes::Kind::Icon ? "icon" : applied->kind == themes::Kind::QuickPanel ? "quickPanel" : applied->kind == themes::Kind::Popup ? "popup" : "global";
         if (save)
         {
             if (!CustomSelected()) return;

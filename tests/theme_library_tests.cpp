@@ -110,6 +110,11 @@ int RunThemeLibraryTests()
     const auto serialized = EncodeLibrary(library, error);
     Library loaded;
     check(DecodeLibrary(serialized, loaded, error) && EncodeLibrary(loaded, error) == serialized, "complete snapshot configuration round-trip");
+    auto legacyLibraryText = serialized;
+    legacyLibraryText.replace(legacyLibraryText.find("\"version\":2"), 11, "\"version\":1");
+    legacyLibraryText.erase(legacyLibraryText.find(",\"icon\":[]"), 10);
+    check(DecodeLibrary(legacyLibraryText, loaded, error) && EncodeLibrary(loaded, error) == serialized,
+        "existing version 1 libraries retain all themes and references when upgraded");
     Package package;
     check(Export(library, "theme/global-copy", package, error) && package.size() == 2 && !package.contains("builtin/quickpanel/light"),
         "export embeds custom dependencies and references builtins by ID");
@@ -136,7 +141,7 @@ int RunThemeLibraryTests()
     check(!Import(destination, broken, mapping, error) && EncodeLibrary(destination, error) == beforeImport,
         "missing dependency rolls back the entire install");
     check(!DecodePackage("{\"format\":\"snowdesktop.theme\",\"version\":1,\"global\":[],\"quickPanel\":[],\"popup\":[]}", decoded, error), "all-empty package is rejected");
-    auto unsupported = packageText; unsupported.replace(unsupported.find("\"version\":1"), 11, "\"version\":2");
+    auto unsupported = packageText; unsupported.replace(unsupported.find("\"version\":1"), 11, "\"version\":3");
     check(!DecodePackage(unsupported, decoded, error) && error == "unsupportedVersion", "unsupported independent format version is rejected");
     check(!DecodePackage("{\"format\":\"snowdesktop.theme\",\"version\":1,\"global\":[],\"popup\":[]}", decoded, error), "missing section is rejected");
     check(!DecodePackage(std::string("\xff", 1), decoded, error), "invalid UTF-8 is rejected before parsing");
@@ -798,5 +803,47 @@ int RunThemeLibraryTests()
     general = {};
     check(LoadGeneralSettings(generalPath.c_str(), general) && !general.globalQuickNavigationAppearance.customized &&
         general.quickNavigationAppearance.mode == -2, "old configuration keeps its conditional legacy appearance");
+    {
+        SettingsValues iconValues;
+        iconValues.desktop.iconBeautify.enabled = true;
+        iconValues.desktop.iconBeautify.shape = IconBeautifyShape::Pebble;
+        iconValues.desktop.iconBeautify.backgroundOpacity = .31234567f;
+        iconValues.desktop.iconBeautify.glassEnabled = true;
+        iconValues.desktop.iconBeautify.edgeLight.direction = 123.f;
+        auto icon = CaptureTarget("icon", iconValues); icon.id = "theme/icon-sample"; icon.name = "图标主题";
+        Package iconPackage{{icon.id, icon}}, iconDecoded;
+        const auto encoded = EncodePackage(iconPackage, error);
+        check(encoded.find("\"version\":2") != std::string::npos && encoded.find("\"appearance\"") == std::string::npos &&
+            DecodePackage(encoded, iconDecoded, error) && SameIconTheme(iconDecoded.at(icon.id).icon, icon.icon),
+            "independent icon package preserves every visual value and omits unrelated panel data");
+        auto invalid = encoded; const auto at = invalid.find("\"shape\":10"); invalid.replace(at, 10, "\"shape\":9");
+        check(!DecodePackage(invalid, iconDecoded, error), "unknown icon geometry rejects the whole package");
+        invalid = encoded; invalid.insert(invalid.find("\"mode\":"), "\"path\":\"private.exe\",");
+        check(!DecodePackage(invalid, iconDecoded, error), "icon themes cannot carry application paths or unknown settings");
+        auto badIcon = icon; badIcon.icon.contentScale = 1.f;
+        check(EncodePackage({{badIcon.id, badIcon}}, error).empty(), "out-of-range icon parameters cannot be exported");
+        Library icons; std::map<std::string, std::string> ids;
+        check(Import(icons, iconPackage, ids, error) && icons.references.empty(), "installing icon themes does not apply them");
+        SettingsValues applied; applied.desktop.itemIconSizeScale = 1.25f; applied.dock.position = DockPosition::Left;
+        const auto unchangedPanel = applied.personalization;
+        check(ApplyTarget(icons, "icon", icon.id, applied, error) && SameIconTheme(applied.desktop.iconBeautify, icon.icon) &&
+            applied.desktop.itemIconSizeScale == 1.25f && applied.dock.position == DockPosition::Left && applied.personalization == unchangedPanel &&
+            !ApplyTarget(icons, "global", icon.id, applied, error), "icon application changes only beautification and rejects other targets");
+        check(Select(icons, "icon", icon.id, Kind::Icon, Components, error), "icon selection owns an independent immutable reference");
+        Library restored;
+        check(DecodeLibrary(EncodeLibrary(icons, error), restored, error) && restored.references.at("icon").kind == Kind::Icon &&
+            SameIconTheme(restored.themes.at(icon.id).icon, icon.icon), "icon themes and references survive local library reload");
+        ReconcileReferences(restored, applied);
+        check(restored.references.at("icon").id == icon.id, "unchanged icon effects retain their selected theme");
+        applied.desktop.iconBeautify.shadowStrength = .79f; ReconcileReferences(restored, applied);
+        check(restored.references.at("icon").id.empty(), "editing icon effects detaches the saved source without rewriting it");
+        icons.themes.at(icon.id).icon.backgroundOpacity = .72f;
+        const auto updated = ApplySavedUpdate(icons, icon.id, applied, error);
+        check(updated == std::vector<std::string>{"icon"} && applied.desktop.iconBeautify.backgroundOpacity == .72f,
+            "explicit icon source updates refresh only its active target");
+        using namespace winui::theme_controls;
+        check(MatchesFilter(icon, FilterTab::Icon) && !MatchesFilter(icon, FilterTab::Global) &&
+            ManagementEntries(icons, {}, {}, FilterTab::Icon).size() == 1, "theme management filters icon themes independently");
+    }
     return failures;
 }
