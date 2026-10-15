@@ -45,13 +45,16 @@ struct Key
     ~Key() { if (owned) RegCloseKey(value); }
     Key(const Key &) = delete;
 };
-std::vector<std::wstring> Children(HKEY root, const std::wstring &path)
+std::vector<std::wstring> Children(HKEY root, const std::wstring &path,
+                                   CatalogueForegroundDemand *control = nullptr)
 {
+    if (control) control->WaitUntilAllowed();
     Key key(root, path);
     std::vector<std::wstring> result;
     if (!key.value) return result;
     for (DWORD i = 0; i < 65536; ++i)
     {
+        if (control && i % 64 == 0) control->WaitUntilAllowed();
         wchar_t name[1024]{}; DWORD count = 1024;
         if (RegEnumKeyExW(key.value, i, name, &count, nullptr, nullptr, nullptr, nullptr) != ERROR_SUCCESS) break;
         result.emplace_back(name, count);
@@ -396,6 +399,7 @@ std::vector<ManifestVerb> ReadManifestVerbs(const std::wstring &path)
 struct Scanner
 {
     HKEY classes;
+    CatalogueForegroundDemand *control = nullptr;
     bool capture = false;
     std::vector<std::pair<Registration, std::wstring>> captured;
     Catalogue result;
@@ -512,6 +516,7 @@ struct Scanner
     }
     void Add(Registration row, const std::wstring &icon)
     {
+        if (control) control->WaitUntilAllowed();
         // Workers keep individual sources; the caller applies the original
         // scan order and global identity/row limit before loading images.
         if (capture) { captured.emplace_back(std::move(row), icon); return; }
@@ -547,8 +552,10 @@ struct Scanner
     }
     void Root(const std::wstring &root, unsigned contexts, const std::vector<std::wstring> &types = {})
     {
-        for (const auto &verb : Children(classes, root + L"\\shell"))
+        if (control) control->WaitUntilAllowed();
+        for (const auto &verb : Children(classes, root + L"\\shell", control))
         {
+            if (control) control->WaitUntilAllowed();
             const auto path = root + L"\\shell\\" + verb;
             Key key(classes, path, KEY_QUERY_VALUE);
             if (!key.value) continue;
@@ -593,8 +600,9 @@ struct Scanner
             row.menuRevision = Hash(settings_ipc::Pack(row.revision, AssetRevision(module)));
             Add(std::move(row), icon);
         }
-        for (const auto &name : Children(classes, root + L"\\shellex\\ContextMenuHandlers"))
+        for (const auto &name : Children(classes, root + L"\\shellex\\ContextMenuHandlers", control))
         {
+            if (control) control->WaitUntilAllowed();
             const auto path = root + L"\\shellex\\ContextMenuHandlers\\" + name;
             auto clsid = Read(classes, path);
             if (clsid.empty() && !name.empty() && name.front() == L'{') clsid = name;
@@ -615,8 +623,9 @@ struct Scanner
     void Packages()
     {
         const std::wstring root = L"Local Settings\\Software\\Microsoft\\Windows\\CurrentVersion\\AppModel\\Repository\\Packages";
-        for (const auto &package : Children(classes, root))
+        for (const auto &package : Children(classes, root, control))
         {
+            if (control) control->WaitUntilAllowed();
             const auto directory = Read(classes, root + L"\\" + package, L"PackageRootFolder");
             if (directory.empty()) continue;
             for (const auto &verb : ReadManifestVerbs(directory + L"\\AppxManifest.xml"))
@@ -655,7 +664,8 @@ std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
     std::optional<Key> choices;
     if (classes == HKEY_CLASSES_ROOT)
         choices.emplace(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\FileExts", KEY_QUERY_VALUE);
-    const auto readAssociation = [classes, &choices](const std::wstring &name) {
+    const auto readAssociation = [classes, &choices, foreground](const std::wstring &name) {
+        if (foreground) foreground->WaitUntilAllowed();
         Key extension(classes, name, KEY_QUERY_VALUE);
         const auto queryRoot = extension.value ? extension.value : classes;
         const auto queryPath = extension.value ? std::wstring{} : name;
@@ -719,7 +729,7 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
 {
     const auto files = ContextBit(Context::File);
     auto serial = [&] { for (const auto &root : roots) scanner.Root(root.path, files, root.types); };
-    // Small/private inventories avoid thread setup. Two to eight workers bound
+    // Small/private inventories avoid thread setup. One to eight workers bound
     // additional CPU work while native menu helpers remain active.
     if (roots.size() < 64) { serial(); return; }
     std::vector<std::vector<std::pair<Registration, std::wstring>>> results(roots.size());
@@ -729,7 +739,7 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
         const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         if (FAILED(initialized)) throw std::runtime_error("metadata COM initialization");
         struct Cleanup { ~Cleanup() { CoUninitialize(); } } cleanup;
-        Scanner local{scanner.classes}; local.capture = true;
+        Scanner local{scanner.classes}; local.control = foreground; local.capture = true;
         while (true)
         {
             const auto index = next.fetch_add(1, std::memory_order_relaxed);
@@ -750,13 +760,14 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
 static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegroundDemand *foreground)
 {
     MenuTiming timing("catalogue");
-    Scanner scanner{classes};
+    if (foreground) foreground->WaitUntilAllowed();
+    Scanner scanner{classes}; scanner.control = foreground;
     const unsigned files = ContextBit(Context::File), folders = ContextBit(Context::Folder);
     scanner.Root(L"*", files); scanner.Root(L"AllFilesystemObjects", files | folders);
     scanner.Root(L"Directory", folders); scanner.Root(L"Folder", folders); scanner.Root(L"Drive", folders);
     scanner.Root(L"Directory\\Background", ContextBit(Context::FolderBackground) | ContextBit(Context::Desktop));
     scanner.Root(L"DesktopBackground", ContextBit(Context::Desktop));
-    const auto roots = Children(classes, L"");
+    const auto roots = Children(classes, L"", foreground);
     auto types = ReadTypeAssociations(classes, roots, scanner.associations, foreground);
     const std::set<std::wstring> special{L"*", L"allfilesystemobjects", L"directory", L"folder", L"drive", L"desktopbackground", L"clsid", L"interface", L"typelib"};
     std::vector<FileRoot> fileRoots;
@@ -767,12 +778,13 @@ static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegro
             if (extensions.empty()) extensions.push_back(L"progid:" + Lower(name));
             fileRoots.push_back({name, extensions});
         }
-    for (const auto &name : Children(classes, L"SystemFileAssociations"))
+    for (const auto &name : Children(classes, L"SystemFileAssociations", foreground))
         fileRoots.push_back({L"SystemFileAssociations\\" + name, types[L"systemfileassociations\\" + Lower(name)]});
     ReadFileRoots(scanner, fileRoots, foreground);
     if (packages) scanner.Packages();
     for (auto &row : scanner.result.rows)
     {
+        if (foreground) foreground->WaitUntilAllowed();
         Unique(row.sources); Unique(row.types); Unique(row.verbs);
         std::vector<std::wstring> associations;
         for (const auto &type : row.types)

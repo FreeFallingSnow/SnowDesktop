@@ -6,6 +6,7 @@
 #include "shell_extension_nvidia_compat.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_catalogue_workers.h"
+#include "platform/foreground_fullscreen.h"
 #include <condition_variable>
 #include <fstream>
 #include <future>
@@ -21,6 +22,18 @@ namespace
 {
 using Key = settings_ipc::Bytes;
 constexpr ULONGLONG kInventoryWaitMs = 30000;
+bool BackgroundCatalogueFullscreen()
+{
+    // A fullscreen workload on another monitor also needs protection. Reuse
+    // the native visibility/client-area policy, excluding our own Shell UI.
+    bool found = false;
+    EnumWindows([](HWND window, LPARAM context) -> BOOL {
+        if (!snowdesktop::fullscreen::ObserveWindow(window)) return TRUE;
+        *reinterpret_cast<bool *>(context) = true;
+        return FALSE;
+    }, reinterpret_cast<LPARAM>(&found));
+    return found;
+}
 Key SelectionKey(Request request)
 {
     request.catalogueOnly = false;
@@ -209,7 +222,12 @@ struct MenuService::Impl
     Key inspectedSelection;
     bool stop = false, scanRequested = false, scanning = false, configured = false, startupWarm = false, inspected = false, desktopInspection = false, catalogueDirty = false, catalogueStale = false;
     bool foregroundScanRequested = false;
-    CatalogueForegroundDemand foregroundScanDemand;
+    CatalogueForegroundDemand foregroundScanDemand{false, [wasPaused = false]() mutable {
+        const bool paused = BackgroundCatalogueFullscreen();
+        if (paused != wasPaused) MenuTrace("catalogue", paused ? "paused.fullscreen" : "resumed.fullscreen");
+        wasPaused = paused;
+        return paused;
+    }};
     std::uint64_t clock = 0;
     std::uint64_t registryRevision = 0, checkedRegistryRevision = 0, failedRegistryRevision = 0, scanRegistryRevision = 0;
     struct ScopeVerification { std::future<std::uint64_t> scan; std::uint64_t checked = 0, signature = 0, attempt = 0, scanRevision = 0; };
@@ -256,6 +274,7 @@ struct MenuService::Impl
     void Stop()
     {
         { std::lock_guard lock(mutex); stop = true; }
+        foregroundScanDemand.Cancel();
         SetEvent(wake);
         if (worker.joinable()) worker.join();
         // The registry scan runs separately from the scheduler. Drain it before
@@ -263,13 +282,19 @@ struct MenuService::Impl
         if (scan.valid()) scan.wait();
         for (auto &scope : scopedVerification) if (scope.scan.valid()) scope.scan.wait();
     }
+    ULONGLONG ActiveScanElapsed() const
+    {
+        const auto elapsed = GetTickCount64() - scanStarted;
+        const auto paused = foregroundScanDemand.PausedMilliseconds();
+        return elapsed > paused ? elapsed - paused : 0;
+    }
     // Called while mutex holds the same row and catalogue used for display.
     bool AttributionPending(const Request &request, const Preferences &fallback) const
     {
         if (request.startPinOnly || catalogue.revision || (!scanning && !scanRequested) ||
             // Inventory attribution enumerates the whole machine and can outlast a
             // single helper. Known rows remain visible throughout this bounded wait.
-            (scanning && GetTickCount64() - scanStarted >= kInventoryWaitMs)) return false;
+            (scanning && ActiveScanElapsed() >= kInventoryWaitMs)) return false;
         const auto it = rows.find(SelectionKey(request));
         const unsigned contexts = it != rows.end() && it->second.view.contexts ? it->second.view.contexts :
             request.context == Context::Desktop ? ContextBit(Context::Desktop) :
@@ -995,7 +1020,7 @@ struct MenuService::Impl
         bool requested = false;
         {
             std::lock_guard lock(mutex);
-            if (!scan.valid() && scanRequested)
+            if (!stop && !scan.valid() && scanRequested)
             {
                 scanRegistryRevision = registryRevision;
                 scanStarted = GetTickCount64();
@@ -1344,7 +1369,7 @@ struct MenuService::Impl
                         !row.force && row.view.snapshot && row.snapshotTargetChecked &&
                         checkedRegistryRevision < registryRevision &&
                         failedRegistryRevision < registryRevision &&
-                        (!scanning || GetTickCount64() - scanStarted < kInventoryWaitMs))
+                        (!scanning || ActiveScanElapsed() < kInventoryWaitMs))
                     {
                         // Wait for the already-requested inventory rather than
                         // launching an extension process just to discard it.

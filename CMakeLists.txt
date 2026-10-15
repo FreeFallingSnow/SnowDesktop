@@ -2455,7 +2455,7 @@ if (BUILD_TESTING)
             src/settings/settings_process.cpp
             src/settings/settings_ipc_channel.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 gdi32 uuid version
+        LINK_LIBRARIES ole32 oleaut32 shell32 shlwapi user32 gdi32 uuid version dwmapi
         LABELS integration contract shell)
 
     # Keep slow inventory boundaries and real helper lifetimes independent of

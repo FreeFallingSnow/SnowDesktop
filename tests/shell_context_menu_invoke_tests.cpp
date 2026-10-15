@@ -32,6 +32,7 @@
 #include <wrl/implements.h>
 
 void TestCatalogueRegistryHandles();
+int RunCatalogueFullscreenFixture();
 void TestShellContextMenuBootstrap();
 void ProbeNativeShellMenuBootstrap(bool legacy);
 
@@ -5824,6 +5825,12 @@ int wmain(int argc, wchar_t **argv)
     if (FAILED(initialized)) return 1;
     try
     {
+        if (argc == 2 && std::wstring_view(argv[1]) == L"--fullscreen-scan-fixture")
+        {
+            const int result = RunCatalogueFullscreenFixture();
+            CoUninitialize();
+            return result;
+        }
         TemporaryDirectory cacheDirectory;
         snowdesktop::shell_extensions::SharedMenuCache()=snowdesktop::shell_extensions::MenuSnapshotCache(cacheDirectory.path/L"shared");
         if (shortcutProbe) ProbeShortcutArchives();
