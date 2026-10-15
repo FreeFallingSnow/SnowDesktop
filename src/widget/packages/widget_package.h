@@ -239,6 +239,12 @@ struct InstalledPackage
     bool active = true;
 };
 
+// Private host registry metadata, independent of the public package manifest.
+using SteamLibrarySubscriptions =
+    std::unordered_map<std::string, std::vector<std::string>>;
+using SteamLibrarySubscriptionHistory =
+    std::unordered_map<std::string, SteamLibrarySubscriptions>;
+
 struct InvalidPackage
 {
     std::string packageId;
@@ -327,9 +333,11 @@ public:
     bool ContainsPackage(const std::string& packageId) const;
     std::unordered_map<std::string, std::vector<std::string>>
         SteamSubscriptionHistory() const;
+    SteamLibrarySubscriptionHistory SteamLibraryHistory() const;
     bool UpdateSteamSubscriptionHistory(const std::string& accountId,
         const std::vector<std::string>& publishedFileIds,
-        std::string& error);
+        std::string& error,
+        const SteamLibrarySubscriptions* libraries = nullptr);
     std::optional<InstalledPackage> Resolve(const std::string& packageId) const;
     std::optional<std::filesystem::path> ResolveEntry(
         const std::string& packageId) const;
@@ -440,6 +448,7 @@ private:
     std::unordered_set<std::string> knownDevelopmentIds_;
     std::unordered_map<std::string, std::unordered_set<std::string>>
         steamSubscriptionsByAccount_;
+    SteamLibrarySubscriptionHistory steamLibrarySubscriptionsByAccount_;
 };
 
 class BuiltinPackageSource final : public IWidgetPackageSource

@@ -32204,6 +32204,12 @@ WidgetEngine::GetSteamWorkshopSubscriptionHistory()
     return GetWidgetPackageManager().SteamSubscriptionHistory();
 }
 
+snowdesktop::widget::SteamLibrarySubscriptionHistory
+WidgetEngine::GetSteamWorkshopLibrarySubscriptionHistory()
+{
+    return GetWidgetPackageManager().SteamLibraryHistory();
+}
+
 void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
     snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
     const std::vector<snowdesktop::widget::InstalledPackage>& installed,
@@ -32406,10 +32412,13 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         !snapshot.activeSteamAccountId.empty())
     {
         std::string historyError;
+        const auto libraryHistory = snowdesktop::widget::BuildSteamWorkshopLibraryHistory(
+            snapshot, manager.SteamLibraryHistory(), manager.ListPackages());
         if (!manager.UpdateSteamSubscriptionHistory(
                 snapshot.activeSteamAccountId,
                 snowdesktop::widget::BuildSteamWorkshopSubscriptionHistory(
-                    snapshot, manager.SteamSubscriptionHistory()), historyError))
+                    snapshot, manager.SteamSubscriptionHistory()), historyError,
+                &libraryHistory))
         {
             result.errors.push_back(
                 "cannot save Steam subscription history: " + historyError);

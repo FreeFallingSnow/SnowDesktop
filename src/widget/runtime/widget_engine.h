@@ -1181,6 +1181,8 @@ public:
         QuerySteamWorkshopSubscriptions(const std::string& locale);
     static snowdesktop::widget::SteamWorkshopSubscriptionHistory
         GetSteamWorkshopSubscriptionHistory();
+    static snowdesktop::widget::SteamLibrarySubscriptionHistory
+        GetSteamWorkshopLibrarySubscriptionHistory();
     static void PrepareSteamWorkshopSubscriptionArtifacts(
         snowdesktop::widget::SteamWorkshopSubscriptionSnapshot& snapshot,
         const std::vector<snowdesktop::widget::InstalledPackage>& installed,

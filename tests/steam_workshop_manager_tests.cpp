@@ -1434,8 +1434,59 @@ void TestPartialWorkshopSourceAndPackageMutations()
         installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id) &&
         manager.Resolve(id)->manifest.version == "1.1.0" && manager.Resolve(unseenId).has_value(),
         "updating refreshes the warmed catalogue while the unavailable library's package survives");
-    Check(manager.UpdateSteamSubscriptionHistory("123", {"999"}, error),
-        "reproduce the Steam installation's stale established-account history in the isolated registry");
+    const std::string offlineId = "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb26";
+    writePackage(offlineId, "1.0.0");
+    Check(manager.InstallDirectory(sourceDirectory, {"steam-workshop", "500@42"}, false,
+        installed, report, error), "install the package owned by the temporarily unavailable library");
+    const auto disabledManifest = disabled / L"steamapps" / L"workshop" / L"appworkshop_5080330.acf";
+    std::filesystem::create_directories(disabledManifest.parent_path());
+    std::ofstream(disabledManifest) << R"("AppWorkshop" { "appid" "5080330"
+        "WorkshopItemDetails" { "500" { "subscribedby" "123" } } })";
+    std::ofstream(workshop / L"appworkshop_5080330.acf") <<
+        R"("AppWorkshop" { "appid" "5080330"
+            "WorkshopItemsInstalled" { "100" { "manifest" "11" } }
+            "WorkshopItemDetails" {
+                "100" { "latest_manifest" "11" "subscribedby" "123" }
+                "200" { "subscribedby" "123" } } })";
+    const auto observed = source.QuerySubscriptions(query, error);
+    Check(error.empty() && observed.librarySubscriptions.size() == 2 &&
+        observed.subscribedPublishedFileIds == std::vector<std::string>({"100", "200", "500"}),
+        "real library reads retain subscription origins before a library becomes unavailable");
+    Check(manager.UpdateSteamSubscriptionHistory("123", {"100", "200", "500", "999"},
+        error, &observed.librarySubscriptions),
+        "persist origins alongside stale legacy history in one registry transaction");
+    {
+        WidgetPackageManager reopened(paths);
+        Check(reopened.Initialize(error) && reopened.SteamLibraryHistory() == manager.SteamLibraryHistory(),
+            "library origin protection survives reopening the real package registry");
+    }
+    {
+        const auto beforeHistory = manager.SteamSubscriptionHistory();
+        const auto beforeLibraries = manager.SteamLibraryHistory();
+        HANDLE locked = CreateFileW(paths.registry.c_str(), GENERIC_READ, FILE_SHARE_READ,
+            nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        Check(locked != INVALID_HANDLE_VALUE, "lock the real registry against atomic replacement");
+        if (locked != INVALID_HANDLE_VALUE)
+        {
+            const SteamLibrarySubscriptions changed{{"replacement", {"100"}}};
+            Check(!manager.UpdateSteamSubscriptionHistory("123", {"100"}, error, &changed) &&
+                manager.SteamSubscriptionHistory() == beforeHistory && manager.SteamLibraryHistory() == beforeLibraries,
+                "failed registry commit rolls back global subscriptions and library origins together");
+            CloseHandle(locked);
+            error.clear();
+        }
+    }
+    std::filesystem::rename(disabled, workshopTestDeployment / L"temporarily-unavailable-library");
+    std::ofstream(workshop / L"appworkshop_5080330.acf") <<
+        R"("AppWorkshop" { "appid" "5080330"
+            "WorkshopItemsInstalled" { "100" { "manifest" "11" } }
+            "WorkshopItemDetails" {
+                "100" { "latest_manifest" "11" "subscribedby" "123" }
+                "500" { "subscribedby" "0" } } })";
+    snapshot = source.QuerySubscriptions(query, error);
+    Check(error.empty() && snapshot.partial &&
+        snapshot.subscribedPublishedFileIds == std::vector<std::string>{"100"},
+        "a readable library and an unavailable library produce the real partial snapshot");
     using PackageValidationQuery = snowdesktop::BoundedFileQuery<SteamWorkshopSubscriptionSnapshot>;
     const auto validationKey = bridge.lexically_normal().native() + L"\n100:" +
         archive.parent_path().lexically_normal().native();
@@ -1470,7 +1521,8 @@ void TestPartialWorkshopSourceAndPackageMutations()
         resumed.installable.size() == 1 && resumed.installable[0].manifest.id == id &&
         resumed.installable[0].manifest.version == "1.1.0" && resumed.localArtifacts.contains("100"),
         "the real source consumes a late validation at the fallback retry while reading fresh subscriptions");
-    ResolveSteamWorkshopSubscriptionRemovals(slow, manager.SteamSubscriptionHistory(), manager.ListPackages());
+    ResolveSteamWorkshopSubscriptionRemovals(slow, manager.SteamSubscriptionHistory(), manager.ListPackages(),
+        manager.SteamLibraryHistory());
     const auto slowPlan = BuildSteamWorkshopSyncPlan(manager.ListPackages(), slow);
     Check(error.empty() && slow.error.empty() && slow.authoritative && slow.installable.empty() &&
         slow.warning.find("packages skipped") != std::string::npos &&
@@ -1478,13 +1530,16 @@ void TestPartialWorkshopSourceAndPackageMutations()
         slowPlan.actions[0].packageId == unseenId,
         "a skipped slow archive does not erase local subscriptions or block their unsubscribe plan");
     auto blocked = snapshot;
-    blocked.authoritative = false; // Negative control: the preceding try's whole-scan gate.
+    blocked.authoritative = false;
+    blocked.partial = false;
     ResolveSteamWorkshopSubscriptionRemovals(blocked, manager.SteamSubscriptionHistory(), manager.ListPackages());
     Check(BuildSteamWorkshopSyncPlan(manager.ListPackages(), blocked).actions.empty(),
-        "the former non-authoritative gate reproduces the reported unsubscribe residue");
-    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory());
-    Check(BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot).actions.empty(),
-        "stale history without installed bindings reproduces the actual Steam removal-plan failure");
+        "a wholly unavailable query cannot retire any managed package");
+    auto unknownOrigins = snapshot;
+    unknownOrigins.locallyUnsubscribedPublishedFileIds.clear();
+    ResolveSteamWorkshopSubscriptionRemovals(unknownOrigins, manager.SteamSubscriptionHistory());
+    Check(BuildSteamWorkshopSyncPlan(manager.ListPackages(), unknownOrigins).actions.empty(),
+        "absence alone cannot retire a legacy identity whose library is unknown during a partial scan");
     const std::string localId = "3fbb18cd-7c46-4a9f-9fe3-3e2c19facb25";
     writePackage(localId, "1.0.0");
     Check(manager.InstallDirectory(sourceDirectory, {"local-directory", "audio-spectrum"}, false,
@@ -1494,26 +1549,57 @@ void TestPartialWorkshopSourceAndPackageMutations()
     conflicting.source = {"steam-workshop", "300"};
     snapshot.installable.push_back(conflicting);
     snapshot.subscribedPublishedFileIds.push_back("300");
-    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory(), manager.ListPackages());
+    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory(), manager.ListPackages(),
+        manager.SteamLibraryHistory());
     const auto removal = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
+    {
+        const auto packageDirectory = paths.installed / std::filesystem::path(unseenId);
+        HANDLE locked = CreateFileW(packageDirectory.c_str(), FILE_LIST_DIRECTORY,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        Check(locked != INVALID_HANDLE_VALUE, "hold a package directory against quarantine rename");
+        if (locked != INVALID_HANDLE_VALUE)
+        {
+            Check(!manager.Uninstall(unseenId, error) && manager.ContainsPackage(unseenId),
+                "a real failed quarantine move leaves the package installed");
+            error.clear();
+            const auto retryOrigins = BuildSteamWorkshopLibraryHistory(
+                snapshot, manager.SteamLibraryHistory(), manager.ListPackages());
+            Check(manager.UpdateSteamSubscriptionHistory("123",
+                BuildSteamWorkshopSubscriptionHistory(snapshot, manager.SteamSubscriptionHistory()),
+                error, &retryOrigins), "persist successful observations after the failed removal");
+            WidgetPackageManager reopened(paths);
+            Check(reopened.Initialize(error), "reopen the registry between failed removal and retry");
+            auto retrySnapshot = snapshot;
+            ResolveSteamWorkshopSubscriptionRemovals(retrySnapshot, reopened.SteamSubscriptionHistory(),
+                reopened.ListPackages(), reopened.SteamLibraryHistory());
+            const auto retryPlan = BuildSteamWorkshopSyncPlan(reopened.ListPackages(), retrySnapshot);
+            Check(retryPlan.actions.size() == 1 && retryPlan.actions[0].packageId == unseenId &&
+                retryPlan.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall,
+                "a failed uninstall retries after restart even without a retained zero marker in Steam's manifest");
+            CloseHandle(locked);
+            error.clear();
+        }
+    }
     Check(removal.actions.size() == 1 && removal.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
         removal.actions[0].packageId == unseenId && removal.conflicts.size() == 1 &&
         manager.Uninstall(unseenId, error) && manager.RefreshCatalog(error) &&
-        !manager.ContainsPackage(unseenId) && manager.Resolve(id).has_value() && manager.Resolve(localId).has_value(),
-        "stale history and an unrelated local ID conflict cannot stop local-manifest uninstallation or overwrite local packages");
+        !manager.ContainsPackage(unseenId) && manager.Resolve(id).has_value() && manager.Resolve(localId).has_value() &&
+        manager.ContainsPackage(offlineId),
+        "real removal retires the readable library's unsubscribed package while preserving the offline library's package and local conflicts");
+    const auto libraryHistory = BuildSteamWorkshopLibraryHistory(snapshot, manager.SteamLibraryHistory());
     Check(manager.UpdateSteamSubscriptionHistory("123",
-            BuildSteamWorkshopSubscriptionHistory(snapshot, manager.SteamSubscriptionHistory()), error) &&
-        manager.SteamSubscriptionHistory().at("123") == std::vector<std::string>({"100", "300"}),
-        "valid local subscription identities persist independently of a package conflict");
-    // A failed removal also needs a fresh plan after history has advanced.
-    writePackage(unseenId, "1.0.0");
-    Check(manager.InstallDirectory(sourceDirectory, {"steam-workshop", "200@42"}, false,
-        installed, report, error), "recreate a remaining managed copy for removal retry");
-    ResolveSteamWorkshopSubscriptionRemovals(snapshot, manager.SteamSubscriptionHistory(), manager.ListPackages());
-    const auto retry = BuildSteamWorkshopSyncPlan(manager.ListPackages(), snapshot);
-    Check(retry.actions.size() == 1 && retry.actions[0].packageId == unseenId &&
-        retry.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall && manager.Uninstall(unseenId, error),
-        "a managed copy still absent from subscriptions is retried even after history was saved");
+            BuildSteamWorkshopSubscriptionHistory(snapshot, manager.SteamSubscriptionHistory()), error,
+            &libraryHistory) && manager.SteamSubscriptionHistory().at("123") ==
+                std::vector<std::string>({"100", "300", "500", "999"}),
+        "partial history retains offline and unknown identities while applying the confirmed readable removal");
+    {
+        WidgetPackageManager reopened(paths);
+        Check(reopened.Initialize(error) && reopened.ContainsPackage(offlineId) &&
+            reopened.SteamSubscriptionHistory() == manager.SteamSubscriptionHistory() &&
+            reopened.SteamLibraryHistory() == manager.SteamLibraryHistory(),
+            "the retained offline package and both histories survive a real registry reopen");
+    }
     Check(manager.Uninstall(id, error) && manager.RefreshCatalog(error) && !manager.ContainsPackage(id),
         "local uninstall immediately removes cached Workshop package entries");
     const auto resubscribed = source.QuerySubscriptions(query, error);
@@ -1524,6 +1610,26 @@ void TestPartialWorkshopSourceAndPackageMutations()
         manager.InstallArchive(archive, {"steam-workshop", "100@42"}, false,
             installed, report, error) && manager.RefreshCatalog(error) && manager.Resolve(id).has_value(),
         "a newly present local subscription can reinstall its managed package after removal");
+    std::filesystem::rename(workshopTestDeployment / L"temporarily-unavailable-library", disabled);
+    auto recoveredLibrary = source.QuerySubscriptions(query, error);
+    ResolveSteamWorkshopSubscriptionRemovals(recoveredLibrary, manager.SteamSubscriptionHistory(),
+        manager.ListPackages(), manager.SteamLibraryHistory());
+    const auto recoveredPlan = BuildSteamWorkshopSyncPlan(manager.ListPackages(), recoveredLibrary);
+    Check(error.empty() && manager.ContainsPackage(offlineId) &&
+        std::none_of(recoveredPlan.actions.begin(), recoveredPlan.actions.end(), [&](const auto& action) {
+            return action.kind == SteamWorkshopSyncActionKind::Uninstall && action.packageId == offlineId;
+        }), "a recovered library's live subscription wins over a stale zero marker in another library");
+    std::ofstream(disabledManifest) << R"("AppWorkshop" { "appid" "5080330"
+        "WorkshopItemDetails" { "500" { "subscribedby" "0" } } })";
+    auto retiredLibrary = source.QuerySubscriptions(query, error);
+    ResolveSteamWorkshopSubscriptionRemovals(retiredLibrary, manager.SteamSubscriptionHistory(),
+        manager.ListPackages(), manager.SteamLibraryHistory());
+    const auto retiredPlan = BuildSteamWorkshopSyncPlan(manager.ListPackages(), retiredLibrary);
+    Check(error.empty() && retiredPlan.actions.size() == 1 &&
+        retiredPlan.actions[0].kind == SteamWorkshopSyncActionKind::Uninstall &&
+        retiredPlan.actions[0].packageId == offlineId && manager.Uninstall(offlineId, error) &&
+        !manager.ContainsPackage(offlineId),
+        "recovery permits the library's subsequently confirmed unsubscribe despite another corrupt root");
 
     // Substitute only the completed metadata read to model a folder disappearing
     // between ACF discovery and validation. Path checks/validation remain real.

@@ -4,6 +4,7 @@
 #include <windows.h>
 
 #include <chrono>
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -19,6 +20,12 @@ namespace
 int failures = 0;
 std::mutex logMutex;
 std::vector<std::wstring> diagnosticLines;
+std::atomic_int64_t simulatedUnixTime{0};
+
+std::int64_t ControlledUnixTime() noexcept
+{
+    return simulatedUnixTime.load();
+}
 
 void Check(bool condition, const char* message)
 {
@@ -205,6 +212,61 @@ int wmain(int argc, wchar_t** argv)
     std::filesystem::copy_file(fixture, sdkFreeFixture,
         std::filesystem::copy_options::overwrite_existing, error);
     Check(!error, "the SDK-free Bridge fixture is prepared");
+    {
+        const auto misleadingParent = root / L"offline-stale-sdk-free-not-owned-client-unavailable";
+        std::filesystem::create_directory(misleadingParent, error);
+        const auto normal = misleadingParent / L"normal-bridge.exe";
+        std::filesystem::copy_file(fixture, normal,
+            std::filesystem::copy_options::overwrite_existing, error);
+        Check(!error, "a normal fixture is copied under failure words in its parent path");
+        Service service(normal, normal, misleadingParent / L"cache.bin");
+        Check(service.Current().bridgeAvailable && service.StartRegistration({}),
+            "ancestor directory names cannot change a normal Bridge's configuration or ownership mode");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (service.Current().state == State::Checking &&
+            std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Check(service.IsRegistered(), "real child IPC keeps the normal fixture owned under misleading parent names");
+    }
+    {
+        simulatedUnixTime.store(registeredUntil - 1);
+        const auto expiryCache = root / L"expiry-cache.bin";
+        std::filesystem::copy_file(cache, expiryCache,
+            std::filesystem::copy_options::overwrite_existing, error);
+        Check(!error, "prepare a real DPAPI lease at its final valid second");
+        Service expiring(offlineFixture, offlineFixture, expiryCache, ControlledUnixTime);
+        const auto before = expiring.Current();
+        Check(before.registered && expiring.IsRegistered(),
+            "the running service accepts an unexpired offline lease");
+        simulatedUnixTime.store(registeredUntil);
+        Check(!expiring.IsRegistered() && !expiring.Current().registered &&
+            expiring.Current().revision > before.revision,
+            "reaching the lease deadline revokes positive operations without recreating the service");
+        const auto expired = expiring.Current();
+        Check(expiring.Current().revision == expired.revision && Read(expiryCache) == protectedBytes,
+            "expiry advances the UI revision once and preserves the persisted record");
+        simulatedUnixTime.store(registeredUntil - 1);
+        Check(!expiring.IsRegistered(), "wall-clock rollback does not reactivate an expired running lease");
+        simulatedUnixTime.store(registeredUntil + 1);
+        Check(expiring.StartRegistration({}, true), "an expired service can retry verification");
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (expiring.Current().state == State::Checking &&
+            std::chrono::steady_clock::now() < deadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Check(!expiring.IsRegistered() && !expiring.Current().registered &&
+            expiring.Current().failure == Failure::SteamUnavailable &&
+            expiring.Current().validUntil == registeredUntil && Read(expiryCache) == protectedBytes,
+            "failed offline revalidation cannot revive or extend an expired lease");
+        Service restoredExpired(fixture, fixture, expiryCache, ControlledUnixTime);
+        Check(!restoredExpired.IsRegistered(), "reopening the same expired DPAPI record also stays locked");
+        Check(restoredExpired.StartRegistration({}), "fresh ownership can renew an expired registration");
+        const auto renewalDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (restoredExpired.Current().state == State::Checking &&
+            std::chrono::steady_clock::now() < renewalDeadline)
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        Check(restoredExpired.IsRegistered() && restoredExpired.Current().validUntil > registeredUntil,
+            "a real successful ownership result renews the service after expiry");
+    }
     {
         Service offline(offlineFixture, offlineFixture, cache);
         Check(offline.IsRegistered() &&

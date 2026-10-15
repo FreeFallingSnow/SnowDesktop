@@ -63,10 +63,11 @@ BuildSteamWorkshopPackageAssociations(
 void ResolveSteamWorkshopSubscriptionRemovals(
     SteamWorkshopSubscriptionSnapshot& snapshot,
     const SteamWorkshopSubscriptionHistory& history,
-    const std::vector<InstalledPackage>& installed)
+    const std::vector<InstalledPackage>& installed,
+    const SteamLibrarySubscriptionHistory& libraryHistory)
 {
     snapshot.explicitlyUnsubscribedPublishedFileIds.clear();
-    if (!snapshot.authoritative || snapshot.activeSteamAccountId.empty())
+    if (!snapshot.CanSynchronize() || snapshot.activeSteamAccountId.empty())
         return;
 
     const auto previous = history.find(snapshot.activeSteamAccountId);
@@ -89,6 +90,21 @@ void ResolveSteamWorkshopSubscriptionRemovals(
     // having recorded a successful earlier synchronization.
     std::unordered_set<std::string> candidates(
         previous->second.begin(), previous->second.end());
+    std::unordered_set<std::string> readableRemovals(
+        snapshot.locallyUnsubscribedPublishedFileIds.begin(),
+        snapshot.locallyUnsubscribedPublishedFileIds.end());
+    std::unordered_set<std::string> unavailableSubscriptions;
+    if (const auto account = libraryHistory.find(snapshot.activeSteamAccountId);
+        account != libraryHistory.end())
+    {
+        for (const auto& [library, subscriptions] : account->second)
+        {
+            if (snapshot.librarySubscriptions.contains(library))
+                readableRemovals.insert(subscriptions.begin(), subscriptions.end());
+            else
+                unavailableSubscriptions.insert(subscriptions.begin(), subscriptions.end());
+        }
+    }
     for (const auto& package : installed)
     {
         if (package.builtin || package.development ||
@@ -100,7 +116,10 @@ void ResolveSteamWorkshopSubscriptionRemovals(
     for (const auto& publishedFileId : candidates)
     {
         if (!current.contains(publishedFileId) &&
-            !subscribedByOtherAccounts.contains(publishedFileId))
+            !subscribedByOtherAccounts.contains(publishedFileId) &&
+            ((snapshot.authoritative && !snapshot.partial) ||
+                (readableRemovals.contains(publishedFileId) &&
+                    !unavailableSubscriptions.contains(publishedFileId))))
         {
             snapshot.explicitlyUnsubscribedPublishedFileIds.push_back(
                 publishedFileId);
@@ -119,7 +138,7 @@ std::vector<std::string> BuildSteamWorkshopSubscriptionHistory(
     const SteamWorkshopSubscriptionHistory& history)
 {
     std::unordered_set<std::string> remembered;
-    if (!snapshot.authoritative)
+    if (!snapshot.authoritative || snapshot.partial)
         if (const auto previous = history.find(snapshot.activeSteamAccountId);
             previous != history.end())
             remembered.insert(previous->second.begin(), previous->second.end());
@@ -130,8 +149,78 @@ std::vector<std::string> BuildSteamWorkshopSubscriptionHistory(
                 snapshot.subscribedPublishedFileIds.end(), id) ==
             snapshot.subscribedPublishedFileIds.end())
             remembered.erase(id);
+    if (snapshot.authoritative || snapshot.partial)
+        for (const auto& id : snapshot.explicitlyUnsubscribedPublishedFileIds)
+            if (std::find(snapshot.subscribedPublishedFileIds.begin(),
+                    snapshot.subscribedPublishedFileIds.end(), id) ==
+                snapshot.subscribedPublishedFileIds.end())
+                remembered.erase(id);
     std::vector<std::string> result(remembered.begin(), remembered.end());
     std::sort(result.begin(), result.end());
+    return result;
+}
+
+SteamLibrarySubscriptions BuildSteamWorkshopLibraryHistory(
+    const SteamWorkshopSubscriptionSnapshot& snapshot,
+    const SteamLibrarySubscriptionHistory& history,
+    const std::vector<InstalledPackage>& remainingInstalled)
+{
+    SteamLibrarySubscriptions result;
+    if (const auto account = history.find(snapshot.activeSteamAccountId);
+        account != history.end())
+        result = account->second;
+    if (!snapshot.CanSynchronize()) return result;
+    if (snapshot.authoritative && !snapshot.partial &&
+        !snapshot.librarySubscriptions.empty())
+        result.clear();
+    for (const auto& [library, subscriptions] : snapshot.librarySubscriptions)
+        result[library] = subscriptions;
+    const auto current = BuildSteamWorkshopSubscriptionHistory(snapshot, {});
+    const std::unordered_set<std::string> subscribed(current.begin(), current.end());
+    // Explicit removals clear all remembered origins, including a library that
+    // is currently unavailable. Complete global queries also retire stale IDs.
+    for (auto& [library, subscriptions] : result)
+    {
+        (void)library;
+        std::erase_if(subscriptions, [&](const auto& id) {
+            if (std::find(snapshot.subscribedPublishedFileIds.begin(),
+                    snapshot.subscribedPublishedFileIds.end(), id) !=
+                snapshot.subscribedPublishedFileIds.end())
+                return false;
+            return (snapshot.authoritative && !snapshot.partial && !subscribed.contains(id)) ||
+                std::find(snapshot.confirmedUnsubscribedPublishedFileIds.begin(),
+                    snapshot.confirmedUnsubscribedPublishedFileIds.end(), id) !=
+                    snapshot.confirmedUnsubscribedPublishedFileIds.end() ||
+                std::find(snapshot.explicitlyUnsubscribedPublishedFileIds.begin(),
+                    snapshot.explicitlyUnsubscribedPublishedFileIds.end(), id) !=
+                    snapshot.explicitlyUnsubscribedPublishedFileIds.end();
+        });
+    }
+    // A failed uninstall must retain its origin for the next scoped retry even
+    // when Steam has already removed its detail entry from the local manifest.
+    if (const auto account = history.find(snapshot.activeSteamAccountId);
+        account != history.end())
+    {
+        for (const auto& package : remainingInstalled)
+        {
+            if (package.builtin || package.development ||
+                package.source.providerId != "steam-workshop") continue;
+            const auto id = SteamPublishedFileId(package.source.externalItemId);
+            if (std::find(snapshot.explicitlyUnsubscribedPublishedFileIds.begin(),
+                    snapshot.explicitlyUnsubscribedPublishedFileIds.end(), id) ==
+                    snapshot.explicitlyUnsubscribedPublishedFileIds.end() &&
+                std::find(snapshot.confirmedUnsubscribedPublishedFileIds.begin(),
+                    snapshot.confirmedUnsubscribedPublishedFileIds.end(), id) ==
+                    snapshot.confirmedUnsubscribedPublishedFileIds.end()) continue;
+            for (const auto& [library, subscriptions] : account->second)
+                if (std::find(subscriptions.begin(), subscriptions.end(), id) != subscriptions.end())
+                {
+                    auto& retained = result[library];
+                    if (std::find(retained.begin(), retained.end(), id) == retained.end())
+                        retained.push_back(id);
+                }
+        }
+    }
     return result;
 }
 
@@ -148,7 +237,7 @@ SteamWorkshopSyncPlan BuildSteamWorkshopSyncPlan(
     std::unordered_set<std::string> explicitlyUnsubscribed(
         snapshot.confirmedUnsubscribedPublishedFileIds.begin(),
         snapshot.confirmedUnsubscribedPublishedFileIds.end());
-    if (snapshot.authoritative)
+    if (snapshot.authoritative || snapshot.partial)
         explicitlyUnsubscribed.insert(
             snapshot.explicitlyUnsubscribedPublishedFileIds.begin(),
             snapshot.explicitlyUnsubscribedPublishedFileIds.end());

@@ -670,6 +670,9 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
     }
     snapshot.subscribedPublishedFileIds =
         cache.subscribedPublishedFileIds;
+    snapshot.librarySubscriptions = cache.librarySubscriptions;
+    snapshot.locallyUnsubscribedPublishedFileIds =
+        cache.locallyUnsubscribedPublishedFileIds;
     if (!snapshot.CanSynchronize())
     {
         error = discoveryError.empty() ? cache.error : discoveryError;

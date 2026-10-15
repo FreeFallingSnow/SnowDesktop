@@ -2106,6 +2106,7 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
     developmentOverrides_.clear();
     knownDevelopmentIds_.clear();
     steamSubscriptionsByAccount_.clear();
+    steamLibrarySubscriptionsByAccount_.clear();
     std::error_code ec;
     if (!std::filesystem::exists(paths_.registry, ec)) return true;
     std::string text;
@@ -2242,6 +2243,26 @@ bool WidgetPackageManager::LoadRegistry(std::string& error)
             for (const auto& item : value.array)
                 if (item.IsString() && DecimalIdentifier(item.string))
                     subscriptions.insert(item.string);
+        }
+    }
+    if (const JsonValue* history = root.Find("steamLibrarySubscriptionsByAccount");
+        history && history->IsObject())
+    {
+        for (const auto& [accountId, libraries] : history->object)
+        {
+            if (!DecimalIdentifier(accountId) || !libraries.IsObject()) continue;
+            auto& account = steamLibrarySubscriptionsByAccount_[accountId];
+            for (const auto& [library, values] : libraries.object)
+            {
+                if (library.empty() || !values.IsArray()) continue;
+                auto& subscriptions = account[library];
+                for (const auto& value : values.array)
+                    if (value.IsString() && DecimalIdentifier(value.string))
+                        subscriptions.push_back(value.string);
+                std::sort(subscriptions.begin(), subscriptions.end());
+                subscriptions.erase(std::unique(subscriptions.begin(),
+                    subscriptions.end()), subscriptions.end());
+            }
         }
     }
     return true;
@@ -2401,6 +2422,45 @@ bool WidgetPackageManager::SaveRegistry(std::string& error) const
             out << '\"' << JsonEscape(subscriptions[item]) << '\"';
         }
         out << ']';
+    }
+    if (!accounts.empty()) out << '\n';
+    out << "  },\n  \"steamLibrarySubscriptionsByAccount\": {";
+    accounts.clear();
+    for (const auto& [accountId, libraries] : steamLibrarySubscriptionsByAccount_)
+    {
+        (void)libraries;
+        accounts.push_back(accountId);
+    }
+    std::sort(accounts.begin(), accounts.end());
+    for (std::size_t account = 0; account < accounts.size(); ++account)
+    {
+        if (account) out << ',';
+        const auto& accountId = accounts[account];
+        const auto& libraries = steamLibrarySubscriptionsByAccount_.at(accountId);
+        out << "\n    \"" << JsonEscape(accountId) << "\":{";
+        std::vector<std::string> keys;
+        for (const auto& [library, subscriptions] : libraries)
+        {
+            (void)subscriptions;
+            keys.push_back(library);
+        }
+        std::sort(keys.begin(), keys.end());
+        for (std::size_t library = 0; library < keys.size(); ++library)
+        {
+            if (library) out << ',';
+            out << '\"' << JsonEscape(keys[library]) << "\":[";
+            auto subscriptions = libraries.at(keys[library]);
+            std::sort(subscriptions.begin(), subscriptions.end());
+            subscriptions.erase(std::unique(subscriptions.begin(),
+                subscriptions.end()), subscriptions.end());
+            for (std::size_t item = 0; item < subscriptions.size(); ++item)
+            {
+                if (item) out << ',';
+                out << '\"' << JsonEscape(subscriptions[item]) << '\"';
+            }
+            out << ']';
+        }
+        out << '}';
     }
     if (!accounts.empty()) out << '\n';
     out << "  }\n}\n";
@@ -2715,11 +2775,17 @@ WidgetPackageManager::SteamSubscriptionHistory() const
 
 bool WidgetPackageManager::UpdateSteamSubscriptionHistory(
     const std::string& accountId,
-    const std::vector<std::string>& publishedFileIds, std::string& error)
+    const std::vector<std::string>& publishedFileIds, std::string& error,
+    const SteamLibrarySubscriptions* libraries)
 {
     if (!DecimalIdentifier(accountId) ||
         !std::all_of(publishedFileIds.begin(), publishedFileIds.end(),
-            DecimalIdentifier))
+            DecimalIdentifier) ||
+        (libraries && !std::all_of(libraries->begin(), libraries->end(),
+            [](const auto& entry) {
+                return !entry.first.empty() && std::all_of(entry.second.begin(),
+                    entry.second.end(), DecimalIdentifier);
+            })))
     {
         error = "invalid Steam subscription history identity";
         return false;
@@ -2729,16 +2795,33 @@ bool WidgetPackageManager::UpdateSteamSubscriptionHistory(
     const bool existed = previous != steamSubscriptionsByAccount_.end();
     std::unordered_set<std::string> previousSubscriptions;
     if (existed) previousSubscriptions = previous->second;
+    const auto previousLibraries = steamLibrarySubscriptionsByAccount_.find(accountId);
+    const bool librariesExisted = previousLibraries != steamLibrarySubscriptionsByAccount_.end();
+    SteamLibrarySubscriptions savedLibraries;
+    if (libraries && librariesExisted) savedLibraries = previousLibraries->second;
     steamSubscriptionsByAccount_[accountId] =
         std::unordered_set<std::string>(publishedFileIds.begin(),
             publishedFileIds.end());
+    if (libraries) steamLibrarySubscriptionsByAccount_[accountId] = *libraries;
     if (SaveRegistry(error)) return true;
+    if (libraries)
+    {
+        if (librariesExisted)
+            steamLibrarySubscriptionsByAccount_[accountId] = std::move(savedLibraries);
+        else
+            steamLibrarySubscriptionsByAccount_.erase(accountId);
+    }
     if (existed)
         steamSubscriptionsByAccount_[accountId] =
             std::move(previousSubscriptions);
     else
         steamSubscriptionsByAccount_.erase(accountId);
     return false;
+}
+
+SteamLibrarySubscriptionHistory WidgetPackageManager::SteamLibraryHistory() const
+{
+    return steamLibrarySubscriptionsByAccount_;
 }
 
 std::optional<InstalledPackage> WidgetPackageManager::Resolve(

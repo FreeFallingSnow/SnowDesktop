@@ -246,6 +246,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
     const auto installedPackages = widgetEngine_->ListWidgetPackages();
     const auto subscriptionHistory =
         WidgetEngine::GetSteamWorkshopSubscriptionHistory();
+    const auto libraryHistory =
+        WidgetEngine::GetSteamWorkshopLibrarySubscriptionHistory();
     const auto packageStaging =
         WidgetEngine::GetWidgetPackagePaths().staging;
     const auto state = steamWorkshopSubscriptionPollState_;
@@ -264,7 +266,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         state->queryInFlight.store(true);
     }
     std::thread([state, locale, notifyWindow, queryId,
-        installedPackages, subscriptionHistory, packageStaging,
+        installedPackages, subscriptionHistory, libraryHistory, packageStaging,
         confirmedUnsubscriptions = std::move(confirmedUnsubscriptions)]() mutable
     {
         // Local cache inspection decides whether theme work is relevant. All
@@ -293,7 +295,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         snapshot.confirmedUnsubscribedPublishedFileIds =
             std::move(confirmedUnsubscriptions);
         snowdesktop::widget::ResolveSteamWorkshopSubscriptionRemovals(
-            snapshot, subscriptionHistory, installedPackages);
+            snapshot, subscriptionHistory, installedPackages, libraryHistory);
         WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(snapshot,
             installedPackages, packageStaging);
         {
