@@ -1,5 +1,7 @@
 #include "widget/storage/widget_storage_transaction.h"
 #include "widget/storage/widget_storage_value.h"
+#include "widget/storage/widget_settings_preview.h"
+#include "widget/storage/widget_storage_persistence.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -199,6 +201,75 @@ void TestTypedStorageValueRejectsMalformedPayloads()
             nested, decoded, error),
         "deeply nested persisted payloads are rejected before JSON recursion");
 }
+
+void TestSettingsPreviewCommitIsolation()
+{
+    using namespace snowdesktop::widget_runtime;
+    StorageMap committed{{"a.color","old-a"},{"b.color","old-b"},{"a.keep","keep"}};
+    WidgetSettingsPreviewLayers previews;
+    int ownerA=0,ownerB=0;
+    std::string error;
+    bool changed=false;
+    const auto stage=[&](const void* owner,const std::string& instance,const std::string& value) {
+        const auto previous=previews.Read(committed);
+        WidgetStorageTransaction transaction(previous,instance);
+        Check(transaction.Set("color",value,changed,error) && transaction.ValidateCommit(error),
+            "preview uses complete real storage transaction validation");
+        return previews.Update(owner,instance+".",previous,transaction.TakeCandidate());
+    };
+    Check(stage(&ownerA,"a","preview-a") && stage(&ownerB,"b","preview-b"),
+        "independent owners stage simultaneous previews");
+    Check(committed.at("a.color")=="old-a" && committed.at("b.color")=="old-b" &&
+        previews.Read(committed).at("a.color")=="preview-a", "previews affect reads without entering committed storage");
+    WidgetStorageTransaction ordinary(committed,"a");
+    Check(ordinary.Set("color","ordinary-a",changed,error) &&
+        ordinary.Set("callback","ordinary-side-effect",changed,error) && ordinary.ValidateCommit(error),
+        "ordinary callback transaction remains usable during preview");
+    committed=ordinary.TakeCandidate(); previews.InvalidateReads();
+    const auto directory=std::filesystem::temp_directory_path() /
+        (L"SnowDesktop-settings-preview-"+std::to_wstring(GetCurrentProcessId())+
+            L"-"+std::to_wstring(GetTickCount64()));
+    std::filesystem::create_directory(directory);
+    const auto path=directory/L"storage.json";
+    struct Cleanup {
+        std::filesystem::path directory,path;
+        ~Cleanup(){std::error_code ignored; std::filesystem::remove(path,ignored);
+            std::filesystem::remove(path.wstring()+L".tmp",ignored);
+            std::filesystem::remove(directory,ignored);}
+    } cleanup{directory,path};
+    StorageMap saved;
+    const auto reload=[&] {
+        saved.clear();
+        return storage_persistence::ReadStorageMap(path,saved,[](const auto&){return false;});
+    };
+    const auto save=[&] {
+        return storage_persistence::SaveStorageMap(path,committed) && reload();
+    };
+    Check(save(),"ordinary persistence uses actual production atomic writer and reader");
+    const auto validate=[&](const StorageMap& candidate,const std::string& prefix) {
+        return WidgetStorageTransaction(candidate,prefix.substr(0,prefix.size()-1)).ValidateCommit(error);
+    };
+    Check(saved.at("a.color")=="ordinary-a" && saved.at("b.color")=="old-b" &&
+        saved.at("a.callback")=="ordinary-side-effect", "ordinary persistence snapshot excludes every open preview");
+    previews.Remove(&ownerA);
+    Check(reload() && saved.at("a.color")=="ordinary-a" &&
+        saved.at("b.color")=="old-b" && previews.Read(committed).at("a.color")=="ordinary-a" &&
+        committed.at("a.callback")=="ordinary-side-effect", "cancel never reverts ordinary writes made during preview");
+    Check(stage(&ownerA,"a","final-a") && previews.Commit(&ownerA,committed,save,validate),
+        "preview commit applies its patch to latest committed storage");
+    Check(saved.at("a.color")=="final-a" && saved.at("a.callback")=="ordinary-side-effect" &&
+        saved.at("b.color")=="old-b" && previews.Read(committed).at("b.color")=="preview-b",
+        "committing one owner never persists another owner's active preview");
+    const auto before=committed;
+    Check(!previews.Commit(&ownerB,committed,[]{return false;},validate) && committed==before &&
+        previews.Read(committed).at("b.color")=="preview-b", "failed persistence rolls back committed state while retaining pending preview");
+    Check(previews.Commit(&ownerB,committed,save,validate) && saved.at("b.color")=="preview-b",
+        "failed commit can be retried without losing another widget's writes");
+    Check(stage(&ownerA,"a","rejected") && !stage(&ownerB,"a","conflict"),
+        "competing preview owners cannot overlap the same instance");
+    previews.Clear();
+    Check(previews.Read(committed)==saved,"closing previews leaves committed persistence intact");
+}
 }
 
 int main()
@@ -211,6 +282,7 @@ int main()
     TestHostMetadataDoesNotReducePublicOperationLimit();
     TestTypedStorageValueRoundTrip();
     TestTypedStorageValueRejectsMalformedPayloads();
+    TestSettingsPreviewCommitIsolation();
     if (failures != 0)
     {
         std::cerr << failures << " widget storage transaction checks failed\n";

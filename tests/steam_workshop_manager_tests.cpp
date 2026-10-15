@@ -14,6 +14,7 @@
 #include "workshop_localization.h"
 #include "workshop_project.h"
 #include "workshop_upload_validation.h"
+#include "workshop_staging.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -382,6 +383,26 @@ void TestPreviewCacheNotifications()
     remoteCache.Request(29, "http://example.invalid/preview.png");
     Check(remoteNotifications.load() == 1,
         "an unchanged remote preview request does not create another wakeup");
+
+    std::atomic<bool> downloading{false}, finish{false};
+    std::atomic<unsigned> completed{0};
+    PreviewCache controlled(temporary.path / L"controlled", [&] { ++completed; },
+        [&](std::string_view, const std::filesystem::path&, std::string& error) {
+            error = "unpublished worker diagnostic";
+            downloading = true;
+            while (!finish.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            error = "final failure"; return false;
+        });
+    controlled.Request(30, "https://controlled.invalid/preview.png");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (!downloading.load() && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    Check(downloading.load(), "the actual preview worker reaches the controlled download boundary");
+    const auto loading = controlled.Get(30);
+    Check(loading.loading && loading.error.empty(), "a loading preview never reads or publishes the worker's mutable error buffer");
+    finish = true;
+    while (!completed.load() && std::chrono::steady_clock::now() < deadline) std::this_thread::yield();
+    Check(completed.load() == 1 && !controlled.Get(30).loading && controlled.Get(30).error == "final failure",
+        "the terminal state publishes the complete error and one notification");
 }
 
 void TestJson()
@@ -400,6 +421,161 @@ void TestJson()
     Check(!ParseJson("{\"n\":9007199254740992}", duplicate, error) ||
         !JsonUnsigned(duplicate, "n"),
         "large identifiers are not accepted as lossy JSON numbers");
+}
+
+void TestStoreConcurrencyAndReadFailure()
+{
+    TemporaryDirectory temporary;
+    const auto source = temporary.path / L"source";
+    std::filesystem::create_directory(source); std::ofstream(source / L"widget.json") << "{}";
+    ProjectStore first(temporary.path / L"store"); WorkshopProject* project = nullptr; std::string error;
+    Check(first.AddDirectory(source, project, error) && first.Save(error), "the concurrent-store fixture saves a real initial library");
+    {
+        auto heldLock = std::make_unique<WorkshopFileLock>(first.Root());
+        Check(static_cast<bool>(*heldLock), "the project transaction owns a real share-denied Windows file handle");
+        std::atomic<bool> entered{false}, returned{false}, acquired{false};
+        std::thread contender([&] {
+            entered = true; WorkshopFileLock next(first.Root());
+            acquired = static_cast<bool>(next); returned = true;
+        });
+        while (!entered.load()) std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+        const bool waited = !returned.load();
+        heldLock.reset(); contender.join();
+        Check(waited && acquired.load(), "a competing transaction waits for the live lock and acquires it after release");
+    }
+    ProjectStore stale(first.Root()); Check(stale.Load(error), "a second store reads the same initial revision");
+    first.Projects()[0].publishedFileId = 900;
+    Check(first.Save(error), "the first writer persists a publication binding");
+    stale.Projects()[0].lastPublishedVersion = "stale edit";
+    Check(!stale.Save(error), "a stale whole-library snapshot cannot overwrite another writer's changes");
+    ProjectStore retained(first.Root());
+    Check(retained.Load(error) && retained.Projects()[0].publishedFileId == 900 && retained.Projects()[0].lastPublishedVersion.empty(),
+        "a rejected stale save preserves the actual committed project fields");
+    std::ifstream beforeInput(first.StorePath(), std::ios::binary);
+    const std::string beforeFailure(std::istreambuf_iterator<char>(beforeInput), {});
+    beforeInput.close();
+    const HANDLE held = CreateFileW(first.StorePath().c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(held != INVALID_HANDLE_VALUE, "the read-failure fixture exclusively locks the real library file");
+    ProjectStore unreadable(first.Root());
+    const bool loadedWhileLocked = unreadable.Load(error);
+    const bool addedAfterFailure = unreadable.AddDirectory(source, project, error);
+    const bool savedWhileLocked = unreadable.Save(error);
+    Check(!loadedWhileLocked && !addedAfterFailure && !savedWhileLocked,
+        "an unreadable library blocks both mutation and saving an empty replacement");
+    if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+    Check(!unreadable.Save(error), "ending a transient file lock does not authorize saving the failed-load snapshot");
+    std::ifstream afterInput(first.StorePath(), std::ios::binary);
+    Check(std::string(std::istreambuf_iterator<char>(afterInput), {}) == beforeFailure,
+        "the original library bytes survive a failed-load drop and save after the lock ends");
+    afterInput.close();
+    Check(unreadable.Load(error) && unreadable.Projects().size() == 1 && unreadable.Projects()[0].publishedFileId == 900,
+        "an explicit successful reload recovers the preserved library after the transient lock ends");
+    { std::ofstream file(first.StorePath(), std::ios::binary | std::ios::trunc); file << "{broken library"; }
+    ProjectStore corrupt(first.Root());
+    const bool corruptLoaded = corrupt.Load(error);
+    const bool corruptAdded = corrupt.AddDirectory(source, project, error);
+    const bool corruptSaved = corrupt.Save(error);
+    Check(!corruptLoaded && !corruptAdded && !corruptSaved,
+        "parse failure cannot be replaced by a newly dropped project");
+    std::ifstream input(first.StorePath(), std::ios::binary);
+    Check(std::string(std::istreambuf_iterator<char>(input), {}) == "{broken library",
+        "failed-load mutation attempts preserve the original corrupt bytes for recovery");
+}
+
+void TestOwnedWorkshopStaging()
+{
+    TemporaryDirectory temporary; std::string error;
+    const auto root = temporary.path / L"staging";
+    Check(PrepareWorkshopStaging(root, error), "the shared staging root is prepared safely");
+    const auto active = root / L"active-package.snowwidget";
+    { std::ofstream file(active); file << "active CLI artifact"; }
+    const auto unopened = root / L"ready-cover.png";
+    { std::ofstream file(unopened); file << "a staged artifact not yet opened by Steam"; }
+    const HANDLE held = CreateFileW(active.c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    Check(held != INVALID_HANDLE_VALUE && PrepareWorkshopStaging(root, error) && std::filesystem::is_regular_file(active),
+        "Manager startup preserves a real active CLI artifact and its held file handle");
+    if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+    Check(PrepareWorkshopStaging(root, error) && std::filesystem::is_regular_file(active) && std::filesystem::is_regular_file(unopened),
+        "startup also preserves staged files which have no open handles yet");
+    const auto upload = root / L"owned-upload";
+    std::filesystem::create_directory(upload);
+    { std::ofstream file(upload / L"foreign.txt"); file << "unowned"; }
+    {
+        WorkshopUploadDirectory cleanup; cleanup.root = upload;
+        for (const auto* name : {L"package.snowtheme", L"cover.png", L"theme-gallery-1.png", L"theme-gallery-2.png"})
+        {
+            const auto file = upload / name; cleanup.files.push_back(file); std::ofstream(file) << "owned";
+        }
+        cleanup.files.push_back(upload / L"failed-copy.png");
+    }
+    Check(std::filesystem::is_regular_file(upload / L"foreign.txt") &&
+        std::distance(std::filesystem::directory_iterator(upload), std::filesystem::directory_iterator{}) == 1,
+        "partial or successful upload cleanup removes every owned gallery file while preserving unowned files");
+}
+
+void TestComponentExecuteBoundaries()
+{
+    constexpr auto packageId = "11111111-2222-3333-4444-555555555555";
+    ComponentPublishPlan plan; plan.packageId = packageId; plan.publishedFileId = 700;
+    plan.localizations = {{"english", "first", "description"}, {"schinese", "second", "description"}};
+    SteamStatus status; status.loggedOn = true; status.appId = kSteamAppId; status.steamId = "42";
+    PublishedItem item; item.ownerSteamId = 42; item.consumerAppId = kSteamAppId;
+    item.metadata = BuildWorkshopMetadata("different-component", "1.0");
+    unsigned submitted = 0;
+    ComponentPublishTransport transport;
+    transport.status = [&](CoreError&) { return std::optional{status}; };
+    transport.item = [&](std::uint64_t, CoreError&) { return std::optional{item}; };
+    transport.publish = [&](const snowdesktop::steam_bridge::PublishRequest& request, const PublishProgressCallback&, CoreError&) -> std::optional<snowdesktop::steam_bridge::PublishResult> {
+        ++submitted; Check(request.expectedPackageId == packageId, "every actual component submission freezes the verified package UUID");
+        return snowdesktop::steam_bridge::PublishResult{false, 700, false, {}};
+    };
+    ComponentPublishResult result; CoreError failure;
+    Check(!ExecuteComponentPublishPlan(plan, transport, {}, result, failure) && submitted == 0,
+        "an explicit item binding cannot overwrite another component's owned Workshop item");
+    item.metadata = BuildWorkshopMetadata(packageId, "1.0");
+    item.ownerSteamId = 43;
+    Check(!ExecuteComponentPublishPlan(plan, transport, {}, result, failure) && submitted == 0,
+        "the actual execute boundary rejects a foreign owner before submission");
+    item.ownerSteamId = 42;
+    Check(ExecuteComponentPublishPlan(plan, transport, {}, result, failure) && submitted == 2 && result.localizedSubmissions == 2,
+        "matching identities retain the complete primary and localization publication sequence");
+
+    TemporaryDirectory temporary; const auto source = temporary.path / L"source";
+    std::filesystem::create_directory(source); std::ofstream(source / L"widget.json") << "{}";
+    ProjectStore store(temporary.path / L"store"); WorkshopProject* project = nullptr; std::string error;
+    Check(store.AddDirectory(source, project, error) && store.Save(error), "new publication fixture has a real durable project record");
+    const auto localId = store.Projects()[0].localId;
+    plan.publishedFileId.reset(); unsigned created = 0, uploaded = 0;
+    ComponentPublishPersistence persistence{
+        [&] { return store.BeginCreation(localId, error); },
+        [&](std::uint64_t id) { return store.PersistCreatedItem(localId, id, error); }};
+    HANDLE held = INVALID_HANDLE_VALUE;
+    transport.publish = [&](const snowdesktop::steam_bridge::PublishRequest& request, const PublishProgressCallback&, CoreError& diagnostic) -> std::optional<snowdesktop::steam_bridge::PublishResult> {
+        if (!request.prepareCreateItem || !request.prepareCreateItem()) { diagnostic.code = "writeFailed"; return {}; }
+        ++created;
+        held = CreateFileW(store.StorePath().c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        Check(held != INVALID_HANDLE_VALUE, "publication persistence failure begins after successful creation preflight");
+        if (!request.persistCreatedItem || !request.persistCreatedItem(901)) { diagnostic.code = "created_item_persistence_failed"; return {}; }
+        ++uploaded; return snowdesktop::steam_bridge::PublishResult{true, 901, false, {}};
+    };
+    Check(!ExecuteComponentPublishPlan(plan, transport, {}, result, failure, persistence) && created == 1 && uploaded == 0 &&
+        result.created && result.publishedFileId == 901 && failure.code == "created_item_persistence_failed",
+        "a newly created ID is reported and upload stops when the actual project save fails");
+    if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+    ProjectStore recovered(store.Root());
+    Check(recovered.Load(error) && recovered.Projects()[0].publishedFileId == 901,
+        "the durable created-ID journal recovers the binding after the failed whole-library save");
+    Check(!recovered.BeginCreation(localId, error), "recovery prevents creating another remote item for an already bound project");
+    const auto second = temporary.path / L"second";
+    std::filesystem::create_directory(second); std::ofstream(second / L"widget.json") << "{}";
+    Check(recovered.AddDirectory(second, project, error) && recovered.Save(error), "uncertain-creation fixture saves a second project");
+    const auto secondId = project->localId;
+    Check(recovered.BeginCreation(secondId, error) && !recovered.BeginCreation(secondId, error),
+        "an unresolved create journal blocks a duplicate create even before an ID is known");
+    ProjectStore resumed(store.Root());
+    Check(resumed.Load(error) && !resumed.BeginCreation(secondId, error),
+        "an uncertain remote create remains blocked across a real store restart");
 }
 
 void TestSteamIdentity()
@@ -1886,6 +2062,9 @@ int wmain(int argc, wchar_t** argv)
     TestSteamChildEnvironment();
     TestManagerFrameScheduler();
     TestPreviewCacheNotifications();
+    TestStoreConcurrencyAndReadFailure();
+    TestOwnedWorkshopStaging();
+    TestComponentExecuteBoundaries();
     TestManagerLocalization();
     TestSteamSubscriptionSyncPlan();
     TestSteamLibraryDiscovery();

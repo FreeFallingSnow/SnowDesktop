@@ -11,6 +11,8 @@
 #include "../../src/theme/theme_preview_parts.h"
 #include "publish_lifecycle.h"
 #include "workshop_upload_validation.h"
+#include "workshop_staging.h"
+#include "workshop_project.h"
 
 #include <algorithm>
 #include <array>
@@ -168,19 +170,7 @@ bool RequireLoggedOn(CoreError& error)
     return false;
 }
 
-struct UploadDirectory
-{
-    std::filesystem::path root;
-    ~UploadDirectory()
-    {
-        if (root.empty()) return;
-        std::error_code ec;
-        for (const auto* name : {L"package.snowwidget", L"package.snowtheme", L"cover.png"})
-        { std::filesystem::remove(root / name, ec); ec.clear(); }
-        ec.clear();
-        std::filesystem::remove(root, ec);
-    }
-};
+using UploadDirectory = WorkshopUploadDirectory;
 #endif
 }
 
@@ -665,8 +655,9 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
                 "cannot create the temporary Workshop upload directory");
             return std::nullopt;
         }
-        std::filesystem::copy_file(request.package,
-            upload.root / (request.contentKind == WorkshopContentKind::Theme ? L"package.snowtheme" : L"package.snowwidget"),
+        const auto stagedPackage = upload.root / (request.contentKind == WorkshopContentKind::Theme ? L"package.snowtheme" : L"package.snowwidget");
+        upload.files.push_back(stagedPackage);
+        std::filesystem::copy_file(request.package, stagedPackage,
             std::filesystem::copy_options::none, ec);
         if (ec)
         {
@@ -681,6 +672,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         if (!request.preview || !request.validateStagedArtifacts || !std::filesystem::create_directory(themePreview.root, ec) || ec)
         { SetError(error, kInvalidArguments, "stalePreparation", "Cannot freeze theme artifacts"); return std::nullopt; }
         previewPath = themePreview.root / L"cover.png";
+        themePreview.files.push_back(previewPath);
         std::filesystem::copy_file(*request.preview, previewPath, std::filesystem::copy_options::none, ec);
         if (ec || !request.validateStagedArtifacts(upload.root / L"package.snowtheme", previewPath))
         { SetError(error, kInvalidArguments, "stalePreparation", "Theme artifacts changed before upload"); return std::nullopt; }
@@ -691,6 +683,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             if (!themes::preview::ManagedGalleryFilename(WideToUtf8(image.filename().wstring()), request.managedPreviewPrefix))
             { SetError(error, kInvalidArguments, "stalePreparation", "Invalid theme gallery name"); return std::nullopt; }
             const auto staged = themePreview.root / image.filename();
+            themePreview.files.push_back(staged);
             std::filesystem::copy_file(image, staged, std::filesystem::copy_options::none, ec);
             if (ec) { SetError(error, kInvalidArguments, "stalePreparation", "Cannot freeze theme gallery"); return std::nullopt; }
             additionalPreviews.push_back(staged);
@@ -736,7 +729,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         if (request.persistCreatedItem && !request.persistCreatedItem(static_cast<std::uint64_t>(itemId)))
         {
             SetError(error, kSteamOperationFailed, "created_item_persistence_failed",
-                "The created Workshop ID could not be saved; upload was stopped");
+                "The created Workshop ID " + std::to_string(itemId) + " could not be saved; upload was stopped");
             return std::nullopt;
         }
         needsAgreement = created.m_bUserNeedsToAcceptWorkshopLegalAgreement;
@@ -748,6 +741,15 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
     if (request.contentKind == WorkshopContentKind::Theme && needsAgreement)
         return PublishResult{creating, static_cast<std::uint64_t>(itemId), true, CommunityItemUrl(itemId)};
     std::vector<std::string> previousPreviews;
+    if (!creating && request.contentKind == WorkshopContentKind::Widget && !request.expectedPackageId.empty())
+    {
+        const auto item = FindItem(itemId, error);
+        WorkshopProject project; project.packageId = request.expectedPackageId;
+        std::string detail;
+        if (!item || item->banned || !CanBindWorkshopItem(project, item->metadata, item->ownerSteamId,
+            SteamUser()->GetSteamID().ConvertToUint64(), item->consumerAppId, appId, detail))
+        { SetError(error, kInvalidArguments, "project_item_mismatch", detail.empty() ? "Workshop item identity changed before upload" : detail); return std::nullopt; }
+    }
     if (!creating && request.contentKind == WorkshopContentKind::Theme)
     {
         const auto item = FindItem(itemId, error);

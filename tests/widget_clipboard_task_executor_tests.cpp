@@ -234,8 +234,11 @@ void TestCancellationOverridesLateResult()
 }
 }
 
+int RunClipboardPlatformContractTests();
+
 int main()
 {
+    RunClipboardPlatformContractTests();
     TestValidationResultsAndRateLimit();
     TestCancellationOverridesLateResult();
     TestInvalidRunnerPayloadIsRejected();

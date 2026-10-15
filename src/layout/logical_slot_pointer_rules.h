@@ -1,6 +1,7 @@
 #pragma once
 
 #include "widget/runtime/widget_item_layout.h"
+#include "widget/runtime/widget_logical_slot.h"
 
 #include <windows.h>
 
@@ -9,6 +10,7 @@
 #include <cstddef>
 #include <optional>
 #include <span>
+#include <string_view>
 
 namespace snowdesktop::widget_runtime
 {
@@ -128,6 +130,52 @@ ResolveLogicalSlotPointerTarget(std::span<const RECT> items,
     target->targetIndex = std::min(items.size() - 1,
         target->insertionIndex > sourceIndex
             ? target->insertionIndex - 1 : target->insertionIndex);
+    return target;
+}
+
+// The rectangles describe a clipped projection. Translate its anchor identity
+// into the complete model before applying Move/Transfer or persisting an order.
+inline std::optional<LogicalSlotPointerTarget>
+ResolveLogicalSlotModelPointerTarget(std::span<const RECT> items,
+    std::span<const std::string_view> visibleIds,
+    const LogicalSlotSnapshot& model, std::string_view sourceId,
+    POINT point, const RECT& surface)
+{
+    if (items.size() != visibleIds.size()) return std::nullopt;
+    std::size_t previous = 0;
+    bool first = true;
+    for (const auto id : visibleIds)
+    {
+        const auto found = std::find_if(model.items.begin(), model.items.end(),
+            [id](const auto& item) { return item.id == id; });
+        if (found == model.items.end()) return std::nullopt;
+        const auto index = static_cast<std::size_t>(found - model.items.begin());
+        if (!first && index <= previous) return std::nullopt;
+        previous = index;
+        first = false;
+    }
+    auto target = ResolveLogicalSlotInsertionTarget(items, point, surface);
+    if (!target) return std::nullopt;
+    std::size_t insertion = model.items.size();
+    if (!visibleIds.empty())
+    {
+        const bool afterLast = target->insertionIndex == visibleIds.size();
+        const auto anchor = afterLast ? visibleIds.back()
+            : visibleIds[target->insertionIndex];
+        const auto found = std::find_if(model.items.begin(), model.items.end(),
+            [anchor](const auto& item) { return item.id == anchor; });
+        insertion = static_cast<std::size_t>(found - model.items.begin()) +
+            (afterLast ? 1 : 0);
+    }
+    target->insertionIndex = target->targetIndex = insertion;
+    if (!sourceId.empty())
+    {
+        const auto source = std::find_if(model.items.begin(), model.items.end(),
+            [sourceId](const auto& item) { return item.id == sourceId; });
+        if (source == model.items.end()) return std::nullopt;
+        const auto sourceIndex = static_cast<std::size_t>(source - model.items.begin());
+        target->targetIndex = insertion > sourceIndex ? insertion - 1 : insertion;
+    }
     return target;
 }
 }

@@ -1855,8 +1855,11 @@ public:
             node.children.end(), [&](std::size_t childIndex) {
                 if (childIndex >= widget.nodes.size()) return false;
                 const auto& candidate = widget.nodes[childIndex];
-                return candidate.gridRow == row &&
-                    candidate.gridColumn == column;
+                return candidate.gridRow && candidate.gridColumn &&
+                    *candidate.gridRow >= 0 && *candidate.gridColumn >= 0 &&
+                    row >= *candidate.gridRow && column >= *candidate.gridColumn &&
+                    row - *candidate.gridRow < candidate.gridRowSpan.value_or(1) &&
+                    column - *candidate.gridColumn < candidate.gridColumnSpan.value_or(1);
             });
         if (child == node.children.end()) return S_OK;
         Microsoft::WRL::ComPtr<IRawElementProviderFragment> fragment;

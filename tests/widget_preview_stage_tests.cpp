@@ -12,6 +12,8 @@
 #include <iostream>
 #include <unordered_set>
 
+int RunWallpaperPixelsTests();
+
 namespace
 {
 void Check(bool condition, const char* message)
@@ -410,6 +412,7 @@ int main()
                 (pixel & 0xffu) == ((pixel >> 8) & 0xffu) &&
                 (pixel & 0xffu) == ((pixel >> 16) & 0xffu);
         }), "native-reference noise retains opaque grayscale source pixels");
-    std::cout << "widget preview stage tests passed\n";
-    return 0;
+    const int pixelFailures = RunWallpaperPixelsTests();
+    if (!pixelFailures) std::cout << "widget preview stage tests passed\n";
+    return pixelFailures ? 1 : 0;
 }

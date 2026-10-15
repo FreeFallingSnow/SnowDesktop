@@ -119,7 +119,8 @@ bool WidgetNotificationScheduleStore::Validate(
             entry.notificationId.size() > 128 ||
         entry.title.empty() || entry.title.size() > 256 ||
         entry.message.empty() || entry.message.size() > 2048 ||
-        entry.dueMs <= 0 || entry.imageResource.size() > 64 ||
+        entry.dueMs <= 0 || entry.dueMs > static_cast<std::int64_t>(MaximumDueMs) ||
+        entry.imageResource.size() > 64 ||
         (entry.progress && (!std::isfinite(*entry.progress) ||
             *entry.progress < 0.0 || *entry.progress > 1.0)) ||
         entry.actions.size() > 2)
@@ -157,6 +158,9 @@ bool WidgetNotificationScheduleStore::LoadText(
     std::string_view text, std::string& error)
 {
     error.clear();
+    // Retain this gate after any failed load so a later new notification cannot
+    // overwrite an unreadable file with an apparently empty store.
+    writable_ = false;
     if (text.size() > MaximumFileBytes)
     {
         error = "notification schedule file exceeds size limit";
@@ -257,6 +261,7 @@ bool WidgetNotificationScheduleStore::LoadText(
         loaded.push_back(std::move(entry));
     }
     entries_ = std::move(loaded);
+    writable_ = true;
     return true;
 }
 
@@ -310,6 +315,11 @@ std::string WidgetNotificationScheduleStore::Serialize() const
 bool WidgetNotificationScheduleStore::Upsert(
     WidgetPersistedNotificationSchedule entry, std::string& error)
 {
+    if (!writable_)
+    {
+        error = "notification schedule store could not be loaded";
+        return false;
+    }
     if (!Validate(entry, error)) return false;
     const auto sameId = std::find_if(entries_.begin(), entries_.end(),
         [&entry](const auto& candidate) {
@@ -323,7 +333,14 @@ bool WidgetNotificationScheduleStore::Upsert(
             error = "notification schedule ID belongs to another owner";
             return false;
         }
-        *sameId = std::move(entry);
+        auto candidate = *this;
+        candidate.entries_[static_cast<std::size_t>(sameId - entries_.begin())] = std::move(entry);
+        if (candidate.Serialize().size() > MaximumFileBytes)
+        {
+            error = "notification schedule file exceeds size limit";
+            return false;
+        }
+        entries_ = std::move(candidate.entries_);
         return true;
     }
     if (entries_.size() >= MaximumEntries)
@@ -331,13 +348,21 @@ bool WidgetNotificationScheduleStore::Upsert(
         error = "notification schedule store is full";
         return false;
     }
-    entries_.push_back(std::move(entry));
+    auto candidate = *this;
+    candidate.entries_.push_back(std::move(entry));
+    if (candidate.Serialize().size() > MaximumFileBytes)
+    {
+        error = "notification schedule file exceeds size limit";
+        return false;
+    }
+    entries_ = std::move(candidate.entries_);
     return true;
 }
 
 bool WidgetNotificationScheduleStore::Remove(
     std::string_view instanceId, std::string_view notificationId)
 {
+    if (!writable_) return false;
     const auto found = std::find_if(entries_.begin(), entries_.end(),
         [instanceId, notificationId](const auto& entry) {
             return entry.instanceId == instanceId &&
@@ -351,6 +376,7 @@ bool WidgetNotificationScheduleStore::Remove(
 std::size_t WidgetNotificationScheduleStore::RemoveInstance(
     std::string_view instanceId)
 {
+    if (!writable_) return 0;
     const std::size_t previous = entries_.size();
     std::erase_if(entries_, [instanceId](const auto& entry) {
         return entry.instanceId == instanceId;
@@ -367,6 +393,7 @@ bool WidgetNotificationScheduleStore::UpdateContent(
     const std::optional<
         std::vector<WidgetPersistedNotificationAction>>& actions)
 {
+    if (!writable_) return false;
     const auto found = std::find_if(entries_.begin(), entries_.end(),
         [instanceId, notificationId](const auto& entry) {
             return entry.instanceId == instanceId &&
@@ -381,7 +408,10 @@ bool WidgetNotificationScheduleStore::UpdateContent(
     if (actions) updated.actions = *actions;
     std::string error;
     if (!Validate(updated, error)) return false;
-    *found = std::move(updated);
+    auto candidate = *this;
+    candidate.entries_[static_cast<std::size_t>(found - entries_.begin())] = std::move(updated);
+    if (candidate.Serialize().size() > MaximumFileBytes) return false;
+    entries_ = std::move(candidate.entries_);
     return true;
 }
 

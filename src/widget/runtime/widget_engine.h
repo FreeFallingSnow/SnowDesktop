@@ -580,6 +580,7 @@ struct LuaWidget
         RECT sourceBounds{};
         RECT indicatorBounds{};
         bool moved = false;
+        std::uint64_t targetRevision = 0;
     };
 
     struct LogicalSlotFocus
@@ -1717,6 +1718,14 @@ private:
     const std::unordered_map<std::string, std::string>&
         WidgetSettingsPersistentStorageForBackend() const noexcept;
     bool PersistWidgetSettingsStorageForBackend();
+    const std::unordered_map<std::string, std::string>&
+        WidgetSettingsReadStorageForBackend() const;
+    bool StageWidgetSettingsPreviewForBackend(const void* owner,
+        const std::string& prefix,
+        const std::unordered_map<std::string, std::string>& previous,
+        const std::unordered_map<std::string, std::string>& candidate);
+    bool CommitWidgetSettingsPreviewForBackend(const void* owner);
+    void RemoveWidgetSettingsPreviewForBackend(const void* owner) noexcept;
 
     void BeginHostLogicalSlotPointer(
         LuaWidget& widget, int x, int y);

@@ -1,4 +1,6 @@
 #include "widget/tasks/widget_media_task_executor.h"
+#include "widget/runtime/widget_media_session_registry.h"
+#include "system/controls/system_control_windows.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -71,7 +73,7 @@ void TestActionValidationAndCompletion()
         "media action payloads must be typed and action-specific");
 
     WidgetMediaTaskExecutor executor(
-        [](const WidgetMediaTaskRequest& request)
+        [](const WidgetMediaTaskRequest& request, const snowdesktop::system_control::Cancellation&)
             -> WidgetMediaTaskRunResult {
             if (request.action == "media.next" &&
                 request.sessionId == "media-session-7")
@@ -105,7 +107,7 @@ void TestCancellationOverridesLateResult()
     bool entered = false;
     bool release = false;
     WidgetMediaTaskExecutor executor(
-        [&](const WidgetMediaTaskRequest&) -> WidgetMediaTaskRunResult {
+        [&](const WidgetMediaTaskRequest&, const snowdesktop::system_control::Cancellation&) -> WidgetMediaTaskRunResult {
             std::unique_lock lock(mutex);
             entered = true;
             condition.notify_all();
@@ -139,12 +141,74 @@ void TestCancellationOverridesLateResult()
             completions[0].error == "canceled",
         "cancellation must override a late successful system result");
 }
+
+void TestSessionObjectIdentity()
+{
+    using namespace snowdesktop::widget_runtime;
+    struct Player { std::string app = "same-player"; unsigned plays = 0; };
+    auto first = std::make_shared<Player>(), second = std::make_shared<Player>();
+    MediaSessionRegistry<std::shared_ptr<Player>> registry;
+    auto inventory = registry.Reconcile({first, second});
+    const auto firstId = inventory[0].id, secondId = inventory[1].id;
+    const auto dispatch = [&](std::string_view id) {
+        if (const auto player = ResolveMediaSessionToken(inventory, id)) { ++player->plays; return true; }
+        return false;
+    };
+    inventory = registry.Reconcile({second, first});
+    Check(dispatch(firstId) && first->plays == 1 && second->plays == 0 && inventory[0].id == secondId,
+        "changing current-session order cannot redirect a retained token to another player from the same app");
+    inventory = registry.Reconcile({second});
+    Check(!dispatch(firstId) && dispatch(secondId) && second->plays == 1,
+        "retiring one session makes its token unavailable without retiring the other session");
+    auto replacement = std::make_shared<Player>();
+    inventory = registry.Reconcile({replacement, second});
+    Check(!dispatch(firstId) && inventory[0].id != firstId && replacement->plays == 0,
+        "a replacement with the same application identity cannot inherit a retired media token");
+}
+
+void TestRunningOperationCancellationAndShutdown()
+{
+    using snowdesktop::system_control::Cancellation;
+    struct Operation
+    {
+        std::atomic<unsigned>* canceled;
+        winrt::Windows::Foundation::AsyncStatus Status() const { return winrt::Windows::Foundation::AsyncStatus::Started; }
+        void Cancel() const { ++*canceled; }
+        bool GetResults() const { Check(false, "a canceled pending operation cannot request results"); return false; }
+    };
+    std::atomic<unsigned> entered{0}, canceled{0};
+    auto executor = std::make_unique<WidgetMediaTaskExecutor>(
+        [&](const WidgetMediaTaskRequest& request, const Cancellation& cancellation) -> WidgetMediaTaskRunResult {
+            if (request.action == "media.next") return {true, {}};
+            ++entered;
+            try { return {snowdesktop::system_control::windows::Await(Operation{&canceled}, cancellation), {}}; }
+            catch (...) { return {false, cancellation.Failure().error}; }
+        });
+    Check(executor->Start(20, {.action="media.play"}) && WaitUntil([&] { return entered.load() == 1; }),
+        "the actual executor enters an unfinished WinRT-shaped operation");
+    Check(executor->Cancel(20) && executor->Start(21, {.action="media.next"}), "canceling a running operation accepts independent queued work");
+    std::vector<snowdesktop::widget_runtime::WidgetMediaTaskCompletion> completions;
+    Check(WaitUntil([&] { auto values = executor->DrainCompletions(); completions.insert(completions.end(), values.begin(), values.end()); return completions.size() == 2; }),
+        "cancellation interrupts the operation and lets the executor advance without an external completion");
+    Check(canceled.load() == 1 && completions[0].error == "canceled" && completions[1].accepted,
+        "the underlying operation receives Cancel while the next task retains its result");
+    Check(executor->Start(22, {.action="media.play"}) && WaitUntil([&] { return entered.load() == 2; }), "shutdown fixture enters the same unfinished operation");
+    const auto started = std::chrono::steady_clock::now();
+    executor.reset();
+    Check(std::chrono::steady_clock::now() - started < 500ms && canceled.load() == 2,
+        "executor destruction cancels its active operation and joins without waiting for player completion");
+    Cancellation deadline{std::make_shared<std::atomic_bool>(false), std::chrono::steady_clock::now() + 40ms};
+    try { snowdesktop::system_control::windows::Await(Operation{&canceled}, deadline); Check(false, "a pending operation must reach its deadline"); }
+    catch (...) { Check(deadline.Expired() && canceled.load() == 3, "deadline expiry cancels the pending operation without GetResults"); }
+}
 }
 
 int main()
 {
     TestActionValidationAndCompletion();
     TestCancellationOverridesLateResult();
+    TestSessionObjectIdentity();
+    TestRunningOperationCancellationAndShutdown();
     std::cout << "widget media task executor tests passed\n";
     return 0;
 }

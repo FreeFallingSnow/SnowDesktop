@@ -1,4 +1,5 @@
 #include "widget_filesystem_watch_service.h"
+#include "widget_filesystem_watch_origin.h"
 
 #include <windows.h>
 
@@ -49,11 +50,13 @@ struct WidgetFilesystemWatchService::Impl
     {
         std::uint64_t id = 0;
         HANDLE directory = INVALID_HANDLE_VALUE;
+        std::shared_ptr<const WidgetFilesystemWatchOrigin> origin;
         OVERLAPPED overlapped{};
         std::vector<unsigned char> buffer;
         std::wstring pendingRenameOld;
         bool pending = false;
         bool stopping = false;
+        ~Watch() { if (directory != INVALID_HANDLE_VALUE) CloseHandle(directory); }
     };
 
     HANDLE completionPort = nullptr;
@@ -108,7 +111,7 @@ struct WidgetFilesystemWatchService::Impl
             {
                 if (candidate->id != completion.id) continue;
                 if (candidate->kind ==
-                    WidgetFilesystemWatchCompletionKind::Events)
+                    WidgetFilesystemWatchCompletionKind::Events && candidate->origin == completion.origin)
                     existing = candidate;
                 break;
             }
@@ -156,8 +159,6 @@ struct WidgetFilesystemWatchService::Impl
             std::unique_ptr<Watch>>::iterator watch)
     {
         const std::uint64_t id = watch->first;
-        if (watch->second->directory != INVALID_HANDLE_VALUE)
-            CloseHandle(watch->second->directory);
         watches.erase(watch);
         QueueCompletion({ id,
             WidgetFilesystemWatchCompletionKind::Stopped });
@@ -204,28 +205,21 @@ struct WidgetFilesystemWatchService::Impl
             return;
         }
 
-        const DWORD attributes = GetFileAttributesW(
-            request.directory.c_str());
-        if (attributes == INVALID_FILE_ATTRIBUTES ||
-            (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0 ||
-            (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+        std::string originError;
+        auto origin = WidgetFilesystemWatchOrigin::Open(request.directory, originError);
+        if (!origin)
         {
             QueueCompletion({ id,
                 WidgetFilesystemWatchCompletionKind::Error,
-                {}, false, "invalidDirectory" });
+                {}, false, std::move(originError) });
             return;
         }
 
         auto watch = std::make_unique<Watch>();
         watch->id = id;
         watch->buffer.resize(kNotificationBufferBytes);
-        watch->directory = CreateFileW(request.directory.c_str(),
-            FILE_LIST_DIRECTORY,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            nullptr, OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED |
-                FILE_FLAG_OPEN_REPARSE_POINT,
-            nullptr);
+        watch->origin = std::move(origin);
+        watch->directory = watch->origin->TakeDirectoryHandle();
         if (!watch->directory || watch->directory == INVALID_HANDLE_VALUE)
         {
             QueueCompletion({ id,
@@ -242,7 +236,6 @@ struct WidgetFilesystemWatchService::Impl
             !CreateIoCompletionPort(watch->directory, completionPort,
                 static_cast<ULONG_PTR>(id), 0))
         {
-            CloseHandle(watch->directory);
             QueueCompletion({ id,
                 WidgetFilesystemWatchCompletionKind::Error,
                 {}, false, "watchOpenFailed" });
@@ -387,6 +380,7 @@ struct WidgetFilesystemWatchService::Impl
 
             WidgetFilesystemWatchCompletion completion;
             completion.id = id;
+            completion.origin = watch->second->origin;
             completion.kind = WidgetFilesystemWatchCompletionKind::Events;
             completion.overflow =
                 (!succeeded && completionError == ERROR_NOTIFY_ENUM_DIR) ||

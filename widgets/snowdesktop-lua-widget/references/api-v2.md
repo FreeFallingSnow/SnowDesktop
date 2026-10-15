@@ -165,6 +165,9 @@ region 绑定的 hover、pressed、click、doubleClick、wheel 和菜单选择�
 `preview=true` 表示设置页正在应用尚未提交的实时预览，直接写入以及预览提交或取消后的
 最终事件为 `preview=false`。组件自身调用 `storage.set` 不触发该事件。组件应在该事件中
 调整订阅和描述符级视觉参数，不要在 `render` 或 `view` 热路径中创建订阅或修改描述符。
+设置页的未提交预览只覆盖读取结果，不写入实例存储。普通 `storage.set/remove` 和事务
+仍写入已提交数据；取消预览不会撤销这些正常写入。多个设置页的预览分别管理，提交或
+关闭一个页面不会覆盖另一个页面尚未提交的值。
 
 `menu(context, model, request)` 同时用于即时绘制 region 和声明式节点的独立右键菜单。
 宿主在菜单打开时冻结该次 `ui.menu(...)` 描述；同一组件运行时内的普通重绘不会使已打开菜单的
@@ -1891,6 +1894,7 @@ WMI/DDC 记录：优先选择可用端点，同样可用时优先内置屏 WMI�
 令牌仍可交给 `system.display.setBrightness`，按原端点执行并验证真实结果。失败或不支持
 仍报告错误，不借另一端点的数值声称成功。端点令牌不是可跨拔插持久化的物理显示器 ID；
 列表、数量和主记录 ID 可能随设备状态变化，组件应使用最新快照并处理目标消失。
+端点退出当前枚举后，其令牌失效；随后占用相同枚举位置的设备不会继承该令牌。
 早期宿主可能把同一物理屏幕的端点分别返回，组件应允许重复名称和可变列表数量，不能依赖
 去重后的固定项数。此修订不增加字段、feature，不提高 API v2 或主题原有最低宿主版本；
 不代表依赖旧重复记录行为的组件已经完成实机兼容验证。
@@ -1938,6 +1942,8 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 时间线。每个会话包含受限到 4096 字节的 `sourceName/title/artist/album`、播放状态、
 逐动作 `can*`、相对 `positionMs/durationMs` 和 seek 范围；没有当前会话时 current
 和 timeline 返回 `available=false,error="notPresent"`，会话列表则是可用的空数组。
+会话 ID 绑定宿主当前识别的原生会话，不由应用名称或列表位置推导。列表重排保持现存
+会话的 ID；已退休会话的 ID 不会指向后来出现的会话，也不能跨宿主重启复用。
 `media.artwork` 只返回当前会话的 `sessionId`、临时 `image` resource handle 和不超过
 512×512 的 `width/height`。宿主在工作线程读取最多 4 MiB 的编码数据，拒绝边长超过
 16384 的源图，并解码为有界 PBGRA 像素；Lua 不取得编码原图、缓存路径或像素字节。
@@ -2328,6 +2334,8 @@ end
 当作完整目录状态。隐藏策略固定收敛为 pause；隐藏、退订、卸载、撤权与关闭都会立即取消
 监听并清空待发事件。`data.change` 会带 `topic="filesystem.watch"`、`subscriptionId`、
 `revision` 和 `overflow`，同一组件监听多个目录时应按 subscription ID 区分。
+事件中的子项授权还会核对生成事件时的目录身份；目录被替换、移动或改为链接后，旧事件
+不能取得替代目录的子项权限。收到失效结果时应重新选择目录并建立订阅。
 
 `filesystem.release` 在对应目录仍被订阅时返回 `handleBusy`。稳定监听错误包括
 `invalidReference`、`notFolder`、`permissionDenied`、`invalidDirectory`、

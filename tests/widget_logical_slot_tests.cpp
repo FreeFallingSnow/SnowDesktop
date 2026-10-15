@@ -1,4 +1,5 @@
 #include "widget/api/widget_logical_slot_manifest.h"
+#include "layout/logical_slot_pointer_rules.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -371,6 +372,60 @@ void TestBoundedUndoRedoHistory()
             model.Find("primaryApp")->items.front().target == "app:history-1",
         "the oldest overflowed history entries must be unavailable");
 }
+
+void TestClippedPointerModelTransactions()
+{
+    auto declarations=TransferDeclarations();
+    declarations.at("source").capacity=8;
+    declarations.at("target").capacity=8;
+    LogicalSlotModel original;
+    LogicalSlotChange change;
+    std::string error;
+    Check(original.Configure(declarations,error),"clipped model configures");
+    for(int i=0;i<6;++i)
+        Check(original.Bind("source",Item("app.reference",std::to_string(i),
+            "app:item"+std::to_string(i)),change,error),"populate complete source model");
+    for(int i=0;i<5;++i)
+        Check(original.Bind("target",Item("app.reference","target"+std::to_string(i),
+            "app:target"+std::to_string(i)),change,error),"populate complete target model");
+    const RECT surface{0,0,120,120};
+    const std::vector<RECT> bounds{{10,10,100,40},{10,50,100,80}};
+    for (const auto sourceIndex : {0u,3u,5u})
+    {
+        auto model=original;
+        const auto snapshot=*model.Find("source");
+        const std::vector<std::string_view> visible{snapshot.items[2].id,snapshot.items[3].id};
+        const auto target=ResolveLogicalSlotModelPointerTarget(bounds,visible,snapshot,
+            snapshot.items[sourceIndex].id,POINT{50,75},surface);
+        Check(target && model.Move("source",snapshot.items[sourceIndex].id,
+            target->targetIndex,change,error),"clipped move applies to complete model");
+        auto expected=snapshot.items;
+        auto moved=expected[sourceIndex]; expected.erase(expected.begin()+sourceIndex);
+        expected.insert(expected.begin()+(sourceIndex<4?3:4),moved);
+        Check(model.Find("source")->items==expected,
+            "visible insertion preserves hidden prefix/suffix and complete source identity");
+        std::unordered_map<std::string,std::string> storage;
+        model.Export(storage,"clipped");
+        LogicalSlotModel reopened;
+        Check(reopened.Configure(declarations,error) && reopened.Restore(storage,"clipped",error) &&
+            reopened.Find("source")->items==expected,"clipped move persists complete order");
+    }
+    auto model=original;
+    const auto source=*model.Find("source");
+    const auto targetSnapshot=*model.Find("target");
+    const std::vector<RECT> single{{10,30,100,60}};
+    const std::vector<std::string_view> visible{targetSnapshot.items[2].id};
+    const auto target=ResolveLogicalSlotModelPointerTarget(single,visible,targetSnapshot,
+        {},POINT{50,55},surface);
+    Check(target && model.Transfer("source",source.items[4].id,"target",
+        target->targetIndex,change,error),"single visible target transfers at complete model insertion");
+    Check(model.Find("target")->items.size()==6 &&
+        model.Find("target")->items[3].target==source.items[4].target &&
+        model.Find("source")->items.size()==5,"transfer respects hidden target prefix and source removal");
+    const std::vector<std::string_view> stale{"removed-id"};
+    Check(!ResolveLogicalSlotModelPointerTarget(single,stale,targetSnapshot,{},POINT{50,55},surface),
+        "stale visible identity cannot mutate a different full-model item");
+}
 }
 
 int main()
@@ -381,6 +436,7 @@ int main()
     TestCrossCollectionTransfer();
     TestTransferRebindAndLegacyIdentities();
     TestBoundedUndoRedoHistory();
+    TestClippedPointerModelTransactions();
     std::cout << "widget logical slot tests passed\n";
     return 0;
 }

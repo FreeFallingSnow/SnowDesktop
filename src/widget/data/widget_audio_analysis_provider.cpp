@@ -468,6 +468,11 @@ WidgetAudioAnalysisDataSnapshot ProjectWidgetAudioAnalysisSnapshot(
     return result;
 }
 
+WidgetAudioAnalysisProvider::WidgetAudioAnalysisProvider(Initialization initialization)
+    : initialization_(std::move(initialization))
+{
+}
+
 WidgetAudioAnalysisProvider::~WidgetAudioAnalysisProvider()
 {
     Stop();
@@ -587,12 +592,17 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
         bool endpointNotificationRegistered = false;
         std::string error;
 
-        if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
-                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&enumerator))))
+        const HRESULT enumeratorResult = initialization_.createEnumerator
+            ? initialization_.createEnumerator(enumerator.GetAddressOf())
+            : CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr,
+                CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&enumerator));
+        if (FAILED(enumeratorResult) || !enumerator)
             error = "audioEnumeratorUnavailable";
         if (error.empty())
         {
-            endpointChangeEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            endpointChangeEvent = initialization_.createEndpointEvent
+                ? initialization_.createEndpointEvent()
+                : CreateEventW(nullptr, FALSE, FALSE, nullptr);
             auto* notification = endpointChangeEvent
                 ? new (std::nothrow) DefaultRenderEndpointNotification(
                     endpointChangeEvent)
@@ -613,12 +623,12 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
             (FAILED(enumerator->GetDefaultAudioEndpoint(
                  eRender, eMultimedia, &endpoint)) || !endpoint))
             error = "notPresent";
-        else if (FAILED(endpoint->Activate(__uuidof(IAudioClient),
+        if (error.empty() && (FAILED(endpoint->Activate(__uuidof(IAudioClient),
                      CLSCTX_INPROC_SERVER, nullptr,
                      reinterpret_cast<void**>(audioClient.GetAddressOf()))) ||
-                 !audioClient)
+                 !audioClient))
             error = "audioCaptureUnavailable";
-        else if (FAILED(audioClient->GetMixFormat(&format)) || !format)
+        if (error.empty() && (FAILED(audioClient->GetMixFormat(&format)) || !format))
             error = "audioFormatUnavailable";
 
         const SampleKind kind = error.empty()

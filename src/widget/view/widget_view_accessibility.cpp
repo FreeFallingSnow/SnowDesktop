@@ -585,9 +585,17 @@ bool CollectViewAccessibilityNodes(const ViewNode& root,
     ResolveAccessibilityRelationships(root, nodes);
     for (auto& node : nodes)
     {
-        node.bounds = ApplyViewTransform(node.bounds,
-            ResolveViewTransformForKey(root, node.key));
-        node.clip = ResolveViewClipForKey(root, node.key, false);
+        const auto transform = ResolveViewTransformForKey(root, node.key);
+        node.bounds = ApplyViewTransform(node.bounds, transform);
+        const auto ancestorClip = ResolveViewClipForKey(root, node.key, false);
+        // Generated select options carry the popup's own local clip. The
+        // key resolver finds their select parent, so its ancestor clip alone
+        // cannot describe the visible, scrollable option viewport.
+        if (node.sourceType == ViewNodeType::Select && node.clip &&
+            HasViewAccessibilityPattern(node.patterns, ViewAccessibilityPattern::SelectionItem))
+            node.clip = Intersect(ancestorClip, ApplyViewTransform(*node.clip, transform));
+        else
+            node.clip = ancestorClip;
         node.offscreen = node.bounds.width <= 0.0f ||
             node.bounds.height <= 0.0f ||
             (node.clip && !Overlaps(node.bounds, *node.clip));

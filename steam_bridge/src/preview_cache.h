@@ -30,9 +30,10 @@ class PreviewCache
 {
 public:
     using ChangeCallback = std::function<void()>;
+    using Download = std::function<bool(std::string_view, const std::filesystem::path&, std::string&)>;
 
     explicit PreviewCache(std::filesystem::path root,
-        ChangeCallback changed = {});
+        ChangeCallback changed = {}, Download download = {});
     ~PreviewCache();
     PreviewCache(const PreviewCache&) = delete;
     PreviewCache& operator=(const PreviewCache&) = delete;
@@ -50,6 +51,7 @@ private:
     std::filesystem::path root_;
     mutable std::mutex mutex_;
     ChangeCallback changed_;
+    Download download_;
     std::map<std::uint64_t, std::unique_ptr<Entry>> entries_;
 };
 }

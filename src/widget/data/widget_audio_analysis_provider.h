@@ -14,6 +14,8 @@
 #include <thread>
 #include <vector>
 
+struct IMMDeviceEnumerator;
+
 namespace snowdesktop::widget_runtime
 {
 struct WidgetAudioAnalysisDataSnapshot
@@ -69,7 +71,12 @@ public:
     static constexpr std::chrono::milliseconds MinimumInterval{ 16 };
     static constexpr std::chrono::milliseconds MaximumInterval{ 1000 };
 
-    WidgetAudioAnalysisProvider() = default;
+    struct Initialization
+    {
+        std::function<long(IMMDeviceEnumerator**)> createEnumerator;
+        std::function<void*()> createEndpointEvent;
+    };
+    explicit WidgetAudioAnalysisProvider(Initialization initialization = {});
     ~WidgetAudioAnalysisProvider();
 
     WidgetAudioAnalysisProvider(const WidgetAudioAnalysisProvider&) = delete;
@@ -100,5 +107,6 @@ private:
     std::atomic<std::int64_t> intervalMs_{ 33 };
     std::atomic<bool> resourcesActive_{ false };
     void* stopEvent_ = nullptr;
+    Initialization initialization_;
 };
 }

@@ -1,4 +1,5 @@
 #include "widget_preview_stage.h"
+#include "widget_wallpaper_pixels.h"
 #include "ui/render/acrylic_noise_asset.h"
 #include "theme/flat_glass_rim.h"
 #include "widget/view/widget_composition_layer_rules.h"
@@ -62,47 +63,7 @@ Wallpaper DecodeWallpaperFile(const std::filesystem::path& path)
     {
         return result;
     }
-    UINT width = 0;
-    UINT height = 0;
-    if (FAILED(converter->GetSize(&width, &height)) ||
-        width == 0 || height == 0 ||
-        width > static_cast<UINT>(std::numeric_limits<int>::max()) ||
-        height > static_cast<UINT>(std::numeric_limits<int>::max()))
-    {
-        return result;
-    }
-    result.width = static_cast<int>(width);
-    result.height = static_cast<int>(height);
-    result.pixels.resize(static_cast<std::size_t>(width) * height);
-    const UINT stride = width * sizeof(std::uint32_t);
-    const std::size_t byteCount = result.pixels.size() *
-        sizeof(std::uint32_t);
-    if (byteCount > std::numeric_limits<UINT>::max() ||
-        FAILED(converter->CopyPixels(nullptr, stride,
-            static_cast<UINT>(byteCount),
-            reinterpret_cast<BYTE*>(result.pixels.data()))))
-    {
-        return {};
-    }
-    // Preview PNGs are intentionally opaque. Composite transparent author
-    // images over a restrained blue-gray instead of preserving alpha.
-    constexpr std::uint8_t backdropB = 45;
-    constexpr std::uint8_t backdropG = 39;
-    constexpr std::uint8_t backdropR = 32;
-    for (std::uint32_t& pixel : result.pixels)
-    {
-        const unsigned alpha = (pixel >> 24) & 0xffu;
-        const auto composite = [alpha](unsigned foreground,
-                                   unsigned background) {
-            return (foreground * alpha + background * (255u - alpha) +
-                127u) / 255u;
-        };
-        const unsigned blue = composite(pixel & 0xffu, backdropB);
-        const unsigned green = composite((pixel >> 8) & 0xffu, backdropG);
-        const unsigned red = composite((pixel >> 16) & 0xffu, backdropR);
-        pixel = 0xff000000u | blue | (green << 8) | (red << 16);
-    }
-    return result;
+    return DecodeWallpaperPixels(converter.Get());
 }
 
 Wallpaper DefaultWallpaperSource()

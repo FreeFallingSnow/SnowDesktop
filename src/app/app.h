@@ -2111,7 +2111,7 @@ private:
     void ShowAddWidgetMenu(POINT screenPoint);
     snowdesktop::component_preview::Model BuildAddWidgetMenuPreview(
         UINT command, const std::wstring& packageId = {});
-    void ApplyWidgetPreviewSettings(POINT screenPoint,
+    std::wstring ApplyWidgetPreviewSettings(POINT screenPoint,
         const snowdesktop::component_preview::ApplySettings& settings);
     snowdesktop::component_preview::Bitmap RenderWidgetMenuPreview(
         const std::shared_ptr<snowdesktop::WidgetPreviewScene>& scene,

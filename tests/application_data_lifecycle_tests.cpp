@@ -947,6 +947,185 @@ void TestDockFolderOrderPersistence(const std::filesystem::path& root)
     } while (std::next_permutation(sequence.begin(), sequence.end()));
 }
 
+void TestPackageMutationTransactions(const std::filesystem::path& root)
+{
+    using namespace snowdesktop::widget;
+    struct ReplacementLock
+    {
+        HANDLE handle = INVALID_HANDLE_VALUE;
+        explicit ReplacementLock(const std::filesystem::path& path)
+            : handle(CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr))
+        { Expect(handle != INVALID_HANDLE_VALUE, "real registry/index replacement lock opens"); }
+        ~ReplacementLock() { if (handle != INVALID_HANDLE_VALUE) CloseHandle(handle); }
+    };
+    for (unsigned index = 0; index < 4; ++index)
+    {
+        const auto fixture = root / (L"package-state-" + std::to_wstring(index));
+        const auto id = "9ce293fa-877e-4c43-9c24-2fdcfe10700" + std::to_string(index);
+        const std::string permissions = index % 2 ? "\"ui.input\"" : "";
+        const PackageSourceRef source{index < 2 ? "local" : "steam-workshop", "isolated-source"};
+        const auto firstSource = fixture / L"first";
+        MakePackage(firstSource, "1.0.0", id, permissions);
+        auto paths = TestPaths(fixture / L"manager");
+        WidgetPackageManager manager(paths);
+        InstalledPackage installed;
+        ValidationReport report;
+        std::string error;
+        if (!manager.Initialize(error) || !manager.InstallDirectory(firstSource, source, false, installed, report, error))
+        { Expect(false, "transaction fixture installs its first real package"); continue; }
+        Expect(manager.SetEnabled(id, false, error), "transaction fixture persists disabled choice");
+        const auto secondSource = fixture / L"second";
+        MakePackage(secondSource, "1.1.0", id, permissions, "", "lua/nested/main.lua");
+        bool updated = false;
+        if (index < 2)
+            updated = manager.InstallDirectory(secondSource, source, false, installed, report, error);
+        else
+        {
+            PackageArtifact update;
+            const auto zip = fixture / L"update.snowwidget";
+            updated = manager.ExportDirectory(secondSource, zip, update, report, error) &&
+                manager.InstallArchive(zip, source, false, installed, report, error);
+        }
+        const auto selected = manager.ResolveSelected(id);
+        Expect(updated && selected && selected->manifest.version == "1.1.0" && !selected->enabled &&
+                !installed.enabled && !manager.Resolve(id) && !manager.ResolveEntry(id),
+            "directory and prepared Workshop archive updates preserve disabled state with unchanged permission scope");
+        const auto selectedEntry = manager.ResolveSelectedEntry(id);
+        const auto selectedByEntry = selectedEntry ? manager.ResolveSelectedEntryPath(*selectedEntry) : std::nullopt;
+        Expect(selectedEntry && selectedByEntry && selectedByEntry->root == installed.root &&
+                selectedByEntry->manifest.entry == "lua/nested/main.lua" && !manager.ResolveEntryPath(*selectedEntry),
+            "isolated inspection finds the nested selected entry without enabling ordinary execution");
+        const auto expansion = fixture / L"expansion";
+        MakePackage(expansion, "1.2.0", id, permissions.empty() ? "\"network.http\"" :
+            permissions + ",\"network.http\"", "\"example.com\"");
+        const auto beforeExpansion = Read(paths.registry);
+        Expect(!manager.InstallDirectory(expansion, source, false, installed, report, error) &&
+                Read(paths.registry) == beforeExpansion && manager.ResolveSelected(id) &&
+                manager.ResolveSelected(id)->manifest.version == "1.1.0" && !manager.ResolveSelected(id)->enabled,
+            "a genuine permission expansion rejects a disabled update without changing selected old version");
+        Expect(manager.Rollback(id, "1.0.0", error) && manager.ResolveSelected(id) &&
+                manager.ResolveSelected(id)->manifest.version == "1.0.0" && !manager.ResolveSelected(id)->enabled,
+            "recovering the selected previous version preserves the user's disabled choice");
+        Expect(manager.SetEnabled(id, true, error), "a deliberate enable is persisted");
+        const auto enabledBytes = Read(paths.registry);
+        {
+            ReplacementLock lock(paths.registry);
+            Expect(!manager.SetEnabled(id, false, error) && Read(paths.registry) == enabledBytes &&
+                    manager.Resolve(id) && manager.ResolveSelected(id)->enabled,
+                "a real failed disable preserves disk, execution and in-memory selected state");
+        }
+        Expect(manager.UpdateSteamSubscriptionHistory("123", {"1"}, error), "an unrelated save after failed disable succeeds");
+        WidgetPackageManager enabledReload(paths);
+        Expect(enabledReload.Initialize(error) && enabledReload.Resolve(id) && enabledReload.ResolveSelected(id)->enabled,
+            "a later successful save cannot leak an earlier failed disable into persistence");
+        Expect(manager.SetEnabled(id, false, error), "a deliberate disable still works after the failed transaction");
+        const auto disabledBytes = Read(paths.registry);
+        {
+            ReplacementLock lock(paths.registry);
+            Expect(!manager.SetEnabled(id, true, error) && Read(paths.registry) == disabledBytes &&
+                    !manager.Resolve(id) && manager.ResolveSelected(id) && !manager.ResolveSelected(id)->enabled,
+                "a real failed enable also preserves the selected disabled state");
+        }
+        Expect(manager.UpdateSteamSubscriptionHistory("123", {"1", "2"}, error), "another unrelated save succeeds");
+        WidgetPackageManager disabledReload(paths);
+        Expect(disabledReload.Initialize(error) && !disabledReload.Resolve(id) && disabledReload.ResolveSelected(id) &&
+                !disabledReload.ResolveSelected(id)->enabled,
+            "disabled state is consistent after restart and subsequent persistence");
+        Expect(manager.SetEnabled(id, true, error), "retry fixture explicitly enables the selected package");
+        {
+            ReplacementLock lock(paths.registry);
+            Expect(!manager.SetEnabled(id, false, error), "retry fixture observes a real replacement failure");
+        }
+        Expect(manager.SetEnabled(id, false, error) && !manager.Resolve(id),
+            "the same failed toggle can be retried with its error object after the lock is released");
+    }
+
+    const auto source = root / L"publication-source";
+    const std::string id = "f415355d-6f9c-48c6-9b0b-7df2eebcd21e";
+    MakePackage(source, "1.0.0", id, "");
+    const auto paths = TestPaths(root / L"publication-manager");
+    WidgetPackageManager manager(paths);
+    ValidationReport report;
+    std::string error;
+    Expect(manager.Initialize(error), "publication fixture manager initializes");
+    PackageArtifact artifactA, artifactB;
+    Expect(manager.ExportDirectory(source, root / L"a.snowwidget", artifactA, report, error), "first same-version artifact exports");
+    Write(source / L"assets" / L"label.txt", "changed same-version bytes");
+    Expect(manager.ExportDirectory(source, root / L"b.snowwidget", artifactB, report, error) && artifactA.sha256 != artifactB.sha256,
+        "second same-version artifact has distinct valid content and digest");
+    const auto catalogDirectory = root / L"transaction-catalog";
+    const auto catalogPath = catalogDirectory / L"catalog.json";
+    LocalCatalogPublisher publisher(catalogDirectory, root / L"publication-validation");
+    PublishRequest request;
+    request.artifact = artifactA;
+    request.title = "Preserved package";
+    request.description = "Local transaction fixture";
+    const auto published = publisher.Publish(request);
+    if (!published.ok) std::cerr << "initial publication error: " << published.error << '\n';
+    Expect(published.ok, "initial local publication succeeds");
+    const auto oldCatalog = Read(catalogPath);
+    const auto oldDigest = WidgetPackageManager::Sha256File(catalogPath);
+    JsonValue catalogRoot;
+    Expect(ParseJson(oldCatalog, catalogRoot), "published index parses");
+    const auto* records = catalogRoot.Find("packages");
+    const auto* oldRelative = records && records->IsArray() && !records->array.empty() ? records->array.front().Find("artifact") : nullptr;
+    if (!oldRelative || !oldRelative->IsString()) { Expect(false, "published index names its artifact"); return; }
+    const auto oldArtifact = catalogDirectory / oldRelative->string;
+    request.artifact = artifactB;
+    {
+        ReplacementLock lock(catalogPath);
+        Expect(!publisher.Publish(request).ok && WidgetPackageManager::Sha256File(catalogPath) == oldDigest &&
+                WidgetPackageManager::Sha256File(oldArtifact) == artifactA.sha256,
+            "failed same-version index commit preserves the original index and original artifact digest");
+        StaticCatalogSource oldSource(catalogPath);
+        WidgetPackageManager consumer(TestPaths(root / L"preserved-consumer"));
+        InstalledPackage installed;
+        Expect(consumer.Initialize(error) && consumer.InstallFromSource(oldSource, published.externalItemId,
+                artifactA.version, false, installed, report, error) && Read(installed.root / L"assets" / L"label.txt") == "asset",
+            "the previously published version remains actually installable after a failed replacement publication");
+    }
+    for (const auto& damaged : {std::string("{"), std::string("{\"schemaVersion\":1,\"packages\":{}}"),
+            std::string("{\"schemaVersion\":1,\"packages\":[{\"broken\":true}]}"), std::string(8 * 1024 * 1024 + 1, ' ')})
+    {
+        Write(catalogPath, damaged);
+        Expect(!publisher.Publish(request).ok && Read(catalogPath) == damaged &&
+                WidgetPackageManager::Sha256File(oldArtifact) == artifactA.sha256,
+            "an existing unreadable, malformed or oversized index is preserved instead of replaced by an empty catalog");
+    }
+    Write(catalogPath, oldCatalog);
+    Expect(publisher.Publish(request).ok, "same-version publication succeeds once index replacement is available");
+    StaticCatalogSource newSource(catalogPath);
+    const auto materialized = newSource.Materialize(published.externalItemId, artifactB.version, root / L"new-copy.snowwidget", error);
+    Expect(materialized && WidgetPackageManager::Sha256File(materialized->localPath) == artifactB.sha256,
+        "successful index commit resolves the new immutable artifact digest");
+
+    const auto large = root / L"large-export";
+    MakePackage(large, "1.0.0", "4011809e-f9b9-430e-b2c5-acdf125c7ec2", "");
+    {
+        std::ofstream payload(large / L"payload.bin", std::ios::binary);
+        std::array<char, 64 * 1024> chunk{};
+        for (unsigned block = 0; block < 21 * 16; ++block) payload.write(chunk.data(), chunk.size());
+    }
+    const auto output = root / L"existing-output.snowwidget";
+    Write(output, "previous release artifact");
+    const auto unrelatedTemporary = std::filesystem::path(output.wstring() + L".tmp");
+    Write(unrelatedTemporary, "unrelated pre-existing user file");
+    PackageArtifact unchanged{output, "sentinel-package", "sentinel-version", "sentinel-hash"};
+    auto exported = unchanged;
+    Expect(manager.ValidateDirectory(large).Ok() && !manager.ExportDirectory(large, output, exported, report, error) &&
+            Read(output) == "previous release artifact" && exported.sha256 == unchanged.sha256 && exported.packageId == unchanged.packageId &&
+            Read(unrelatedTemporary) == "unrelated pre-existing user file",
+        "oversized directory export rejects before replacing a previous release or its result metadata");
+    InstalledPackage installedLarge;
+    Expect(manager.InstallDirectory(large, {"local", "large-export"}, false, installedLarge, report, error),
+        "a valid 21 MiB extracted package can be installed within the 64 MiB source limit");
+    exported = unchanged;
+    Expect(!manager.ExportArchive(installedLarge.manifest.id, output, exported, report, error) &&
+            Read(output) == "previous release artifact" && exported.sha256 == unchanged.sha256,
+        "oversized installed-package export also preserves the previous release bytes");
+}
+
 int RunDataCleanupTests();
 int main()
 {
@@ -974,6 +1153,7 @@ int main()
 
     const auto hashInput = root / L"sha256-input.bin";
     TestPersistenceTransactions(root);
+    TestPackageMutationTransactions(root / L"package-transactions");
     TestDockFolderOrderPersistence(root);
     TestWidgetCatalogRediscovery(root);
     TestDebugProfile(root);
@@ -3181,7 +3361,13 @@ int main()
         !std::filesystem::exists(createdFullBackup.backup.root),
         "complete backup can be deleted from managed storage");
 
-    std::filesystem::remove_all(root, ec);
+    const auto cleanupTarget = std::filesystem::absolute(root).lexically_normal();
+    const bool safeCleanup = std::filesystem::equivalent(cleanupTarget.parent_path(),
+            std::filesystem::weakly_canonical(std::filesystem::temp_directory_path())) &&
+        cleanupTarget.filename() == L"SDDataTest-" + std::wstring(runIdText + 1, 36) &&
+        (GetFileAttributesW(cleanupTarget.c_str()) & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+    Expect(safeCleanup, "recursive lifecycle cleanup stays in the exact owned temporary run root");
+    if (safeCleanup) std::filesystem::remove_all(cleanupTarget, ec);
     if (failures)
         std::cerr << failures
             << " application data lifecycle test(s) failed\n";

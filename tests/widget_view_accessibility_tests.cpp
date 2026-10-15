@@ -354,6 +354,49 @@ void TestVirtualControlChildren()
         "grid collections must expose selection capability, positions, and spans");
 }
 
+void TestSelectPopupClipAndScrolling()
+{
+    ViewNode root = Node(ViewNodeType::Box, "root", 0, 0, 400, 400);
+    ViewNode select = Node(ViewNodeType::Select, "choice", 20, 20, 180, 32);
+    select.expanded = true;
+    select.fontSize = 14;
+    for (int index = 0; index < 8; ++index)
+        select.options.push_back({std::to_string(index), std::to_string(index),
+            "Option " + std::to_string(index), true});
+    root.children = {select};
+    std::vector<ViewAccessibilityNode> nodes;
+    std::string error;
+    const auto collect = [&] {
+        Check(CollectViewAccessibilityNodes(root, {}, nodes, error) && nodes.size() == 10,
+            "expanded eight-option select retains its full semantic tree");
+    };
+    collect();
+    for (std::size_t index = 0; index < 8; ++index)
+        Check(nodes[index + 2].clip == ViewRect{20, 52, 180, 140} &&
+                nodes[index + 2].offscreen == (index >= 5),
+            "only the five rows inside the popup viewport are on screen");
+    root.children[0].scrollOffset = 56;
+    collect();
+    for (std::size_t index = 0; index < 8; ++index)
+        Check(nodes[index + 2].clip == ViewRect{20, 52, 180, 140} &&
+                nodes[index + 2].offscreen == (index < 2 || index >= 7),
+            "scrolling changes visible options without exposing rows outside the popup");
+
+    root.children[0].scrollOffset = 0;
+    root.transform = ViewTransform{10, 5, 2, 0, 0};
+    root.children[0].transform = ViewTransform{7, 11, 1.5f, 0, 0};
+    collect();
+    // origin=(0,0) is relative to the select's frame origin (20,20).
+    Check(nodes[2].bounds == ViewRect{64, 163, 540, 84} &&
+            nodes[2].clip == ViewRect{64, 163, 540, 420} && !nodes[2].offscreen && nodes[7].offscreen,
+        "nested transforms apply once to both option bounds and the popup clip");
+    root.clipFrame = ViewRect{20, 100, 100, 56};
+    collect();
+    Check(nodes[2].clip == ViewRect{64, 205, 186, 112} &&
+            !nodes[2].offscreen && !nodes[3].offscreen && nodes[4].offscreen,
+        "the transformed popup is intersected with a narrower transformed ancestor clip");
+}
+
 void TestHiddenSemanticSubtree()
 {
     ViewNode root = Node(ViewNodeType::Column,
@@ -411,6 +454,7 @@ int main()
     TestImmediateRegionSemantics();
     TestSemanticMetadataAndRelationships();
     TestVirtualControlChildren();
+    TestSelectPopupClipAndScrolling();
     TestHiddenSemanticSubtree();
     TestTransformedSemanticBounds();
     std::cout << "widget view accessibility tests passed\n";

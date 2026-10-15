@@ -1,5 +1,5 @@
 #include "system_control_windows.h"
-#include "widget/runtime/widget_media_contract.h"
+#include "widget/runtime/widget_media_session_registry.h"
 #include <winrt/Windows.Foundation.Collections.h>
 #include <winrt/Windows.Media.h>
 #include <winrt/Windows.Media.Control.h>
@@ -14,17 +14,7 @@ using namespace winrt::Windows::Media::Control;
 using Session = GlobalSystemMediaTransportControlsSession;
 Session Resolve(const GlobalSystemMediaTransportControlsSessionManager& manager, const std::string& id)
 {
-    const auto current = manager.GetCurrentSession(); if (id.empty()) return current;
-    std::unordered_map<std::wstring, std::size_t> occurrences; std::size_t exposed = 0;
-    const auto match = [&](const Session& session) -> Session {
-        if (!session || exposed >= widget_runtime::MaximumExposedMediaSessions) return nullptr;
-        ++exposed; const std::wstring source(session.SourceAppUserModelId());
-        return widget_runtime::OpaqueMediaSessionId(source, occurrences[source]++) == id ? session : Session{nullptr};
-    };
-    if (const auto found = match(current)) return found;
-    for (const auto& session : manager.GetSessions())
-    { if (session == current) continue; if (const auto found = match(session)) return found; }
-    return nullptr;
+    return widget_runtime::ResolveMediaSessionIdentity(manager, id);
 }
 class Media final : public Backend
 {
@@ -37,7 +27,7 @@ public:
         if (cancel.Stop()) return cancel.Failure();
         try
         {
-            const auto manager = Await(GlobalSystemMediaTransportControlsSessionManager::RequestAsync(), cancel);
+            const auto manager = widget_runtime::AcquireMediaSessionManager(cancel);
             const auto session = Resolve(manager, Argument(request, "sessionId"));
             if (!session) return Error(ERROR_NOT_FOUND, "notAvailable");
             const auto controls = session.GetPlaybackInfo().Controls();

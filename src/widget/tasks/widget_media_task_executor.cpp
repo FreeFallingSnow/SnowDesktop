@@ -1,5 +1,6 @@
 #include "widget_media_task_executor.h"
-#include "widget/runtime/widget_media_contract.h"
+#include "widget/runtime/widget_media_session_registry.h"
+#include "system/controls/system_control_windows.h"
 
 #include <chrono>
 #include <cmath>
@@ -25,33 +26,7 @@ using MediaSessionManager = winrt::Windows::Media::Control::
 MediaSession ResolveMediaSession(
     const MediaSessionManager& manager, std::string_view sessionId)
 {
-    const auto currentSession = manager.GetCurrentSession();
-    if (sessionId.empty()) return currentSession;
-
-    std::unordered_map<std::wstring, std::size_t> sourceOccurrences;
-    std::size_t exposed = 0;
-    const auto match = [&](const MediaSession& session) -> MediaSession {
-        if (!session || exposed >= MaximumExposedMediaSessions)
-            return nullptr;
-        ++exposed;
-        const std::wstring sourceId =
-            session.SourceAppUserModelId().c_str();
-        const std::size_t occurrence = sourceOccurrences[sourceId]++;
-        return OpaqueMediaSessionId(sourceId, occurrence) == sessionId
-            ? session : MediaSession{ nullptr };
-    };
-
-    if (currentSession)
-    {
-        if (const auto found = match(currentSession)) return found;
-    }
-    for (const auto& session : manager.GetSessions())
-    {
-        if (exposed >= MaximumExposedMediaSessions) break;
-        if (currentSession && session == currentSession) continue;
-        if (const auto found = match(session)) return found;
-    }
-    return nullptr;
+    return ResolveMediaSessionIdentity(manager, sessionId);
 }
 }
 
@@ -66,6 +41,7 @@ WidgetMediaTaskExecutor::~WidgetMediaTaskExecutor()
     {
         std::scoped_lock lock(mutex_);
         stopping_ = true;
+        for (const auto& [id, flag] : cancellationFlags_) { (void)id; flag->store(true); }
     }
     if (worker_.joinable())
     {
@@ -82,7 +58,9 @@ bool WidgetMediaTaskExecutor::Start(
     std::scoped_lock lock(mutex_);
     if (stopping_ || active_.contains(id)) return false;
     active_.insert(id);
-    requests_.push_back({ id, std::move(request) });
+    auto canceled = std::make_shared<std::atomic_bool>(false);
+    cancellationFlags_[id] = canceled;
+    requests_.push_back({ id, std::move(request), std::move(canceled) });
     if (!worker_.joinable())
     {
         worker_ = std::jthread(
@@ -99,6 +77,7 @@ bool WidgetMediaTaskExecutor::Cancel(std::uint64_t id)
     std::scoped_lock lock(mutex_);
     if (!active_.contains(id)) return false;
     canceled_.insert(id);
+    cancellationFlags_.at(id)->store(true);
     condition_.notify_all();
     return true;
 }
@@ -167,61 +146,58 @@ bool WidgetMediaTaskExecutor::ValidateRequest(
 }
 
 WidgetMediaTaskRunResult WidgetMediaTaskExecutor::RunSystemAction(
-    const WidgetMediaTaskRequest& request)
+    const WidgetMediaTaskRequest& request,
+    const system_control::Cancellation& cancellation)
 {
     using namespace winrt::Windows::Media::Control;
+    if (cancellation.Stop()) return {false, cancellation.Failure().error};
     if (!ValidateRequest(request))
         return { false, "invalidArguments" };
     try
     {
-        thread_local GlobalSystemMediaTransportControlsSessionManager manager{
-            nullptr };
-        if (!manager)
-        {
-            manager = GlobalSystemMediaTransportControlsSessionManager::
-                RequestAsync().get();
-        }
+        const auto manager = AcquireMediaSessionManager(cancellation);
         if (!manager) return { false, "mediaSessionManagerUnavailable" };
         const auto session = ResolveMediaSession(manager, request.sessionId);
         if (!session) return { false, "notAvailable" };
         const auto controls = session.GetPlaybackInfo().Controls();
+        if (cancellation.Stop()) return {false, cancellation.Failure().error};
 
         bool accepted = false;
         if (request.action == "media.play")
         {
             if (!controls.IsPlayEnabled())
                 return { false, "actionUnsupported" };
-            accepted = session.TryPlayAsync().get();
+            accepted = system_control::windows::Await(session.TryPlayAsync(), cancellation);
         }
         else if (request.action == "media.pause")
         {
             if (!controls.IsPauseEnabled())
                 return { false, "actionUnsupported" };
-            accepted = session.TryPauseAsync().get();
+            accepted = system_control::windows::Await(session.TryPauseAsync(), cancellation);
         }
         else if (request.action == "media.toggle")
         {
             if (!controls.IsPlayPauseToggleEnabled())
                 return { false, "actionUnsupported" };
-            accepted = session.TryTogglePlayPauseAsync().get();
+            accepted = system_control::windows::Await(session.TryTogglePlayPauseAsync(), cancellation);
         }
         else if (request.action == "media.stop")
         {
             if (!controls.IsStopEnabled())
                 return { false, "actionUnsupported" };
-            accepted = session.TryStopAsync().get();
+            accepted = system_control::windows::Await(session.TryStopAsync(), cancellation);
         }
         else if (request.action == "media.next")
         {
             if (!controls.IsNextEnabled())
                 return { false, "actionUnsupported" };
-            accepted = session.TrySkipNextAsync().get();
+            accepted = system_control::windows::Await(session.TrySkipNextAsync(), cancellation);
         }
         else if (request.action == "media.previous")
         {
             if (!controls.IsPreviousEnabled())
                 return { false, "actionUnsupported" };
-            accepted = session.TrySkipPreviousAsync().get();
+            accepted = system_control::windows::Await(session.TrySkipPreviousAsync(), cancellation);
         }
         else if (request.action == "media.seek")
         {
@@ -241,20 +217,20 @@ WidgetMediaTaskRunResult WidgetMediaTaskExecutor::RunSystemAction(
             if (target < timeline.MinSeekTime().count() ||
                 target > timeline.MaxSeekTime().count())
                 return { false, "seekOutOfRange" };
-            accepted = session.TryChangePlaybackPositionAsync(target).get();
+            accepted = system_control::windows::Await(session.TryChangePlaybackPositionAsync(target), cancellation);
         }
         else if (request.action == "media.setRate")
         {
             if (!controls.IsPlaybackRateEnabled())
                 return { false, "actionUnsupported" };
-            accepted = session.TryChangePlaybackRateAsync(*request.rate).get();
+            accepted = system_control::windows::Await(session.TryChangePlaybackRateAsync(*request.rate), cancellation);
         }
         else if (request.action == "media.setShuffle")
         {
             if (!controls.IsShuffleEnabled())
                 return { false, "actionUnsupported" };
-            accepted = session.TryChangeShuffleActiveAsync(
-                *request.shuffle).get();
+            accepted = system_control::windows::Await(session.TryChangeShuffleActiveAsync(
+                *request.shuffle), cancellation);
         }
         else if (request.action == "media.setRepeat")
         {
@@ -266,7 +242,7 @@ WidgetMediaTaskRunResult WidgetMediaTaskExecutor::RunSystemAction(
                 : request.repeatMode == "list"
                     ? MediaPlaybackAutoRepeatMode::List
                     : MediaPlaybackAutoRepeatMode::None;
-            accepted = session.TryChangeAutoRepeatModeAsync(mode).get();
+            accepted = system_control::windows::Await(session.TryChangeAutoRepeatModeAsync(mode), cancellation);
         }
         else
         {
@@ -278,6 +254,7 @@ WidgetMediaTaskRunResult WidgetMediaTaskExecutor::RunSystemAction(
     }
     catch (...)
     {
+        if (cancellation.Stop()) return {false, cancellation.Failure().error};
         return { false, "mediaActionFailed" };
     }
 }
@@ -309,6 +286,7 @@ void WidgetMediaTaskExecutor::WorkerMain(std::stop_token stopToken)
             {
                 active_.erase(request.id);
                 canceled_.erase(request.id);
+                cancellationFlags_.erase(request.id);
                 completions_.push_back(
                     { request.id, false, "canceled" });
                 continue;
@@ -318,7 +296,9 @@ void WidgetMediaTaskExecutor::WorkerMain(std::stop_token stopToken)
         WidgetMediaTaskRunResult result;
         try
         {
-            result = runner_(request.request);
+            const system_control::Cancellation cancellation{request.canceled,
+                std::chrono::steady_clock::now() + std::chrono::seconds(5)};
+            result = runner_(request.request, cancellation);
         }
         catch (...)
         {
@@ -329,6 +309,7 @@ void WidgetMediaTaskExecutor::WorkerMain(std::stop_token stopToken)
             if (canceled_.erase(request.id) > 0)
                 result = { false, "canceled" };
             active_.erase(request.id);
+            cancellationFlags_.erase(request.id);
             completions_.push_back({ request.id, result.accepted,
                 std::move(result.error) });
         }

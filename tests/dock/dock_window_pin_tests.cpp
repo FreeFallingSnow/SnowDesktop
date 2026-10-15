@@ -14,6 +14,7 @@
 namespace
 {
 constexpr wchar_t kPinProperty[] = L"SnowDesktop.DockWindowPin";
+constexpr wchar_t kUndoProperty[] = L"SnowDesktop.DockWindowPinUndo";
 constexpr wchar_t kFixtureClass[] = L"SnowDesktopDockPinFixture";
 
 struct ScopedDpiContext
@@ -109,9 +110,11 @@ struct BlockedPinWindow
 {
     static constexpr UINT Block = WM_APP + 101;
     static constexpr UINT ResetAndBlock = WM_APP + 102;
+    static constexpr UINT Drain = WM_APP + 103;
     HANDLE created = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE drained = CreateEventW(nullptr, TRUE, FALSE, nullptr);
     std::atomic<HWND> window{nullptr};
     std::atomic<bool> stop{false};
     std::thread thread;
@@ -130,13 +133,14 @@ struct BlockedPinWindow
             WaitForSingleObject(self->release, 3000);
             return 0;
         }
+        if (self && message == Drain) { SetEvent(self->drained); return 0; }
         if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
         if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
         return DefWindowProcW(window, message, wp, lp);
     }
     BlockedPinWindow()
     {
-        if (!created || !entered || !release) return;
+        if (!created || !entered || !release || !drained) return;
         thread = std::thread([this] {
             WNDCLASSW cls{};
             cls.hInstance = GetModuleHandleW(nullptr);
@@ -160,7 +164,7 @@ struct BlockedPinWindow
         SetEvent(release);
         PostMessageW(window, WM_CLOSE, 0, 0);
         if (thread.joinable()) thread.join();
-        CloseHandle(created); CloseHandle(entered); CloseHandle(release);
+        CloseHandle(created); CloseHandle(entered); CloseHandle(release); CloseHandle(drained);
     }
     template<class Action> bool WhileBlocked(Action action, bool resetTopmost = false, DWORD responseDeadline = 200)
     {
@@ -177,7 +181,13 @@ struct BlockedPinWindow
         SetEvent(returned);
         controller.join();
         CloseHandle(returned);
-        return responsive.load();
+        // Do not accept an initially clear TOPMOST bit before the target has
+        // resumed its queue and handled the earlier asynchronous native calls.
+        ResetEvent(drained);
+        PostMessageW(window, Drain, 0, 0);
+        return responsive.load() && Until([&] {
+            return WaitForSingleObject(drained, 0) == WAIT_OBJECT_0;
+        });
     }
     template<class Predicate> bool Until(Predicate predicate)
     {
@@ -217,14 +227,16 @@ int RunDockWindowPinTests()
         check(target.WhileBlocked([&] { accepted = pin->Toggle(target.window); }) && accepted,
             "unpin request returns while its target GUI thread is blocked");
         check(target.Until([&] { pin->Refresh(); return !IsNativeTopmost(target.window) &&
-            !GetPropW(target.window, kPinProperty); }), "queued unpin releases the tracked lease after confirmation");
+            !GetPropW(target.window, kPinProperty) && !GetPropW(target.window, kUndoProperty); }),
+            "queued unpin releases both the tracked lease and native cancellation after confirmation");
         pin->Toggle(target.window);
         check(target.Until([&] { pin->Refresh(); return IsNativeTopmost(target.window); }), "maintenance fixture is pinned");
         check(target.WhileBlocked([&] { pin->Refresh(); }, true),
             "repairing an application-reset pin does not wait on its blocked GUI thread");
         check(target.Until([&] { pin->Refresh(); return IsNativeTopmost(target.window); }), "asynchronous maintenance restores the pin");
         check(target.WhileBlocked([&] { pin->Clear(); }), "clearing pins does not wait on a blocked GUI thread");
-        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty); }),
+        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty) &&
+            !GetPropW(target.window, kUndoProperty); }),
             "clear eventually withdraws its native topmost change");
         bool expired = false;
         check(target.WhileBlocked([&] {
@@ -232,12 +244,24 @@ int RunDockWindowPinTests()
             expired = target.Until([&] { pin->Refresh(); return !GetPropW(target.window, kPinProperty); });
         }, false, 2000) && accepted && expired,
             "an unconfirmed pin expires while its target is still blocked");
-        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty); }),
+        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty) &&
+            !GetPropW(target.window, kUndoProperty); }),
             "a pin delivered after its confirmation deadline is withdrawn by its queued inverse");
         check(target.WhileBlocked([&] { accepted = pin->Toggle(target.window); pin.reset(); }) && accepted,
             "destroying a pending pin queues its inverse without waiting on the target");
-        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty); }),
+        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty) &&
+            !GetPropW(target.window, kUndoProperty); }),
             "a late queued pin cannot survive destruction of its owner");
+        pin = std::make_unique<DockWindowPin>();
+        check(target.WhileBlocked([&] {
+            accepted = pin->Toggle(target.window);
+            const HWND visual = static_cast<HWND>(GetPropW(target.window, kPinProperty));
+            check(visual && DestroyWindow(visual), "the fixture destroys only its own pending pin border");
+        }) && accepted, "early visual destruction never waits for a pending native pin");
+        check(target.Until([&] { pin->Refresh(); return !IsNativeTopmost(target.window) &&
+            !GetPropW(target.window, kPinProperty) && !GetPropW(target.window, kUndoProperty); }),
+            "the independent operation owner withdraws a late pin after its visual was destroyed");
+        pin->Clear();
     }
     // A protected consent broker can reject process-path reads while exposing
     // a normal task window. The discovery identity must retain each such window

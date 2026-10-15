@@ -74,6 +74,18 @@ struct ComponentPublishResult
     std::string failedLanguage;
 };
 
+struct ComponentPublishPersistence
+{
+    std::function<bool()> prepareCreateItem;
+    std::function<bool(std::uint64_t)> persistCreatedItem;
+};
+struct ComponentPublishTransport
+{
+    std::function<std::optional<SteamStatus>(CoreError&)> status;
+    std::function<std::optional<PublishedItem>(std::uint64_t, CoreError&)> item;
+    std::function<std::optional<PublishResult>(const PublishRequest&, const PublishProgressCallback&, CoreError&)> publish;
+};
+
 std::string_view ComponentPublishActionName(ComponentPublishAction action);
 
 bool BuildComponentPublishPlan(const WorkshopProject& project,
@@ -84,5 +96,11 @@ bool BuildComponentPublishPlan(const WorkshopProject& project,
 bool ExecuteComponentPublishPlan(const ComponentPublishPlan& plan,
     SteamWorkshopCore& steam,
     const ComponentPublishProgressCallback& progress,
-    ComponentPublishResult& result, CoreError& error);
+    ComponentPublishResult& result, CoreError& error,
+    const ComponentPublishPersistence& persistence = {});
+bool ExecuteComponentPublishPlan(const ComponentPublishPlan& plan,
+    ComponentPublishTransport& transport,
+    const ComponentPublishProgressCallback& progress,
+    ComponentPublishResult& result, CoreError& error,
+    const ComponentPublishPersistence& persistence = {});
 }

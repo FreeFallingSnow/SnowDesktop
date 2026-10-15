@@ -1252,7 +1252,9 @@ int RunComponentWorkshopCommand(const ParsedOptions& options, bool execute)
                       << ",\"submitStarted\":"
                       << (progress.steam.submitStarted ? "true" : "false")
                       << "}\n" << std::flush;
-        }, result, coreError);
+        }, result, coreError, ComponentPublishPersistence{
+            [&] { return store.BeginCreation(project->localId, progressStoreError); },
+            [&](std::uint64_t id) { return store.PersistCreatedItem(project->localId, id, progressStoreError); }});
     if (result.publishedFileId)
         project->publishedFileId = result.publishedFileId;
     if (result.baseSubmitted)

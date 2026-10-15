@@ -10,6 +10,7 @@
 
 namespace snowdesktop::widget_runtime
 {
+class WidgetFilesystemWatchOrigin;
 struct WidgetFilesystemWatchEvent
 {
     std::string kind;
@@ -33,6 +34,7 @@ struct WidgetFilesystemWatchCompletion
     std::vector<WidgetFilesystemWatchEvent> events;
     bool overflow = false;
     std::string error;
+    std::shared_ptr<const WidgetFilesystemWatchOrigin> origin;
 };
 
 struct WidgetFilesystemWatchStartResult

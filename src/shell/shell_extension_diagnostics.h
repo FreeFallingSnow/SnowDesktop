@@ -2,6 +2,8 @@
 #include <windows.h>
 #include <chrono>
 #include <cstdio>
+#include <mutex>
+#include <share.h>
 #include <string>
 #include <string_view>
 
@@ -17,8 +19,12 @@ inline void MenuTrace(std::string_view phase, std::string_view reason, double mi
     if (!length || length >= 32768)
         return;
     const auto file = std::wstring(base) + L"." + std::to_wstring(GetCurrentProcessId()) + L".log";
-    FILE *output = nullptr;
-    if (_wfopen_s(&output, file.c_str(), L"ab") || !output)
+    // Readers may inspect a live trace. Serialize this process's appenders,
+    // while allowing those readers to coexist with a complete record write.
+    static std::mutex appendMutex;
+    const std::lock_guard lock(appendMutex);
+    FILE *output = _wfsopen(file.c_str(), L"ab", _SH_DENYNO);
+    if (!output)
         return;
     fprintf(output, "tick=%llu phase=%.*s reason=%.*s ms=%.3f count=%u\n", GetTickCount64(),
             static_cast<int>(phase.size()), phase.data(), static_cast<int>(reason.size()), reason.data(),

@@ -3,6 +3,7 @@
 #include "widget_catalog_refresh.h"
 
 #include "common/json_value.h"
+#include "data/atomic_file.h"
 #include "common/language_fallback.h"
 #include "widget/api/widget_logical_slot_manifest.h"
 #include "widget/permissions/widget_permission_broker.h"
@@ -104,39 +105,7 @@ bool ReadFile(const std::filesystem::path& path, std::string& output,
 bool AtomicWrite(const std::filesystem::path& target, const std::string& data,
     std::string& error)
 {
-    std::error_code ec;
-    std::filesystem::create_directories(target.parent_path(), ec);
-    if (ec)
-    {
-        error = "cannot create parent directory: " + ec.message();
-        return false;
-    }
-    const auto temporary = target.wstring() + L".tmp";
-    {
-        std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-        if (!file)
-        {
-            error = "cannot open temporary file";
-            return false;
-        }
-        file.write(data.data(), static_cast<std::streamsize>(data.size()));
-        file.flush();
-        if (!file)
-        {
-            error = "cannot write temporary file";
-            std::filesystem::remove(temporary, ec);
-            return false;
-        }
-    }
-    if (!MoveFileExW(temporary.c_str(), target.c_str(),
-        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-    {
-        error = "cannot atomically replace file: " +
-            std::to_string(GetLastError());
-        std::filesystem::remove(temporary, ec);
-        return false;
-    }
-    return true;
+    return atomic_file::WriteAll(target, data, {}, &error);
 }
 
 std::string Lower(std::string value)
@@ -703,7 +672,8 @@ struct ZipItem
 };
 
 bool WriteStoreZip(const std::filesystem::path& root,
-    const std::filesystem::path& output, std::string& error)
+    const std::filesystem::path& output, std::string& error,
+    std::string& sha256)
 {
     std::vector<ZipItem> items;
     std::error_code ec;
@@ -736,13 +706,29 @@ bool WriteStoreZip(const std::filesystem::path& root,
     std::sort(items.begin(), items.end(),
         [](const ZipItem& a, const ZipItem& b) { return a.path < b.path; });
 
-    std::filesystem::create_directories(output.parent_path(), ec);
+    const auto absoluteOutput = std::filesystem::absolute(output, ec).lexically_normal();
+    if (ec)
+    {
+        error = "cannot resolve archive output: " + ec.message();
+        return false;
+    }
+    std::filesystem::create_directories(absoluteOutput.parent_path(), ec);
     if (ec)
     {
         error = "cannot create archive directory: " + ec.message();
         return false;
     }
-    const auto temporary = output.wstring() + L".tmp";
+    const auto temporary = absoluteOutput.wstring() + L".tmp-" +
+        Utf8ToWide(WidgetPackageManager::GenerateUuid());
+    struct TemporaryArchive
+    {
+        std::filesystem::path path;
+        ~TemporaryArchive() noexcept
+        {
+            try { if (!path.empty()) { std::error_code ignored; std::filesystem::remove(path, ignored); } }
+            catch (...) {}
+        }
+    } cleanup{temporary};
     std::ofstream zip(temporary, std::ios::binary | std::ios::trunc);
     if (!zip)
     {
@@ -818,14 +804,30 @@ bool WriteStoreZip(const std::filesystem::path& root,
         return false;
     }
     zip.close();
-    std::filesystem::create_directories(output.parent_path(), ec);
-    if (!MoveFileExW(temporary.c_str(), output.c_str(),
+    const auto bytes = std::filesystem::file_size(temporary, ec);
+    if (!zip || ec || bytes > kMaxArchiveBytes)
+    {
+        error = !zip ? "cannot close archive" : ec ? "cannot measure archive" :
+            "exported package exceeds 20 MiB";
+        std::filesystem::remove(temporary, ec);
+        return false;
+    }
+    const auto digest = WidgetPackageManager::Sha256File(temporary);
+    if (digest.empty())
+    {
+        error = "cannot hash archive";
+        std::filesystem::remove(temporary, ec);
+        return false;
+    }
+    if (!MoveFileExW(temporary.c_str(), absoluteOutput.c_str(),
         MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
     {
         error = "cannot atomically publish archive";
         std::filesystem::remove(temporary, ec);
         return false;
     }
+    sha256 = digest;
+    cleanup.path.clear();
     return true;
 }
 
@@ -1080,7 +1082,7 @@ std::vector<PackageUpdate> FindAvailableUpdates(
 bool CopyArtifactWithProgress(const std::filesystem::path& source,
     const std::filesystem::path& target,
     const std::function<bool(std::uint64_t, std::uint64_t)>& progress,
-    std::string& error)
+    std::string& error, const std::string& expectedSha256)
 {
     std::error_code ec;
     const auto total = std::filesystem::file_size(source, ec);
@@ -1096,7 +1098,8 @@ bool CopyArtifactWithProgress(const std::filesystem::path& source,
         return false;
     }
     const auto temporary =
-        std::filesystem::path(target.wstring() + L".uploading");
+        std::filesystem::path(target.wstring() + L".uploading-" +
+            Utf8ToWide(WidgetPackageManager::GenerateUuid()));
     std::ifstream input(source, std::ios::binary);
     std::ofstream output(temporary, std::ios::binary | std::ios::trunc);
     if (!input || !output)
@@ -1144,9 +1147,21 @@ bool CopyArtifactWithProgress(const std::filesystem::path& source,
         return false;
     }
     output.close();
-    if (!MoveFileExW(temporary.c_str(), target.c_str(),
-        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    if (!output || WidgetPackageManager::Sha256File(temporary) != expectedSha256)
     {
+        error = "cannot close artifact or copied content changed";
+        std::filesystem::remove(temporary, ec);
+        return false;
+    }
+    if (!MoveFileExW(temporary.c_str(), target.c_str(), MOVEFILE_WRITE_THROUGH))
+    {
+        // Another successful publication may already own this immutable name.
+        // It is safe to reuse only the exact expected bytes, never overwrite it.
+        if (WidgetPackageManager::Sha256File(target) == expectedSha256)
+        {
+            std::filesystem::remove(temporary, ec);
+            return true;
+        }
         error = "cannot atomically publish catalog artifact";
         std::filesystem::remove(temporary, ec);
         return false;
@@ -2477,8 +2492,9 @@ bool WidgetPackageManager::RefreshCatalog(std::string& error)
     return true;
 }
 
-bool WidgetPackageManager::Refresh(std::string& error)
+bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
 {
+    error.clear();
     catalogueRefresh_->Begin({paths_.builtin, paths_.installed, paths_.development});
     const auto previousKnown = knownDevelopmentIds_;
     const auto previousOverrides = developmentOverrides_;
@@ -2712,7 +2728,7 @@ bool WidgetPackageManager::Refresh(std::string& error)
     scanRoot(paths_.development, false, true);
 
     if (!error.empty()) return false;
-    if (knownDevelopmentIds_ != previousKnown && !SaveRegistry(error))
+    if (persistDiscovery && knownDevelopmentIds_ != previousKnown && !SaveRegistry(error))
     {
         knownDevelopmentIds_ = previousKnown;
         developmentOverrides_ = previousOverrides;
@@ -2843,6 +2859,16 @@ std::optional<InstalledPackage> WidgetPackageManager::Resolve(
     return std::nullopt;
 }
 
+std::optional<InstalledPackage> WidgetPackageManager::ResolveSelected(
+    const std::string& packageId) const
+{
+    const auto found = std::find_if(packages_.begin(), packages_.end(),
+        [&](const InstalledPackage& package) {
+            return package.manifest.id == packageId && package.active;
+        });
+    return found == packages_.end() ? std::nullopt : std::optional<InstalledPackage>(*found);
+}
+
 std::optional<std::filesystem::path> WidgetPackageManager::ResolveEntry(
     const std::string& packageId) const
 {
@@ -2857,6 +2883,37 @@ std::optional<std::filesystem::path> WidgetPackageManager::ResolveEntry(
         HasReparsePoint(canonicalEntry))
         return std::nullopt;
     return canonicalEntry;
+}
+
+std::optional<std::filesystem::path> WidgetPackageManager::ResolveSelectedEntry(
+    const std::string& packageId) const
+{
+    const auto package = ResolveSelected(packageId);
+    if (!package) return std::nullopt;
+    std::error_code ec;
+    const auto root = std::filesystem::weakly_canonical(package->root, ec);
+    if (ec) return std::nullopt;
+    const auto entry = std::filesystem::weakly_canonical(
+        package->root / Utf8ToWide(package->manifest.entry), ec);
+    if (ec || !StartsWithPath(entry, root) || HasReparsePoint(entry))
+        return std::nullopt;
+    return entry;
+}
+
+std::optional<InstalledPackage> WidgetPackageManager::ResolveSelectedEntryPath(
+    const std::filesystem::path& entryPath) const
+{
+    std::error_code ec;
+    const auto input = std::filesystem::weakly_canonical(entryPath, ec);
+    if (ec) return std::nullopt;
+    for (const auto& package : packages_)
+    {
+        if (!package.active) continue;
+        const auto entry = ResolveSelectedEntry(package.manifest.id);
+        if (entry && std::filesystem::equivalent(*entry, input, ec)) return package;
+        ec.clear();
+    }
+    return std::nullopt;
 }
 
 std::optional<InstalledPackage> WidgetPackageManager::ResolveEntryPath(
@@ -3018,7 +3075,7 @@ bool WidgetPackageManager::CommitStagedPackage(
         std::vector<std::string> currentRequired;
         std::vector<std::string> currentDeclared;
         std::vector<std::string> currentDomains;
-        if (const auto current = Resolve(manifest.id))
+        if (const auto current = ResolveSelected(manifest.id))
         {
             currentRequired = current->manifest.permissions;
             currentDeclared = DeclaredPermissions(current->manifest);
@@ -3087,28 +3144,21 @@ bool WidgetPackageManager::CommitStagedPackage(
         entry.grantedPermissions = declaredPermissions;
         entry.grantedNetworkDomains = manifest.networkDomains;
     }
-    entry.enabled = true;
-    const auto oldEntry = registry_.find(manifest.id);
-    const std::optional<RegistryEntry> previous = oldEntry == registry_.end()
-        ? std::nullopt : std::optional<RegistryEntry>(oldEntry->second);
-    registry_[manifest.id] = entry;
-    if (!SaveRegistry(error))
+    entry.enabled = existing == registry_.end() || existing->second.enabled;
+    auto candidate = *this;
+    candidate.registry_[manifest.id] = entry;
+    const bool refreshed = candidate.Refresh(error, false);
+    const auto resolved = refreshed ? candidate.ResolveSelected(manifest.id) : std::nullopt;
+    if (!refreshed || !resolved || !candidate.SaveRegistry(error))
     {
-        if (previous) registry_[manifest.id] = *previous;
-        else registry_.erase(manifest.id);
+        if (error.empty()) error = "installed package could not be selected";
         const auto quarantine = paths_.quarantine /
             (Utf8ToWide(manifest.id + "-" + manifest.version + "-" + Timestamp()));
         std::filesystem::rename(target, quarantine, ec);
+        if (ec) error += "; cannot quarantine uncommitted package: " + ec.message();
         return false;
     }
-    std::string refreshError;
-    Refresh(refreshError);
-    const auto resolved = Resolve(manifest.id);
-    if (!resolved)
-    {
-        error = "installed package could not be resolved";
-        return false;
-    }
+    *this = std::move(candidate);
     installed = *resolved;
     return true;
 }
@@ -3412,18 +3462,13 @@ bool WidgetPackageManager::ExportArchive(const std::string& packageId,
         error = "output must use the .snowwidget extension";
         return false;
     }
-    if (!WriteStoreZip(package->root, output, error)) return false;
-    std::error_code ec;
-    if (std::filesystem::file_size(output, ec) > kMaxArchiveBytes)
-    {
-        error = "exported package exceeds 20 MiB";
-        return false;
-    }
+    std::string digest;
+    if (!WriteStoreZip(package->root, output, error, digest)) return false;
     artifact.localPath = output;
     artifact.packageId = package->manifest.id;
     artifact.version = package->manifest.version;
-    artifact.sha256 = Sha256File(output);
-    return !artifact.sha256.empty();
+    artifact.sha256 = std::move(digest);
+    return true;
 }
 
 bool WidgetPackageManager::ExportDirectory(
@@ -3443,18 +3488,13 @@ bool WidgetPackageManager::ExportDirectory(
         error = "output must use the .snowwidget extension";
         return false;
     }
-    if (!WriteStoreZip(source, output, error)) return false;
-    std::error_code ec;
-    if (std::filesystem::file_size(output, ec) > kMaxArchiveBytes)
-    {
-        error = "exported package exceeds 20 MiB";
-        return false;
-    }
+    std::string digest;
+    if (!WriteStoreZip(source, output, error, digest)) return false;
     artifact.localPath = output;
     artifact.packageId = manifest.id;
     artifact.version = manifest.version;
-    artifact.sha256 = Sha256File(output);
-    return !artifact.sha256.empty();
+    artifact.sha256 = std::move(digest);
+    return true;
 }
 
 bool WidgetPackageManager::SetEnabled(const std::string& packageId,
@@ -3471,9 +3511,11 @@ bool WidgetPackageManager::SetEnabled(const std::string& packageId,
         }
         return false;
     }
-    found->second.enabled = enabled;
-    if (!SaveRegistry(error)) return false;
-    return Refresh(error);
+    auto candidate = *this;
+    candidate.registry_.at(packageId).enabled = enabled;
+    if (!candidate.Refresh(error, false) || !candidate.SaveRegistry(error)) return false;
+    *this = std::move(candidate);
+    return true;
 }
 
 bool WidgetPackageManager::SetPermissionDecision(
@@ -4348,13 +4390,8 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         result.error = "publish artifact failed package validation";
         return result;
     }
-    std::error_code ec;
     const std::string externalId = request.externalItemId.value_or(
         request.artifact.packageId);
-    const auto relative = std::filesystem::path(L"packages") /
-        Utf8ToWide(request.artifact.packageId + "-" +
-            request.artifact.version + ".snowwidget");
-    const auto target = catalogDirectory_ / relative;
     const std::string actualSha256 =
         WidgetPackageManager::Sha256File(request.artifact.localPath);
     if (actualSha256.empty())
@@ -4368,11 +4405,11 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
         result.error = "artifact SHA-256 does not match the publish request";
         return result;
     }
-    if (!CopyArtifactWithProgress(request.artifact.localPath, target,
-        request.progress, result.error))
-    {
-        return result;
-    }
+    // Content-addressed artifacts are immutable. A failed index commit leaves
+    // every previously published version paired with its original bytes.
+    const auto relative = std::filesystem::path(L"packages") /
+        Utf8ToWide(actualSha256 + ".snowwidget");
+    const auto target = catalogDirectory_ / relative;
     struct CatalogRecord
     {
         std::string id;
@@ -4403,15 +4440,39 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
     const auto catalogPath = catalogDirectory_ / L"catalog.json";
     std::string existingText;
     JsonValue existingRoot;
-    if (ReadFile(catalogPath, existingText, 8 * 1024 * 1024) &&
-        ParseJson(existingText, existingRoot) && existingRoot.IsObject())
+    const DWORD catalogAttributes = GetFileAttributesW(catalogPath.c_str());
+    const bool catalogExists = catalogAttributes != INVALID_FILE_ATTRIBUTES;
+    const DWORD catalogStatusError = catalogExists ? ERROR_SUCCESS : GetLastError();
+    if (!catalogExists && catalogStatusError != ERROR_FILE_NOT_FOUND && catalogStatusError != ERROR_PATH_NOT_FOUND)
     {
+        result.error = "cannot inspect existing catalog: " + std::to_string(catalogStatusError);
+        return result;
+    }
+    if (catalogExists)
+    {
+        if (!ReadFile(catalogPath, existingText, 8 * 1024 * 1024) ||
+            !ParseJson(existingText, existingRoot) || !existingRoot.IsObject())
+        {
+            result.error = "cannot read or parse existing catalog";
+            return result;
+        }
+        const auto* schema = existingRoot.Find("schemaVersion");
+        const auto* entries = existingRoot.Find("packages");
+        if (!schema || !schema->IsNumber() || schema->number != 1 || !entries || !entries->IsArray())
+        {
+            result.error = "existing catalog schema is invalid";
+            return result;
+        }
         if (const JsonValue* packages = existingRoot.Find("packages");
             packages && packages->IsArray())
         {
             for (const auto& value : packages->array)
             {
-                if (!value.IsObject()) continue;
+                if (!value.IsObject())
+                {
+                    result.error = "existing catalog entry is invalid";
+                    return result;
+                }
                 CatalogRecord record;
                 ReadString(value, "id", record.id);
                 ReadString(value, "slug", record.slug);
@@ -4459,10 +4520,16 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
                 ReadString(value, "changeNotes", record.changeNotes);
                 ReadString(value, "artifact", record.artifact);
                 ReadString(value, "sha256", record.sha256);
-                if (WidgetPackageValidator::IsUuid(record.id) &&
+                if (arraysValid && WidgetPackageValidator::IsUuid(record.id) &&
                     WidgetPackageValidator::IsSemVer(record.version) &&
-                    !record.externalId.empty())
+                    !record.externalId.empty() && !record.artifact.empty() &&
+                    !record.sha256.empty())
                     records.push_back(std::move(record));
+                else
+                {
+                    result.error = "existing catalog entry has invalid identity or fields";
+                    return result;
+                }
             }
         }
     }
@@ -4575,7 +4642,21 @@ PublishResult LocalCatalogPublisher::Publish(const PublishRequest& request)
     if (!records.empty()) out << '\n';
     out << "  ]\n}\n";
     std::string error;
-    if (!AtomicWrite(catalogPath, out.str(), error))
+    const auto catalogText = out.str();
+    if (catalogText.size() > 8 * 1024 * 1024)
+    {
+        result.error = "catalog exceeds the readable 8 MiB limit";
+        return result;
+    }
+    if (!CopyArtifactWithProgress(request.artifact.localPath, target,
+        request.progress, result.error, actualSha256))
+        return result;
+    if (WidgetPackageManager::Sha256File(target) != actualSha256)
+    {
+        result.error = "copied artifact SHA-256 does not match";
+        return result;
+    }
+    if (!AtomicWrite(catalogPath, catalogText, error))
     {
         result.error = error;
         return result;

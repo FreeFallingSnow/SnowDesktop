@@ -436,11 +436,11 @@ void DesktopApp::AddWidgetToGrid(DesktopWidget&& widget, GridSpan span)
 /**
  * @brief 按组件预览页所表达的尺寸与显示模式创建组件。
  */
-void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
+std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     const snowdesktop::component_preview::ApplySettings& settings)
 {
     using snowdesktop::component_preview::ApplyKind;
-    if (settings.kind == ApplyKind::None) return;
+    if (settings.kind == ApplyKind::None) return {};
 
     lastContextMenuScreenPoint_ = screenPoint;
     const GridSpan span{
@@ -507,7 +507,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
             dialog->Release();
         }
         CoUninitialize();
-        if (folderPath.empty()) return;
+        if (folderPath.empty()) return {};
 
         std::wstring title = folderPath;
         if (!title.empty() && title.back() == L'\\') title.pop_back();
@@ -521,7 +521,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
         break;
     }
     case ApplyKind::LuaScript:
-        if (settings.packageId.empty()) return;
+        if (settings.packageId.empty()) return {};
         widget.type = DesktopWidgetType::LuaScript;
         widget.packageId = settings.packageId;
         CaptureWidgetPackageSource(widget);
@@ -538,7 +538,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
         }
         break;
     default:
-        return;
+        return {};
     }
 
     const bool enumerateFolder =
@@ -548,7 +548,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     // LayoutItems may remove an empty-page Guide during this insertion.
     // Confirm the created instance rather than comparing vector sizes.
     const size_t createdIndex = FindWidgetIndexById(createdId);
-    if (createdIndex >= widgets_.size()) return;
+    if (createdIndex >= widgets_.size()) return {};
     if (enumerateFolder)
     {
         EnumerateFolderMappingEntries(widgets_[createdIndex]);
@@ -556,6 +556,7 @@ void DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     }
     ClearWidgetAddedHint();
     ShowWidgetAddedHint();
+    return createdId;
 }
 
 /**
@@ -1831,11 +1832,9 @@ void DesktopApp::AddLuaWidgetAt(POINT screenPoint, const std::wstring& packageId
         settings.packageId = packageId;
         settings.columns = defaultColumns;
         settings.rows = defaultRows;
-        const size_t previousCount = widgets_.size();
-        ApplyWidgetPreviewSettings(screenPoint, settings);
-        if (widgets_.size() <= previousCount) return;
-        BeginLuaWidgetConsent(screenPoint, packageId,
-            widgets_.back().id);
+        const std::wstring createdId = ApplyWidgetPreviewSettings(screenPoint, settings);
+        if (createdId.empty()) return;
+        BeginLuaWidgetConsent(screenPoint, packageId, createdId);
         return;
     }
     if (!alreadyGranted)

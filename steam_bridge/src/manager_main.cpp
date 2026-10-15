@@ -25,6 +25,7 @@
 #include "steam_workshop_core.h"
 #include "workshop_localization.h"
 #include "workshop_project.h"
+#include "workshop_staging.h"
 #include "resources/resource.h"
 
 #include <algorithm>
@@ -399,22 +400,7 @@ public:
         error.clear();
         std::error_code directoryError;
         const auto stagingRoot = managerRoot_ / L"staging";
-        if (const DWORD attributes = GetFileAttributesW(stagingRoot.c_str());
-            attributes != INVALID_FILE_ATTRIBUTES &&
-            (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
-        {
-            SetMessage(false, "Workshop Manager staging directory is unsafe");
-        }
-        else
-        {
-            std::filesystem::remove_all(stagingRoot, directoryError);
-            if (!directoryError)
-                std::filesystem::create_directories(
-                    stagingRoot, directoryError);
-            if (directoryError)
-                SetMessage(false,
-                    "cannot reset Workshop Manager data staging directory");
-        }
+        if (!PrepareWorkshopStaging(stagingRoot, error)) SetMessage(false, error);
         directoryError.clear();
         if (!developmentRoot_.empty())
             std::filesystem::create_directories(
@@ -1461,7 +1447,19 @@ private:
                     progressFraction_.store(static_cast<float>(
                         std::clamp(fraction, 0.0, 1.0)));
                     RequestManagerFrame();
-                }, result, coreError);
+                }, result, coreError, ComponentPublishPersistence{
+                    [this, &localId] {
+                        std::string failure; std::lock_guard lock(mutex_);
+                        const bool saved = store_.BeginCreation(localId, failure);
+                        if (!saved) SetMessageUnlocked(false, failure);
+                        return saved;
+                    },
+                    [this, &localId](std::uint64_t id) {
+                        std::string failure; std::lock_guard lock(mutex_);
+                        const bool saved = store_.PersistCreatedItem(localId, id, failure);
+                        if (!saved) SetMessageUnlocked(false, failure);
+                        return saved;
+                    }});
             submitStarted_.store(false);
             progressFraction_.store(0.0f);
             RequestManagerFrame();
@@ -1484,7 +1482,8 @@ private:
                     }
                     if (!store_.Save(error))
                     {
-                        SetMessageUnlocked(false, error);
+                        SetMessageUnlocked(false, error + (result.created && result.publishedFileId
+                            ? " (Workshop PublishedFileId: " + std::to_string(result.publishedFileId) + ")" : ""));
                         return;
                     }
                 }

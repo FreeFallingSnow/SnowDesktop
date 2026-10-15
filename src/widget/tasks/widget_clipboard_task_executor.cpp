@@ -19,15 +19,34 @@ namespace
 class ClipboardScope
 {
 public:
-    ClipboardScope() : opened_(OpenClipboard(nullptr) != FALSE) {}
+    explicit ClipboardScope(HWND owner = nullptr) : opened_(OpenClipboard(owner) != FALSE) {}
     ~ClipboardScope()
     {
         if (opened_) CloseClipboard();
     }
     explicit operator bool() const noexcept { return opened_; }
+    bool Close()
+    {
+        if (!opened_) return true;
+        if (!CloseClipboard()) return false;
+        opened_ = false;
+        return true;
+    }
 
 private:
     bool opened_ = false;
+};
+
+class ClipboardOwnerWindow
+{
+public:
+    ClipboardOwnerWindow()
+        : window_(CreateWindowExW(0, L"STATIC", L"", 0, 0, 0, 0, 0,
+            HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr)) {}
+    ~ClipboardOwnerWindow() { if (window_) DestroyWindow(window_); }
+    HWND Get() const noexcept { return window_; }
+private:
+    HWND window_ = nullptr;
 };
 
 std::wstring Utf8ToWide(std::string_view value)
@@ -326,7 +345,13 @@ WidgetClipboardTaskRunResult WriteText(std::string_view text)
     static_cast<wchar_t*>(target)[wide.size()] = L'\0';
     GlobalUnlock(memory);
 
-    ClipboardScope clipboard;
+    ClipboardOwnerWindow owner;
+    if (!owner.Get())
+    {
+        GlobalFree(memory);
+        return { false, {}, {}, "clipboardWriteFailed" };
+    }
+    ClipboardScope clipboard(owner.Get());
     if (!clipboard)
     {
         GlobalFree(memory);
@@ -337,14 +362,17 @@ WidgetClipboardTaskRunResult WriteText(std::string_view text)
         GlobalFree(memory);
         return { false, {}, {}, "clipboardWriteFailed" };
     }
-    return { true, {}, {}, {} };
+    return clipboard.Close() ? WidgetClipboardTaskRunResult{ true, {}, {}, {} }
+        : WidgetClipboardTaskRunResult{ false, {}, {}, "clipboardWriteFailed" };
 }
 
 WidgetClipboardTaskRunResult ClearClipboardData()
 {
-    ClipboardScope clipboard;
+    ClipboardOwnerWindow owner;
+    if (!owner.Get()) return { false, {}, {}, "clipboardWriteFailed" };
+    ClipboardScope clipboard(owner.Get());
     if (!clipboard) return { false, {}, {}, "clipboardBusy" };
-    return EmptyClipboard()
+    return EmptyClipboard() && clipboard.Close()
         ? WidgetClipboardTaskRunResult{ true, {}, {}, {} }
         : WidgetClipboardTaskRunResult{
             false, {}, {}, "clipboardWriteFailed" };

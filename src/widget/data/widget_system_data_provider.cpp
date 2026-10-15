@@ -4,7 +4,7 @@
 #include "system/controls/system_power_status.h"
 #include "widget/storage/widget_storage_usage.h"
 #include "diagnostics/performance_trace.h"
-#include "widget/runtime/widget_media_contract.h"
+#include "widget/runtime/widget_media_session_registry.h"
 
 #include <windows.h>
 #include <tlhelp32.h>
@@ -1914,13 +1914,7 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_tok
     try
     {
         if (cancel.Stop()) throw winrt::hresult_canceled();
-        thread_local GlobalSystemMediaTransportControlsSessionManager manager{
-            nullptr };
-        if (!manager)
-        {
-            manager = system_control::windows::Await(
-                GlobalSystemMediaTransportControlsSessionManager::RequestAsync(), cancel);
-        }
+        const auto manager = AcquireMediaSessionManager(cancel);
         if (!manager)
         {
             snapshot.error = "mediaSessionManagerUnavailable";
@@ -1928,9 +1922,9 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_tok
         }
 
         const auto currentSession = manager.GetCurrentSession();
-        const auto sessions = manager.GetSessions();
-        std::unordered_map<std::wstring, std::size_t> sourceOccurrences;
-        const auto appendSession = [&](const auto& session, bool current) {
+        const auto sessions = SnapshotMediaSessionInventory(manager);
+        const auto appendSession = [&](const auto& entry, bool current) {
+            const auto& session = entry.session;
             if (cancel.Stop()) throw winrt::hresult_canceled();
             if (!session || snapshot.sessions.size() >=
                     MaximumExposedMediaSessions)
@@ -1938,8 +1932,7 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_tok
             WidgetMediaSessionDataSnapshot value;
             const std::wstring sourceId =
                 session.SourceAppUserModelId().c_str();
-            const std::size_t occurrence = sourceOccurrences[sourceId]++;
-            value.id = OpaqueMediaSessionId(sourceId, occurrence);
+            value.id = entry.id;
             value.sourceName = BoundedMediaString(sourceId);
             value.current = current;
 
@@ -2028,13 +2021,11 @@ WidgetSystemDataProvider::SampleMediaSessions(bool includeArtwork, std::stop_tok
             snapshot.sessions.push_back(std::move(value));
         };
 
-        if (currentSession) appendSession(currentSession, true);
-        for (const auto& session : sessions)
+        for (const auto& entry : sessions)
         {
             if (snapshot.sessions.size() >=
                 MaximumExposedMediaSessions) break;
-            if (currentSession && session == currentSession) continue;
-            appendSession(session, false);
+            appendSession(entry, SameMediaSession(entry.session, currentSession));
         }
         if (cancel.Stop()) throw winrt::hresult_canceled();
         snapshot.available = true;

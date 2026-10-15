@@ -502,6 +502,7 @@ set(SNOWDESKTOP_SOURCES
     src/ui/preview/preview_png_writer.cpp
     src/widget/authoring/widget_author_preview.cpp
     src/widget/preview/widget_preview_stage.cpp
+    src/widget/preview/widget_wallpaper_pixels.h
     src/widget/preview/widget_preview_scene.cpp
     src/widget/preview/widget_preview_scene_model.cpp
     src/common/l10n.cpp
@@ -532,6 +533,8 @@ set(SNOWDESKTOP_SOURCES
     src/widget/tasks/widget_filesystem_handle_store.cpp
     src/widget/tasks/widget_filesystem_task_executor.cpp
     src/widget/tasks/widget_filesystem_watch_service.cpp
+    src/widget/tasks/widget_filesystem_watch_origin.cpp
+    src/widget/tasks/widget_filesystem_watch_origin.h
     src/widget/tasks/widget_app_task_executor.cpp
     src/widget/settings/widget_system_settings.cpp
     src/widget/data/widget_system_data_provider.cpp
@@ -1085,6 +1088,7 @@ add_executable(snowwidget
     src/widget/runtime/widget_logical_slot.cpp
     src/widget/runtime/lua_runtime.cpp
     src/widget/packages/widget_package.cpp
+    src/data/atomic_file.cpp
     src/widget/permissions/widget_permission_broker.cpp
     src/widget/permissions/widget_permission_state.cpp
     src/widget/api/widget_system_contract_json.cpp
@@ -1514,7 +1518,7 @@ if (BUILD_TESTING)
             tests/widget_media_task_executor_tests.cpp
             src/widget/tasks/widget_media_task_executor.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES windowsapp
+        LINK_LIBRARIES windowsapp ole32
         LABELS integration media task lua widget)
 
     snowdesktop_add_test(
@@ -1532,7 +1536,7 @@ if (BUILD_TESTING)
         widget_clipboard_task_executor
         SOURCES
             tests/widget_clipboard_task_executor_tests.cpp
-            src/widget/tasks/widget_clipboard_task_executor.cpp
+            tests/widget/clipboard_platform_contract_tests.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES gdi32 ole32 shell32 windowscodecs
         LABELS contract clipboard task lua widget)
@@ -1565,7 +1569,11 @@ if (BUILD_TESTING)
         SOURCES
             tests/widget_filesystem_watch_service_tests.cpp
             src/widget/tasks/widget_filesystem_watch_service.cpp
+            src/widget/tasks/widget_filesystem_watch_origin.cpp
+            src/widget/tasks/widget_filesystem_handle_store.cpp
+            src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES bcrypt
         LABELS integration filesystem security data lua widget)
 
     snowdesktop_add_test(
@@ -2101,6 +2109,7 @@ if (BUILD_TESTING)
             src/widget/api/widget_api_registry.cpp
             src/widget/runtime/widget_logical_slot.cpp
             src/widget/packages/widget_package.cpp
+            src/data/atomic_file.cpp
             src/widget/permissions/widget_permission_broker.cpp
             src/widget/permissions/widget_permission_state.cpp
         INCLUDE_DIRECTORIES src tools/snowwidget
@@ -2233,6 +2242,13 @@ if (BUILD_TESTING)
         widget_engine_settings_backend
         SOURCES
             tests/widget_engine_settings_backend_tests.cpp
+            tests/widget/widget_host_control_projection_tests.cpp
+            src/widget/api/widget_view_contract.cpp
+            src/widget/view/widget_view_tree.cpp
+            src/widget/view/widget_view_lua.cpp
+            src/widget/view/widget_interaction_region.cpp
+            src/widget/runtime/widget_logical_slot.cpp
+            src/widget/view/widget_view_accessibility.cpp
             src/widget/settings/widget_setting_rules.cpp
             src/widget/storage/widget_storage_value.cpp
         INCLUDE_DIRECTORIES src
@@ -2687,6 +2703,7 @@ if (BUILD_TESTING)
         widget_preview_stage
         SOURCES
             tests/widget_preview_stage_tests.cpp
+            tests/widget/preview/wallpaper_pixels_tests.cpp
             src/widget/preview/widget_preview_stage.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES d2d1 d3d11 dxgi dxguid gdi32 ole32 windowscodecs
@@ -2712,6 +2729,7 @@ if (BUILD_TESTING)
             src/steam/steam_workshop_source.cpp
             src/steam/steam_workshop_sync.cpp
             src/widget/packages/widget_package.cpp
+            src/data/atomic_file.cpp
             src/widget/packages/widget_package_paths.cpp
             src/widget/runtime/widget_logical_slot.cpp
             src/widget/permissions/widget_permission_broker.cpp
@@ -2719,6 +2737,7 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES steam_bridge/src src
         LINK_LIBRARIES
             SnowDesktopWorkshopManagerSupport
+            SnowDesktopSteamWorkshopCore
             SnowDesktopSteamAppIdentity
             advapi32
             bcrypt

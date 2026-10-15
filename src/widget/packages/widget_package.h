@@ -339,6 +339,10 @@ public:
         std::string& error,
         const SteamLibrarySubscriptions* libraries = nullptr);
     std::optional<InstalledPackage> Resolve(const std::string& packageId) const;
+    // Selection and inspection do not grant execution of a disabled package.
+    std::optional<InstalledPackage> ResolveSelected(const std::string& packageId) const;
+    std::optional<std::filesystem::path> ResolveSelectedEntry(const std::string& packageId) const;
+    std::optional<InstalledPackage> ResolveSelectedEntryPath(const std::filesystem::path& entryPath) const;
     std::optional<std::filesystem::path> ResolveEntry(
         const std::string& packageId) const;
     std::optional<InstalledPackage> ResolveEntryPath(
@@ -420,7 +424,7 @@ private:
         std::vector<std::string> grantedNetworkDomains;
     };
 
-    bool Refresh(std::string& error);
+    bool Refresh(std::string& error, bool persistDiscovery = true);
     bool LoadRegistry(std::string& error);
     bool SaveRegistry(std::string& error) const;
     bool ExtractArchive(const std::filesystem::path& archive,

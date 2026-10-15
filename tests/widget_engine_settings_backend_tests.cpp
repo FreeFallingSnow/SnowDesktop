@@ -33,8 +33,12 @@ std::string ReadFile(const std::filesystem::path& path)
 }
 }
 
+void TestHostControlProjection();
+
 int main(int argc, char* argv[])
 {
+    try { TestHostControlProjection(); }
+    catch (const std::exception& error) { Check(false,error.what()); }
     using namespace snowdesktop::widget_runtime;
     namespace detail = widget_settings_backend_detail;
 
@@ -309,24 +313,6 @@ int main(int argc, char* argv[])
                 source.find("RuntimeBindHostLogicalSlot") !=
                     std::string::npos,
             "source keeps host appearance transactional and typed, secret, handle, and reference channels distinct");
-        Check(source.find(
-                  "PreviewHostAppearanceTransaction") !=
-                    std::string::npos &&
-                source.find("if (!persist)") != std::string::npos &&
-                source.find("preview_->originals.try_emplace") !=
-                    std::string::npos &&
-                source.find("CommitPreview(") != std::string::npos &&
-                source.find("RevertPreview(") != std::string::npos &&
-                source.find(
-                    "PersistWidgetSettingsStorageForBackend()") !=
-                    std::string::npos &&
-                source.find("storage.insert_or_assign(key, *value)") !=
-                    std::string::npos &&
-                source.find("storage.erase(key)") != std::string::npos &&
-                source.find("previewCommitRequired") !=
-                    std::string::npos,
-            "transient previews touch live storage without saving, then commit or restore only guarded touched keys");
-
         const auto functionSection = [&source](std::string_view begin,
                                                 std::string_view end) {
             const std::size_t first = source.find(begin);

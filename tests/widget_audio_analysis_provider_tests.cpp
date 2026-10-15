@@ -1,4 +1,6 @@
 #include "widget/data/widget_audio_analysis_provider.h"
+#include <mmdeviceapi.h>
+#include <wrl/implements.h>
 
 #include <algorithm>
 #include <atomic>
@@ -7,6 +9,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <numbers>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -165,12 +168,54 @@ void TestSubscriptionProjection()
             !projected.hasPeak && projected.peak == 0.0,
         "each subscription must receive only its selected derived features");
 }
+
+void TestInitializationFailures()
+{
+    struct Enumerator final : Microsoft::WRL::RuntimeClass<
+        Microsoft::WRL::RuntimeClassFlags<Microsoft::WRL::ClassicCom>, IMMDeviceEnumerator>
+    {
+        std::atomic<unsigned>* queries = nullptr;
+        HRESULT STDMETHODCALLTYPE EnumAudioEndpoints(EDataFlow, DWORD, IMMDeviceCollection**) override { return E_NOTIMPL; }
+        HRESULT STDMETHODCALLTYPE GetDefaultAudioEndpoint(EDataFlow, ERole, IMMDevice**) override { ++*queries; return E_FAIL; }
+        HRESULT STDMETHODCALLTYPE GetDevice(LPCWSTR, IMMDevice**) override { return E_NOTIMPL; }
+        HRESULT STDMETHODCALLTYPE RegisterEndpointNotificationCallback(IMMNotificationClient*) override { return E_ACCESSDENIED; }
+        HRESULT STDMETHODCALLTYPE UnregisterEndpointNotificationCallback(IMMNotificationClient*) override { return S_OK; }
+    };
+    for (const int stage : {0, 1, 2})
+    {
+        std::atomic<unsigned> queries{0};
+        WidgetAudioAnalysisProvider::Initialization initialization;
+        initialization.createEnumerator = [&](IMMDeviceEnumerator** result) -> long {
+            if (stage == 0) { *result = nullptr; return E_ACCESSDENIED; }
+            auto instance = Microsoft::WRL::Make<Enumerator>();
+            instance->queries = &queries;
+            *result = instance.Detach();
+            return S_OK;
+        };
+        if (stage == 1) initialization.createEndpointEvent = []() -> void* { return nullptr; };
+        WidgetAudioAnalysisProvider provider(std::move(initialization));
+        Check(provider.Start(33ms), "failure injection starts the actual audio worker");
+        Check(WaitFor([&] { const auto snapshot = provider.Snapshot(); return snapshot && !snapshot->warmingUp; }),
+            "initialization failure publishes a terminal sample without dereferencing an absent endpoint");
+        const auto snapshot = provider.Snapshot();
+        Check(snapshot && !snapshot->available && snapshot->error == (stage == 0
+            ? "audioEnumeratorUnavailable" : "audioEndpointNotificationUnavailable") && queries.load() == 0,
+            "an earlier initialization error prevents later endpoint operations and preserves its diagnostic");
+        const auto started = std::chrono::steady_clock::now();
+        provider.Stop();
+        Check(std::chrono::steady_clock::now() - started < 500ms && !provider.ResourcesActive(),
+            "failed initialization releases resources and its retry wait is canceled on shutdown");
+    }
+}
 }
 
-int main()
+int main(int argc, char** argv)
 {
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
+    TestInitializationFailures();
     TestLogarithmicSpectrumDistribution();
     TestSubscriptionProjection();
+    if (argc == 2 && std::string_view(argv[1]) == "--initialization-only") return 0;
     TestOnDemandCaptureLifecycle();
     std::cout << "widget audio analysis provider tests passed\n";
     return 0;

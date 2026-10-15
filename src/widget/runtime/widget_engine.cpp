@@ -63,6 +63,10 @@ namespace text_input = snowdesktop::text_input;
 #include "widget/packages/widget_package_image_cache.h"
 #include "widget/view/widget_text_input_rules.h"
 #include "widget/storage/widget_storage_transaction.h"
+#include "widget/storage/widget_settings_preview.h"
+#include "widget/storage/widget_storage_persistence.h"
+#include "widget/tasks/widget_filesystem_watch_origin.h"
+#include "widget_host_control_projection.h"
 #include "widget/storage/widget_storage_value.h"
 #include "widget/storage/widget_storage_write_budget.h"
 #include "widget/storage/widget_secret_store.h"
@@ -364,8 +368,10 @@ static void ClearSteamWorkshopInstallFailure(
 
 static std::wstring ResolveWidgetPath(const std::wstring& packageId)
 {
-    const auto entry = GetWidgetPackageManager().ResolveEntry(
-        WidgetWideToUtf8(packageId));
+    auto& manager = GetWidgetPackageManager();
+    const auto id = WidgetWideToUtf8(packageId);
+    const auto entry = snowdesktop::widget_runtime::IsDryLoad()
+        ? manager.ResolveSelectedEntry(id) : manager.ResolveEntry(id);
     return entry ? entry->wstring() : std::wstring{};
 }
 
@@ -402,15 +408,22 @@ static bool RecoverWidgetPackage(const std::string& packageId,
     {
         std::string error;
         if (manager.Uninstall(packageId, error))
-            return manager.Resolve(packageId).has_value();
+            return manager.ResolveSelected(packageId).has_value();
     }
     return false;
 }
 
+static std::optional<snowdesktop::widget::InstalledPackage>
+ResolveWidgetEntryPackage(const std::filesystem::path& path)
+{
+    auto& manager = GetWidgetPackageManager();
+    return snowdesktop::widget_runtime::IsDryLoad()
+        ? manager.ResolveSelectedEntryPath(path) : manager.ResolveEntryPath(path);
+}
+
 static std::wstring ManifestPathForScriptFile(const std::wstring& fullScriptPath)
 {
-    if (const auto package =
-        GetWidgetPackageManager().ResolveEntryPath(fullScriptPath))
+    if (const auto package = ResolveWidgetEntryPackage(fullScriptPath))
         return (package->root / L"widget.json").wstring();
     const std::filesystem::path packageManifest =
         std::filesystem::path(fullScriptPath).parent_path() / L"widget.json";
@@ -427,6 +440,7 @@ static std::wstring ManifestPathForScriptFile(const std::wstring& fullScriptPath
 
 // ── Storage (shared localStorage for Lua widgets) ────────────────
 static std::unordered_map<std::string, std::string> g_storage;
+static snowdesktop::widget_runtime::WidgetSettingsPreviewLayers g_settingsPreviews;
 static std::wstring g_storagePath;
 static snowdesktop::widget_runtime::DiagnosticsLog g_widgetDiagnostics;
 static bool StorageWriteWithinQuota(const std::string& prefix,
@@ -451,107 +465,34 @@ static bool IsRemovedPanelEffectSettingKey(const std::string& key)
 
 static std::unordered_map<std::string, std::string>& ActiveStorage()
 {
+    g_settingsPreviews.InvalidateReads();
     return snowdesktop::widget_runtime::ActiveStorage(g_storage);
+}
+
+static const snowdesktop::widget_runtime::StorageMap& ReadStorage()
+{
+    if (const auto overlay = snowdesktop::widget_runtime::CurrentStorageOverlay())
+        return *overlay;
+    return g_settingsPreviews.Read(g_storage);
 }
 
 using snowdesktop::widget_runtime::DryLoadScope;
 using snowdesktop::widget_runtime::PreviewExecutionScope;
 using snowdesktop::widget_runtime::StorageOverlayScope;
 
-static std::string EscapeStorageJson(std::string_view value)
-{
-    std::string result;
-    result.reserve(value.size() + 8);
-    static constexpr char hex[] = "0123456789abcdef";
-    for (unsigned char ch : value)
-    {
-        switch (ch)
-        {
-        case '"': result += "\\\""; break;
-        case '\\': result += "\\\\"; break;
-        case '\b': result += "\\b"; break;
-        case '\f': result += "\\f"; break;
-        case '\n': result += "\\n"; break;
-        case '\r': result += "\\r"; break;
-        case '\t': result += "\\t"; break;
-        default:
-            if (ch < 0x20)
-            {
-                result += "\\u00";
-                result.push_back(hex[(ch >> 4) & 0x0f]);
-                result.push_back(hex[ch & 0x0f]);
-            }
-            else result.push_back(static_cast<char>(ch));
-            break;
-        }
-    }
-    return result;
-}
-
-static bool ParseLegacyStorageText(const std::string& text,
-    std::unordered_map<std::string, std::string>& output)
-{
-    // Releases before package format v1 wrote string values without JSON
-    // escaping. Recover the same key/value pairs that the former reader
-    // accepted, then immediately rewrite them through the safe serializer.
-    size_t pos = text.find('{');
-    if (pos == std::string::npos) return false;
-    while (true)
-    {
-        pos = text.find('"', pos);
-        if (pos == std::string::npos) break;
-        const size_t keyEnd = text.find('"', pos + 1);
-        if (keyEnd == std::string::npos) break;
-        const std::string key = text.substr(pos + 1, keyEnd - pos - 1);
-        pos = text.find(':', keyEnd + 1);
-        if (pos == std::string::npos) break;
-        pos = text.find('"', pos + 1);
-        if (pos == std::string::npos) break;
-        const size_t valueEnd = text.find('"', pos + 1);
-        if (valueEnd == std::string::npos) break;
-        if (!key.empty() && !IsRemovedPanelEffectSettingKey(key))
-            output[key] = text.substr(pos + 1, valueEnd - pos - 1);
-        pos = valueEnd + 1;
-    }
-    return !output.empty();
-}
-
-static bool ParseStorageText(const std::string& text,
-    std::unordered_map<std::string, std::string>& output)
-{
-    JsonValue root;
-    std::string parseError;
-    if (ParseJson(text, root, &parseError) && root.IsObject())
-    {
-        for (const auto& [key, value] : root.object)
-            if (value.IsString() && !IsRemovedPanelEffectSettingKey(key))
-                output.emplace(key, value.string);
-        return true;
-    }
-    return ParseLegacyStorageText(text, output);
-}
-
-static bool ReadStorageMap(const std::filesystem::path& path,
-    std::unordered_map<std::string, std::string>& output)
-{
-    std::ifstream file(path, std::ios::binary);
-    if (!file) return false;
-    std::ostringstream stream;
-    stream << file.rdbuf();
-    return ParseStorageText(stream.str(), output);
-}
-
 static bool SaveStorageFile();
 
 static void LoadStorageFile()
 {
+    g_settingsPreviews.Clear();
     g_storage.clear();
     if (g_storagePath.empty()) return;
 
     std::error_code ec;
     const bool storageExists =
         std::filesystem::is_regular_file(g_storagePath, ec);
-    if (storageExists && !ReadStorageMap(g_storagePath, g_storage))
+    if (storageExists && !snowdesktop::widget_runtime::storage_persistence::ReadStorageMap(
+            g_storagePath, g_storage, IsRemovedPanelEffectSettingKey))
     {
         SYSTEMTIME now{};
         GetLocalTime(&now);
@@ -568,39 +509,15 @@ static void LoadStorageFile()
 
 static bool SaveStorageFile()
 {
+    g_settingsPreviews.InvalidateReads();
     if (g_storagePath.empty()) return false;
-    std::vector<std::pair<std::string, std::string>> values(
-        g_storage.begin(), g_storage.end());
-    std::sort(values.begin(), values.end(),
-        [](const auto& left, const auto& right) {
-            return left.first < right.first;
-        });
-    std::ostringstream output;
-    output << "{";
-    for (std::size_t index = 0; index < values.size(); ++index)
-    {
-        if (index) output << ',';
-        output << "\n  \"" << EscapeStorageJson(values[index].first)
-            << "\": \"" << EscapeStorageJson(values[index].second) << '"';
-    }
-    if (!values.empty()) output << '\n';
-    output << "}\n";
-
-    const std::wstring temporary = g_storagePath + L".tmp";
-    std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
-    const std::string text = output.str();
-    file.write(text.data(), static_cast<std::streamsize>(text.size()));
-    file.flush();
-    if (!file) return false;
-    file.close();
-    return MoveFileExW(temporary.c_str(), g_storagePath.c_str(),
-        MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != FALSE;
+    return snowdesktop::widget_runtime::storage_persistence::SaveStorageMap(g_storagePath, g_storage);
 }
 
 std::unordered_map<std::string, std::string>&
 WidgetEngine::WidgetSettingsPersistentStorageForBackend() noexcept
 {
+    g_settingsPreviews.InvalidateReads();
     return g_storage;
 }
 
@@ -613,6 +530,37 @@ WidgetEngine::WidgetSettingsPersistentStorageForBackend() const noexcept
 bool WidgetEngine::PersistWidgetSettingsStorageForBackend()
 {
     return SaveStorageFile();
+}
+
+const snowdesktop::widget_runtime::StorageMap&
+WidgetEngine::WidgetSettingsReadStorageForBackend() const
+{
+    return ReadStorage();
+}
+
+bool WidgetEngine::StageWidgetSettingsPreviewForBackend(const void* owner,
+    const std::string& prefix,
+    const snowdesktop::widget_runtime::StorageMap& previous,
+    const snowdesktop::widget_runtime::StorageMap& candidate)
+{
+    return g_settingsPreviews.Update(owner, prefix, previous, candidate);
+}
+
+bool WidgetEngine::CommitWidgetSettingsPreviewForBackend(const void* owner)
+{
+    return g_settingsPreviews.Commit(owner, g_storage,
+        [] { return SaveStorageFile(); },
+        [](const auto& candidate, const std::string& prefix) {
+            snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
+                candidate, prefix.substr(0, prefix.size() - 1));
+            std::string error;
+            return transaction.ValidateCommit(error);
+        });
+}
+
+void WidgetEngine::RemoveWidgetSettingsPreviewForBackend(const void* owner) noexcept
+{
+    g_settingsPreviews.Remove(owner);
 }
 
 static bool EndsWithLastError(const std::string& key)
@@ -12587,30 +12535,16 @@ void WidgetEngine::DrainFilesystemWatchCompletions()
             publicEvent.oldName = WidgetWideToUtf8(event.oldName);
             if (publicEvent.name.empty()) continue;
 
-            if (event.kind != "removed")
+            if (event.kind != "removed" && completion.origin && filesystemHandleStore_)
             {
-                const std::filesystem::path child =
-                    watch.directory / event.name;
-                const DWORD attributes = GetFileAttributesW(child.c_str());
-                if (attributes != INVALID_FILE_ATTRIBUTES &&
-                    (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0)
+                auto grant = completion.origin->GrantChild(*filesystemHandleStore_,
+                    watch.owner, event.name, watch.access);
+                if (grant)
                 {
-                    const auto kind =
-                        (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0
-                        ? snowdesktop::widget_runtime::
-                            WidgetFilesystemHandleKind::Folder
-                        : snowdesktop::widget_runtime::
-                            WidgetFilesystemHandleKind::File;
                     publicEvent.itemKind = std::string(
                         snowdesktop::widget_runtime::
-                            WidgetFilesystemHandleStore::KindName(kind));
-                    if (filesystemHandleStore_)
-                    {
-                        auto grant = filesystemHandleStore_->Grant(
-                            watch.owner, child, kind, watch.access);
-                        if (grant)
-                            publicEvent.handle = grant.entry->handle;
-                    }
+                            WidgetFilesystemHandleStore::KindName(grant.entry->kind));
+                    publicEvent.handle = grant.entry->handle;
                 }
             }
             watch.events.push_back(std::move(publicEvent));
@@ -12738,22 +12672,46 @@ void WidgetEngine::LoadNotificationSchedules()
         snowdesktop::widget_runtime::WidgetNotificationScheduleStore>();
     notificationSchedulePath_ = GetDataFilePath(
         L"SnowDesktop.widget-notifications.json");
+    const auto rejectLoad = [this](const std::string& error) {
+        notificationScheduleStore_->MarkLoadFailed();
+        OutputDebugStringA(("SnowDesktop: notification schedule load "
+            "failed: " + error + "\n").c_str());
+    };
+    const DWORD attributes = GetFileAttributesW(notificationSchedulePath_.c_str());
+    if (attributes == INVALID_FILE_ATTRIBUTES)
+    {
+        const DWORD error = GetLastError();
+        if (error != ERROR_FILE_NOT_FOUND && error != ERROR_PATH_NOT_FOUND)
+            rejectLoad("cannot inspect file: " + std::to_string(error));
+        return;
+    }
+    if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0)
+    {
+        rejectLoad("file is a reparse point");
+        return;
+    }
     std::error_code fileError;
     if (!std::filesystem::is_regular_file(
             notificationSchedulePath_, fileError))
+    {
+        rejectLoad(fileError ? fileError.message() : "not a regular file");
         return;
+    }
+    const auto fileBytes = std::filesystem::file_size(
+        notificationSchedulePath_, fileError);
+    if (fileError || fileBytes > snowdesktop::widget_runtime::
+            WidgetNotificationScheduleStore::MaximumFileBytes)
+    {
+        rejectLoad(fileError ? fileError.message() : "file exceeds size limit");
+        return;
+    }
     std::string text;
     std::string error;
     if (!snowdesktop::atomic_file::ReadAll(
             notificationSchedulePath_, text, &error) ||
         !notificationScheduleStore_->LoadText(text, error))
     {
-        OutputDebugStringA(("SnowDesktop: notification schedule load "
-            "failed: " + error + "\n").c_str());
-        notificationScheduleStore_ = std::make_unique<
-            snowdesktop::widget_runtime::
-                WidgetNotificationScheduleStore>();
-        (void)SaveNotificationSchedules();
+        rejectLoad(error);
         return;
     }
     const std::int64_t nowMs =
@@ -12778,6 +12736,7 @@ void WidgetEngine::LoadNotificationSchedules()
 bool WidgetEngine::SaveNotificationSchedules()
 {
     if (!notificationScheduleStore_ ||
+        !notificationScheduleStore_->IsWritable() ||
         notificationSchedulePath_.empty())
         return false;
     std::string error;
@@ -12796,7 +12755,8 @@ bool WidgetEngine::SaveNotificationSchedules()
 void WidgetEngine::RestoreNotificationSchedules(LuaWidget& widget)
 {
     if (!notificationCenter_ || !notificationScheduleStore_ ||
-        widget.preview)
+        !notificationScheduleStore_->IsWritable() || widget.preview ||
+        snowdesktop::widget_runtime::IsDryLoad())
         return;
     const std::string instanceId = WidgetWideToUtf8(widget.widgetId);
     if (!snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(
@@ -16469,8 +16429,7 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
     }
     if (packageRootOverride)
         pending.packageRoot = *packageRootOverride;
-    else if (const auto package =
-        GetWidgetPackageManager().ResolveEntryPath(path))
+    else if (const auto package = ResolveWidgetEntryPackage(path))
         pending.packageRoot = package->root;
     else
         pending.packageRoot = std::filesystem::path(path).parent_path();
@@ -17035,7 +16994,8 @@ bool WidgetEngine::LoadWidget(const std::wstring& path,
         SaveStorageFile();
     }
 
-    if (!preview && widgets_.back().manifest.refreshIntervalMs > 0 &&
+    if (!preview && !snowdesktop::widget_runtime::IsDryLoad() &&
+        widgets_.back().manifest.refreshIntervalMs > 0 &&
         widgetTimerRequestCallback_)
     {
         UINT_PTR tid = widgetTimerRequestCallback_(widgetId,
@@ -20565,9 +20525,11 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         }
         found->desktopMarquee.requiresLuaRender = true;
     }
-    std::erase_if(found->hostControls, [](const auto& control) {
-        return HostControlBelongsToSurface(control, "desktop");
-    });
+    snowdesktop::widget_runtime::HostControlFrame<LuaWidget::HostControl>
+        hostControlFrame([this, ownerId = widgetId]() -> std::vector<LuaWidget::HostControl>* {
+            const int currentIndex = FindWidget(ownerId);
+            return currentIndex < 0 ? nullptr : &widgets_[currentIndex].hostControls;
+        }, "desktop");
     found->interactionRegions.BeginFrame();
     d2dState_->widgetClipDepth = 0;
 
@@ -20920,6 +20882,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
 
         if (!accepted)
         {
+            hostControlFrame.Restore();
             found->interactionRegions.AbortFrame();
             if (!viewError.empty())
             {
@@ -20931,6 +20894,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         }
         else
         {
+            hostControlFrame.Commit();
             RuntimeRecordSuccess(widgetId);
             const auto transition =
                 found->interactionRegions.CommitFrame();
@@ -21107,6 +21071,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
         }
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
+        hostControlFrame.Commit();
         RuntimeRecordSuccess(widgetId);
         if (const int currentIndex = FindWidget(widgetId);
             currentIndex >= 0)
@@ -21131,6 +21096,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
     }
     else
     {
+        hostControlFrame.Restore();
         found->interactionRegions.AbortFrame();
         lua_pop(state, 1);
     }
@@ -26255,7 +26221,7 @@ std::string WidgetEngine::RuntimeGetStorageValue(const std::wstring& widgetId, c
     const std::string fullKey = prefix + "." + key;
     int idx = FindWidget(widgetId);
     auto& storage = idx >= 0 && widgets_[idx].preview
-        ? widgets_[idx].previewStorage : ActiveStorage();
+        ? widgets_[idx].previewStorage : ReadStorage();
     auto it = storage.find(fullKey);
     if (it != storage.end())
     {
@@ -27907,8 +27873,8 @@ void WidgetEngine::BeginHostLogicalSlotPointer(
             snowdesktop::widget_runtime::LogicalSlotKind::Collection)
         return;
     widget.logicalSlotPointerDrag = LuaWidget::LogicalSlotPointerDrag{
-        hit->slotId, hit->slotId, hit->itemId, hit->surfaceIndex,
-        hit->surfaceIndex, POINT{ x, y }, hit->bounds, RECT{}, false };
+        hit->slotId, hit->slotId, hit->itemId, hit->modelIndex,
+        hit->modelIndex, POINT{ x, y }, hit->bounds, RECT{}, false };
 }
 
 bool WidgetEngine::UpdateHostLogicalSlotPointer(
@@ -27945,10 +27911,11 @@ bool WidgetEngine::UpdateHostLogicalSlotPointer(
     }
 
     std::string targetSlotId;
+    std::uint64_t targetRevision = 0;
     std::optional<snowdesktop::widget_runtime::
         LogicalSlotPointerTarget> target;
     RECT sourceBounds = drag.sourceBounds;
-    std::size_t sourceIndex = drag.sourceIndex;
+    const auto sourceIndex = static_cast<std::size_t>(sourceItem - sourceSnapshot->items.begin());
     for (const auto& snapshot : widget.logicalSlots.Snapshots())
     {
         if (snapshot.kind !=
@@ -27959,25 +27926,21 @@ bool WidgetEngine::UpdateHostLogicalSlotPointer(
         if (!surface || !PtInRect(&surface->bounds, point)) continue;
 
         std::vector<RECT> itemBounds;
+        std::vector<std::string_view> visibleIds;
         itemBounds.reserve(surface->items.size());
+        visibleIds.reserve(surface->items.size());
         for (std::size_t index = 0; index < surface->items.size(); ++index)
         {
             itemBounds.push_back(surface->items[index].bounds);
+            visibleIds.push_back(surface->items[index].itemId);
             if (snapshot.id == drag.sourceSlotId &&
                 surface->items[index].itemId == drag.itemId)
             {
-                sourceIndex = index;
                 sourceBounds = surface->items[index].bounds;
             }
         }
 
-        if (snapshot.id == drag.sourceSlotId)
-        {
-            target = snowdesktop::widget_runtime::
-                ResolveLogicalSlotPointerTarget(
-                    itemBounds, sourceIndex, point, surface->bounds);
-        }
-        else
+        if (snapshot.id != drag.sourceSlotId)
         {
             const auto declaration =
                 widget.logicalSlots.Declarations().find(snapshot.id);
@@ -27994,13 +27957,16 @@ bool WidgetEngine::UpdateHostLogicalSlotPointer(
             if (!accepts || duplicate ||
                 snapshot.items.size() >= snapshot.capacity)
                 continue;
-            target = snowdesktop::widget_runtime::
-                ResolveLogicalSlotInsertionTarget(
-                    itemBounds, point, surface->bounds);
         }
+        target = snowdesktop::widget_runtime::
+            ResolveLogicalSlotModelPointerTarget(itemBounds, visibleIds,
+                snapshot, snapshot.id == drag.sourceSlotId
+                    ? std::string_view(drag.itemId) : std::string_view{},
+                point, surface->bounds);
         if (target)
         {
             targetSlotId = snapshot.id;
+            targetRevision = snapshot.revision;
             break;
         }
     }
@@ -28014,6 +27980,7 @@ bool WidgetEngine::UpdateHostLogicalSlotPointer(
         (!target && !IsRectEmpty(&drag.indicatorBounds)) ||
         !EqualRect(&drag.sourceBounds, &sourceBounds);
     drag.moved = true;
+    drag.targetRevision = targetRevision;
     drag.sourceIndex = sourceIndex;
     drag.targetSlotId = std::move(targetSlotId);
     drag.targetIndex = target ? target->targetIndex : 0;
@@ -28035,6 +28002,12 @@ bool WidgetEngine::EndHostLogicalSlotPointer(
     RuntimeInvalidateHost(widgetId);
     if (!drag.moved) return false;
     if (drag.targetSlotId.empty()) return true;
+    const auto* targetSnapshot = widgets_[index].logicalSlots.Find(drag.targetSlotId);
+    if (!targetSnapshot || targetSnapshot->revision != drag.targetRevision)
+    {
+        RuntimeRecordError(widgetId, "logical slot pointer target changed during drag");
+        return true;
+    }
 
     snowdesktop::widget_runtime::LogicalSlotChange change;
     std::string error;
@@ -28971,9 +28944,13 @@ WidgetEngine::RuntimeAccessibilitySnapshots() const
         snapshot.name = widget.name;
         snapshot.bounds = widget.lastBounds;
         snapshot.selected = RuntimeIsWidgetSelected(widget.widgetId);
+        const std::string_view desktopFocus = focusedHostInput_.active &&
+                focusedHostInput_.widgetId == widget.widgetId &&
+                focusedHostInput_.surface != "desktop"
+            ? std::string_view{} : std::string_view(widget.viewKeyboardFocusKey);
         const bool collected = widget.viewTree
             ? snowdesktop::widget_runtime::CollectViewAccessibilityNodes(
-                *widget.viewTree, widget.viewKeyboardFocusKey,
+                *widget.viewTree, desktopFocus,
                 snapshot.nodes, snapshot.error)
             : snowdesktop::widget_runtime::
                 CollectInteractionAccessibilityNodes(
@@ -28982,42 +28959,30 @@ WidgetEngine::RuntimeAccessibilitySnapshots() const
                         widget.lastBounds.right - widget.lastBounds.left)),
                     static_cast<float>(std::max<LONG>(0,
                         widget.lastBounds.bottom - widget.lastBounds.top)),
-                    widget.viewKeyboardFocusKey,
+                    desktopFocus,
                     snapshot.nodes, snapshot.error);
         (void)collected;
         for (auto& node : snapshot.nodes)
         {
             if (node.key.empty()) continue;
-            const auto control = std::find_if(
-                widget.hostControls.rbegin(),
-                widget.hostControls.rend(), [&](const auto& candidate) {
-                    return candidate.type ==
-                            LuaWidget::HostControl::Type::Input &&
-                        candidate.id == node.key;
-                });
-            if (control == widget.hostControls.rend()) continue;
-            if (focusedHostInput_.active &&
-                focusedHostInput_.widgetId == widget.widgetId &&
-                focusedHostInput_.id == node.key)
-            {
-                node.valueText = WidgetWideToUtf8(
-                    focusedHostInput_.text);
-            }
-            else
-            {
-                node.valueText = control->controlled
-                    ? control->controlledText
-                    : RuntimeGetStorageValue(
-                        widget.widgetId, control->storageKey);
-            }
+            const auto projected = snowdesktop::widget_runtime::
+                ProjectHostInputAccessibility(widget.hostControls,
+                    focusedHostInput_, widget.widgetId, node.key, "desktop",
+                    [this, &widget](const std::string& key) {
+                        return RuntimeGetStorageValue(widget.widgetId, key);
+                    }, [](const std::wstring& value) { return WidgetWideToUtf8(value); });
+            if (!projected) continue;
+            const auto* control = projected->control;
+            node.valueText = projected->valueText;
+            node.focused = projected->focused;
             node.valueReadOnly = control->readOnly;
             if (d2dState_)
             {
                 text_input::AccessibleDocument document;
                 document.text=Utf8ToWideLocal(node.valueText);
                 document.cursor=document.anchor=document.text.size();
-                if(focusedHostInput_.active&&focusedHostInput_.widgetId==widget.widgetId&&focusedHostInput_.id==node.key)
-                {document.cursor=focusedHostInput_.cursor;document.anchor=focusedHostInput_.selectionAnchor;}
+                if(projected->focused)
+                {document.cursor=projected->cursor;document.anchor=projected->anchor;}
                 document.enabled=node.enabled;document.readOnly=control->readOnly;
                 const float innerWidth=std::max(1.f,node.bounds.width-control->padding.left-control->padding.right-(control->multiline?8.f:0.f));
                 const float innerHeight=std::max(1.f,node.bounds.height-control->padding.top-control->padding.bottom);
@@ -29091,11 +29056,13 @@ bool WidgetEngine::RuntimeSetAccessibilityFocus(
     if (!widget.valid || widget.preview || !widget.hostVisible ||
         !widget.interactionRegions.IsKeyboardFocusable(nodeKey))
         return false;
+    WidgetSurfaceScope surfaceScope(d2dState_, "desktop");
 
     const auto input = std::find_if(widget.hostControls.rbegin(),
         widget.hostControls.rend(), [&](const auto& control) {
             return control.type == LuaWidget::HostControl::Type::Input &&
-                control.enabled && control.id == nodeKey;
+                control.enabled && control.id == nodeKey &&
+                HostControlBelongsToSurface(control, "desktop");
         });
     if (input != widget.hostControls.rend())
     {
@@ -29206,13 +29173,14 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
     if (!widget.valid || widget.preview || !widget.hostVisible ||
         request.nodeKey.empty())
         return false;
+    WidgetSurfaceScope surfaceScope(d2dState_, "desktop");
 
     const auto setHostValue = [&](std::wstring value) {
         const auto control = std::find_if(widget.hostControls.rbegin(),
             widget.hostControls.rend(), [&](const auto& candidate) {
                 return candidate.type ==
                         LuaWidget::HostControl::Type::Input &&
-                    candidate.id == request.nodeKey;
+                    candidate.id == request.nodeKey && HostControlBelongsToSurface(candidate, "desktop");
             });
         if (control == widget.hostControls.rend() ||
             !snowdesktop::widget_runtime::HostInputAllowsMutation(
@@ -29238,13 +29206,13 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
                 request.widgetId, control->storageKey));
         if (focusedHostInput_.active &&
             focusedHostInput_.widgetId == request.widgetId &&
-            focusedHostInput_.id == request.nodeKey)
+            focusedHostInput_.id == request.nodeKey && focusedHostInput_.surface == "desktop")
             previous = focusedHostInput_.text;
         if (previous == value) return true;
 
         const bool focused = focusedHostInput_.active &&
             focusedHostInput_.widgetId == request.widgetId &&
-            focusedHostInput_.id == request.nodeKey;
+            focusedHostInput_.id == request.nodeKey && focusedHostInput_.surface == "desktop";
         if (focused)
         {
             focusedHostInput_.text = value;
@@ -29279,11 +29247,11 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
         request.kind == LuaWidgetAccessibilityActionKind::RevealTextPosition)
     {
         const auto control=std::find_if(widget.hostControls.rbegin(),widget.hostControls.rend(),[&](const auto& candidate){
-            return candidate.type==LuaWidget::HostControl::Type::Input&&candidate.enabled&&candidate.id==request.nodeKey;});
+            return candidate.type==LuaWidget::HostControl::Type::Input&&candidate.enabled&&candidate.id==request.nodeKey&&HostControlBelongsToSurface(candidate,"desktop");});
         if(control==widget.hostControls.rend())return false;
         if(request.kind==LuaWidgetAccessibilityActionKind::SetTextSelection)
         {
-            if(!focusedHostInput_.active||focusedHostInput_.widgetId!=request.widgetId||focusedHostInput_.id!=request.nodeKey)
+            if(!focusedHostInput_.active||focusedHostInput_.widgetId!=request.widgetId||focusedHostInput_.id!=request.nodeKey||focusedHostInput_.surface!="desktop")
                 if(!RuntimeFocusHostInput(request.widgetId,request.nodeKey,"accessibility"))return false;
             if(focusedHostInput_.composing)return false;
             const auto previousAnchor=focusedHostInput_.selectionAnchor,previousCursor=focusedHostInput_.cursor;
@@ -29296,7 +29264,7 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
         }
         else if(control->multiline&&d2dState_)
         {
-            const auto text=focusedHostInput_.active&&focusedHostInput_.widgetId==request.widgetId&&focusedHostInput_.id==request.nodeKey
+            const auto text=focusedHostInput_.active&&focusedHostInput_.widgetId==request.widgetId&&focusedHostInput_.id==request.nodeKey&&focusedHostInput_.surface=="desktop"
                 ?focusedHostInput_.text:Utf8ToWideLocal(control->controlled?control->controlledText:RuntimeGetStorageValue(request.widgetId,control->storageKey));
             const auto layout=CreateHostMultilineTextLayout(d2dState_,text,control->fontSize,
                 std::max(1.f,static_cast<float>(control->rect.right-control->rect.left)-control->padding.left-control->padding.right-8.f));
@@ -29316,7 +29284,7 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
         const auto scroll = std::find_if(widget.hostControls.rbegin(),
             widget.hostControls.rend(), [&](const auto& control) {
                 return control.type == LuaWidget::HostControl::Type::Scroll &&
-                    control.enabled && control.id == request.nodeKey;
+                    control.enabled && control.id == request.nodeKey && HostControlBelongsToSurface(control, "desktop");
             });
         if (scroll == widget.hostControls.rend()) return false;
         const int maximum = scroll->horizontal
@@ -29343,7 +29311,7 @@ bool WidgetEngine::RuntimePerformAccessibilityAction(
             widget.hostControls.rend(), [&](const auto& control) {
                 return control.type ==
                         LuaWidget::HostControl::Type::Input &&
-                    control.numeric && control.id == request.nodeKey;
+                    control.numeric && control.id == request.nodeKey && HostControlBelongsToSurface(control, "desktop");
             });
         if (input != widget.hostControls.rend())
         {
@@ -32101,9 +32069,15 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
         return false;
     }
 
+    const auto selected = GetWidgetPackageManager().ResolveSelected(packageId);
+    if (!selected)
+    {
+        error = L"The installed component selection is unavailable.";
+        return false;
+    }
     std::vector<std::wstring> liveInstances;
     for (const auto& widget : widgets_)
-        if (widget.packageId == packageId)
+        if (selected->enabled && widget.packageId == packageId)
             liveInstances.push_back(widget.widgetId);
 
     std::unordered_map<std::string, std::string> migratedStorage = g_storage;
@@ -32117,17 +32091,24 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
             const std::wstring dryId = Utf8ToWideLocal(
                 "__package_dry_load_" +
                 snowdesktop::widget::WidgetPackageManager::GenerateUuid());
-            const std::wstring path =
-                ResolveWidgetPath(Utf8ToWideLocal(packageId));
+            DryLoadScope dryLoadScope;
+            try
             {
-                DryLoadScope dryLoadScope;
+                const std::wstring path =
+                    ResolveWidgetPath(Utf8ToWideLocal(packageId));
                 ok = !path.empty() && LoadWidget(path, dryId);
+                if (!ok)
+                {
+                    const auto& storage = ActiveStorage();
+                    const auto stored = storage.find(
+                        WidgetWideToUtf8(dryId) + ".lastError");
+                    if (stored != storage.end()) failure = stored->second;
+                }
             }
-            if (!ok)
+            catch (...)
             {
-                const auto stored = g_storage.find(
-                    WidgetWideToUtf8(dryId) + ".lastError");
-                if (stored != g_storage.end()) failure = stored->second;
+                DeleteWidgetInstance(dryId);
+                throw;
             }
             DeleteWidgetInstance(dryId);
         }
@@ -32184,7 +32165,7 @@ bool WidgetEngine::InstallAndVerifyWidgetPackage(const std::wstring& path,
         return false;
     }
     std::optional<std::string> previousVersion;
-    if (const auto previous = manager.Resolve(incoming.id))
+    if (const auto previous = manager.ResolveSelected(incoming.id))
         if (!previous->builtin && !previous->development)
             previousVersion = previous->manifest.version;
     snowdesktop::widget::InstalledPackage installed;
@@ -32490,7 +32471,7 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         }
 
         std::optional<std::string> previousVersion;
-        if (const auto previous = manager.Resolve(action.packageId))
+        if (const auto previous = manager.ResolveSelected(action.packageId))
             if (!previous->builtin && !previous->development)
                 previousVersion = previous->manifest.version;
         snowdesktop::widget::InstalledPackage installed;
@@ -32665,7 +32646,7 @@ bool WidgetEngine::InstallAndVerifyWidgetPackageFromSource(
         ? details->manifest.version : version;
     std::optional<std::string> previousVersion;
     auto& manager = GetWidgetPackageManager();
-    if (const auto previous = manager.Resolve(details->manifest.id))
+    if (const auto previous = manager.ResolveSelected(details->manifest.id))
         if (!previous->builtin && !previous->development)
             previousVersion = previous->manifest.version;
     snowdesktop::widget::InstalledPackage installed;
@@ -33910,7 +33891,7 @@ static int lua_StorageGet(lua_State* L)
         return 1;
     }
     const std::string prefix = BoundStoragePrefix(L);
-    auto& storage = ActiveStorage();
+    const auto& storage = ReadStorage();
     const auto value = storage.find(prefix + "." + key);
     if (value != storage.end())
     {
@@ -34081,7 +34062,7 @@ static int lua_StorageKeys(lua_State* L)
     std::string prefix = s ? BoundStoragePrefix(L) + "." : "";
     lua_newtable(L);
     int idx = 1;
-    for (const auto& kv : ActiveStorage())
+    for (const auto& kv : ReadStorage())
     {
         if (!prefix.empty() && kv.first.compare(0, prefix.size(), prefix) != 0)
             continue;
