@@ -176,6 +176,27 @@ int RunFullscreenFocusTests()
             check(!fullscreen::GuardFocusRequest(false, [&]() { return fullscreen::ObserveWindow(window, 0); },
                 [&]() { ++nativeActivationCalls; SetFocus(window); }) && nativeActivationCalls == 0,
                 "native fullscreen observation blocks the production focus boundary before SetFocus");
+            // Reproduce a custom-chrome app whose maximized client covers
+            // the monitor. Only the external-process boundary is substituted;
+            // geometry, maximization, observation and reveal policy are real.
+            ShowWindow(window, SW_SHOWMAXIMIZED);
+            SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                SWP_NOACTIVATE | SWP_NOZORDER);
+            check(IsZoomed(window) != FALSE, "custom-chrome fixture is actually maximized");
+            const auto maximized = fullscreen::ObserveWindow(window, 0);
+            check(!maximized, "monitor-sized maximized clients without WS_CAPTION are not fullscreen");
+            for (const auto source : {S::Gesture, S::AssociatedSurface, S::Hotkey})
+                check(!policy::BlocksReveal(P::FullProtection, source, maximized.has_value(), false),
+                    "a maximized app on another monitor cannot suppress Dock reveal, promotion or preview interaction");
+            int maximizedFocusCalls = 0;
+            check(fullscreen::GuardFocusRequest(false, [&]() { return fullscreen::ObserveWindow(window, 0); },
+                [&]() { ++maximizedFocusCalls; }) && maximizedFocusCalls == 1,
+                "maximized custom-chrome apps do not block the Dock keyboard focus boundary");
+            ShowWindow(window, SW_RESTORE);
+            SetWindowPos(window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top,
+                SWP_NOACTIVATE | SWP_NOZORDER);
+            check(fullscreen::ObserveWindow(window, 0).has_value(),
+                "leaving maximized state restores protection for an actual borderless fullscreen client");
             SetWindowLongPtrW(window, GWL_EXSTYLE, WS_EX_NOACTIVATE);
             check(!fullscreen::ObserveWindow(window, 0), "fullscreen-sized passive overlays are excluded");
             SetWindowLongPtrW(window, GWL_EXSTYLE, 0);

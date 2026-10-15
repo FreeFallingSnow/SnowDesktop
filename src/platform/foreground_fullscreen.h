@@ -36,10 +36,11 @@ inline std::optional<WindowSnapshot> ObserveWindow(
     snapshot.window = window;
     GetWindowThreadProcessId(window, &snapshot.process);
     if (!snapshot.process || snapshot.process == ignoredProcess) return std::nullopt;
-    const auto style = GetWindowLongPtrW(window, GWL_STYLE);
     const auto extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
+    // Custom-chrome applications can maximize without WS_CAPTION and expose
+    // a monitor-sized client. Maximization still does not own fullscreen.
     if ((extended & (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT)) ||
-        (IsZoomed(window) && (style & WS_CAPTION) == WS_CAPTION) ||
+        IsZoomed(window) ||
         GetPropW(window, L"NonRudeHWND")) return std::nullopt;
     wchar_t name[128]{};
     GetClassNameW(window, name, static_cast<int>(std::size(name)));
