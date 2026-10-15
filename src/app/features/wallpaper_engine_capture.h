@@ -48,11 +48,16 @@ enum class CancellableWaitResult
 CancellableWaitResult WaitForHandleOrCancellation(HANDLE handle,
     DWORD timeoutMs, const std::atomic_bool* cancelled = nullptr);
 
+/** Refuse injection while an older producer may still own the graphics hooks. */
+bool CanInjectCaptureHook(DWORD processId, std::wstring& error);
+
 /**
  * Capture one Wallpaper Engine Present for the requested physical monitor.
  * The injected producer is enabled with a zero periodic interval, so only an
- * explicit request serial copies a frame. The hook is shut down before this
- * function returns. This function is blocking and must run off the UI thread.
+ * explicit request serial copies a frame. Capture is disabled before this
+ * function returns; the target retains a sleeping worker and disabled hooks
+ * so pending callbacks and subsequent sessions remain safe. This function is
+ * blocking and must run off the UI thread.
  */
 Result CaptureOneShotForMonitor(const RECT& monitorBounds,
     DWORD timeoutMs, const std::atomic_bool* cancelled = nullptr);

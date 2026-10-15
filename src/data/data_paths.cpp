@@ -7,6 +7,7 @@
 #include "diagnostics/debug_profile.h"
 #include "desktop/desktop_source.h"
 #include "data_path_policy.h"
+#include "executable_path.h"
 #include "platform/deployment_context.h"
 #include "portable_data_migration.h"
 
@@ -114,12 +115,7 @@ namespace
 
 std::wstring GetExecutableDirectoryPath()
 {
-    wchar_t path[MAX_PATH]{};
-    DWORD length = GetModuleFileNameW(nullptr, path, static_cast<DWORD>(std::size(path)));
-    if (length == 0 || length >= static_cast<DWORD>(std::size(path)))
-        return L".";
-    PathRemoveFileSpecW(path);
-    return path;
+    return snowdesktop::data_paths::ExecutableDirectory().wstring();
 }
 
 namespace

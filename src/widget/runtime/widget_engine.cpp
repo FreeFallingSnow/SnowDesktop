@@ -9091,110 +9091,147 @@ static void PushContextRect(lua_State* L, const RECT& rect,
     lua_setfield(L, -2, "height");
 }
 
-static int lua_WidgetContext(lua_State* L)
+static int DeferLuaError(lua_State* state, std::string_view message);
+
+static int LuaWidgetContextWithDeferredError(lua_State* caller)
 {
-    auto* d2d = GetD2D(L);
-    const std::wstring widgetId = BoundWidgetId(L);
-    LuaWidgetContextState state = d2d && d2d->engine
-        ? d2d->engine->RuntimeGetWidgetContextState(widgetId)
+    auto* contextD2D = GetD2D(caller);
+    lua_getfield(caller, LUA_REGISTRYINDEX, "__widget_preview");
+    const bool preview = lua_toboolean(caller, -1) != 0;
+    lua_pop(caller, 1);
+    const std::wstring widgetId = BoundWidgetId(caller);
+    LuaWidgetContextState contextState = contextD2D && contextD2D->engine
+        ? contextD2D->engine->RuntimeGetWidgetContextState(widgetId)
         : LuaWidgetContextState{};
-    lua_getfield(L, LUA_REGISTRYINDEX, "__widget_preview");
-    if (lua_toboolean(L, -1) != 0) state.preview = true;
-    lua_pop(L, 1);
-    const WidgetSystemEnvironment system = QueryWidgetSystemEnvironment();
-    const double scaleX = static_cast<double>(state.surface.dpiX) /
+    if (preview) contextState.preview = true;
+    const WidgetSystemEnvironment contextSystem = QueryWidgetSystemEnvironment();
+    const double contextScaleX = static_cast<double>(contextState.surface.dpiX) /
         USER_DEFAULT_SCREEN_DPI;
-    const double scaleY = static_cast<double>(state.surface.dpiY) /
+    const double contextScaleY = static_cast<double>(contextState.surface.dpiY) /
         USER_DEFAULT_SCREEN_DPI;
-    const double pixelWidth = d2d
-        ? d2d->widgetRect.right - d2d->widgetRect.left : 0.0;
-    const double pixelHeight = d2d
-        ? d2d->widgetRect.bottom - d2d->widgetRect.top : 0.0;
-    const int columns = d2d ? std::max(1, d2d->gridColumns) : 1;
-    const int rows = d2d ? std::max(1, d2d->gridRows) : 1;
-    const int area = columns * rows;
-    const LuaWidgetTheme theme = d2d && d2d->engine
-        ? d2d->engine->RuntimeGetWidgetTheme(widgetId)
+    const double contextPixelWidth = contextD2D
+        ? contextD2D->widgetRect.right - contextD2D->widgetRect.left : 0.0;
+    const double contextPixelHeight = contextD2D
+        ? contextD2D->widgetRect.bottom - contextD2D->widgetRect.top : 0.0;
+    const int contextColumns = contextD2D ? std::max(1, contextD2D->gridColumns) : 1;
+    const int contextRows = contextD2D ? std::max(1, contextD2D->gridRows) : 1;
+    const int contextArea = contextColumns * contextRows;
+    const LuaWidgetTheme contextTheme = contextD2D && contextD2D->engine
+        ? contextD2D->engine->RuntimeGetWidgetTheme(widgetId)
         : LuaWidgetTheme{};
 
-    lua_createtable(L, 0, 19);
-    lua_createtable(L, 0, 2);
-    lua_pushnumber(L, pixelWidth / scaleX); lua_setfield(L, -2, "width");
-    lua_pushnumber(L, pixelHeight / scaleY); lua_setfield(L, -2, "height");
-    lua_setfield(L, -2, "logicalSize");
-    lua_createtable(L, 0, 2);
-    lua_pushnumber(L, pixelWidth); lua_setfield(L, -2, "width");
-    lua_pushnumber(L, pixelHeight); lua_setfield(L, -2, "height");
-    lua_setfield(L, -2, "pixelSize");
-    lua_createtable(L, 0, 2);
-    lua_pushnumber(L, CurrentLayoutContentWidth(d2d));
-    lua_setfield(L, -2, "width");
-    lua_pushnumber(L, CurrentLayoutContentHeight(d2d));
-    lua_setfield(L, -2, "height");
-    lua_setfield(L, -2, "layoutSize");
-    lua_createtable(L, 0, 4);
-    lua_pushinteger(L, state.surface.dpiX); lua_setfield(L, -2, "x");
-    lua_pushinteger(L, state.surface.dpiY); lua_setfield(L, -2, "y");
-    lua_pushnumber(L, scaleX); lua_setfield(L, -2, "scaleX");
-    lua_pushnumber(L, scaleY); lua_setfield(L, -2, "scaleY");
-    lua_setfield(L, -2, "dpi");
-    lua_pushstring(L, area <= 2 ? "small" :
-        (area <= 6 ? "medium" : "large"));
-    lua_setfield(L, -2, "sizeClass");
-    lua_createtable(L, 0, 2);
-    lua_pushinteger(L, columns); lua_setfield(L, -2, "columns");
-    lua_pushinteger(L, rows); lua_setfield(L, -2, "rows");
-    lua_setfield(L, -2, "grid");
+    struct ContextArguments
+    {
+        D2DState* d2d;
+        const LuaWidgetContextState* state;
+        const WidgetSystemEnvironment* system;
+        const LuaWidgetTheme* theme;
+        double scaleX, scaleY, pixelWidth, pixelHeight;
+        int columns, rows, area;
+    } arguments{contextD2D, &contextState, &contextSystem, &contextTheme,
+        contextScaleX, contextScaleY, contextPixelWidth, contextPixelHeight,
+        contextColumns, contextRows, contextArea};
+    std::string error;
+    // Own all native strings above the protected call. Lua allocation failure
+    // can jump only across this push-only callback, never their destructors.
+    const bool pushed = snowdesktop::lua_runtime::ProtectedHostCall(caller,
+        +[](lua_State* inner) {
+            const auto& input = *static_cast<ContextArguments*>(lua_touserdata(inner, 1));
+            lua_State* L = inner;
+            auto* d2d = input.d2d;
+            const auto& state = *input.state;
+            const auto& system = *input.system;
+            const auto& theme = *input.theme;
+            const double scaleX = input.scaleX, scaleY = input.scaleY;
+            const double pixelWidth = input.pixelWidth, pixelHeight = input.pixelHeight;
+            const int columns = input.columns, rows = input.rows, area = input.area;
 
-    lua_createtable(L, 0, 6);
-    lua_pushboolean(L, state.surface.monitorAvailable);
-    lua_setfield(L, -2, "available");
-    lua_pushboolean(L, state.surface.primaryMonitor);
-    lua_setfield(L, -2, "primary");
-    PushContextRect(L, state.surface.monitorBounds, 1.0, 1.0);
-    lua_setfield(L, -2, "pixelBounds");
-    PushContextRect(L, state.surface.workArea, 1.0, 1.0);
-    lua_setfield(L, -2, "pixelWorkArea");
-    PushContextRect(L, state.surface.monitorBounds, scaleX, scaleY);
-    lua_setfield(L, -2, "logicalBounds");
-    PushContextRect(L, state.surface.workArea, scaleX, scaleY);
-    lua_setfield(L, -2, "logicalWorkArea");
-    lua_setfield(L, -2, "monitor");
+            lua_createtable(L, 0, 19);
+            lua_createtable(L, 0, 2);
+            lua_pushnumber(L, pixelWidth / scaleX); lua_setfield(L, -2, "width");
+            lua_pushnumber(L, pixelHeight / scaleY); lua_setfield(L, -2, "height");
+            lua_setfield(L, -2, "logicalSize");
+            lua_createtable(L, 0, 2);
+            lua_pushnumber(L, pixelWidth); lua_setfield(L, -2, "width");
+            lua_pushnumber(L, pixelHeight); lua_setfield(L, -2, "height");
+            lua_setfield(L, -2, "pixelSize");
+            lua_createtable(L, 0, 2);
+            lua_pushnumber(L, CurrentLayoutContentWidth(d2d));
+            lua_setfield(L, -2, "width");
+            lua_pushnumber(L, CurrentLayoutContentHeight(d2d));
+            lua_setfield(L, -2, "height");
+            lua_setfield(L, -2, "layoutSize");
+            lua_createtable(L, 0, 4);
+            lua_pushinteger(L, state.surface.dpiX); lua_setfield(L, -2, "x");
+            lua_pushinteger(L, state.surface.dpiY); lua_setfield(L, -2, "y");
+            lua_pushnumber(L, scaleX); lua_setfield(L, -2, "scaleX");
+            lua_pushnumber(L, scaleY); lua_setfield(L, -2, "scaleY");
+            lua_setfield(L, -2, "dpi");
+            lua_pushstring(L, area <= 2 ? "small" :
+                (area <= 6 ? "medium" : "large"));
+            lua_setfield(L, -2, "sizeClass");
+            lua_createtable(L, 0, 2);
+            lua_pushinteger(L, columns); lua_setfield(L, -2, "columns");
+            lua_pushinteger(L, rows); lua_setfield(L, -2, "rows");
+            lua_setfield(L, -2, "grid");
 
-    lua_createtable(L, 0, 6);
-    lua_pushstring(L, theme.contentTheme == 1 ? "light" : "dark");
-    lua_setfield(L, -2, "mode");
-    lua_pushinteger(L, theme.bg); lua_setfield(L, -2, "background");
-    lua_pushinteger(L, theme.border); lua_setfield(L, -2, "border");
-    lua_pushliteral(L, "systemAccent"); lua_setfield(L, -2, "accentToken");
-    lua_pushinteger(L, system.accentColor); lua_setfield(L, -2, "accentColor");
-    lua_pushboolean(L, system.highContrast); lua_setfield(L, -2, "highContrast");
-    lua_setfield(L, -2, "theme");
+            lua_createtable(L, 0, 6);
+            lua_pushboolean(L, state.surface.monitorAvailable);
+            lua_setfield(L, -2, "available");
+            lua_pushboolean(L, state.surface.primaryMonitor);
+            lua_setfield(L, -2, "primary");
+            PushContextRect(L, state.surface.monitorBounds, 1.0, 1.0);
+            lua_setfield(L, -2, "pixelBounds");
+            PushContextRect(L, state.surface.workArea, 1.0, 1.0);
+            lua_setfield(L, -2, "pixelWorkArea");
+            PushContextRect(L, state.surface.monitorBounds, scaleX, scaleY);
+            lua_setfield(L, -2, "logicalBounds");
+            PushContextRect(L, state.surface.workArea, scaleX, scaleY);
+            lua_setfield(L, -2, "logicalWorkArea");
+            lua_setfield(L, -2, "monitor");
 
-    lua_createtable(L, 0, 3);
-    lua_pushboolean(L, system.highContrast); lua_setfield(L, -2, "highContrast");
-    lua_pushboolean(L, system.reducedMotion); lua_setfield(L, -2, "reducedMotion");
-    lua_pushnumber(L, system.textScale); lua_setfield(L, -2, "textScale");
-    lua_setfield(L, -2, "accessibility");
-    lua_pushlstring(L, system.locale.data(), system.locale.size());
-    lua_setfield(L, -2, "locale");
-    lua_pushlstring(L, system.region.data(), system.region.size());
-    lua_setfield(L, -2, "region");
-    lua_pushlstring(L, system.timeZone.data(), system.timeZone.size());
-    lua_setfield(L, -2, "timeZone");
-    lua_pushinteger(L, system.utcOffsetMinutes);
-    lua_setfield(L, -2, "utcOffsetMinutes");
-    lua_pushlstring(L, system.inputLanguage.data(),
-        system.inputLanguage.size());
-    lua_setfield(L, -2, "inputLanguage");
-    lua_pushboolean(L, state.visible); lua_setfield(L, -2, "visible");
-    lua_pushboolean(L, state.preview); lua_setfield(L, -2, "preview");
-    lua_pushboolean(L, state.focused); lua_setfield(L, -2, "focused");
-    lua_pushboolean(L, state.selected); lua_setfield(L, -2, "selected");
-    lua_pushstring(L, state.preview ? "preview" :
-        (d2d && d2d->surfaceKind ? d2d->surfaceKind : "desktop"));
-    lua_setfield(L, -2, "surface");
-    return 1;
+            lua_createtable(L, 0, 6);
+            lua_pushstring(L, theme.contentTheme == 1 ? "light" : "dark");
+            lua_setfield(L, -2, "mode");
+            lua_pushinteger(L, theme.bg); lua_setfield(L, -2, "background");
+            lua_pushinteger(L, theme.border); lua_setfield(L, -2, "border");
+            lua_pushliteral(L, "systemAccent"); lua_setfield(L, -2, "accentToken");
+            lua_pushinteger(L, system.accentColor); lua_setfield(L, -2, "accentColor");
+            lua_pushboolean(L, system.highContrast); lua_setfield(L, -2, "highContrast");
+            lua_setfield(L, -2, "theme");
+
+            lua_createtable(L, 0, 3);
+            lua_pushboolean(L, system.highContrast); lua_setfield(L, -2, "highContrast");
+            lua_pushboolean(L, system.reducedMotion); lua_setfield(L, -2, "reducedMotion");
+            lua_pushnumber(L, system.textScale); lua_setfield(L, -2, "textScale");
+            lua_setfield(L, -2, "accessibility");
+            lua_pushlstring(L, system.locale.data(), system.locale.size());
+            lua_setfield(L, -2, "locale");
+            lua_pushlstring(L, system.region.data(), system.region.size());
+            lua_setfield(L, -2, "region");
+            lua_pushlstring(L, system.timeZone.data(), system.timeZone.size());
+            lua_setfield(L, -2, "timeZone");
+            lua_pushinteger(L, system.utcOffsetMinutes);
+            lua_setfield(L, -2, "utcOffsetMinutes");
+            lua_pushlstring(L, system.inputLanguage.data(),
+                system.inputLanguage.size());
+            lua_setfield(L, -2, "inputLanguage");
+            lua_pushboolean(L, state.visible); lua_setfield(L, -2, "visible");
+            lua_pushboolean(L, state.preview); lua_setfield(L, -2, "preview");
+            lua_pushboolean(L, state.focused); lua_setfield(L, -2, "focused");
+            lua_pushboolean(L, state.selected); lua_setfield(L, -2, "selected");
+            lua_pushstring(L, state.preview ? "preview" :
+                (d2d && d2d->surfaceKind ? d2d->surfaceKind : "desktop"));
+            lua_setfield(L, -2, "surface");
+            return 1;
+        }, &arguments, 1, error);
+    return pushed ? 1 : DeferLuaError(caller, error);
+}
+
+static int lua_WidgetContext(lua_State* L)
+{
+    const int result = LuaWidgetContextWithDeferredError(L);
+    return result < 0 ? lua_error(L) : result;
 }
 
 static int lua_WidgetInfo(lua_State* L)
@@ -10425,7 +10462,7 @@ static ID2D1Bitmap1* LoadImageBitmap(
     return result;
 }
 
-static void ReleasePackageImageResources(
+static void ReleasePackageImageResourcesUnprotected(
     D2DState* state, lua_State* luaState)
 {
     if (!state || !luaState) return;
@@ -10455,9 +10492,21 @@ static void ReleasePackageImageResources(
         }
     }
     lua_pop(luaState, 1);
-    lua_createtable(luaState, 0, 0);
+    lua_pushnil(luaState);
     lua_setfield(luaState, LUA_REGISTRYINDEX,
         "__widget_resource_content_keys");
+}
+
+static void ReleasePackageImageResources(D2DState* state, lua_State* luaState)
+{
+    if (!state || !luaState) return;
+    std::string error;
+    (void)snowdesktop::lua_runtime::ProtectedHostCall(luaState,
+        +[](lua_State* inner) {
+            ReleasePackageImageResourcesUnprotected(
+                static_cast<D2DState*>(lua_touserdata(inner, 1)), inner);
+            return 0;
+        }, state, 0, error);
 }
 
 static ID2D1Bitmap1* LoadRuntimeImageBitmap(
@@ -15292,6 +15341,13 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 completion.error = "taskResultUnavailable";
             }
         }
+        std::vector<std::string> filesystemPickerNames;
+        if (completion.ok && filesystemPickerResult)
+        {
+            filesystemPickerNames.reserve(filesystemPickerResult->size());
+            for (const auto& entry : *filesystemPickerResult)
+                filesystemPickerNames.push_back(WidgetWideToUtf8(entry.path.filename().wstring()));
+        }
         snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
             trustedGestureState_, false);
         (void)InvokeLifecycleEvent(*widget, "task.complete",
@@ -15303,7 +15359,7 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                 notificationCompletion, locationTask, locationResult, networkTask,
                 networkResult, clipboardReadTask,
                 clipboardResult, filesystemPickerTask,
-                filesystemPickerResult, filesystemDataTask,
+                filesystemPickerResult, &filesystemPickerNames, filesystemDataTask,
                 filesystemTaskResult](lua_State* eventState) {
                 lua_pushinteger(eventState,
                     static_cast<lua_Integer>(completion.id));
@@ -15447,7 +15503,8 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                     else if (filesystemPickerTask)
                     {
                         const auto pushSelection = [](lua_State* state,
-                            const snowdesktop::widget_runtime::WidgetFilesystemHandleEntry& entry) {
+                            const snowdesktop::widget_runtime::WidgetFilesystemHandleEntry& entry,
+                            const std::string& name) {
                             lua_createtable(state, 0, 4);
                             lua_pushlstring(state, entry.handle.data(), entry.handle.size());
                             lua_setfield(state, -2, "handle");
@@ -15457,18 +15514,16 @@ void WidgetEngine::ApplyWidgetTaskBrokerActions()
                             const auto access = snowdesktop::widget_runtime::WidgetFilesystemHandleStore::AccessName(entry.access);
                             lua_pushlstring(state, access.data(), access.size());
                             lua_setfield(state, -2, "access");
-                            const auto name = WidgetWideToUtf8(entry.path.filename().wstring());
                             lua_pushlstring(state, name.data(), name.size());
                             lua_setfield(state, -2, "name");
                         };
                         // Preserve the legacy single selection fields; items is additive.
-                        pushSelection(eventState, filesystemPickerResult->front());
+                        pushSelection(eventState, filesystemPickerResult->front(), filesystemPickerNames.front());
                         lua_createtable(eventState, static_cast<int>(filesystemPickerResult->size()), 0);
-                        int index = 1;
-                        for (const auto& entry : *filesystemPickerResult)
+                        for (std::size_t index = 0; index < filesystemPickerResult->size(); ++index)
                         {
-                            pushSelection(eventState, entry);
-                            lua_rawseti(eventState, -2, index++);
+                            pushSelection(eventState, (*filesystemPickerResult)[index], filesystemPickerNames[index]);
+                            lua_rawseti(eventState, -2, static_cast<lua_Integer>(index + 1));
                         }
                         lua_setfield(eventState, -2, "items");
                     }
@@ -16130,13 +16185,26 @@ bool WidgetEngine::InvokeLifecycleEvent(LuaWidget& widget,
     snowdesktop::lua_runtime::StackGuard stackGuard(widget.state);
     SetWidgetRectContext(d2dState_, BoundsForSurface(
         widget, CurrentWidgetSurface(d2dState_)));
-    lua_createtable(widget.state, 0, 10);
-    lua_pushstring(widget.state, kind);
-    lua_setfield(widget.state, -2, "kind");
-    if (pushFields) pushFields(widget.state);
-
     bool invoked = false;
     std::string error;
+    struct EventArguments
+    {
+        const char* kind;
+        const std::function<void(lua_State*)>* fields;
+    } arguments{kind, &pushFields};
+    if (!snowdesktop::lua_runtime::ProtectedHostCall(widget.state,
+            +[](lua_State* inner) {
+                const auto* args = static_cast<EventArguments*>(lua_touserdata(inner, 1));
+                lua_createtable(inner, 0, 10);
+                lua_pushstring(inner, args->kind);
+                lua_setfield(inner, -2, "kind");
+                if (*args->fields) (*args->fields)(inner);
+                return 1;
+            }, &arguments, 1, error))
+    {
+        RuntimeRecordError(widget.widgetId, error);
+        return false;
+    }
     const auto pushContext = +[](lua_State* lifecycleState) {
         (void)lua_WidgetContext(lifecycleState);
     };
@@ -22422,6 +22490,44 @@ void WidgetEngine::CancelInteractionPointerPress(std::string_view surface)
     }
 }
 
+static bool PushProtectedMenuField(lua_State* state, int tableIndex,
+    const char* field, std::chrono::steady_clock::time_point deadline,
+    std::string& error)
+{
+    // Menu descriptors are user-owned tables. Preserve __index/string
+    // conversion semantics, but keep their errors and execution budget inside
+    // Lua while native item/vector owners remain on the calling C++ stack.
+    const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    if (remaining.count() <= 0)
+    {
+        error = "Widget menu descriptor execution quota exceeded";
+        return false;
+    }
+    struct FieldArguments
+    {
+        const char* name;
+        std::chrono::milliseconds remaining;
+    } arguments{field, remaining};
+    return snowdesktop::lua_runtime::ProtectedHostCall(state,
+        +[](lua_State* inner) {
+            const auto* input = static_cast<FieldArguments*>(lua_touserdata(inner, 1));
+            lua_pushcfunction(inner, +[](lua_State* fieldState) {
+                const auto* fieldInput = static_cast<FieldArguments*>(lua_touserdata(fieldState, 2));
+                lua_getfield(fieldState, 1, fieldInput->name);
+                if (lua_type(fieldState, -1) == LUA_TNUMBER)
+                    (void)lua_tolstring(fieldState, -1, nullptr);
+                return 1;
+            });
+            lua_pushvalue(inner, 2);
+            lua_pushvalue(inner, 1);
+            if (snowdesktop::lua_runtime::ProtectedCall(inner, 2, 1,
+                    snowdesktop::lua_runtime::kDefaultInstructionBudget, input->remaining) != LUA_OK)
+                return lua_error(inner);
+            return 1;
+        }, &arguments, 1, error, tableIndex);
+}
+
 std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
     const std::wstring& widgetId, int x, int y,
     std::string_view surface, bool componentScopeOnly)
@@ -22449,27 +22555,38 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
             normalizedSurface.c_str());
         snowdesktop::lua_runtime::StackGuard stackGuard(state);
         SetWidgetRectContext(d2dState_, BoundsForSurface(w, surface));
-        lua_createtable(state, 0, 6);
-        lua_pushlstring(state, requestAction.id.data(),
-            requestAction.id.size());
-        lua_setfield(state, -2, "id");
-        PushInteractionValue(state, requestAction.value);
-        lua_setfield(state, -2, "value");
-        lua_pushlstring(state, targetKey.data(), targetKey.size());
-        lua_setfield(state, -2, "targetKey");
-        lua_pushlstring(state, surface.data(), surface.size());
-        lua_setfield(state, -2, "surface");
-        lua_pushliteral(state, "pointer");
-        lua_setfield(state, -2, "source");
-        lua_pushstring(state,
-            requestAction.contextMenuScope ==
-                    snowdesktop::widget_runtime::InteractionAction::
-                        ContextMenuScope::Component
-                ? "component" : "element");
-        lua_setfield(state, -2, "scope");
-
         bool invoked = false;
         std::string error;
+        struct MenuRequestArguments
+        {
+            const snowdesktop::widget_runtime::InteractionAction* action;
+            const std::string* targetKey;
+            std::string_view surface;
+        } arguments{&requestAction, &targetKey, surface};
+        if (!snowdesktop::lua_runtime::ProtectedHostCall(state,
+                +[](lua_State* inner) {
+                    const auto& input = *static_cast<MenuRequestArguments*>(lua_touserdata(inner, 1));
+                    lua_createtable(inner, 0, 6);
+                    lua_pushlstring(inner, input.action->id.data(), input.action->id.size());
+                    lua_setfield(inner, -2, "id");
+                    PushInteractionValue(inner, input.action->value);
+                    lua_setfield(inner, -2, "value");
+                    lua_pushlstring(inner, input.targetKey->data(), input.targetKey->size());
+                    lua_setfield(inner, -2, "targetKey");
+                    lua_pushlstring(inner, input.surface.data(), input.surface.size());
+                    lua_setfield(inner, -2, "surface");
+                    lua_pushliteral(inner, "pointer");
+                    lua_setfield(inner, -2, "source");
+                    lua_pushstring(inner, input.action->contextMenuScope ==
+                        snowdesktop::widget_runtime::InteractionAction::ContextMenuScope::Component
+                            ? "component" : "element");
+                    lua_setfield(inner, -2, "scope");
+                    return 1;
+                }, &arguments, 1, error))
+        {
+            RuntimeRecordError(widgetId, error);
+            return result;
+        }
         const auto pushContext = +[](lua_State* lifecycleState) {
             (void)lua_WidgetContext(lifecycleState);
         };
@@ -22493,6 +22610,10 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
         std::unordered_set<std::string> ids;
         std::size_t descriptorCount = 0;
         std::string menuError;
+        const auto descriptorDeadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(100);
+        const auto pushField = [&](int index, const char* field) {
+            return PushProtectedMenuField(state, index, field, descriptorDeadline, menuError);
+        };
         std::function<bool(int, int, std::vector<LuaWidgetMenuItem>&)>
             parseMenuItems;
         parseMenuItems = [&](int tableIndex, int depth,
@@ -22516,7 +22637,7 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                 ++descriptorCount;
 
                 LuaWidgetMenuItem item;
-                lua_getfield(state, -1, "type");
+                if (!pushField(-1, "type")) return false;
                 item.separator = lua_isstring(state, -1) &&
                     std::strcmp(lua_tostring(state, -1), "separator") == 0;
                 lua_pop(state, 1);
@@ -22527,26 +22648,34 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                     continue;
                 }
 
-                lua_getfield(state, -1, "id");
+                if (!pushField(-1, "id")) return false;
                 if (lua_isstring(state, -1))
                     item.actionId = lua_tostring(state, -1);
                 lua_pop(state, 1);
-                lua_getfield(state, -1, "label");
+                if (!pushField(-1, "label")) return false;
                 if (lua_isstring(state, -1))
                     item.label = lua_tostring(state, -1);
                 lua_pop(state, 1);
-                lua_getfield(state, -1, "icon");
+                if (!pushField(-1, "icon")) return false;
                 if (lua_isstring(state, -1))
                     item.icon = lua_tostring(state, -1);
                 lua_pop(state, 1);
-                lua_getfield(state, -1, "iconFont");
+                if (!pushField(-1, "iconFont")) return false;
                 if (lua_isstring(state, -1))
                     item.iconFont = lua_tostring(state, -1);
                 lua_pop(state, 1);
-                lua_getfield(state, -1, "image");
+                if (!pushField(-1, "image")) return false;
                 if (!lua_isnil(state, -1))
                 {
-                    const auto* handle = TestResourceHandle(state, -1);
+                    if (!snowdesktop::lua_runtime::ProtectedHostCall(state,
+                            +[](lua_State* inner) {
+                                auto* resource = TestResourceHandle(inner, 2);
+                                lua_pushlightuserdata(inner, resource);
+                                return 1;
+                            }, nullptr, 1, menuError, -1)) return false;
+                    const auto* handle = static_cast<const snowdesktop::widget_runtime::LuaResourceHandle*>(
+                        lua_touserdata(state, -1));
+                    lua_pop(state, 1);
                     if (!handle || handle->type != LuaResourceType::Image ||
                         snowdesktop::widget_runtime::
                             IsWidgetRuntimeImageToken(handle->name))
@@ -22564,11 +22693,11 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                         "Widget menu items cannot combine icon and image";
                     return false;
                 }
-                lua_getfield(state, -1, "enabled");
+                if (!pushField(-1, "enabled")) return false;
                 item.enabled = lua_isnil(state, -1) ||
                     lua_toboolean(state, -1) != 0;
                 lua_pop(state, 1);
-                lua_getfield(state, -1, "checked");
+                if (!pushField(-1, "checked")) return false;
                 item.checked = lua_toboolean(state, -1) != 0;
                 lua_pop(state, 1);
                 if (item.label.empty() || item.label.size() > 512)
@@ -22578,7 +22707,7 @@ std::vector<LuaWidgetMenuItem> WidgetEngine::GetContextMenu(
                     return false;
                 }
 
-                lua_getfield(state, -1, "children");
+                if (!pushField(-1, "children")) return false;
                 const bool hasChildren = lua_istable(state, -1);
                 if (!hasChildren && !lua_isnil(state, -1))
                 {
@@ -33405,25 +33534,28 @@ struct LuaStorageTransactionHandle
         nullptr;
 };
 
-static snowdesktop::widget_runtime::WidgetStorageTransaction*
-ActiveLuaStorageTransaction(lua_State* state)
+static LuaStorageTransactionHandle* ActiveLuaStorageTransactionHandle(lua_State* state)
 {
     lua_rawgetp(state, LUA_REGISTRYINDEX,
         &kActiveStorageTransactionRegistryKey);
-    auto* transaction = static_cast<
-        snowdesktop::widget_runtime::WidgetStorageTransaction*>(
-            lua_touserdata(state, -1));
+    auto* handle = static_cast<LuaStorageTransactionHandle*>(lua_touserdata(state, -1));
     lua_pop(state, 1);
-    return transaction;
+    return handle;
 }
 
-static void SetActiveLuaStorageTransaction(lua_State* state,
-    snowdesktop::widget_runtime::WidgetStorageTransaction* transaction)
+static snowdesktop::widget_runtime::WidgetStorageTransaction*
+ActiveLuaStorageTransaction(lua_State* state)
 {
-    if (transaction)
-        lua_pushlightuserdata(state, transaction);
-    else
-        lua_pushnil(state);
+    const auto* handle = ActiveLuaStorageTransactionHandle(state);
+    return handle ? handle->transaction : nullptr;
+}
+
+static void ClearActiveLuaStorageTransaction(lua_State* state)
+{
+    auto* handle = ActiveLuaStorageTransactionHandle(state);
+    if (!handle) return;
+    handle->transaction = nullptr;
+    lua_pushnil(state);
     lua_rawsetp(state, LUA_REGISTRYINDEX,
         &kActiveStorageTransactionRegistryKey);
 }
@@ -33490,7 +33622,7 @@ static LuaStorageTransactionHandle* CheckStorageTransactionHandle(
     auto* handle = static_cast<LuaStorageTransactionHandle*>(
         luaL_checkudata(state, 1, kStorageTransactionMetatable));
     if (!handle || !handle->transaction ||
-        ActiveLuaStorageTransaction(state) != handle->transaction)
+        ActiveLuaStorageTransactionHandle(state) != handle)
     {
         luaL_error(state, "storage transaction is closed");
         return nullptr;
@@ -33672,8 +33804,11 @@ static void PushStorageTransactionHandle(lua_State* state,
     auto* handle = static_cast<LuaStorageTransactionHandle*>(
         lua_newuserdatauv(state, sizeof(LuaStorageTransactionHandle), 0));
     handle->transaction = transaction;
-    if (luaL_newmetatable(state, kStorageTransactionMetatable) != 0)
+    luaL_getmetatable(state, kStorageTransactionMetatable);
+    if (lua_isnil(state, -1))
     {
+        lua_pop(state, 1);
+        lua_createtable(state, 0, 2);
         lua_newtable(state);
         lua_pushcfunction(state, lua_StorageTransactionGet);
         lua_setfield(state, -2, "get");
@@ -33684,6 +33819,10 @@ static void PushStorageTransactionHandle(lua_State* state,
         lua_setfield(state, -2, "__index");
         lua_pushboolean(state, 0);
         lua_setfield(state, -2, "__metatable");
+        // Publish only a complete metatable. An allocation failure above must
+        // not leave a half-initialized handle type for the next transaction.
+        lua_pushvalue(state, -1);
+        lua_setfield(state, LUA_REGISTRYINDEX, kStorageTransactionMetatable);
     }
     lua_setmetatable(state, -2);
 }
@@ -34067,29 +34206,103 @@ static int lua_LayoutBarHeight(lua_State* L)
     return 1;
 }
 
+static bool PushProtectedLuaString(lua_State* state, std::string_view text)
+{
+    if (!lua_checkstack(state, 2))
+    {
+        // This helper is only called inside Lua C entry points. Clearing
+        // their arguments frees the minimum C frame slots without allocating.
+        lua_settop(state, 0);
+        lua_pushnil(state);
+        return false;
+    }
+    lua_pushcfunction(state, +[](lua_State* inner) {
+        const auto* value = static_cast<std::string_view*>(lua_touserdata(inner, 1));
+        lua_pushlstring(inner, value->data(), value->size());
+        return 1;
+    });
+    lua_pushlightuserdata(state, &text);
+    return lua_pcall(state, 1, 1, 0) == LUA_OK;
+}
+
+static int DeferLuaError(lua_State* state, std::string_view message)
+{
+    (void)PushProtectedLuaString(state, message);
+    return -1;
+}
+
+static int LuaL10nTrWithDeferredError(lua_State* L)
+{
+    constexpr std::size_t maximumBytes = 64 * 1024;
+    constexpr int maximumArguments = 64;
+    const int argumentCount = lua_gettop(L) - 1;
+    std::size_t keyLength = 0;
+    (void)luaL_checklstring(L, 1, &keyLength);
+    if (keyLength > maximumBytes || argumentCount > maximumArguments)
+        return luaL_error(L, "l10n.tr: template or argument quota exceeded");
+    if (!lua_checkstack(L, argumentCount + 4))
+        return luaL_error(L, "l10n.tr: not enough Lua stack space");
+    lua_pushvalue(L, 1);
+    lua_rawget(L, lua_upvalueindex(1));
+    if (lua_type(L, -1) != LUA_TSTRING) { lua_pop(L, 1); lua_pushvalue(L, 1); }
+    std::size_t templateLength = 0;
+    const char* templateBytes = lua_tolstring(L, -1, &templateLength);
+    if (templateLength > maximumBytes)
+        return luaL_error(L, "l10n.tr: template quota exceeded");
+    const std::string_view pattern(templateBytes, templateLength);
+    std::array<std::string_view, maximumArguments> values{};
+    std::size_t argumentBytes = 0;
+    // Convert before constructing owning C++ values. __tostring and Lua
+    // allocation errors may longjmp; converted strings stay pinned on-stack.
+    for (int index = 0; index < argumentCount; ++index)
+    {
+        std::size_t length = 0;
+        const char* value = luaL_tolstring(L, index + 2, &length);
+        if (length > maximumBytes - argumentBytes)
+            return luaL_error(L, "l10n.tr: argument byte quota exceeded");
+        argumentBytes += length;
+        values[static_cast<std::size_t>(index)] = {value, length};
+    }
+    try
+    {
+        std::string result;
+        result.reserve(pattern.size());
+        for (std::size_t position = 0; position < pattern.size();)
+        {
+            std::string_view next = pattern.substr(position, 1);
+            std::size_t consumed = 1;
+            if (pattern[position] == '{')
+            {
+                std::size_t end = position + 1;
+                unsigned index = 0;
+                while (end < pattern.size() && end - position <= 2 &&
+                    pattern[end] >= '0' && pattern[end] <= '9')
+                    index = index * 10 + static_cast<unsigned>(pattern[end++] - '0');
+                if (end > position + 1 && end < pattern.size() && pattern[end] == '}' &&
+                    (end == position + 2 || pattern[position + 1] != '0') &&
+                    index < static_cast<unsigned>(argumentCount))
+                {
+                    next = values[index];
+                    consumed = end - position + 1;
+                }
+            }
+            if (next.size() > maximumBytes - result.size())
+                return DeferLuaError(L, "l10n.tr: output exceeds 65536 bytes");
+            result.append(next);
+            position += consumed;
+        }
+        return PushProtectedLuaString(L, result) ? 1 : -1;
+    }
+    catch (const std::exception&)
+    {
+        return DeferLuaError(L, "l10n.tr: native formatting allocation failed");
+    }
+}
+
 static int lua_L10nTr(lua_State* L)
 {
-    const char* key = luaL_checkstring(L, 1);
-    lua_getfield(L, lua_upvalueindex(1), key);
-    std::string result = lua_isstring(L, -1) ? lua_tostring(L, -1) : key;
-    lua_pop(L, 1);
-    const int argumentCount = lua_gettop(L);
-    for (int index = 2; index <= argumentCount; ++index)
-    {
-        size_t length = 0;
-        const char* value = luaL_tolstring(L, index, &length);
-        const std::string placeholder =
-            "{" + std::to_string(index - 2) + "}";
-        size_t position = 0;
-        while ((position = result.find(placeholder, position)) != std::string::npos)
-        {
-            result.replace(position, placeholder.size(), value, length);
-            position += length;
-        }
-        lua_pop(L, 1);
-    }
-    lua_pushlstring(L, result.data(), result.size());
-    return 1;
+    const int result = LuaL10nTrWithDeferredError(L);
+    return result < 0 ? lua_error(L) : result;
 }
 
 static int lua_L10nLanguage(lua_State* L)
@@ -34246,7 +34459,7 @@ static int lua_LayoutRpxY(lua_State* L)
     return 1;
 }
 
-static int lua_StorageTransaction(lua_State* state)
+static int LuaStorageTransactionWithDeferredError(lua_State* state)
 {
     if (lua_gettop(state) != 1 || !lua_isfunction(state, 1))
         return luaL_error(state,
@@ -34261,26 +34474,36 @@ static int lua_StorageTransaction(lua_State* state)
     auto& activeStorage = ActiveStorage();
     snowdesktop::widget_runtime::WidgetStorageTransaction transaction(
         activeStorage, BoundStoragePrefix(state));
-    SetActiveLuaStorageTransaction(state, &transaction);
-    lua_pushvalue(state, 1);
-    PushStorageTransactionHandle(state, &transaction);
-    const int callbackResult = lua_pcall(state, 1, 0, 0);
-    SetActiveLuaStorageTransaction(state, nullptr);
-    if (callbackResult != LUA_OK)
-        return lua_error(state);
-
     std::string error;
+    const bool callbackSucceeded = snowdesktop::lua_runtime::ProtectedHostCall(state,
+        +[](lua_State* inner) {
+            auto* active = static_cast<snowdesktop::widget_runtime::WidgetStorageTransaction*>(
+                lua_touserdata(inner, 1));
+            lua_pushvalue(inner, 2);
+            PushStorageTransactionHandle(inner, active);
+            // Root the actual userdata, not the stack transaction address.
+            // Its identity cannot be reused while an old handle is retained.
+            lua_pushvalue(inner, -1);
+            lua_rawsetp(inner, LUA_REGISTRYINDEX, &kActiveStorageTransactionRegistryKey);
+            lua_call(inner, 1, 0);
+            return 0;
+        }, &transaction, 0, error, 1);
+    ClearActiveLuaStorageTransaction(state);
+    if (!callbackSucceeded) return DeferLuaError(state, error);
+
     if (!transaction.ValidateCommit(error))
-        return luaL_error(state, "storage.transaction: %s", error.c_str());
+        return DeferLuaError(state, "storage.transaction: " + error);
     const bool changed = transaction.Changed();
     if (!changed)
     {
         lua_pushboolean(state, 0);
         return 1;
     }
-    if (const int rejected = RejectStorageWriteFrequency(
-            state, "storage.transaction"))
-        return rejected;
+    if (!snowdesktop::lua_runtime::ProtectedHostCall(state,
+            +[](lua_State* inner) {
+                return RejectStorageWriteFrequency(inner, "storage.transaction");
+            }, nullptr, 0, error))
+        return DeferLuaError(state, error);
 
     auto candidate = transaction.TakeCandidate();
     activeStorage.swap(candidate);
@@ -34288,11 +34511,17 @@ static int lua_StorageTransaction(lua_State* state)
         !SaveStorageFile())
     {
         activeStorage.swap(candidate);
-        return luaL_error(state,
+        return DeferLuaError(state,
             "storage.transaction: failed to persist storage");
     }
     lua_pushboolean(state, 1);
     return 1;
+}
+
+static int lua_StorageTransaction(lua_State* state)
+{
+    const int result = LuaStorageTransactionWithDeferredError(state);
+    return result < 0 ? lua_error(state) : result;
 }
 
 static int LuaL10nOptions(lua_State* L, int index)

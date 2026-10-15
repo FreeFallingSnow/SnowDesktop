@@ -1766,12 +1766,15 @@ bool DockContainer::ScrollByWheelDelta(POINT pointer, int wheelDelta)
 std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
 {
     std::vector<std::unique_ptr<Slot>> slots;
-    entryItems_.clear();
     runningItems_.clear();
     frequentItems_.clear();
     RECT bounds = GetBounds();
     scrollOffset_ = std::clamp(scrollOffset_, 0, GetMaxScrollOffset(bounds));
     const size_t count = entries_ ? entries_->size() : 0;
+    // Scrolling changes slot geometry while press/drag sessions still own
+    // pointers to the pinned entries. Keep their wrappers while the entry
+    // array is unchanged; model rebuilds rebind sessions separately.
+    entryItems_.resize(count);
     const size_t fixedCount = SortableEntryCount();
     const size_t folderCount = FolderEntryCount();
     const size_t layoutFixedCount = fixedCount + EmptyRunningDragFixedSlots();
@@ -1893,10 +1896,10 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
         else
             cell = makeCell(i + leadingControlSlots, leadingControlOffset);
         auto slot = std::make_unique<Slot>(this, cell, i);
-        auto item = std::make_unique<DockEntryItem>(app_, this, i);
-        item->SetBounds(cell);
-        slot->SetItem(item.get());
-        entryItems_.push_back(std::move(item));
+        if (!entryItems_[i])
+            entryItems_[i] = std::make_unique<DockEntryItem>(app_, this, i);
+        entryItems_[i]->SetBounds(cell);
+        slot->SetItem(entryItems_[i].get());
         slots.push_back(std::move(slot));
     }
 

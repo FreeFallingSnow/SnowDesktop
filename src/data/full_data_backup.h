@@ -22,6 +22,23 @@ inline constexpr std::uint64_t kMaxFileBytes =
     1ull * 1024ull * 1024ull * 1024ull;
 inline constexpr std::size_t kMaxFiles = 100000;
 
+namespace detail
+{
+// Stored ZIP32 archives contain an EOCD plus a local header and central
+// directory entry for each file. Include both copies of each UTF-8 name.
+inline bool AppendStoreZipSize(std::uint64_t& bytes,
+    std::uint64_t payloadBytes, std::size_t nameBytes) noexcept
+{
+    if (nameBytes > 65535 || payloadBytes > kMaxArchiveBytes ||
+        bytes > kMaxArchiveBytes) return false;
+    const std::uint64_t overhead = 76 + 2 * nameBytes;
+    if (overhead > kMaxArchiveBytes - bytes ||
+        payloadBytes > kMaxArchiveBytes - bytes - overhead) return false;
+    bytes += overhead + payloadBytes;
+    return true;
+}
+}
+
 struct BackupInfo
 {
     std::wstring id;

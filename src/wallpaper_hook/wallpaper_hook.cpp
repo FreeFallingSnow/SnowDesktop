@@ -1,4 +1,6 @@
 #include "wallpaper_hook_protocol.h"
+#include "wallpaper_hook_worker.h"
+#include "shared_frame_access.h"
 
 #include <MinHook.h>
 #include <tlhelp32.h>
@@ -52,6 +54,7 @@ struct RuntimeSlot {
 
 HMODULE g_module = nullptr;
 HANDLE g_mapping = nullptr;
+HANDLE g_controlEvent = nullptr;
 SharedState* g_state = nullptr;
 PresentFn g_present = nullptr;
 Present1Fn g_present1 = nullptr;
@@ -63,6 +66,7 @@ D3D9ResetFn g_d3d9Reset = nullptr;
 D3D9ResetExFn g_d3d9ResetEx = nullptr;
 SRWLOCK g_slotLock = SRWLOCK_INIT;
 std::array<RuntimeSlot, kMaxFrameSlots> g_slots;
+bool g_minHookInitialized = false;
 
 struct ActiveHook {
     ActiveHook()
@@ -282,6 +286,9 @@ void ClearPublishedSlot(std::size_t index)
     published.width = 0;
     published.height = 0;
     published.format = static_cast<std::uint32_t>(DXGI_FORMAT_UNKNOWN);
+    InterlockedExchange(&published.completed_request_serial, 0);
+    InterlockedExchange64(&published.frame_number, 0);
+    InterlockedExchange64(&published.consumed_frame_number, 0);
     InterlockedIncrement(&published.generation);
 }
 
@@ -633,6 +640,11 @@ void CaptureD3D9Device(IDirect3DDevice9* device,
         return;
 
     AcquireSRWLockExclusive(&g_slotLock);
+    if (g_state->shutdown_requested || !g_state->capture_enabled)
+    {
+        ReleaseSRWLockExclusive(&g_slotLock);
+        return;
+    }
     const int slotIndex = FindOrCreateD3D9Slot(device, presentedSwapChain,
         outputWindow, className);
     if (slotIndex < 0)
@@ -748,6 +760,11 @@ void CaptureSwapChain(IDXGISwapChain* chain)
         return;
 
     AcquireSRWLockExclusive(&g_slotLock);
+    if (g_state->shutdown_requested || !g_state->capture_enabled)
+    {
+        ReleaseSRWLockExclusive(&g_slotLock);
+        return;
+    }
     const int slotIndex = FindOrCreateSlot(chain, outputWindow, className);
     if (slotIndex < 0)
     {
@@ -761,6 +778,8 @@ void CaptureSwapChain(IDXGISwapChain* chain)
     published.desktop_rect = desktopRect;
     wcsncpy_s(published.window_class, className, _TRUNCATE);
 
+    if (InterlockedExchange(&published.recreate_requested, 0) != 0)
+        ReleaseRuntimeSlot(index, false);
     const LONG requestSerial = g_state->request_serial;
     const LONG observedInterval = g_state->requested_interval_ms;
     const DWORD interval = static_cast<DWORD>(std::max<LONG>(0, observedInterval));
@@ -793,38 +812,43 @@ void CaptureSwapChain(IDXGISwapChain* chain)
         }
     }
 
-    const HRESULT acquireHr = runtime.keyedMutex->AcquireSync(0, 0);
+    const HRESULT acquireHr = UseSharedFrame(
+        [&] { return runtime.keyedMutex->AcquireSync(0, 0); },
+        [&] { runtime.keyedMutex->ReleaseSync(1); },
+        [&] {
+            ComPtr<ID3D11Device> device;
+            source->GetDevice(&device);
+            ComPtr<ID3D11DeviceContext> context;
+            device->GetImmediateContext(&context);
+            if (sourceDesc.SampleDesc.Count > 1)
+            {
+                context->ResolveSubresource(runtime.resolveTexture.Get(), 0,
+                    source.Get(), 0, sourceDesc.Format);
+                context->CopyResource(runtime.sharedTexture.Get(), runtime.resolveTexture.Get());
+            }
+            else
+            {
+                context->CopyResource(runtime.sharedTexture.Get(), source.Get());
+            }
+            return S_OK;
+        },
+        [&] { ReleaseRuntimeSlot(index, false); });
     if (acquireHr == WAIT_TIMEOUT)
     {
         InterlockedIncrement64(&published.skipped_frames);
         ReleaseSRWLockExclusive(&g_slotLock);
         return;
     }
-    if (FAILED(acquireHr))
+    if (acquireHr != S_OK)
     {
-        SetFailure(acquireHr);
+        if (acquireHr != static_cast<HRESULT>(WAIT_ABANDONED))
+            SetFailure(acquireHr);
         ReleaseSRWLockExclusive(&g_slotLock);
         return;
-    }
-
-    ComPtr<ID3D11Device> device;
-    source->GetDevice(&device);
-    ComPtr<ID3D11DeviceContext> context;
-    device->GetImmediateContext(&context);
-    if (sourceDesc.SampleDesc.Count > 1)
-    {
-        context->ResolveSubresource(runtime.resolveTexture.Get(), 0, source.Get(), 0,
-            sourceDesc.Format);
-        context->CopyResource(runtime.sharedTexture.Get(), runtime.resolveTexture.Get());
-    }
-    else
-    {
-        context->CopyResource(runtime.sharedTexture.Get(), source.Get());
     }
     // ReleaseSync establishes the cross-device producer/consumer ordering.
     // An explicit Flush here forces a command-buffer submission inside the
     // wallpaper's Present path and carries significant per-frame overhead.
-    runtime.keyedMutex->ReleaseSync(1);
     runtime.lastCopyTick = now;
     InterlockedExchange(&published.completed_request_serial, requestSerial);
     InterlockedIncrement64(&published.frame_number);
@@ -1050,25 +1074,18 @@ HRESULT DiscoverD3D9HookTargets(void** present, void** presentEx,
     return hr;
 }
 
-DWORD WINAPI WorkerThread(void*)
+bool CreateOrReuseHook(void* target, void* detour, void** original)
 {
-    wchar_t mappingName[128]{};
-    MakeMappingName(GetCurrentProcessId(), mappingName);
-    g_mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
-        static_cast<DWORD>(sizeof(SharedState)), mappingName);
-    if (!g_mapping)
-        return 1;
-    g_state = static_cast<SharedState*>(MapViewOfFile(g_mapping, FILE_MAP_ALL_ACCESS,
-        0, 0, sizeof(SharedState)));
-    if (!g_state)
-        return 2;
-    ZeroMemory(g_state, sizeof(*g_state));
-    g_state->magic = kMagic;
-    g_state->version = kVersion;
-    g_state->process_id = GetCurrentProcessId();
-    g_state->status = static_cast<LONG>(Status::starting);
-    InterlockedExchange64(&g_state->producer_heartbeat,
-        static_cast<LONG64>(GetTickCount64()));
+    const MH_STATUS status = MH_CreateHook(target, detour, original);
+    return status == MH_OK || status == MH_ERROR_ALREADY_CREATED;
+}
+
+HRESULT InitializeCaptureHooks()
+{
+    HMODULE pinned = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+            GET_MODULE_HANDLE_EX_FLAG_PIN, reinterpret_cast<LPCWSTR>(g_module), &pinned))
+        return HRESULT_FROM_WIN32(GetLastError());
 
     void* present = nullptr;
     void* present1 = nullptr;
@@ -1076,8 +1093,7 @@ DWORD WINAPI WorkerThread(void*)
     const HRESULT discoverHr = DiscoverHookTargets(&present, &present1, &resizeBuffers);
     if (FAILED(discoverHr) || !present || !resizeBuffers)
     {
-        SetFailure(FAILED(discoverHr) ? discoverHr : E_NOINTERFACE);
-        return 3;
+        return FAILED(discoverHr) ? discoverHr : E_NOINTERFACE;
     }
 
     void* d3d9Present = nullptr;
@@ -1088,96 +1104,105 @@ DWORD WINAPI WorkerThread(void*)
     const HRESULT d3d9DiscoverHr = DiscoverD3D9HookTargets(&d3d9Present,
         &d3d9PresentEx, &d3d9SwapChainPresent, &d3d9Reset, &d3d9ResetEx);
 
-    if (MH_Initialize() != MH_OK ||
-        MH_CreateHook(present, &HookPresent, reinterpret_cast<void**>(&g_present)) != MH_OK ||
-        MH_CreateHook(resizeBuffers, &HookResizeBuffers,
-            reinterpret_cast<void**>(&g_resizeBuffers)) != MH_OK)
+    if (!g_minHookInitialized)
     {
-        SetFailure(E_FAIL);
-        return 4;
+        if (MH_Initialize() != MH_OK)
+            return E_FAIL;
+        g_minHookInitialized = true;
     }
+    if (!CreateOrReuseHook(present, reinterpret_cast<void*>(&HookPresent),
+            reinterpret_cast<void**>(&g_present)) ||
+        !CreateOrReuseHook(resizeBuffers, reinterpret_cast<void*>(&HookResizeBuffers),
+            reinterpret_cast<void**>(&g_resizeBuffers)))
+        return E_FAIL;
     if (present1)
     {
-        const MH_STATUS createStatus = MH_CreateHook(present1, &HookPresent1,
-            reinterpret_cast<void**>(&g_present1));
-        if (createStatus != MH_OK && createStatus != MH_ERROR_ALREADY_CREATED)
-        {
-            SetFailure(E_FAIL);
-            return 5;
-        }
+        if (!CreateOrReuseHook(present1, reinterpret_cast<void*>(&HookPresent1),
+                reinterpret_cast<void**>(&g_present1)))
+            return E_FAIL;
     }
     if (SUCCEEDED(d3d9DiscoverHr) && d3d9Present && d3d9Reset)
     {
-        if (MH_CreateHook(d3d9Present, &HookD3D9Present,
-                reinterpret_cast<void**>(&g_d3d9Present)) != MH_OK ||
-            MH_CreateHook(d3d9Reset, &HookD3D9Reset,
-                reinterpret_cast<void**>(&g_d3d9Reset)) != MH_OK)
-        {
-            SetFailure(E_FAIL);
-            return 6;
-        }
+        if (!CreateOrReuseHook(d3d9Present, reinterpret_cast<void*>(&HookD3D9Present),
+                reinterpret_cast<void**>(&g_d3d9Present)) ||
+            !CreateOrReuseHook(d3d9Reset, reinterpret_cast<void*>(&HookD3D9Reset),
+                reinterpret_cast<void**>(&g_d3d9Reset)))
+            return E_FAIL;
         if (d3d9SwapChainPresent &&
-            MH_CreateHook(d3d9SwapChainPresent, &HookD3D9SwapChainPresent,
-                reinterpret_cast<void**>(&g_d3d9SwapChainPresent)) != MH_OK)
-        {
-            SetFailure(E_FAIL);
-            return 7;
-        }
+            !CreateOrReuseHook(d3d9SwapChainPresent,
+                reinterpret_cast<void*>(&HookD3D9SwapChainPresent),
+                reinterpret_cast<void**>(&g_d3d9SwapChainPresent)))
+            return E_FAIL;
         if (d3d9PresentEx &&
-            MH_CreateHook(d3d9PresentEx, &HookD3D9PresentEx,
-                reinterpret_cast<void**>(&g_d3d9PresentEx)) != MH_OK)
-        {
-            SetFailure(E_FAIL);
-            return 8;
-        }
+            !CreateOrReuseHook(d3d9PresentEx, reinterpret_cast<void*>(&HookD3D9PresentEx),
+                reinterpret_cast<void**>(&g_d3d9PresentEx)))
+            return E_FAIL;
         if (d3d9ResetEx &&
-            MH_CreateHook(d3d9ResetEx, &HookD3D9ResetEx,
-                reinterpret_cast<void**>(&g_d3d9ResetEx)) != MH_OK)
+            !CreateOrReuseHook(d3d9ResetEx, reinterpret_cast<void*>(&HookD3D9ResetEx),
+                reinterpret_cast<void**>(&g_d3d9ResetEx)))
+            return E_FAIL;
+    }
+    return MH_EnableHook(MH_ALL_HOOKS) == MH_OK ? S_OK : E_FAIL;
+}
+
+struct CaptureHookOperations
+{
+    HRESULT Initialize() { return InitializeCaptureHooks(); }
+    HRESULT Disable()
+    {
+        const bool disabled = !g_minHookInitialized || MH_DisableHook(MH_ALL_HOOKS) == MH_OK;
+        AcquireSRWLockExclusive(&g_slotLock);
+        for (std::size_t i = 0; i < g_slots.size(); ++i)
+            ReleaseRuntimeSlot(i, true);
+        ReleaseSRWLockExclusive(&g_slotLock);
+        return disabled ? S_OK : E_FAIL;
+    }
+    ULONGLONG Now() const { return GetTickCount64(); }
+    bool Wait(DWORD milliseconds) const
+    {
+        if (milliseconds == 50)
         {
-            SetFailure(E_FAIL);
-            return 9;
+            // Idle workers have no periodic wakeups. A new preview explicitly
+            // signals this event after publishing its restart request.
+            if (WaitForSingleObject(g_controlEvent, INFINITE) == WAIT_FAILED)
+                Sleep(100);
         }
+        else
+            Sleep(milliseconds);
+        return true;
     }
-    if (MH_EnableHook(MH_ALL_HOOKS) != MH_OK)
-    {
-        SetFailure(E_FAIL);
-        return 10;
-    }
-    InterlockedExchange(&g_state->status, static_cast<LONG>(Status::hooked));
+};
 
-    // The preview receiver normally connects immediately and requests one
-    // frame. If an injector is interrupted before it can publish a heartbeat,
-    // unload instead of leaving an idle hook resident in Wallpaper Engine.
-    ULONGLONG lastConsumerTick = GetTickCount64();
-    while (!g_state->shutdown_requested)
+DWORD WINAPI WorkerThread(void*)
+{
+    wchar_t mappingName[128]{};
+    MakeMappingName(GetCurrentProcessId(), mappingName);
+    wchar_t controlName[128]{};
+    MakeControlEventName(GetCurrentProcessId(), controlName);
+    g_controlEvent = CreateEventW(nullptr, FALSE, FALSE, controlName);
+    if (!g_controlEvent)
+        FreeLibraryAndExitThread(g_module, 1);
+    g_mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE, 0,
+        static_cast<DWORD>(sizeof(SharedState)), mappingName);
+    const bool alreadyExists = g_mapping && GetLastError() == ERROR_ALREADY_EXISTS;
+    if (g_mapping && !alreadyExists)
+        g_state = static_cast<SharedState*>(MapViewOfFile(g_mapping,
+            FILE_MAP_ALL_ACCESS, 0, 0, sizeof(SharedState)));
+    if (!g_state)
     {
-        const ULONGLONG now = GetTickCount64();
-        InterlockedExchange64(&g_state->producer_heartbeat,
-            static_cast<LONG64>(now));
-        const auto consumerHeartbeat = static_cast<ULONGLONG>(
-            g_state->consumer_heartbeat);
-        if (consumerHeartbeat)
-            lastConsumerTick = consumerHeartbeat;
-        if (now - lastConsumerTick >= 10000)
-            break;
-        Sleep(100);
+        if (g_mapping) CloseHandle(g_mapping);
+        CloseHandle(g_controlEvent);
+        g_controlEvent = nullptr;
+        g_mapping = nullptr;
+        FreeLibraryAndExitThread(g_module, 1);
     }
-    InterlockedExchange(&g_state->status, static_cast<LONG>(Status::stopping));
-    InterlockedExchange(&g_state->capture_enabled, 0);
-    MH_DisableHook(MH_ALL_HOOKS);
-    for (int attempt = 0; attempt < 100 && g_state->active_hooks != 0; ++attempt)
-        Sleep(10);
-    MH_Uninitialize();
-
-    AcquireSRWLockExclusive(&g_slotLock);
-    for (std::size_t i = 0; i < g_slots.size(); ++i)
-        ReleaseRuntimeSlot(i, true);
-    ReleaseSRWLockExclusive(&g_slotLock);
-    UnmapViewOfFile(g_state);
-    g_state = nullptr;
-    CloseHandle(g_mapping);
-    g_mapping = nullptr;
-    FreeLibraryAndExitThread(g_module, 0);
+    ZeroMemory(g_state, sizeof(*g_state));
+    g_state->status = static_cast<LONG>(Status::starting);
+    g_state->magic = kMagic;
+    g_state->version = kVersion;
+    g_state->process_id = GetCurrentProcessId();
+    CaptureHookOperations operations;
+    return RunCaptureHookWorker(*g_state, operations);
 }
 
 } // namespace
@@ -1189,8 +1214,9 @@ BOOL APIENTRY DllMain(HMODULE module, DWORD reason, LPVOID)
         g_module = module;
         DisableThreadLibraryCalls(module);
         HANDLE thread = CreateThread(nullptr, 0, WorkerThread, nullptr, 0, nullptr);
-        if (thread)
-            CloseHandle(thread);
+        if (!thread)
+            return FALSE;
+        CloseHandle(thread);
     }
     return TRUE;
 }

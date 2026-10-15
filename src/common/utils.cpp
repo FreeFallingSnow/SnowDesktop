@@ -1,3 +1,4 @@
+#include "json_string.h"
 /**
  * @file utils.cpp
  * @brief 杂项工具函数实现
@@ -1626,41 +1627,14 @@ std::wstring Utf8ToWide(const std::string& value)
 /**
  * @brief 对宽字符串进行 JSON 转义，输出 UTF-8 格式字符串。
  *
- * 转义特殊字符：反斜杠、双引号、换行符、回车符、制表符。
+ * 转义反斜杠、双引号及所有 JSON 控制字符。
  *
  * @param value 要转义的原始宽字符串。
  * @return JSON 安全转义后的 UTF-8 字符串。
  */
 std::string JsonEscapeUtf8(const std::wstring& value)
 {
-    std::string input = WideToUtf8(value);
-    std::string output;
-    output.reserve(input.size() + 16);
-    for (unsigned char ch : input)
-    {
-        switch (ch)
-        {
-        case '\\':
-            output += "\\\\";
-            break;
-        case '"':
-            output += "\\\"";
-            break;
-        case '\n':
-            output += "\\n";
-            break;
-        case '\r':
-            output += "\\r";
-            break;
-        case '\t':
-            output += "\\t";
-            break;
-        default:
-            output.push_back(static_cast<char>(ch));
-            break;
-        }
-    }
-    return output;
+    return snowdesktop::json::EscapeString(WideToUtf8(value));
 }
 
 /**

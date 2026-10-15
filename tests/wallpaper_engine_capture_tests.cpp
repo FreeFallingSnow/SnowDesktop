@@ -1,10 +1,15 @@
 #include "../src/app/features/wallpaper_engine_capture.h"
 #include "platform/deployment_context.h"
+#include "wallpaper_hook/remote_injection_cleanup.h"
+#include "wallpaper_hook/shared_frame_access.h"
+#include "wallpaper_hook/wallpaper_hook_worker.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdlib>
 #include <iostream>
+#include <cwchar>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -33,10 +38,201 @@ void Check(bool condition, const char* message)
     }
 }
 
+void TestSharedSurfaceAccess()
+{
+    using snow::wallpaper_hook::UseSharedFrame;
+    for (const HRESULT acquire : { S_OK, static_cast<HRESULT>(WAIT_TIMEOUT),
+            static_cast<HRESULT>(WAIT_ABANDONED), E_FAIL, S_FALSE })
+    {
+        int copies = 0, releases = 0, recreations = 0;
+        const HRESULT result = UseSharedFrame([&] { return acquire; },
+            [&] { ++releases; }, [&] { ++copies; return S_OK; }, [&] { ++recreations; });
+        Check(result == acquire && copies == (acquire == S_OK ? 1 : 0) &&
+            releases == copies && recreations == (acquire == WAIT_ABANDONED ? 1 : 0),
+            "shared frame only copies/releases an owned surface; abandoned state requests recreation");
+    }
+    int generation = 1, copiedGeneration = 0, releases = 0;
+    const auto copy = [&] { copiedGeneration = generation; return S_OK; };
+    Check(UseSharedFrame([] { return static_cast<HRESULT>(WAIT_ABANDONED); },
+        [&] { ++releases; }, copy, [&] { ++generation; }) == WAIT_ABANDONED &&
+        copiedGeneration == 0 && releases == 0, "an abandoned generation never publishes a frame");
+    Check(UseSharedFrame([] { return S_OK; }, [&] { ++releases; }, copy,
+        [&] { ++generation; }) == S_OK && copiedGeneration == 2 && releases == 1,
+        "a rebuilt shared surface can publish the next requested frame");
+    Check(UseSharedFrame([] { return S_OK; }, [&] { ++releases; },
+        [] { return E_FAIL; }, [] {}) == E_FAIL && releases == 2,
+        "readback failure still releases the mutex it acquired");
+}
+
+struct WorkerFixture
+{
+    snow::wallpaper_hook::SharedState& state;
+    int failuresRemaining = 0;
+    bool disableFails = false;
+    int initializes = 0, disables = 0, idleObservations = 0;
+    ULONGLONG clock = 1;
+    HRESULT Initialize() { ++initializes; return failuresRemaining-- > 0 ? E_FAIL : S_OK; }
+    HRESULT Disable() { ++disables; return disableFails ? E_ACCESSDENIED : S_OK; }
+    ULONGLONG Now() const { return clock; }
+    bool Wait(DWORD milliseconds)
+    {
+        clock += milliseconds;
+        if (state.status == static_cast<LONG>(snow::wallpaper_hook::Status::hooked))
+        {
+            InterlockedExchange(&state.capture_enabled, 1);
+            InterlockedExchange(&state.shutdown_requested, 1);
+        }
+        else
+        {
+            ++idleObservations;
+            Check(state.capture_enabled == 0,
+                "failed or stopped capture disables publication even if entry disabling failed");
+            if (initializes >= 3)
+                return false;
+            InterlockedExchange(&state.shutdown_requested, snow::wallpaper_hook::kRestartRequested);
+        }
+        return true;
+    }
+};
+
+void TestWorkerRetryAndRetention(bool initializationFails = true)
+{
+    using namespace snow::wallpaper_hook;
+    for (const bool disableFails : { false, true })
+    {
+        SharedState state{};
+        // An original Present remains in flight across failure, stop and retry.
+        // The actual worker does not release its state or terminate at one second.
+        state.active_hooks = 1;
+        state.magic = kMagic;
+        WorkerFixture operations{ state };
+        operations.failuresRemaining = initializationFails ? 1 : 0;
+        operations.disableFails = disableFails;
+        RunCaptureHookWorker(state, operations);
+        Check(operations.initializes == 3 && operations.disables == 3 &&
+            operations.idleObservations == 3 && state.active_hooks == 1 && state.magic == kMagic,
+            "initialization failure and later shutdown keep a live worker/state for retry with callbacks in flight");
+        Check(state.status == static_cast<LONG>(disableFails ? Status::failed : Status::stopping),
+            "entry disabling failures are retained as failures, not claimed as successful teardown");
+        InterlockedDecrement(&state.active_hooks);
+    }
+}
+
+HANDLE remoteReadGate = nullptr;
+HANDLE remoteReadEntered = nullptr;
+std::atomic_bool remotePathRead = false;
+
+DWORD WINAPI DelayedPathReader(void* path)
+{
+    SetEvent(remoteReadEntered);
+    WaitForSingleObject(remoteReadGate, INFINITE);
+    MEMORY_BASIC_INFORMATION information{};
+    if (VirtualQuery(path, &information, sizeof(information)) && information.State == MEM_COMMIT)
+        remotePathRead = std::wcscmp(static_cast<const wchar_t*>(path), L"pending-library-path") == 0;
+    return remotePathRead ? 42 : 0;
+}
+
+void TestPendingInjectionArgument()
+{
+    remoteReadGate = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    remoteReadEntered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE process = OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+        FALSE, GetCurrentProcessId());
+    auto* path = static_cast<wchar_t*>(VirtualAllocEx(process, nullptr, 4096,
+        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    Check(remoteReadGate && remoteReadEntered && process && path, "isolated injection ownership fixture starts");
+    wcscpy_s(path, 2048, L"pending-library-path");
+    HANDLE thread = CreateThread(nullptr, 0, DelayedPathReader, path, 0, nullptr);
+    Check(thread && WaitForSingleObject(remoteReadEntered, 1000) == WAIT_OBJECT_0,
+        "controlled target waits before reading its native thread argument");
+    std::atomic_bool completed = false;
+    std::atomic_bool loaded = false;
+    HANDLE initialWaitDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE continueCleanup = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE holdingArgument = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE cleanupDone = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::thread cleanup([&] {
+        int waits = 0;
+        loaded = snow::wallpaper_hook::WaitAndCompleteRemoteInjection(process, thread, path, 0,
+            [&](HANDLE handle, DWORD milliseconds) {
+                if (++waits > 1)
+                    SetEvent(holdingArgument);
+                const DWORD result = WaitForSingleObject(handle, milliseconds);
+                if (waits == 1)
+                {
+                    SetEvent(initialWaitDone);
+                    WaitForSingleObject(continueCleanup, INFINITE);
+                }
+                return result;
+            });
+        completed = true;
+        SetEvent(cleanupDone);
+    });
+    Check(WaitForSingleObject(initialWaitDone, 1000) == WAIT_OBJECT_0,
+        "argument owner starts the zero-duration initial wait");
+    SetEvent(continueCleanup);
+    const HANDLE boundaryEvents[]{ holdingArgument, cleanupDone };
+    const DWORD ownershipBoundary = WaitForMultipleObjects(2, boundaryEvents, FALSE, 2000);
+    MEMORY_BASIC_INFORMATION information{};
+    const bool retained = ownershipBoundary == WAIT_OBJECT_0 &&
+        VirtualQuery(path, &information, sizeof(information)) && information.State == MEM_COMMIT;
+    SetEvent(remoteReadGate);
+    cleanup.join();
+    Check(retained, "pending target argument remains allocated while the initial wait expires");
+    Check(completed && loaded && remotePathRead,
+        "delayed target reads the intact argument before the reaper finishes");
+    VirtualQuery(path, &information, sizeof(information));
+    Check(information.State == MEM_FREE, "the target allocation is released after actual thread completion");
+    CloseHandle(initialWaitDone);
+    CloseHandle(continueCleanup);
+    CloseHandle(holdingArgument);
+    CloseHandle(cleanupDone);
+    CloseHandle(remoteReadEntered);
+    CloseHandle(remoteReadGate);
+}
+
+void TestLegacyHookInjectionGuard()
+{
+    using snowdesktop::wallpaper_engine_capture::CanInjectCaptureHook;
+    wchar_t name[128]{};
+    _snwprintf_s(name, 128, _TRUNCATE,
+        L"Local\\SnowDesktop.WallpaperEngine.DxgiHook.v3.%lu",
+        static_cast<unsigned long>(GetCurrentProcessId()));
+    std::wstring error;
+    Check(CanInjectCaptureHook(GetCurrentProcessId(), error),
+        "a process without a legacy producer remains eligible for injection");
+    DWORD before = 0, after = 0;
+    GetProcessHandleCount(GetCurrentProcess(), &before);
+    HANDLE legacy = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr,
+        PAGE_READWRITE, 0, 4096, name);
+    Check(legacy && GetLastError() != ERROR_ALREADY_EXISTS,
+        "isolated old-protocol mapping is created for this test process");
+    for (int attempt = 0; attempt < 16; ++attempt)
+        Check(!CanInjectCaptureHook(GetCurrentProcessId(), error) &&
+            error.find(L"restart") != std::wstring::npos,
+            "a live legacy producer prevents competing Hook injection and explains recovery");
+    CloseHandle(legacy);
+    GetProcessHandleCount(GetCurrentProcess(), &after);
+    Check(before == after && CanInjectCaptureHook(GetCurrentProcessId(), error),
+        "legacy probes close their handles and permit injection after the old owner exits");
+}
+
 } // namespace
 
-int main()
+int main(int argc, char** argv)
 {
+    const std::string_view mode = argc > 1 ? argv[1] : "all";
+    if (mode == "all" || mode == "surface") TestSharedSurfaceAccess();
+    if (mode == "all" || mode == "worker") TestWorkerRetryAndRetention();
+    if (mode == "all" || mode == "retention") TestWorkerRetryAndRetention(false);
+    if (mode == "all" || mode == "injection") TestPendingInjectionArgument();
+    if (mode == "all" || mode == "legacy") TestLegacyHookInjectionGuard();
+    if (mode != "all")
+    {
+        Check(mode == "surface" || mode == "worker" || mode == "retention" ||
+            mode == "injection" || mode == "legacy", "known capture test mode");
+        return 0;
+    }
     using snowdesktop::wallpaper_engine_capture::CropFrameToDesktopRegion;
     using snowdesktop::wallpaper_engine_capture::CancellableWaitResult;
     using snowdesktop::wallpaper_engine_capture::WaitForHandleOrCancellation;

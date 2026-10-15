@@ -14,14 +14,20 @@ namespace
 constexpr std::int64_t LifecycleInstructionBudget = 1000000;
 constexpr auto LifecycleTimeBudget = std::chrono::milliseconds(100);
 
-void PushMeasuredContext(lua_State* state,
-    WidgetLuaLifecycle::PushContext pushContext)
+bool PushMeasuredContext(lua_State* state,
+    WidgetLuaLifecycle::PushContext pushContext, std::string& error)
 {
     // This is host argument construction, not the lifetime of the execution
     // context guard or the subsequent Lua callback. Owner is inherited from
     // the surrounding widget scope, as with lua/protectedCall.
     snowdesktop::performance::Scope scope("lua", "context.arguments");
-    pushContext(state);
+    return snowdesktop::lua_runtime::ProtectedHostCall(state,
+        +[](lua_State* inner) {
+            const auto* callback = static_cast<WidgetLuaLifecycle::PushContext*>(
+                lua_touserdata(inner, 1));
+            (*callback)(inner);
+            return 1;
+        }, &pushContext, 1, error);
 }
 
 void PushModel(lua_State* state, int modelRef)
@@ -34,10 +40,22 @@ void PushModel(lua_State* state, int modelRef)
 
 std::string PopLuaError(lua_State* state, const char* fallback)
 {
-    const char* message = lua_tostring(state, -1);
+    const char* message = lua_type(state, -1) == LUA_TSTRING
+        ? lua_tostring(state, -1) : nullptr;
     std::string result = message ? message : fallback;
     lua_pop(state, 1);
     return result;
+}
+
+template<class Operation>
+bool ProtectLifecycleOperation(lua_State* state, Operation& operation,
+    int results, std::string& error, int argumentIndex = 0)
+{
+    return snowdesktop::lua_runtime::ProtectedHostCall(state,
+        +[](lua_State* inner) {
+            auto* callback = static_cast<Operation*>(lua_touserdata(inner, 1));
+            return (*callback)(inner);
+        }, &operation, results, error, argumentIndex);
 }
 }
 
@@ -60,6 +78,82 @@ WidgetLuaLifecycle& WidgetLuaLifecycle::operator=(
 }
 
 bool WidgetLuaLifecycle::Setup(lua_State* state, int definitionRef,
+    PushContext pushContext, std::string& error)
+{
+    bool accepted = false;
+    auto operation = [&](lua_State* inner) {
+        accepted = SetupUnprotected(inner, definitionRef, pushContext, error);
+        return 0;
+    };
+    return ProtectLifecycleOperation(state, operation, 0, error) && accepted;
+}
+
+bool WidgetLuaLifecycle::PushRenderArguments(lua_State* state,
+    PushContext pushContext) const
+{
+    if (!state) return false;
+    const int base = lua_gettop(state);
+    bool accepted = false;
+    std::string error;
+    auto operation = [&](lua_State* inner) {
+        accepted = PushRenderArgumentsUnprotected(inner, pushContext, error);
+        return accepted ? 2 : 0;
+    };
+    const bool protectedResult = ProtectLifecycleOperation(state, operation, 2, error);
+    if (!protectedResult || !accepted) lua_settop(state, base);
+    return protectedResult && accepted;
+}
+
+bool WidgetLuaLifecycle::Event(lua_State* state, int definitionRef,
+    PushContext pushContext, int eventIndex, bool& invoked, std::string& error) const
+{
+    invoked = false;
+    bool accepted = false;
+    auto operation = [&](lua_State* inner) {
+        accepted = EventUnprotected(inner, definitionRef, pushContext, 2, invoked, error);
+        return 0;
+    };
+    return ProtectLifecycleOperation(state, operation, 0, error, eventIndex) && accepted;
+}
+
+bool WidgetLuaLifecycle::Menu(lua_State* state, int definitionRef,
+    PushContext pushContext, int requestIndex, bool& invoked, std::string& error) const
+{
+    invoked = false;
+    if (!state) { error = "invalid widget lifecycle menu context"; return false; }
+    const int base = lua_gettop(state);
+    bool accepted = false;
+    auto operation = [&](lua_State* inner) {
+        accepted = MenuUnprotected(inner, definitionRef, pushContext, 2, invoked, error);
+        return accepted && invoked ? 1 : 0;
+    };
+    const bool protectedResult = ProtectLifecycleOperation(
+        state, operation, 1, error, requestIndex);
+    if (!protectedResult || !accepted || !invoked) lua_settop(state, base);
+    return protectedResult && accepted;
+}
+
+bool WidgetLuaLifecycle::Dispose(lua_State* state, int definitionRef,
+    PushContext pushContext, const char* reason, std::string& error)
+{
+    error.clear();
+    if (disposeInvoked_) return true;
+    if (!setupCompleted_) { disposeInvoked_ = true; return true; }
+    if (!state)
+    {
+        disposeInvoked_ = true;
+        error = "invalid widget lifecycle dispose context";
+        return false;
+    }
+    bool accepted = false;
+    auto operation = [&](lua_State* inner) {
+        accepted = DisposeUnprotected(inner, definitionRef, pushContext, reason, error);
+        return 0;
+    };
+    return ProtectLifecycleOperation(state, operation, 0, error) && accepted;
+}
+
+bool WidgetLuaLifecycle::SetupUnprotected(lua_State* state, int definitionRef,
     PushContext pushContext, std::string& error)
 {
     error.clear();
@@ -100,7 +194,11 @@ bool WidgetLuaLifecycle::Setup(lua_State* state, int definitionRef,
         return false;
     }
 
-    PushMeasuredContext(state, pushContext);
+    if (!PushMeasuredContext(state, pushContext, error))
+    {
+        lua_settop(state, entryTop);
+        return false;
+    }
     if (snowdesktop::lua_runtime::ProtectedCall(
             state, 1, 1, LifecycleInstructionBudget,
             LifecycleTimeBudget) != LUA_OK)
@@ -115,17 +213,17 @@ bool WidgetLuaLifecycle::Setup(lua_State* state, int definitionRef,
     return true;
 }
 
-bool WidgetLuaLifecycle::PushRenderArguments(lua_State* state,
-    PushContext pushContext) const
+bool WidgetLuaLifecycle::PushRenderArgumentsUnprotected(lua_State* state,
+    PushContext pushContext, std::string& error) const
 {
     if (!state || !pushContext || !setupCompleted_ || disposeInvoked_)
         return false;
-    PushMeasuredContext(state, pushContext);
+    if (!PushMeasuredContext(state, pushContext, error)) return false;
     PushModel(state, modelRef_);
     return true;
 }
 
-bool WidgetLuaLifecycle::Event(lua_State* state, int definitionRef,
+bool WidgetLuaLifecycle::EventUnprotected(lua_State* state, int definitionRef,
     PushContext pushContext, int eventIndex, bool& invoked,
     std::string& error) const
 {
@@ -161,7 +259,11 @@ bool WidgetLuaLifecycle::Event(lua_State* state, int definitionRef,
         return false;
     }
 
-    PushMeasuredContext(state, pushContext);
+    if (!PushMeasuredContext(state, pushContext, error))
+    {
+        lua_settop(state, entryTop);
+        return false;
+    }
     PushModel(state, modelRef_);
     lua_pushvalue(state, eventIndex);
     invoked = true;
@@ -177,7 +279,7 @@ bool WidgetLuaLifecycle::Event(lua_State* state, int definitionRef,
     return true;
 }
 
-bool WidgetLuaLifecycle::Menu(lua_State* state, int definitionRef,
+bool WidgetLuaLifecycle::MenuUnprotected(lua_State* state, int definitionRef,
     PushContext pushContext, int requestIndex, bool& invoked,
     std::string& error) const
 {
@@ -213,7 +315,11 @@ bool WidgetLuaLifecycle::Menu(lua_State* state, int definitionRef,
         return false;
     }
 
-    PushMeasuredContext(state, pushContext);
+    if (!PushMeasuredContext(state, pushContext, error))
+    {
+        lua_settop(state, entryTop);
+        return false;
+    }
     PushModel(state, modelRef_);
     lua_pushvalue(state, requestIndex);
     invoked = true;
@@ -230,7 +336,7 @@ bool WidgetLuaLifecycle::Menu(lua_State* state, int definitionRef,
     return true;
 }
 
-bool WidgetLuaLifecycle::Dispose(lua_State* state, int definitionRef,
+bool WidgetLuaLifecycle::DisposeUnprotected(lua_State* state, int definitionRef,
     PushContext pushContext, const char* reason, std::string& error)
 {
     error.clear();
@@ -265,7 +371,11 @@ bool WidgetLuaLifecycle::Dispose(lua_State* state, int definitionRef,
         return false;
     }
 
-    PushMeasuredContext(state, pushContext);
+    if (!PushMeasuredContext(state, pushContext, error))
+    {
+        lua_settop(state, entryTop);
+        return false;
+    }
     PushModel(state, modelRef_);
     lua_pushstring(state, reason ? reason : "unknown");
     if (snowdesktop::lua_runtime::ProtectedCall(

@@ -1,3 +1,5 @@
+#include "data/atomic_file.h"
+#include <sstream>
 /**
  * @file navigation_settings.cpp
  * @brief 快捷导航面板设置的实现
@@ -279,8 +281,7 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
  */
 bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& settings)
 {
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
+    std::ostringstream file;
     file << "{\n";
     file << "  \"layoutVersion\": 2,\n";
     file << "  \"enabled\": " << (settings.enabled ? "true" : "false") << ",\n";
@@ -335,7 +336,7 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
     for (const auto& [key, value] : settings.colors) { if (!first) file << ','; first = false; file << quoted(key) << ':' << quoted(value); }
     file << "}\n";
     file << "}\n";
-    return file.good();
+    return file.good() && snowdesktop::atomic_file::WriteAll(path, file.str());
 }
 
 /**

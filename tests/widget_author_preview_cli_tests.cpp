@@ -724,6 +724,58 @@ void CheckRuntimeBoundaryRegressions(const std::filesystem::path& snowwidget,
         catch (const std::exception& error) { failures.emplace_back(std::string(name) + ": " + error.what()); }
     };
     const auto noFiles = [](const std::filesystem::path&) {};
+    preview("translation-linear-substitution", R"lua(
+assert(l10n.tr("{0}/{1}", "{1}", "done") == "{1}/done",
+    "inserted values must not be interpreted as another template")
+assert(l10n.tr("{0}", "prefix{0}suffix") == "prefix{0}suffix",
+    "self-referential values must terminate after one substitution")
+assert(l10n.tr("{00} {64} {missing}", "x") == "{00} {64} {missing}",
+    "unknown and noncanonical placeholders remain literal")
+return widget.define({ render = function() draw.text(8, 8, "linear translation", 14, 0xFFFFFF) end })
+)lua", noFiles);
+    preview("translation-resource-limits", R"lua(
+local full = string.rep("x", 65536)
+assert(l10n.tr(full) == full and l10n.tr("{0}", full) == full,
+    "exact template, argument and output byte boundaries remain supported")
+local args = {}; for i = 1, 64 do args[i] = "" end
+assert(l10n.tr("{63}", table.unpack(args)) == "", "64 arguments are supported")
+args[65] = ""
+for _, attempt in ipairs({
+    function() return l10n.tr(full .. "x") end,
+    function() return l10n.tr("{0}", full .. "x") end,
+    function() return l10n.tr("{0}{1}", full, "x") end,
+    function() return l10n.tr("{0}{0}", full) end,
+    function() return l10n.tr("{0}", table.unpack(args)) end,
+}) do
+    local ok, failure = pcall(attempt)
+    assert(not ok and tostring(failure):find("l10n.tr", 1, true),
+        "oversized translation must return a catchable quota error")
+    assert(l10n.tr("ok {0}", 42) == "ok 42", "quota failure must preserve later calls")
+end
+return widget.define({ render = function() draw.text(8, 8, "translation bounded", 14, 0xFFFFFF) end })
+)lua", noFiles);
+    preview("storage-closed-transaction-handle", R"lua(
+return widget.define({
+    setup = function()
+        local closed
+        assert(storage.transaction(function(tx) closed = tx; tx:set("committed", 1) end))
+        local ok, failure = pcall(storage.transaction, function(tx)
+            tx:set("rolledback", 2); error("expected rollback")
+        end)
+        assert(not ok and tostring(failure):find("expected rollback", 1, true))
+        assert(storage.get("committed") == 1 and storage.get("rolledback") == nil,
+            "failed callback must release the active transaction and roll back its writes")
+        assert(storage.transaction(function(tx)
+            local oldOk, oldFailure = pcall(closed.get, closed, "committed")
+            assert(not oldOk and tostring(oldFailure):find("closed", 1, true),
+                "retained handle must stay closed while another transaction is active")
+            assert(tx:get("committed") == 1); tx:set("committed", 3)
+        end))
+        assert(storage.get("committed") == 3, "current transaction remains usable after a stale handle is rejected")
+    end,
+    render = function() draw.text(8, 8, "transaction recovered", 14, 0xFFFFFF) end,
+})
+)lua", noFiles);
     preview("numeric-preset-key", R"lua(
 return widget.define({
     settings = {

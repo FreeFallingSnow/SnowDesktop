@@ -1,3 +1,5 @@
+#include "data/atomic_file.h"
+#include <sstream>
 #include "dock_settings.h"
 #include "theme/taskbar_appearance.h"
 #include "dock_gradient_storage.h"
@@ -1308,8 +1310,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     const auto customAppearance = snowdesktop::EncodePanelAppearance(settings.customAppearance);
     std::ostringstream materialFields;
     if (customAppearance.empty() || !snowdesktop::WriteTaskbarMaterials(materialFields, settings)) return false;
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
+    std::ostringstream file;
 
     const PersonalizationSettings& taskbarStyle = settings.systemTaskbarAppearance;
     file << "{\n";
@@ -1414,5 +1415,5 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"customAppearance\": " << customAppearance << ",\n";
     file << "  \"dynamicTaskbarSchemaVersion\": 1\n";
     file << "}\n";
-    return true;
+    return snowdesktop::atomic_file::WriteAll(path, file.str());
 }

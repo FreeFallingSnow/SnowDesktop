@@ -4,6 +4,7 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <utility>
 
 namespace
 {
@@ -255,6 +256,62 @@ void TestCrossCollectionTransfer()
         "incompatible cross-collection transfer must fail without mutation");
 }
 
+void TestTransferRebindAndLegacyIdentities()
+{
+    LogicalSlotModel model;
+    std::string error;
+    LogicalSlotChange change;
+    Check(model.Configure(TransferDeclarations(), error) &&
+        model.Bind("source", Item("app.reference", "Calendar", "app:calendar"), change, error),
+        "identity fixture binds the original item");
+    const auto original = model.Find("source")->items.front();
+    Check(model.Transfer("source", original.id, "target", 0, change, error) &&
+        model.Bind("source", Item("app.reference", "Calendar", "app:calendar"), change, error),
+        "moving an item and adding the same target back to the original slot are valid operations");
+    const auto rebound = model.Find("source")->items.front();
+    const auto moved = model.Find("target")->items.front();
+    const bool distinct = rebound.id != moved.id && rebound.reference != moved.reference &&
+        moved.id == original.id && moved.reference == original.reference;
+
+    std::unordered_map<std::string, std::string> storage;
+    model.Export(storage, "instance");
+    auto& legacySource = storage.at(LogicalSlotModel::StorageKey("instance", "source"));
+    for (const auto& tokens : {std::pair{rebound.id, moved.id},
+            std::pair{rebound.reference, moved.reference}})
+    {
+        const auto position = legacySource.find(tokens.first);
+        Check(position != std::string::npos, "legacy identity fixture uses actual exported storage");
+        legacySource.replace(position, tokens.first.size(), tokens.second);
+    }
+    LogicalSlotModel repaired;
+    Check(repaired.Configure(TransferDeclarations(), error) && repaired.Restore(storage, "instance", error),
+        "old cross-slot duplicate identities remain recoverable without dropping items");
+    const auto repairedSource = repaired.Find("source")->items.front();
+    const auto repairedTarget = repaired.Find("target")->items.front();
+    const bool migrated = repairedSource.id != repairedTarget.id &&
+        repairedSource.reference != repairedTarget.reference &&
+        repairedSource.target == "app:calendar" && repairedTarget.target == "app:calendar";
+    repaired.Export(storage, "instance");
+    LogicalSlotModel reopened;
+    Check(reopened.Configure(TransferDeclarations(), error) && reopened.Restore(storage, "instance", error) &&
+        reopened.Find("source")->items == repaired.Find("source")->items &&
+        reopened.Find("target")->items == repaired.Find("target")->items,
+        "repaired identities persist and remain stable on a second load");
+    Check(distinct && migrated,
+        "IDs and references are unique across the instance after transfer/rebind and legacy recovery");
+
+    auto corrupt = storage;
+    auto& changedSource = corrupt.at(LogicalSlotModel::StorageKey("instance", "source"));
+    const auto title = changedSource.find("Calendar");
+    Check(title != std::string::npos, "restoration rollback fixture has a known title");
+    changedSource.replace(title, 8, "Changed before failure");
+    corrupt[LogicalSlotModel::StorageKey("instance", "target")] = "{";
+    Check(!reopened.Restore(corrupt, "instance", error) &&
+        reopened.Find("source")->items == repaired.Find("source")->items &&
+        reopened.Find("target")->items == repaired.Find("target")->items,
+        "a later corrupt slot cannot partially publish an earlier restored slot");
+}
+
 void TestBoundedUndoRedoHistory()
 {
     LogicalSlotModel model;
@@ -322,6 +379,7 @@ int main()
     TestBindingAndCollectionTransactions();
     TestPersistenceRoundTrip();
     TestCrossCollectionTransfer();
+    TestTransferRebindAndLegacyIdentities();
     TestBoundedUndoRedoHistory();
     std::cout << "widget logical slot tests passed\n";
     return 0;

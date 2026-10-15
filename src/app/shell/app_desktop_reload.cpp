@@ -8,6 +8,7 @@
 #include "layout/popup_icon_load_rules.h"
 #include "dock/dock_minimize_protocol.h"
 #include "desktop/desktop_membership_recovery.h"
+#include "shell/directory_change_watch.h"
 
 // SID 字符串格式化（S-1-5-21-...），直接按 SID 内存布局解析，
 // 不依赖 sddl.h/ntsecapi，避免 PCH 环境下安全 API 声明不可用的问题。
@@ -206,15 +207,10 @@ void DesktopApp::StopRecycleBinWatcher()
         SetEvent(recycleBinWatcherStopEvent_);
         if (recycleBinWatcherThread_)
         {
-            // 监听线程收到停止事件后会在一个事件循环内退出；
-            // 超时则放弃等待并跳过 CloseHandle，避免监听线程仍在使用
-            // 已关闭句柄（句柄重用/use-after-free 风险），
-            // 让线程自然退出后由系统回收线程资源。
-            if (WaitForSingleObject(
-                    recycleBinWatcherThread_, 2000) == WAIT_OBJECT_0)
-            {
-                CloseHandle(recycleBinWatcherThread_);
-            }
+            // The worker still owns this object and the stop event while it
+            // cancels and drains I/O. A timeout cannot make destruction safe.
+            WaitForSingleObject(recycleBinWatcherThread_, INFINITE);
+            CloseHandle(recycleBinWatcherThread_);
             recycleBinWatcherThread_ = nullptr;
         }
         CloseHandle(recycleBinWatcherStopEvent_);
@@ -234,46 +230,11 @@ DWORD WINAPI DesktopApp::RecycleBinWatcherThreadProc(LPVOID param)
         !self->recycleBinWatcherStopEvent_)
         return 0; // 无目录可监视，仅靠轮询兜底
 
-    struct WatchEntry
-    {
-        HANDLE dir = nullptr;
-        HANDLE event = nullptr;
-        OVERLAPPED overlapped{};
-        std::vector<BYTE> buffer;
-    };
-    std::vector<WatchEntry> watches;
+    std::vector<std::unique_ptr<snowdesktop::shell::DirectoryChangeWatch>> watches;
     for (const auto& dir : directories)
     {
-        WatchEntry entry;
-        entry.dir = CreateFileW(dir.c_str(), FILE_LIST_DIRECTORY,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            nullptr, OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
-            nullptr);
-        if (entry.dir == INVALID_HANDLE_VALUE || !entry.dir)
-            continue;
-        entry.event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-        if (!entry.event)
-        {
-            CloseHandle(entry.dir);
-            continue;
-        }
-        entry.overlapped.hEvent = entry.event;
-        entry.buffer.resize(64 * 1024);
-        if (!ReadDirectoryChangesW(entry.dir,
-                entry.buffer.data(),
-                static_cast<DWORD>(entry.buffer.size()), TRUE,
-                FILE_NOTIFY_CHANGE_FILE_NAME |
-                    FILE_NOTIFY_CHANGE_DIR_NAME |
-                    FILE_NOTIFY_CHANGE_SIZE |
-                    FILE_NOTIFY_CHANGE_LAST_WRITE,
-                nullptr, &entry.overlapped, nullptr))
-        {
-            CloseHandle(entry.event);
-            CloseHandle(entry.dir);
-            continue;
-        }
-        watches.push_back(std::move(entry));
+        if (auto watch = snowdesktop::shell::DirectoryChangeWatch::Create(dir))
+            watches.push_back(std::move(watch));
     }
     if (watches.empty())
         return 0;
@@ -286,7 +247,7 @@ DWORD WINAPI DesktopApp::RecycleBinWatcherThreadProc(LPVOID param)
         waitHandles.clear();
         waitHandles.push_back(self->recycleBinWatcherStopEvent_);
         for (const auto& watch : watches)
-            waitHandles.push_back(watch.event);
+            waitHandles.push_back(watch->Event());
         const DWORD waitResult = WaitForMultipleObjects(
             static_cast<DWORD>(waitHandles.size()),
             waitHandles.data(), FALSE, INFINITE);
@@ -300,10 +261,7 @@ DWORD WINAPI DesktopApp::RecycleBinWatcherThreadProc(LPVOID param)
         if (watchIndex >= watches.size())
             break;
         DWORD bytesReturned = 0;
-        if (GetOverlappedResult(
-                watches[watchIndex].dir,
-                &watches[watchIndex].overlapped,
-                &bytesReturned, FALSE))
+        if (watches[watchIndex]->Complete(bytesReturned))
         {
             // 合并 500ms 内的连续事件，避免批量删除时查询风暴。
             const DWORD64 now = GetTickCount64();
@@ -313,26 +271,10 @@ DWORD WINAPI DesktopApp::RecycleBinWatcherThreadProc(LPVOID param)
                 self->CheckRecycleBinStatus();
             }
         }
-        ResetEvent(watches[watchIndex].event);
-        if (!ReadDirectoryChangesW(
-                watches[watchIndex].dir,
-                watches[watchIndex].buffer.data(),
-                static_cast<DWORD>(
-                    watches[watchIndex].buffer.size()),
-                TRUE,
-                FILE_NOTIFY_CHANGE_FILE_NAME |
-                    FILE_NOTIFY_CHANGE_DIR_NAME |
-                    FILE_NOTIFY_CHANGE_SIZE |
-                    FILE_NOTIFY_CHANGE_LAST_WRITE,
-                nullptr, &watches[watchIndex].overlapped,
-                nullptr))
+        if (!watches[watchIndex]->Arm())
             break; // 监听失败：退出，轮询兜底
     }
-    for (auto& watch : watches)
-    {
-        if (watch.event) CloseHandle(watch.event);
-        if (watch.dir) CloseHandle(watch.dir);
-    }
+    // Each watch cancels and drains before releasing its buffers and event.
     return 0;
 }
 

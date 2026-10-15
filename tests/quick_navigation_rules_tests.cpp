@@ -1175,8 +1175,36 @@ void TestResultColorOpacity()
         !snowdesktop::DecodeRgbaColor("12345680",color), "RGBA codec has explicit channel order and rejects malformed values");
 }
 
+void TestGridColumnsRespectLayoutBounds()
+{
+    Check(rules::GridColumnCount(408, 192, 48) == 1,
+        "440-wide navigation with 96px icons and 48px gaps safely reduces two columns to one");
+    // Exercise actual scaled layout inputs. The independent occupancy check
+    // covers every valid width, boundary padding/icon/gap values and DPIs.
+    bool fits = true, maximal = true;
+    for (int dpi : {96, 120, 144, 168, 192, 240, 288, 384})
+    for (int width = 400; width <= 1800; ++width)
+    for (int icon : {24, 48, 96})
+    for (int gap : {4, 24, 48})
+    for (int padding : {8, 16, 40})
+    {
+        const auto scale = [dpi](int value) { return MulDiv(value, dpi, 96); };
+        const int available = scale(width) - 2 * scale(padding);
+        const int cell = scale(std::max(96, icon + 2 * gap));
+        const int spacing = scale(gap);
+        const int columns = rules::GridColumnCount(available, cell, spacing);
+        fits = fits && columns >= 1 &&
+            (columns == 1 || columns * cell + (columns - 1) * spacing <= available);
+        maximal = maximal &&
+            (columns + 1) * cell + columns * spacing > available;
+    }
+    Check(fits, "all valid navigation widths keep at least one column and fit each multi-column grid");
+    Check(maximal, "navigation grids retain every column that fits the requested minimum spacing");
+}
+
 int main()
 {
+    TestGridColumnsRespectLayoutBounds();
     TestResultColorOpacity();
     TestExtendedSearchAndConfiguration();
     TestViewModePersistenceValues();

@@ -159,6 +159,7 @@ set(SNOWDESKTOP_SOURCES
     src/desktop/desktop_namespace_registry.cpp
     src/desktop/desktop_namespace_registry.h
     src/icons/icon_beautify.cpp
+    src/icons/icon_beautify_preview.h
     src/app/render/app_bitmap_cache.cpp
     src/app/menus/app_background_menu.cpp
     src/app/render/app_animation_scheduler.cpp
@@ -1662,7 +1663,15 @@ if (BUILD_TESTING)
             tests/application_restart_policy_tests.cpp
             src/platform/application_crash_watchdog.cpp
         INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES advapi32 user32
         LABELS contract recovery)
+
+    snowdesktop_add_test(
+        SnowDesktopDirectoryChangeWatchTests
+        directory_change_watch
+        SOURCES tests/shell/directory_change_watch_tests.cpp
+        INCLUDE_DIRECTORIES src
+        LABELS contract integration shell)
 
     snowdesktop_add_test(
         SnowDesktopWidgetLayoutContextTests
@@ -1702,6 +1711,7 @@ if (BUILD_TESTING)
             tests/theme_library_tests.cpp
             src/theme/theme_library.cpp
             src/settings/general_settings.cpp
+            src/data/atomic_file.cpp
             src/ui/render/app_font.cpp
             src/theme/personalization.cpp
         INCLUDE_DIRECTORIES src
@@ -2305,6 +2315,7 @@ if (BUILD_TESTING)
         SOURCES
             tests/quick_navigation_rules_tests.cpp
             src/navigation/navigation_settings.cpp
+            src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES SnowDesktopPinyinData
         LABELS rules navigation)
@@ -2536,6 +2547,7 @@ if (BUILD_TESTING)
             src/taskbar_hook/taskbar_classic_surface.cpp
             ${MINHOOK64_SOURCES}
             tests/desktop_backdrop_compositor_tests.cpp
+            src/data/atomic_file.cpp
             src/ui/render/native_tooltip.cpp
             src/theme/personalization.cpp
             tests/tray_model_tests.cpp

@@ -112,6 +112,7 @@ public:
     using TimePoint = Clock::time_point;
 
     static constexpr std::size_t MaxRequests = 16;
+    static constexpr std::size_t MaxFrameHistory = 64;
     static constexpr std::size_t MaxNameBytes = 128;
     static constexpr std::int64_t MaximumDeltaMilliseconds = 1000;
 
@@ -136,6 +137,7 @@ public:
 private:
     std::vector<std::string> pending_;
     std::unordered_map<std::string, TimePoint> previousFrames_;
+    std::vector<std::string> frameHistoryOrder_;
     bool dataRefreshPending_ = false;
     bool visible_ = true;
 };

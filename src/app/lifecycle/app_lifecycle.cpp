@@ -8,6 +8,7 @@
 #include "platform/http_runtime.h"
 #include "platform/shell_overlay_window.h"
 #include "platform/foreground_fullscreen.h"
+#include "platform/owned_window_shutdown.h"
 #include "shell/shell_extension_service.h"
 
 // Desktop host lifecycle.
@@ -16,6 +17,7 @@ DesktopApp::DesktopApp() = default;
 
 DesktopApp::~DesktopApp()
 {
+    StopRecycleBinWatcher();
     dockExternalMinimize_.reset();
     snowdesktop::SoftwareDesktopHotkey().Unregister();
     dataCleanupWorker_.Stop();
@@ -97,12 +99,9 @@ DesktopApp::~DesktopApp()
     }
     if (oleDragDropAdapter_)
         oleDragDropAdapter_->Detach();
-    // The restart handoff may display an error after this object is destroyed.
-    // Retire the last HWND carrying this pointer while members are still alive,
-    // so that dialog's message loop cannot call back into a destroyed host.
-    if (controlHwnd_ && IsWindow(controlHwnd_))
-        DestroyWindow(controlHwnd_);
-    controlHwnd_ = nullptr;
+    // Startup can fail before the control window exists. Retire every host
+    // window before the startup failure dialog starts another message loop.
+    snowdesktop::RetireOwnedWindows({ &inputHwnd_, &hwnd_, &controlHwnd_ });
 }
 
 void DesktopApp::ShutdownSettingsInfrastructure() noexcept

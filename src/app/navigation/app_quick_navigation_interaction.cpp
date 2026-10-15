@@ -7,6 +7,8 @@
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_rules.h"
 
+#include <filesystem>
+
 namespace shellCalls = snowdesktop::shell_call_diagnostics;
 
 // Quick-navigation rename, click handling, shortcuts and context menus.
@@ -419,10 +421,12 @@ bool DesktopApp::HandleQuickNavigationClick(POINT point)
         if (entry.kind == QuickNavigationEntry::Kind::DesktopItem &&
             entry.itemIndex != static_cast<size_t>(-1) && entry.itemIndex < items_.size())
         {
-            const size_t itemIndex = entry.itemIndex;
+            const auto key = items_[entry.itemIndex].layoutKey;
             CloseQuickNavigationThen(
-                [this, itemIndex]() {
-                    LaunchDesktopItem(itemIndex, true);
+                [this, key]() {
+                    const auto currentIndex = FindItemIndexByKey(key);
+                    if (currentIndex < items_.size())
+                        LaunchDesktopItem(currentIndex, true);
                 });
         }
         else if (entry.kind == QuickNavigationEntry::Kind::FolderEntry && !entry.path.empty())
@@ -764,10 +768,8 @@ bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayNa
     std::wstring stem = SanitizeShortcutFileStem(displayName);
     if (stem.empty() && !targetPath.empty())
     {
-        wchar_t nameBuf[MAX_PATH]{};
-        wcscpy_s(nameBuf, PathFindFileNameW(targetPath.c_str()));
-        PathRemoveExtensionW(nameBuf);
-        stem = SanitizeShortcutFileStem(nameBuf);
+        stem = SanitizeShortcutFileStem(
+            std::filesystem::path(targetPath).stem().wstring());
     }
 
     std::wstring shortcutPath;
@@ -776,19 +778,17 @@ bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayNa
         std::wstring fileName = i == 1
             ? stem + L".lnk"
             : stem + L" (" + std::to_wstring(i) + L").lnk";
-        wchar_t candidate[MAX_PATH]{};
-        PathCombineW(candidate, desktopPath, fileName.c_str());
-        if (GetFileAttributesW(candidate) == INVALID_FILE_ATTRIBUTES)
+        const auto candidate = std::filesystem::path(desktopPath) / fileName;
+        if (GetFileAttributesW(candidate.c_str()) == INVALID_FILE_ATTRIBUTES)
         {
-            shortcutPath = candidate;
+            shortcutPath = candidate.wstring();
             break;
         }
     }
     if (shortcutPath.empty())
     {
-        wchar_t fallback[MAX_PATH]{};
-        PathCombineW(fallback, desktopPath, (stem + L" (1000).lnk").c_str());
-        shortcutPath = fallback;
+        shortcutPath = (std::filesystem::path(desktopPath) /
+            (stem + L" (1000).lnk")).wstring();
     }
 
     ComPtr<IShellLinkW> shellLink;
@@ -802,8 +802,9 @@ bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayNa
     if (FAILED(setTargetHr))
         return false;
 
-    if (!workingDirectory.empty())
-        shellLink->SetWorkingDirectory(workingDirectory.c_str());
+    if (!workingDirectory.empty() &&
+        FAILED(shellLink->SetWorkingDirectory(workingDirectory.c_str())))
+        return false;
 
     ComPtr<IPersistFile> persistFile;
     if (FAILED(shellLink.As(&persistFile)) ||
@@ -834,19 +835,13 @@ bool DesktopApp::CreateDesktopShortcutForPath(
     }
     else
     {
-        wchar_t dir[MAX_PATH]{};
-        wcscpy_s(dir, path.c_str());
-        if (PathRemoveFileSpecW(dir))
-            workingDirectory = dir;
+        workingDirectory = std::filesystem::path(path).parent_path().wstring();
     }
 
     std::wstring stem = displayName;
     if (stem.empty())
     {
-        wchar_t nameBuf[MAX_PATH]{};
-        wcscpy_s(nameBuf, PathFindFileNameW(path.c_str()));
-        PathRemoveExtensionW(nameBuf);
-        stem = nameBuf;
+        stem = std::filesystem::path(path).stem().wstring();
     }
     return CreateDesktopShortcutForShellLink(stem, nullptr, path, workingDirectory);
 }
@@ -937,8 +932,11 @@ void DesktopApp::ShowQuickNavigationAppContextMenu(
 }
 
 void DesktopApp::ShowQuickNavigationEverythingContextMenu(
-    const QuickNavigationEverythingEntry& entry, POINT screenPoint)
+    const QuickNavigationEverythingEntry& selectedEntry, POINT screenPoint)
 {
+    // ShowModernMenu dispatches search completions, which can replace the
+    // result vector. Own the action target before entering that message loop.
+    const QuickNavigationEverythingEntry entry = selectedEntry;
     if (entry.path.empty())
         return;
     PrepareMenuIconsForPoint(screenPoint);

@@ -544,4 +544,40 @@ std::vector<IconResourceLocation> ReadLocalIconResources(std::wstring_view sourc
     }
     return result;
 }
+
+bool ReadDeclaredIconResources(std::wstring_view shortcutPath,
+    std::vector<IconResourceLocation>& resources)
+{
+    namespace rules = shortcut_application_rules;
+    resources.clear();
+    const std::wstring path(shortcutPath);
+    const auto bytes = ReadLocalBytes(path);
+    if (bytes.empty()) return false;
+    if (rules::HasExtension(path, L".lnk"))
+    {
+        LocalLinkHints hints;
+        if (!ParseLocalLink({bytes}, hints)) return false;
+        const auto add = [&](const std::wstring& value, int index) {
+            if (!value.empty()) resources.push_back({ResolveRelativeIconPath(path,
+                ExpandIconPath(value)), index});
+        };
+        add(hints.icon, hints.index);
+        add(hints.target, 0);
+        add(hints.relative, 0);
+        return true;
+    }
+    if (rules::HasExtension(path, L".url") || rules::HasExtension(path, L".website"))
+    {
+        // Profile reads have a bounded destination; truncation is unknown,
+        // never evidence that the declared icon has become unreferenced.
+        std::vector<wchar_t> icon(32768);
+        const auto length = GetPrivateProfileStringW(L"InternetShortcut", L"IconFile", L"",
+            icon.data(), static_cast<DWORD>(icon.size()), path.c_str());
+        if (length >= icon.size() - 1) return false;
+        if (auto resource = ReadInternetShortcutIconResource(path))
+            resources.push_back(std::move(*resource));
+        return true;
+    }
+    return false;
+}
 } // namespace snowdesktop::shortcut_icon_resource

@@ -164,6 +164,56 @@ inline void Run(const std::filesystem::path& root)
             "first paste finishes before completion; repeated paste preserves both batches without a conflict prompt");
         worker.Stop();
     }
+    // CF_HDROP cuts may mix a no-op already in the destination with external
+    // files. Run the production clipboard worker and inspect real files;
+    // neither a whole-selection shortcut nor rename-on-collision is valid.
+    for (int selection = 0; selection < 3; ++selection)
+    {
+        const auto target = fixture / (L"cut-target-" + std::to_wstring(selection));
+        std::filesystem::create_directory(target);
+        const auto local = target / L"already-here.txt";
+        const auto external = source / (L"move-" + std::to_wstring(selection) + L".txt");
+        const bool hasLocal = selection != 1;
+        const bool hasExternal = selection != 0;
+        if (hasLocal) std::ofstream(local) << "unchanged local payload";
+        if (hasExternal) std::ofstream(external) << "external payload";
+
+        ShellDropRequest request;
+        if (hasLocal) request.sources.push_back(local.wstring());
+        if (hasExternal) request.sources.push_back(external.wstring());
+        request.targetParsingName = target.wstring();
+        request.allowedEffects = DROPEFFECT_MOVE;
+        request.keyState = ClipboardShellDropKeyState(DROPEFFECT_MOVE);
+        request.clipboardPaste = true;
+        HANDLE finished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        Check(finished != nullptr, "create mixed-source cut completion event");
+        struct Event { HANDLE handle; ~Event() { CloseHandle(handle); } } event{finished};
+        ShellFileOperationWorker worker;
+        std::atomic<bool> succeeded{false};
+        Check(worker.Enqueue(std::move(request), [&](bool ok) {
+            succeeded = ok;
+            SetEvent(finished);
+        }), "queue local-only, external-only and mixed-source cuts through the clipboard worker");
+        DWORD index = 0;
+        const HRESULT waited = CoWaitForMultipleHandles(
+            COWAIT_DISPATCH_CALLS | COWAIT_DISPATCH_WINDOW_MESSAGES, 15000, 1, &finished, &index);
+        Check(SUCCEEDED(waited) && succeeded, "all cut selections complete successfully");
+        worker.Stop();
+        const auto read = [](const std::filesystem::path& path) {
+            std::ifstream input(path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(input), {});
+        };
+        if (hasLocal) Check(read(local) == "unchanged local payload",
+            "an item already at the destination retains its path and contents");
+        if (hasExternal) Check(!std::filesystem::exists(external) &&
+            read(target / external.filename()) == "external payload",
+            "external peers of a no-op are moved to the requested folder");
+        const auto count = std::distance(std::filesystem::directory_iterator(target),
+            std::filesystem::directory_iterator{});
+        Check(count == hasLocal + hasExternal,
+            "cut no-ops create no collision copies and do not discard other sources");
+    }
+
     for (const bool virtualFiles : {false, true})
     {
         const auto target = fixture / (virtualFiles ? L"virtual-target" : L"namespace-target");

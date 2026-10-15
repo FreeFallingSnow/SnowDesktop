@@ -19,6 +19,23 @@
 
 namespace snowdesktop::quick_navigation_rules
 {
+// Return the largest grid that fits both its cells and the minimum gap.
+// Treat a single column as a terminal case; it has no inter-column gaps.
+inline int GridColumnCount(int contentWidth, int cellWidth, int minimumGap)
+{
+    contentWidth = std::max(1, contentWidth);
+    cellWidth = std::max(1, cellWidth);
+    minimumGap = std::max(0, minimumGap);
+    int columns = std::max(1, contentWidth / cellWidth);
+    while (columns > 1)
+    {
+        const int gap = (contentWidth - columns * cellWidth) / (columns - 1);
+        if (gap >= minimumGap) break;
+        --columns;
+    }
+    return columns;
+}
+
 inline QuickNavigationDesktopViewMode
 NextQuickNavigationDesktopViewMode(
     QuickNavigationDesktopViewMode mode)

@@ -1,3 +1,5 @@
+#include "data/atomic_file.h"
+#include <sstream>
 /**
  * @file general_settings.cpp
  * @brief 通用设置的实现
@@ -209,8 +211,7 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
     const auto statusBar = snowdesktop::EncodeStatusBarSettings(settings.statusBar);
     if (quickAppearance.empty() || popupAppearance.empty() || globalQuickAppearance.empty() ||
         globalPopupAppearance.empty() || statusBar.empty()) return false;
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
+    std::ostringstream file;
     auto calendar = settings.calendarDisplay;
     snowdesktop::calendar::Normalize(calendar);
     const auto quote = [](std::string_view text) {
@@ -285,5 +286,5 @@ bool SaveGeneralSettings(const wchar_t* path, const GeneralSettings& settings)
          << ",\n";
     file << "  \"language\": \"" << settings.language << "\"\n";
     file << "}\n";
-    return true;
+    return snowdesktop::atomic_file::WriteAll(path, file.str());
 }

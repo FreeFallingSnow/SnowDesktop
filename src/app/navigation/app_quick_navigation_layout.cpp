@@ -326,16 +326,8 @@ int DesktopApp::GetQuickNavigationColumnCount(const RECT& overlay) const
     RECT content = GetQuickNavigationContentRect(overlay);
     const int cellW = QuickNavScale(QuickNavigationGridCellWidth());
     const int contentWidth = std::max(1, static_cast<int>(content.right - content.left));
-    if (contentWidth < cellW) return 1;
-    int columns = contentWidth / cellW;
-    if (columns <= 1) return 1;
-    int gap = (contentWidth - columns * cellW) / (columns - 1);
-    while (columns > 1 && gap < QuickNavScale(navigationSettings_.layout.gridGap))
-    {
-        --columns;
-        gap = (contentWidth - columns * cellW) / (columns - 1);
-    }
-    return std::max(1, columns);
+    return snowdesktop::quick_navigation_rules::GridColumnCount(
+        contentWidth, cellW, QuickNavScale(navigationSettings_.layout.gridGap));
 }
 
 int DesktopApp::GetQuickNavigationGap(const RECT& overlay) const

@@ -3,6 +3,8 @@
 #include "data/atomic_file.h"
 #include "common/json_value.h"
 
+#include <windows.h>
+
 #include <cmath>
 #include <iomanip>
 #include <limits>
@@ -1074,5 +1076,54 @@ bool ClearLayoutAndStorage(const std::filesystem::path& layoutPath,
     if ((!primaryRestored || !recoveryRestored) && error)
         *error += "; layout rollback failed: " + rollbackError + filesystemError.message();
     return false;
+}
+
+bool DeleteBackupPair(const std::filesystem::path& layoutPath,
+    const std::filesystem::path& storagePath, std::string* error)
+{
+    struct File
+    {
+        HANDLE value = INVALID_HANDLE_VALUE;
+        ~File() { if (value != INVALID_HANDLE_VALUE) CloseHandle(value); }
+    } layout, storage;
+    const auto fail = [&](const char* operation, DWORD code) {
+        if (error) *error = std::string(operation) + ": Win32 error " + std::to_string(code);
+        return false;
+    };
+    const auto open = [](const std::filesystem::path& path) {
+        return CreateFileW(path.c_str(), DELETE | FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+            OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, nullptr);
+    };
+    layout.value = open(layoutPath);
+    if (layout.value == INVALID_HANDLE_VALUE)
+        return fail("cannot open layout backup for deletion", GetLastError());
+    storage.value = open(storagePath);
+    if (storage.value == INVALID_HANDLE_VALUE)
+    {
+        const DWORD code = GetLastError();
+        if (code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND)
+            return fail("cannot open component storage backup for deletion", code);
+    }
+    // A shared reader that disallows delete is rejected by the two opens above.
+    // Keep both handles alive until both dispositions have been accepted.
+    FILE_DISPOSITION_INFO disposition{TRUE};
+    if (storage.value != INVALID_HANDLE_VALUE &&
+        !SetFileInformationByHandle(storage.value, FileDispositionInfo,
+            &disposition, sizeof(disposition)))
+        return fail("cannot delete component storage backup", GetLastError());
+    if (!SetFileInformationByHandle(layout.value, FileDispositionInfo,
+            &disposition, sizeof(disposition)))
+    {
+        const DWORD code = GetLastError();
+        disposition.DeleteFile = FALSE;
+        if (storage.value != INVALID_HANDLE_VALUE &&
+            !SetFileInformationByHandle(storage.value, FileDispositionInfo,
+                &disposition, sizeof(disposition)))
+            return fail("cannot roll back component storage deletion", GetLastError());
+        return fail("cannot delete layout backup", code);
+    }
+    if (error) error->clear();
+    return true;
 }
 }

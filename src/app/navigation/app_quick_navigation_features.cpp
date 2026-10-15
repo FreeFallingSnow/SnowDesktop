@@ -679,7 +679,14 @@ bool DesktopApp::ActivateQuickNavigationListRow(size_t index)
         if (row.index >= model.entries.size()) return false;
         const auto entry = model.entries[row.index];
         if (entry.kind == QuickNavigationEntry::Kind::DesktopItem)
-            CloseQuickNavigationThen([this, index = entry.itemIndex]() { LaunchDesktopItem(index, true); });
+        {
+            if (entry.itemIndex >= items_.size()) return false;
+            const auto key = items_[entry.itemIndex].layoutKey;
+            CloseQuickNavigationThen([this, key]() {
+                const auto currentIndex = FindItemIndexByKey(key);
+                if (currentIndex < items_.size()) LaunchDesktopItem(currentIndex, true);
+            });
+        }
         else CloseQuickNavigationThen([this, path = entry.path]() { LaunchPathWithShortcutPolicy(nullptr, path); });
     }
     else if (row.kind == Kind::ExpandApps) { quickNavigationAppsExpanded_ = true; PositionQuickNavigationWindow(); InvalidateQuickNavigationWindow(); }

@@ -20,6 +20,7 @@
 #include "diagnostics/crashlog.h"
 #include "platform/application_crash_watchdog.h"
 #include "platform/application_restart_policy.h"
+#include "platform/crash_restart_history.h"
 #include "data/data_paths.h"
 #include "diagnostics/debug_profile.h"
 #include "platform/deployment_context.h"
@@ -253,7 +254,6 @@ static std::atomic_bool g_crashWatchdogStarted = false;
 
 static bool ShouldPreventAutoRestart()
 {
-    std::vector<DWORD> ticks;
     HKEY key = nullptr;
     if (RegOpenKeyExW(HKEY_CURRENT_USER, kRegSubKey, 0, KEY_READ | KEY_WRITE, &key) != ERROR_SUCCESS)
     {
@@ -262,15 +262,7 @@ static bool ShouldPreventAutoRestart()
             return false;
     }
 
-    DWORD type = REG_BINARY;
-    DWORD dataSize = 0;
-    if (RegQueryValueExW(key, kRegValueName, nullptr, &type, nullptr, &dataSize) == ERROR_SUCCESS &&
-        type == REG_BINARY && dataSize >= sizeof(DWORD))
-    {
-        ticks.resize(dataSize / sizeof(DWORD));
-        RegQueryValueExW(key, kRegValueName, nullptr, nullptr,
-            reinterpret_cast<BYTE*>(ticks.data()), &dataSize);
-    }
+    const std::vector<DWORD> ticks = snowdesktop::ReadCrashRestartHistory(key);
 
     DWORD now = GetTickCount();
     std::vector<DWORD> recent;

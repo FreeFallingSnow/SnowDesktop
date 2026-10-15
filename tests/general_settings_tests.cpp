@@ -316,6 +316,46 @@ void TestTooltipPresentation()
 int main(int argc, char** argv)
 {
     {
+        // A reader may permit writes while forbidding delete/replace. The
+        // native savers must preserve the committed document on failed commit.
+        const auto path = std::filesystem::temp_directory_path() /
+            (L"SnowDesktopAtomicSettings-" + std::to_wstring(GetCurrentProcessId()) + L".json");
+        GeneralSettings original, replacement;
+        original.tooltipFontSize = 12; replacement.tooltipFontSize = 23;
+        Check(SaveGeneralSettings(path.c_str(), original), "seed actual general settings before a failed replacement");
+        const auto read = [&] {
+            std::ifstream stream(path, std::ios::binary);
+            return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+        };
+        const auto previous = read();
+        HANDLE lock = CreateFileW(path.c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        Check(lock != INVALID_HANDLE_VALUE, "hold an actual settings file against replacement only");
+        Check(!SaveGeneralSettings(path.c_str(), replacement) && read() == previous,
+            "failed native general settings commit reports failure and preserves the complete prior file");
+        if (lock != INVALID_HANDLE_VALUE) CloseHandle(lock);
+        GeneralSettings restored;
+        Check(SaveGeneralSettings(path.c_str(), replacement) &&
+            LoadGeneralSettings(path.c_str(), restored) && restored.tooltipFontSize == 23,
+            "the same general settings input can be retried and reloaded after the lock is released");
+        auto appearance = PersonalizationSettings::DarkPreset();
+        appearance.backgroundPreset = kAppearancePresetCustom;
+        Check(SavePersonalization(path.c_str(), appearance), "seed actual appearance settings");
+        const auto previousAppearance = read();
+        appearance.widgetAlpha = .35f;
+        lock = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+            nullptr, OPEN_EXISTING, 0, nullptr);
+        Check(lock != INVALID_HANDLE_VALUE, "hold actual personalization against replacement only");
+        Check(!SavePersonalization(path.c_str(), appearance) && read() == previousAppearance,
+            "failed appearance commit preserves the prior document and reports failure");
+        if (lock != INVALID_HANDLE_VALUE) CloseHandle(lock);
+        PersonalizationSettings restoredAppearance;
+        Check(SavePersonalization(path.c_str(), appearance) &&
+            LoadPersonalization(path.c_str(), restoredAppearance) && restoredAppearance.widgetAlpha == .35f,
+            "appearance input remains available for a successful retry");
+        std::filesystem::remove(path);
+    }
+    {
         // Never reserve a shortcut for existing profiles. Preserve a chosen
         // chord, including clearing it, across application restarts.
         const auto path = std::filesystem::temp_directory_path() /

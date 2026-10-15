@@ -188,6 +188,15 @@ BeginRenameDockFolderPopupEntry(
         return;
 
     ShowAllCollectionPopupItems();
+    // memberIndex addresses the source folder; geometry addresses the
+    // filtered visible order. A hidden entry has no rename anchor.
+    const size_t visibleCount = GetPopupItemCount(dockFolderPopupWidget_);
+    size_t visibleIndex = 0;
+    while (visibleIndex < visibleCount &&
+        GetPopupFolderEntryIndex(dockFolderPopupWidget_, visibleIndex) != memberIndex)
+        ++visibleIndex;
+    if (visibleIndex == visibleCount) return;
+
     ClearSelection();
     for (auto& entry :
          dockFolderPopupWidget_.folderEntries)
@@ -203,9 +212,18 @@ BeginRenameDockFolderPopupEntry(
     const RECT popup =
         GetCollectionPopupRect(
             dockFolderPopupWidget_);
-    RECT itemRect =
-        GetCollectionPopupItemRect(
-            popup, memberIndex);
+    RECT itemRect = GetCollectionPopupItemRect(popup, visibleIndex);
+    if (!UsesCollectionPopupFan(dockFolderPopupWidget_))
+    {
+        const RECT content = GetCollectionPopupContentRect(popup);
+        if (itemRect.top < content.top)
+            popupScrollOffset_ -= content.top - itemRect.top;
+        else if (itemRect.bottom > content.bottom)
+            popupScrollOffset_ += itemRect.bottom - content.bottom;
+        popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
+            GetCollectionPopupMaxScrollOffset(dockFolderPopupWidget_, popup));
+        itemRect = GetCollectionPopupItemRect(popup, visibleIndex);
+    }
     RECT rect =
         UsesCollectionPopupList(dockFolderPopupWidget_)
             ? GetCollectionPopupItemTextRect(itemRect)

@@ -38,6 +38,65 @@ void Write(
         std::ios::binary | std::ios::trunc);
     file << text;
 }
+
+void CheckReminderStorageRetry(const std::filesystem::path& root)
+{
+    using snowdesktop::calendar::CalendarSeries;
+    // Exercise each persisted side independently and both together, including
+    // a failed startup catch-up followed by an ordinary poll next minute.
+    for (const int failureMask : {1, 2, 3})
+    for (const bool startup : {false, true})
+    {
+        const auto path = root / (L"reminder-retry-" + std::to_wstring(failureMask) +
+            (startup ? L"-startup" : L"-regular")) / L"calendar.json";
+        const auto seriesPath = path.parent_path() / L"calendar-series.json";
+        CalendarNow now{"2026-07-30", 599};
+        CalendarService service(path, [&] { return now; });
+        Expect(service.Load(), "retry fixture loads an empty actual calendar store");
+        CalendarEvent event;
+        event.title = "Single retry"; event.date = now.date;
+        event.startMinutes = 600; event.endMinutes = 660; event.reminderMinutes = 0;
+        Expect(service.Create(event).ok, "create a persisted one-off reminder");
+        CalendarSeries series;
+        series.event = event; series.event.title = "Series retry";
+        series.rule.kind = "dates"; series.rule.dates = {now.date};
+        Expect(service.CreateSeries(series).ok, "create a persisted recurring reminder");
+        int singleCount = 0, seriesCount = 0;
+        const auto notify = [&](const CalendarEvent& delivered) {
+            if (delivered.seriesId.empty()) ++singleCount; else ++seriesCount;
+        };
+        service.SetNotificationCallback(notify);
+        if (!startup) service.CheckReminders(now, false);
+        HANDLE singleLock = INVALID_HANDLE_VALUE, seriesLock = INVALID_HANDLE_VALUE;
+        if (failureMask & 1) singleLock = CreateFileW(path.c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        if (failureMask & 2) seriesLock = CreateFileW(seriesPath.c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        Expect(!(failureMask & 1) || singleLock != INVALID_HANDLE_VALUE,
+            "hold the one-off file against atomic replacement");
+        Expect(!(failureMask & 2) || seriesLock != INVALID_HANDLE_VALUE,
+            "hold the series file against atomic replacement");
+        now.minutes = startup ? 605 : 600;
+        service.CheckReminders(now, startup);
+        service.CheckReminders(now, false);
+        Expect(singleCount == ((failureMask & 1) ? 0 : 1) &&
+            seriesCount == ((failureMask & 2) ? 0 : 1),
+            "failed persistence emits no notification while the successful side deduplicates repeated same-minute polls");
+        if (singleLock != INVALID_HANDLE_VALUE) CloseHandle(singleLock);
+        if (seriesLock != INVALID_HANDLE_VALUE) CloseHandle(seriesLock);
+        ++now.minutes;
+        service.CheckReminders(now, false);
+        service.CheckReminders(now, false);
+        Expect(singleCount == 1 && seriesCount == 1,
+            "the next ordinary minute retries both failed stores once and never repeats a successfully delivered reminder");
+        CalendarService restarted(path, [&] { return now; });
+        restarted.SetNotificationCallback(notify);
+        Expect(restarted.Load(), "reload both actual calendar files after recovery");
+        restarted.CheckReminders(now, true);
+        Expect(singleCount == 1 && seriesCount == 1,
+            "successful retry persists deduplication across a process restart");
+    }
+}
 void CheckCalendarEditorOccurrenceSelection()
 {
     using snowdesktop::CalendarEditorOccurrenceDate;
@@ -459,6 +518,7 @@ int wmain(int argc, wchar_t* argv[])
     CheckCalendarEditorOccurrenceSelection();
     CheckSeries(root);
     CheckOccurrenceReminderEdits(root);
+    CheckReminderStorageRetry(root);
 
     const auto leap =
         CalendarService::GetDateInfo("2024-02-29");

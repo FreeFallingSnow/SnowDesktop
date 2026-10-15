@@ -1,3 +1,5 @@
+#include "data/atomic_file.h"
+#include <sstream>
 /**
  * @file personalization.cpp
  * @brief 个性化设置持久化实现
@@ -585,8 +587,7 @@ bool LoadPersonalization(
 bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
 {
     if (!snowdesktop::ValidatePanelGradient(s.panelGradient)) return false;
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) return false;
+    std::ostringstream file;
     // Applied theme snapshots must survive a settings save/reload exactly.
     file.precision(std::numeric_limits<float>::max_digits10);
     file << "{\n";
@@ -666,5 +667,5 @@ bool SavePersonalization(const wchar_t* path, const PersonalizationSettings& s)
     file << "  \"contentTheme\": " << s.contentTheme << ",\n";
     file << "  \"acrylicEnabled\": " << (s.acrylicEnabled ? "true" : "false") << "\n";
     file << "}\n";
-    return true;
+    return snowdesktop::atomic_file::WriteAll(path, file.str());
 }

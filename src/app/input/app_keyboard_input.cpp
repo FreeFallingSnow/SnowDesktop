@@ -586,90 +586,23 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     {
         handled = true;
         restoreFloatingDockLayer = true;
-        if (dockFolderPopupOpen_ &&
-            dockFolderPopupAvailable_ &&
-            PasteClipboardToFolderPath(
-                dockFolderPopupWidget_.
-                    sourceFolderPath))
+        // Once a popup/mapping has selected the destination, failure belongs
+        // to that target. Never retry the user's paste on the desktop.
+        if (dockFolderPopupOpen_)
+        {
+            if (!dockFolderPopupAvailable_ || !PasteClipboardToFolderPath(
+                    dockFolderPopupWidget_.sourceFolderPath))
+                MessageBeep(MB_ICONWARNING);
             break;
-        if (PasteClipboardToFolderMapping(FindFolderMappingShortcutTarget()))
+        }
+        const auto mappingIndex = FindFolderMappingShortcutTarget();
+        if (mappingIndex < widgets_.size())
+        {
+            if (!PasteClipboardToFolderMapping(mappingIndex))
+                MessageBeep(MB_ICONWARNING);
             break;
-
-        bool fromDesktop = false;
-        std::unordered_set<std::wstring> clipPaths;
-
-        ComPtr<IDataObject> clipObj;
-        if (SUCCEEDED(OleGetClipboard(&clipObj)) && clipObj)
-        {
-            CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
-            FORMATETC fmtPref{ cfPreferred, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-            STGMEDIUM medPref{};
-            if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)) && medPref.hGlobal)
-            {
-                DWORD* pEffect = static_cast<DWORD*>(GlobalLock(medPref.hGlobal));
-                bool isMove = pEffect && (*pEffect & DROPEFFECT_MOVE);
-                if (pEffect) GlobalUnlock(medPref.hGlobal);
-                if (isMove)
-                {
-                    FORMATETC fmtDrop{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-                    STGMEDIUM medDrop{};
-                    if (SUCCEEDED(clipObj->GetData(&fmtDrop, &medDrop)) && medDrop.hGlobal)
-                    {
-                        HDROP hDrop = static_cast<HDROP>(medDrop.hGlobal);
-                        UINT count = DragQueryFileW(hDrop, 0xFFFFFFFF, nullptr, 0);
-                        for (UINT i = 0; i < count; ++i)
-                        {
-                            wchar_t path[MAX_PATH]{};
-                            if (DragQueryFileW(hDrop, i, path, MAX_PATH) > 0)
-                                clipPaths.insert(path);
-                        }
-                        ReleaseStgMedium(&medDrop);
-                    }
-                }
-                ReleaseStgMedium(&medPref);
-            }
         }
-
-        if (!clipPaths.empty())
-        {
-            for (const auto& item : items_)
-            {
-                wchar_t path[MAX_PATH]{};
-                if (SHGetPathFromIDListW(item.absolutePidl.get(), path) && clipPaths.contains(path))
-                {
-                    fromDesktop = true;
-                    break;
-                }
-            }
-        }
-
-        if (fromDesktop)
-        {
-            cutPaths_.clear();
-            if (OpenClipboard(hwnd_))
-            {
-                EmptyClipboard();
-                CloseClipboard();
-            }
-            UpdateCutState();
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        }
-        else
-        {
-            ComPtr<IContextMenu> bgMenu;
-            if (SUCCEEDED(desktopFolder_->CreateViewObject(hwnd_, IID_IContextMenu,
-                reinterpret_cast<void**>(bgMenu.GetAddressOf()))) && bgMenu)
-            {
-                CMINVOKECOMMANDINFO info{};
-                info.cbSize = sizeof(info);
-                info.hwnd = ShellDialogOwnerHwnd();
-                info.lpVerb = "paste";
-                info.nShow = SW_SHOWNORMAL;
-                SafeInvokeCommand(bgMenu.Get(), &info);
-                cutPaths_.clear();
-                RequestShellRefresh();
-            }
-        }
+        PasteClipboardToDesktop();
     }
     break;
     case 'A':

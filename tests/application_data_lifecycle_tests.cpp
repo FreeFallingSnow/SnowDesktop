@@ -5,6 +5,9 @@
 #include "data/layout_storage.h"
 #include "layout/page_management_rules.h"
 #include "common/json_value.h"
+#include "common/json_string.h"
+#include "data/executable_path.h"
+#include "data/data_path_policy.h"
 #include "widget/packages/widget_package.h"
 #include "widget/packages/widget_removal.h"
 #include "data/portable_data_migration.h"
@@ -53,6 +56,94 @@ std::string Read(const std::filesystem::path& path)
     return std::string(
         std::istreambuf_iterator<char>(file),
         std::istreambuf_iterator<char>());
+}
+
+std::wstring fakeExecutable;
+DWORD WINAPI ReadFakeExecutable(HMODULE, LPWSTR target, DWORD capacity)
+{
+    const auto copied = (std::min)(static_cast<std::size_t>(capacity), fakeExecutable.size());
+    std::copy_n(fakeExecutable.data(), copied, target);
+    return static_cast<DWORD>(copied);
+}
+
+void TestPersistenceTransactions(const std::filesystem::path& root)
+{
+    // Use the production string encoder with the complete accepted control
+    // range; saving the decoded custom title must remain a valid layout.
+    std::string title = "Unicode \xe9\x9b\xaa ";
+    for (char value = 0; value < 32; ++value) title += value;
+    title += "\\\"";
+    const std::string encoded = snowdesktop::json::EscapeString(title);
+    JsonValue decoded;
+    Expect(ParseJson('"' + encoded + '"', decoded) && decoded.string == title,
+        "every JSON control character and Unicode title round trips through the production encoder");
+    const auto titlePath = root / L"control-title.layout.json";
+    const std::string document = "{\"layoutSchemaVersion\":1,\"widgets\":[{\"id\":\"controls\","
+        "\"page\":\"page-a\",\"x\":0,\"y\":0,\"type\":\"collection\",\"title\":\"" + encoded + "\",\"customTitle\":\"" + encoded +
+        "\",\"titleMode\":\"custom\",\"userRenamed\":true}]}";
+    snowdesktop::layout_storage::Document layout;
+    std::string error;
+    Expect(snowdesktop::layout_storage::SaveDocument(titlePath, document, &error) &&
+        snowdesktop::layout_storage::LoadDocument(titlePath, layout).status ==
+            snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+        layout.widgets.size() == 1 && layout.widgets.front().customTitle == title,
+        "a decoded control-character custom title can be saved and loaded as a real layout");
+
+    fakeExecutable = L"C:\\portable";
+    for (int part = 0; part < 8; ++part) fakeExecutable += L"\\long-executable-directory-component";
+    fakeExecutable += L"\\SnowDesktop.exe";
+    const auto directory = snowdesktop::data_paths::ExecutableDirectory(ReadFakeExecutable);
+    snowdesktop::deployment::RuntimeDeploymentContext portable;
+    portable.kind = snowdesktop::deployment::RuntimeDeploymentKind::Portable;
+    const auto first = snowdesktop::data_paths::ResolveRuntimeDataPathPolicy(portable, {}, directory);
+    Expect(directory.is_absolute() && directory == std::filesystem::path(fakeExecutable).parent_path() &&
+        first.dataRoot == directory / L"data" && first.dataRoot.is_absolute(),
+        "a truncated first OS path buffer expands and portable data remains beside the long executable path");
+
+    using snowdesktop::backup::detail::AppendStoreZipSize;
+    constexpr auto limit = snowdesktop::backup::kMaxArchiveBytes;
+    for (const std::uint64_t target : {limit - 1, limit, limit + 1})
+    {
+        std::uint64_t bytes = 22;
+        // Two entries, two 76-byte header pairs, and UTF-8 names of 10/15 bytes.
+        const std::uint64_t firstPayload = snowdesktop::backup::kMaxFileBytes;
+        const std::uint64_t secondPayload = target - 22 - 152 - 50 - firstPayload;
+        const bool accepted = AppendStoreZipSize(bytes, firstPayload, 10) &&
+            AppendStoreZipSize(bytes, secondPayload, 15);
+        Expect(target <= limit ? accepted && bytes == target : !accepted,
+            "the actual stored-ZIP size policy accepts limit-1/limit and rejects limit+1 including both header/name copies");
+    }
+    std::uint64_t size = 22;
+    Expect(!AppendStoreZipSize(size, limit - 1, 1) && size == 22,
+        "an importable payload alone cannot bypass the complete archive limit or mutate a rejected size");
+
+    const auto primary = root / L"paired-backup.json";
+    const auto companion = root / L"paired-backup.storage.json";
+    for (const bool lockCompanion : {true, false})
+    {
+        Write(primary, "layout backup"); Write(companion, "component storage backup");
+        const auto& lockedPath = lockCompanion ? companion : primary;
+        HANDLE lock = CreateFileW(lockedPath.c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        Expect(lock != INVALID_HANDLE_VALUE, "lock one backup member against deletion");
+        const bool removed = snowdesktop::layout_storage::DeleteBackupPair(primary, companion, &error);
+        Expect(!removed && !error.empty() && Read(primary) == "layout backup" &&
+            Read(companion) == "component storage backup",
+            "a locked member leaves both original backup files and a visible retryable layout entry");
+        if (lock != INVALID_HANDLE_VALUE) CloseHandle(lock);
+        Expect(snowdesktop::layout_storage::DeleteBackupPair(primary, companion, &error) &&
+            !std::filesystem::exists(primary) && !std::filesystem::exists(companion),
+            "releasing either lock allows the same backup deletion to remove both members");
+    }
+    Write(primary, "layout backup"); Write(companion, "component storage backup");
+    SetFileAttributesW(primary.c_str(), FILE_ATTRIBUTE_READONLY);
+    Expect(!snowdesktop::layout_storage::DeleteBackupPair(primary, companion, &error) &&
+        Read(primary) == "layout backup" && Read(companion) == "component storage backup",
+        "failure to mark the layout for deletion restores a previously marked storage member");
+    SetFileAttributesW(primary.c_str(), FILE_ATTRIBUTE_NORMAL);
+    std::filesystem::remove(companion);
+    Expect(snowdesktop::layout_storage::DeleteBackupPair(primary, companion, &error) &&
+        !std::filesystem::exists(primary), "legacy backups without a storage companion remain deletable");
 }
 
 bool CorruptArchivePayload(const std::filesystem::path& path,
@@ -882,6 +973,7 @@ int main()
     }
 
     const auto hashInput = root / L"sha256-input.bin";
+    TestPersistenceTransactions(root);
     TestDockFolderOrderPersistence(root);
     TestWidgetCatalogRediscovery(root);
     TestDebugProfile(root);

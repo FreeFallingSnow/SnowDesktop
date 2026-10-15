@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "drag_drop/external_drop_content.h"
+#include "drag_drop/clipboard_file_operation.h"
 
 // Folder-entry clipboard, delete and paste operations.
 
@@ -353,6 +354,8 @@ bool DesktopApp::PasteClipboardToFolderPath(
             {
                 EmptyClipboard();
                 cutPaths_.clear();
+                UpdateCutState();
+                InvalidateRect(hwnd_, nullptr, FALSE);
             }
             CloseClipboard();
         }
@@ -372,8 +375,17 @@ bool DesktopApp::PasteClipboardToFolderPath(
             snowdesktop::ClipboardShellDropKeyState(effect), {}, effect,
             std::move(operationCompletion), {}, true);
     }
-    const auto paths = snowdesktop::external_drop_content::ReadFilePaths(clipObj.Get());
+    auto paths = snowdesktop::external_drop_content::ReadFilePaths(clipObj.Get());
     if (paths.empty()) return false;
+    if (action == DropAction::Move)
+    {
+        snowdesktop::RemoveClipboardMoveNoOps(paths, targetFolderPath);
+        if (paths.empty())
+        {
+            operationCompletion(true);
+            return true;
+        }
+    }
 
     DragSourceList sourceList;
     sourceList.hasExternalFiles = true;
@@ -395,83 +407,6 @@ bool DesktopApp::PasteClipboardToFolderPath(
 
 bool DesktopApp::PasteClipboardToDesktop()
 {
-    bool fromDesktop = false;
-    std::unordered_set<std::wstring> clipPaths;
-
-    ComPtr<IDataObject> clipObj;
-    if (SUCCEEDED(OleGetClipboard(&clipObj)) && clipObj &&
-        snowdesktop::external_drop_content::ProbeClipboardFileSource(clipObj.Get()) ==
-            snowdesktop::external_drop_content::ClipboardFileSource::FilePaths &&
-        !snowdesktop::virtual_file_drop::UsesAsyncMode(clipObj.Get()))
-    {
-        CLIPFORMAT cfPreferred = static_cast<CLIPFORMAT>(
-            RegisterClipboardFormatW(CFSTR_PREFERREDDROPEFFECT));
-        FORMATETC fmtPref{ cfPreferred, nullptr,
-            DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-        STGMEDIUM medPref{};
-        if (SUCCEEDED(clipObj->GetData(&fmtPref, &medPref)) &&
-            medPref.hGlobal)
-        {
-            DWORD* pEffect = static_cast<DWORD*>(
-                GlobalLock(medPref.hGlobal));
-            const bool isMove =
-                pEffect && (*pEffect & DROPEFFECT_MOVE);
-            if (pEffect) GlobalUnlock(medPref.hGlobal);
-            if (isMove)
-            {
-                FORMATETC fmtDrop{ CF_HDROP, nullptr,
-                    DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
-                STGMEDIUM medDrop{};
-                if (SUCCEEDED(clipObj->GetData(
-                        &fmtDrop, &medDrop)) &&
-                    medDrop.hGlobal)
-                {
-                    HDROP hDrop = static_cast<HDROP>(
-                        medDrop.hGlobal);
-                    const UINT count = DragQueryFileW(
-                        hDrop, 0xFFFFFFFF, nullptr, 0);
-                    for (UINT i = 0; i < count; ++i)
-                    {
-                        wchar_t path[MAX_PATH]{};
-                        if (DragQueryFileW(
-                                hDrop, i, path, MAX_PATH) > 0)
-                            clipPaths.insert(path);
-                    }
-                    ReleaseStgMedium(&medDrop);
-                }
-            }
-            ReleaseStgMedium(&medPref);
-        }
-    }
-
-    if (!clipPaths.empty())
-    {
-        for (const auto& item : items_)
-        {
-            wchar_t path[MAX_PATH]{};
-            if (SHGetPathFromIDListW(
-                    item.absolutePidl.get(), path) &&
-                clipPaths.contains(path))
-            {
-                fromDesktop = true;
-                break;
-            }
-        }
-    }
-
-    if (fromDesktop)
-    {
-        cutPaths_.clear();
-        if (OpenClipboard(hwnd_))
-        {
-            EmptyClipboard();
-            CloseClipboard();
-        }
-        UpdateCutState();
-        InvalidateRect(hwnd_, nullptr, FALSE);
-        return true;
-    }
-
     wchar_t desktopPath[MAX_PATH]{};
     if (snowdesktop::desktop_source::CopyDirectory(desktopPath) &&
         PasteClipboardToFolderPath(desktopPath))

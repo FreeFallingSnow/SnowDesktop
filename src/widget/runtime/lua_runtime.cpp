@@ -150,4 +150,38 @@ int ProtectedCall(lua_State* state, int arguments, int results,
     }
     return status;
 }
+
+bool ProtectedHostCall(lua_State* state, lua_CFunction function, void* context,
+    int results, std::string& error, int argumentIndex)
+{
+    error.clear();
+    if (!state || !function)
+    {
+        error = "invalid Lua host call";
+        return false;
+    }
+    const int base = lua_gettop(state);
+    if (argumentIndex) argumentIndex = lua_absindex(state, argumentIndex);
+    // lua_checkstack reports allocation failure instead of throwing a Lua
+    // error. Zero-upvalue C functions and light userdata do not allocate.
+    if (!lua_checkstack(state, 3))
+    {
+        error = "not enough Lua stack space for host call";
+        return false;
+    }
+    lua_pushcfunction(state, function);
+    lua_pushlightuserdata(state, context);
+    if (argumentIndex) lua_pushvalue(state, argumentIndex);
+    const int status = lua_pcall(state, argumentIndex ? 2 : 1, results, 0);
+    if (status == LUA_OK) return true;
+    if (lua_type(state, -1) == LUA_TSTRING)
+    {
+        std::size_t length = 0;
+        const char* text = lua_tolstring(state, -1, &length);
+        error.assign(text, length);
+    }
+    else error = "Lua host argument construction failed";
+    lua_settop(state, base);
+    return false;
+}
 }

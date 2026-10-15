@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -1764,6 +1765,41 @@ int RunLauncherFixtureHost(int argc, wchar_t** argv)
     return 0;
 }
 
+void MakeGuiLauncherFixture(const std::filesystem::path& payload)
+{
+    // The test runner remains a console program, but its copied host must
+    // match SnowDesktop's GUI subsystem. Reattaching console-host fixtures
+    // during immediate recovery can fail in Windows DLL initialization,
+    // before this fixture's entry point or the startup protocol executes.
+    // Change only the subsystem word in the disposable, unsigned copy; its
+    // existing wmain CRT entry point and all business assertions stay intact.
+    std::fstream file(payload, std::ios::binary | std::ios::in | std::ios::out);
+    IMAGE_DOS_HEADER dos{};
+    file.read(reinterpret_cast<char*>(&dos), sizeof(dos));
+    if (!file || dos.e_magic != IMAGE_DOS_SIGNATURE || dos.e_lfanew <= 0)
+    {
+        Check(false, "the copied launcher host has a valid DOS header");
+        return;
+    }
+    file.seekg(dos.e_lfanew);
+    IMAGE_NT_HEADERS nt{};
+    file.read(reinterpret_cast<char*>(&nt), sizeof(nt));
+    if (!file || nt.Signature != IMAGE_NT_SIGNATURE ||
+        nt.OptionalHeader.Magic != IMAGE_NT_OPTIONAL_HDR_MAGIC)
+    {
+        Check(false, "the copied launcher host has native PE headers");
+        return;
+    }
+    const auto subsystemOffset = static_cast<std::streamoff>(dos.e_lfanew) +
+        static_cast<std::streamoff>(offsetof(IMAGE_NT_HEADERS, OptionalHeader)) +
+        static_cast<std::streamoff>(offsetof(IMAGE_OPTIONAL_HEADER, Subsystem));
+    const WORD subsystem = IMAGE_SUBSYSTEM_WINDOWS_GUI;
+    file.seekp(subsystemOffset);
+    file.write(reinterpret_cast<const char*>(&subsystem), sizeof(subsystem));
+    file.flush();
+    Check(file.good(), "the disposable launcher host matches the product GUI subsystem");
+}
+
 void WriteLauncherDistribution(const std::filesystem::path& root,
     const std::filesystem::path& host, std::string_view id,
     std::string_view mode, bool protocol = true, bool invalidExecutable = false)
@@ -1772,7 +1808,11 @@ void WriteLauncherDistribution(const std::filesystem::path& root,
     std::filesystem::create_directories(distribution);
     const auto payload = distribution / L"SnowDesktop.exe";
     if (invalidExecutable) WriteText(payload, "not an executable");
-    else std::filesystem::copy_file(host, payload, std::filesystem::copy_options::overwrite_existing);
+    else
+    {
+        std::filesystem::copy_file(host, payload, std::filesystem::copy_options::overwrite_existing);
+        MakeGuiLauncherFixture(payload);
+    }
     WriteText(distribution / L"mode.txt", mode);
     std::ostringstream manifest;
     manifest << "{\"schemaVersion\":1,\"kind\":\"steam-managed\",\"version\":\"1.0.7.0\",\"buildId\":\""
@@ -1851,9 +1891,15 @@ void TestLauncherEntry(const std::filesystem::path& root,
         "the real child receives empty, spaced, quoted and trailing-backslash arguments without inheriting startup identity");
 
     WriteLauncherDistribution(root, host, b, "fail-before");
-    Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
-            ReadText(state / kCurrentRuntimeFilename) == std::string(a) + "\n" &&
-            ReadText(state / L"launcher.log").find("before data access") != std::string::npos,
+    const auto recoveryExit = RunLauncherProcess(root, L"--launcher-test-host");
+    const auto recoveredSelection = ReadText(state / kCurrentRuntimeFilename);
+    const auto recoveryLog = ReadText(state / L"launcher.log");
+    if (recoveryExit != 0 || recoveredSelection != std::string(a) + "\n" ||
+        recoveryLog.find("before data access") == std::string::npos)
+        std::cerr << "Pre-data recovery: exit=" << recoveryExit << ", selection=" <<
+            recoveredSelection << ", launcher log=" << recoveryLog << '\n';
+    Check(recoveryExit == 0 && recoveredSelection == std::string(a) + "\n" &&
+            recoveryLog.find("before data access") != std::string::npos,
         "pre-data child exit is diagnosed and recovers the previous host through the real launcher");
     const auto beforeRetry = ReadText(output);
     Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
