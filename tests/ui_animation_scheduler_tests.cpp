@@ -841,6 +841,80 @@ int main()
     Check(mergedTimerCalls == 2,
         "same-cycle component deadlines share one dispatch pass");
 
+    {
+        UiAnimationScheduler batch;
+        Check(batch.Initialize(), "timed presentation scheduler initializes");
+        int owner = 0, otherOwner = 0;
+        int firstState = 0, secondState = 0, paints = 0, otherPaints = 0;
+        bool completeState = false;
+        const auto request = [&] {
+            return batch.RequestScheduledPresentation(&owner, [&] {
+                ++paints;
+                completeState = firstState == 1 && secondState == 1;
+                batch.DispatchDue();
+                return true;
+            });
+        };
+        batch.ScheduleOnce(0, [&](auto) {
+            firstState = 1;
+            Check(request() && paints == 0, "first timed update queues without presenting a partial batch");
+        });
+        batch.ScheduleOnce(0, [&](auto) {
+            secondState = 1;
+            Check(request() && paints == 0, "second timed update shares the current snapshot");
+            batch.RequestScheduledPresentation(&otherOwner, [&] { ++otherPaints; return true; });
+        });
+        batch.DispatchDue();
+        Check(paints == 1 && otherPaints == 1 && completeState && !batch.HasScheduledWork(),
+            "deadline-only updates present both complete states once without an extra wakeup");
+
+        Check(!batch.RequestScheduledPresentation(&owner, [&] { ++paints; return false; }) && paints == 2,
+            "direct input presentation remains synchronous and preserves failure results");
+        int immediatePointerPaints = 0;
+        batch.ScheduleOnce(0, [&](auto) {
+            batch.RequestFramePresentation(&owner, [&] { ++immediatePointerPaints; });
+            Check(immediatePointerPaints == 1,
+                "existing immediate presentation is not deferred by a deadline callback");
+        });
+        batch.DispatchDue();
+
+        int lastState = 0, publishedState = 0, mixedPaints = 0;
+        batch.ScheduleOnce(0, [&](auto) {
+            lastState = 1;
+            batch.RequestScheduledPresentation(&owner, [&] { ++mixedPaints; publishedState = lastState; return true; });
+        });
+        batch.StartAnimation(UiAnimationSurface::Desktop, [&](double) {
+            lastState = 2;
+            batch.RequestFramePresentation(&owner, [&] { ++mixedPaints; publishedState = lastState; });
+            return false;
+        });
+        batch.DispatchDue();
+        Check(mixedPaints == 1 && publishedState == 2 && !batch.HasScheduledWork(),
+            "timer and animation owners share their latest state in one presentation");
+
+        int cancelledPresentations = 0;
+        batch.ScheduleOnce(0, [&](auto) {
+            batch.RequestScheduledPresentation(&owner, [&] { ++cancelledPresentations; return true; });
+            batch.CancelAll();
+        });
+        batch.DispatchDue();
+        Check(cancelledPresentations == 0 && !batch.HasScheduledWork(),
+            "cancelling timed work discards its pending presentation");
+        batch.ScheduleOnce(0, [&](auto) {
+            batch.RequestScheduledPresentation(&owner, [&] { batch.CancelAll(); return true; });
+            batch.RequestScheduledPresentation(&otherOwner, [&] { ++cancelledPresentations; return true; });
+        });
+        batch.DispatchDue();
+        Check(cancelledPresentations == 0, "cancellation during timed presentation prevents later owners publishing");
+        batch.ScheduleOnce(0, [&](auto) {
+            batch.RequestScheduledPresentation(&owner, [&] { ++cancelledPresentations; return true; });
+            throw std::runtime_error("retired component callback");
+        });
+        batch.DispatchDue();
+        Check(cancelledPresentations == 1 && !batch.HasScheduledWork(),
+            "failed deadline callbacks still publish their queued terminal state");
+    }
+
     int firstFrames = 0;
     int secondFrames = 0;
     double firstTimestamp = 0.0;

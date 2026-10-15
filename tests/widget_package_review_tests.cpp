@@ -1,5 +1,6 @@
 #include "../src/winui/widget_package_review.h"
 #include "test_temporary_directory.h"
+#include "steam/workshop_validation_cache_tests.h"
 
 #include <fstream>
 #include <cstdlib>
@@ -133,7 +134,11 @@ void RunReviewedPackageInstallationCases()
 
 void TestReviewedPackageInstallation()
 {
-    try { RunReviewedPackageInstallationCases(); }
+    try
+    {
+        RunReviewedPackageInstallationCases();
+        TestWorkshopValidationCache();
+    }
     catch (const std::exception& error)
     {
         // Unwind all fixture resources before reporting failure to the runner.

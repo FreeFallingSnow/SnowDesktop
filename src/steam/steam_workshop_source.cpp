@@ -6,6 +6,8 @@
 #include "steam_app_identity.h"
 #include "steam_child_environment.h"
 #include "steam_workshop_cache.h"
+#include "steam_workshop_validation_cache.h"
+#include "shell/shell_extension_diagnostics.h"
 
 #include <windows.h>
 
@@ -463,7 +465,8 @@ std::optional<SteamWorkshopSource::ResolvedItem>
 SteamWorkshopSource::ResolveInstalledFolder(
     const std::string& publishedFileId, const std::string& ownerSteamId,
     const std::filesystem::path& folder, std::string& error,
-    PackageManifest* detectedManifest, const PackagePaths& validationPaths)
+    PackageManifest* detectedManifest, const PackagePaths& validationPaths,
+    bool reuseValidatedArchive)
 {
     std::error_code filesystemError;
     const auto absoluteFolder = std::filesystem::absolute(
@@ -521,18 +524,26 @@ SteamWorkshopSource::ResolveInstalledFolder(
     }
 
     WidgetPackageManager validationManager(validationPaths);
-    PackageManifest manifest;
-    const ValidationReport validation =
-        validationManager.ValidateArchive(artifact, &manifest);
-    if (detectedManifest) *detectedManifest = manifest;
-    if (!validation.Ok())
+    const auto validate = [&] {
+        SteamWorkshopValidationCache::Result result;
+        result.report = validationManager.ValidateArchive(artifact, &result.manifest);
+        return result;
+    };
+    auto validation = reuseValidatedArchive
+        ? SteamWorkshopValidationCache::ForProcess().Validate(
+            artifact, validationPaths.staging, validate)
+        : validate();
+    snowdesktop::shell_extensions::MenuTrace("workshop.validation",
+        validation.reused ? "cache.hit" : "validate.archive");
+    if (detectedManifest) *detectedManifest = validation.manifest;
+    if (!validation.report.Ok())
     {
         error = "Workshop component package failed validation: " +
-            validation.ToJson();
+            validation.report.ToJson();
         return std::nullopt;
     }
     PackageDetails details;
-    details.manifest = std::move(manifest);
+    details.manifest = std::move(validation.manifest);
     details.source = { "steam-workshop",
         BoundExternalItemId(publishedFileId, ownerSteamId) };
     details.versions.push_back(details.manifest.version);
@@ -707,7 +718,7 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
                 PackageManifest detectedManifest;
                 auto resolved = ResolveInstalledFolder(
                     item.publishedFileId, {}, item.contentDirectory, itemError,
-                    &detectedManifest, paths);
+                    &detectedManifest, paths, true);
                 if (!resolved)
                 {
                     const std::string packageId = detectedManifest.id.empty()

@@ -120,7 +120,14 @@ bool DesktopApp::QueueDesktopWidgetComposition(
     }
 
     pendingDesktopWidgetCompositions_.insert(widgetId);
-    return PresentQueuedDesktopWidgetComposition();
+    if (desktopWidgetPointerBatchActive_)
+        return PresentQueuedDesktopWidgetComposition();
+    // Every timed widget update adds its ID before the scheduler presents the
+    // owner once. Direct input and non-scheduled invalidation still present now.
+    return uiAnimationScheduler_.RequestScheduledPresentation(
+        &pendingDesktopWidgetCompositions_, [this] {
+            return PresentQueuedDesktopWidgetComposition();
+        });
 }
 
 bool DesktopApp::PresentQueuedDesktopWidgetComposition(bool passivePointerFrame)

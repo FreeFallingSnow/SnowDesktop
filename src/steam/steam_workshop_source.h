@@ -58,7 +58,8 @@ private:
     static std::optional<ResolvedItem> ResolveInstalledFolder(
         const std::string& publishedFileId, const std::string& ownerSteamId,
         const std::filesystem::path& folder, std::string& error,
-        PackageManifest* detectedManifest, const PackagePaths& validationPaths);
+        PackageManifest* detectedManifest, const PackagePaths& validationPaths,
+        bool reuseValidatedArchive = false);
 
     std::filesystem::path bridgeExecutable_;
     PackagePaths validationPaths_;

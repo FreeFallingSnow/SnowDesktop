@@ -252,8 +252,9 @@ void UiAnimationScheduler::DispatchDue()
     {
         bool& active;
         bool& advancing;
-        ~DispatchGuard() { advancing = false; active = false; }
-    } guard{dispatching_, advancingFrame_};
+        bool& timers;
+        ~DispatchGuard() { timers = false; advancing = false; active = false; }
+    } guard{dispatching_, advancingFrame_, dispatchingTimers_};
 
     const double now = MonotonicMilliseconds();
     std::vector<UiScheduleToken> dueTimers;
@@ -264,6 +265,7 @@ void UiAnimationScheduler::DispatchDue()
             dueTimers.push_back(token);
     }
 
+    dispatchingTimers_ = true;
     for (UiScheduleToken token : dueTimers)
     {
         auto found = timerEntries_.find(token);
@@ -294,6 +296,7 @@ void UiAnimationScheduler::DispatchDue()
             Cancel(token);
         }
     }
+    dispatchingTimers_ = false;
 
     // Component/deadline callbacks above may take longer than a frame. Sample
     // again after that work so every animated surface receives the current
@@ -351,15 +354,7 @@ void UiAnimationScheduler::DispatchDue()
         advancingFrame_ = false;
         // Keep dispatching_ guarded while presenting: a paint or native menu
         // can run a nested message loop, but cannot reenter this snapshot.
-        auto presentations = std::move(pendingPresentations_);
-        pendingPresentations_.clear();
-        const auto cancellation = presentationCancellation_;
-        for (auto& presentation : presentations)
-        {
-            if (presentationCancellation_ != cancellation) break;
-            try { presentation.callback(); }
-            catch (...) {}
-        }
+        FlushPresentations();
         const double frameWork =
             MonotonicMilliseconds() - workStart;
         ++deliveredFrames_;
@@ -381,6 +376,9 @@ void UiAnimationScheduler::DispatchDue()
         }
     }
 
+    // Deadline-only snapshots need the same boundary even with no animation
+    // registered; otherwise queued component surfaces would never be drawn.
+    FlushPresentations();
     ArmNextWakeup();
 }
 
@@ -393,6 +391,21 @@ void UiAnimationScheduler::RequestFramePresentation(
         callback();
         return;
     }
+    QueuePresentation(owner, std::move(callback));
+}
+
+bool UiAnimationScheduler::RequestScheduledPresentation(
+    const void* owner, std::function<bool()> callback)
+{
+    if (!callback) return false;
+    if (!dispatchingTimers_ && !advancingFrame_) return callback();
+    QueuePresentation(owner, [callback = std::move(callback)] { (void)callback(); });
+    return true;
+}
+
+void UiAnimationScheduler::QueuePresentation(
+    const void* owner, std::function<void()> callback)
+{
     auto existing = std::find_if(pendingPresentations_.begin(),
         pendingPresentations_.end(), [owner](const auto& entry) {
             return entry.owner == owner;
@@ -401,6 +414,19 @@ void UiAnimationScheduler::RequestFramePresentation(
         pendingPresentations_.push_back({owner, std::move(callback)});
     else
         existing->callback = std::move(callback);
+}
+
+void UiAnimationScheduler::FlushPresentations()
+{
+    auto presentations = std::move(pendingPresentations_);
+    pendingPresentations_.clear();
+    const auto cancellation = presentationCancellation_;
+    for (auto& presentation : presentations)
+    {
+        if (presentationCancellation_ != cancellation) break;
+        try { presentation.callback(); }
+        catch (...) {}
+    }
 }
 
 void UiAnimationScheduler::SetSoftwareRendering(bool softwareRendering)
