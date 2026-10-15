@@ -7,6 +7,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "layout/popup_icon_load_rules.h"
 #include "dock/dock_minimize_protocol.h"
+#include "desktop/desktop_membership_recovery.h"
 
 // SID 字符串格式化（S-1-5-21-...），直接按 SID 内存布局解析，
 // 不依赖 sddl.h/ntsecapi，避免 PCH 环境下安全 API 声明不可用的问题。
@@ -831,6 +832,8 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         RequestShellRefresh();
         return;
     }
+    snowdesktop::desktop_membership_recovery::Reconcile(widgets_, items_, dockEntries_,
+        snowdesktop::desktop_membership_recovery::NowSeconds(), !incremental);
     snowdesktop::startup_diagnostics::Call(L"InitializeGridFromWindows", [&] { InitializeGridFromWindows(); });
     // Revalidate against the new snapshot without losing the last confirmed
     // section/pinned identity while asynchronous Shell queries are pending.
@@ -1041,24 +1044,6 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     LayoutItems();
     snowdesktop::startup_diagnostics::Call(L"ApplyPendingPlacement", [&] { ApplyPendingPlacement(); });
     UpdateCutState();
-
-    // Prune desktop-backed widget itemKeys that no longer exist (file was deleted from outside).
-    // FolderMapping keys are mapped-folder paths, not desktop layout keys.
-    std::unordered_set<std::wstring> allKeys;
-    for (auto& item : items_)
-        if (!item.layoutKey.empty())
-            allKeys.insert(ToUpperInvariant(item.layoutKey));
-    for (auto& w : widgets_)
-    {
-        if (incremental) break; // Unobserved keys remain valid until a complete read.
-        if (w.type == DesktopWidgetType::FolderMapping)
-            continue;
-        auto it = std::remove_if(w.itemKeys.begin(), w.itemKeys.end(),
-            [&](const std::wstring& key) {
-                return allKeys.count(ToUpperInvariant(key)) == 0;
-            });
-        w.itemKeys.erase(it, w.itemKeys.end());
-    }
 
     if (snapshot) snapshot->layoutMs = GetTickCount64() - stageStarted;
     stageStarted = GetTickCount64();

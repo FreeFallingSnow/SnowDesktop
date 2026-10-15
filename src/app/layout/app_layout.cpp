@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "desktop/folder_mapping_visibility_rules.h"
+#include "desktop/desktop_membership_recovery.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "icons/large_icon_backup.h"
 #include "platform/operation_recovery_dialog.h"
@@ -569,6 +570,10 @@ void DesktopApp::LoadLayoutSlots()
         widget.itemKeys.reserve(saved.items.size());
         for (const auto& key : saved.items)
             widget.itemKeys.push_back(Utf8ToWide(key));
+        if (widget.type != DesktopWidgetType::FolderMapping)
+            for (const auto& missing : saved.missingItems)
+                widget.missingItems.push_back({ToUpperInvariant(Utf8ToWide(missing.key)),
+                    static_cast<size_t>(missing.index), missing.missingSince});
         widget.childWidgetIds.reserve(saved.childWidgets.size());
         for (const auto& child : saved.childWidgets)
             widget.childWidgetIds.push_back(Utf8ToWide(child));
@@ -898,6 +903,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     if (!desktopItemsReady_ || gridPages_.empty())
         return false;
 
+    snowdesktop::desktop_membership_recovery::PruneExpired(
+        widgets_, snowdesktop::desktop_membership_recovery::NowSeconds());
+
     if (dockFolderPopupOpen_)
     {
         const auto source = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
@@ -1222,7 +1230,15 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
             file << "\"" << JsonEscapeUtf8(w.itemKeys[j]) << "\"";
             if (j + 1 != w.itemKeys.size()) file << ", ";
         }
-        file << "], \"childWidgets\": [";
+        file << "]";
+        if (!w.missingItems.empty() && w.type != DesktopWidgetType::FolderMapping)
+        {
+            std::vector<snowdesktop::layout_storage::MissingItemRecord> missing;
+            for (const auto& entry : w.missingItems)
+                missing.push_back({WideToUtf8(entry.key), static_cast<int>(entry.index), entry.missingSince});
+            file << ", \"missingItems\": " << snowdesktop::layout_storage::SerializeMissingItems(missing);
+        }
+        file << ", \"childWidgets\": [";
         for (size_t j = 0; j < w.childWidgetIds.size(); ++j)
         {
             file << "\"" << JsonEscapeUtf8(w.childWidgetIds[j]) << "\"";

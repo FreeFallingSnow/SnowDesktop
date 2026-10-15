@@ -59,6 +59,9 @@ inline MigrationResult MigrateReferences(
             if (ReplaceMatchingKey(key, oldKey, newKey))
                 ++result.widgetReferences;
         }
+        for (auto& item : widget.missingItems)
+            if (ReplaceMatchingKey(item.key, oldKey, newKey))
+                ++result.widgetReferences;
     }
 
     for (DockEntry& entry : dockEntries)

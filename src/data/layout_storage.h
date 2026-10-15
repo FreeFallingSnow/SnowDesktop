@@ -4,6 +4,7 @@
 #include "dock/dock_layout_settings.h"
 
 #include <filesystem>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -30,6 +31,13 @@ struct ItemRecord
     int width = 1;
     int height = 1;
     std::optional<LargeIconConfig> largeIcon;
+};
+
+struct MissingItemRecord
+{
+    std::string key;
+    int index = 0;
+    std::int64_t missingSince = 0;
 };
 
 struct WidgetRecord
@@ -87,6 +95,7 @@ struct WidgetRecord
     std::optional<bool> bottomBarHover;
     std::optional<bool> userRenamed;
     std::vector<std::string> items;
+    std::vector<MissingItemRecord> missingItems;
     std::vector<std::string> childWidgets;
 };
 
@@ -214,6 +223,7 @@ LoadResult LoadDocument(const std::filesystem::path& layoutPath,
 bool SaveDocument(const std::filesystem::path& layoutPath,
     std::string_view contents, std::string* error = nullptr);
 std::string SerializeDockLayout(const DockLayoutSettings& settings);
+std::string SerializeMissingItems(const std::vector<MissingItemRecord>& items);
 // Clear placement records and reset Dock layout while preserving appearance.
 bool BuildClearedDocument(std::string_view contents, std::string& cleared,
     std::string* error = nullptr);

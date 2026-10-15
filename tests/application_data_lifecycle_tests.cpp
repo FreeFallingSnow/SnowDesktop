@@ -24,6 +24,8 @@
 #include <thread>
 #include <vector>
 
+int RunDesktopMembershipRecoveryTests(const std::filesystem::path& root);
+
 namespace
 {
 using namespace snowdesktop::widget;
@@ -838,6 +840,7 @@ int main()
     TestDebugProfile(root);
     TestWidgetRemoval(root);
     TestDockLayoutBackup(root);
+    failures += RunDesktopMembershipRecoveryTests(root);
     TestLayoutReset(root);
     TestInitializationExperiment(root);
     Write(hashInput, "abc");

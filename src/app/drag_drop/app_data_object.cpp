@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "desktop/folder_mapping_visibility_rules.h"
+#include "desktop/desktop_membership_recovery.h"
 
 // OLE data-object construction and desktop landing bookkeeping.
 
@@ -227,24 +228,8 @@ void DesktopApp::RemoveDesktopKeysFromWidgets(const std::vector<std::wstring>& k
 {
     if (keys.empty()) return;
 
-    std::vector<std::wstring> normalizedKeys;
-    normalizedKeys.reserve(keys.size());
-    for (const auto& key : keys)
-        normalizedKeys.push_back(ToUpperInvariant(key));
-
     for (auto& widget : widgets_)
-    {
-        if (widget.type == DesktopWidgetType::FolderMapping)
-            continue;
-        widget.itemKeys.erase(
-            std::remove_if(widget.itemKeys.begin(), widget.itemKeys.end(),
-                [&](const std::wstring& existing) {
-                    std::wstring normalizedExisting = ToUpperInvariant(existing);
-                    return std::find(normalizedKeys.begin(), normalizedKeys.end(),
-                        normalizedExisting) != normalizedKeys.end();
-                }),
-            widget.itemKeys.end());
-    }
+        snowdesktop::desktop_membership_recovery::Forget(widget, keys);
     RefreshCollectedKeysCache();
 }
 

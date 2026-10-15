@@ -1261,6 +1261,7 @@ if (BUILD_TESTING)
         application_data_lifecycle
         SOURCES
             tests/application_data_lifecycle_tests.cpp
+            tests/desktop/desktop_membership_recovery_tests.cpp
             tests/data/data_cleanup_tests.cpp
             src/data/data_cleanup.cpp
             src/data/atomic_file.cpp
@@ -1275,7 +1276,7 @@ if (BUILD_TESTING)
             src/diagnostics/debug_profile.cpp
             src/steam/steam_runtime_context.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES bcrypt ole32 shell32 user32 version
+        LINK_LIBRARIES bcrypt gdi32 ole32 shell32 user32 version
         LABELS core integration data)
 
     snowdesktop_add_test(

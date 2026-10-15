@@ -369,6 +369,35 @@ bool DecodeItems(const JsonValue& root, Document& document,
     return true;
 }
 
+bool DecodeMissingItems(const JsonValue& object, const std::string& path,
+    std::vector<MissingItemRecord>& output, std::string* error)
+{
+    const JsonValue* items = nullptr;
+    if (!ReadObjectArray(object, "missingItems", items, error)) return false;
+    if (!items) return true;
+    for (size_t index = 0; index < items->array.size(); ++index)
+    {
+        const auto& item = items->array[index];
+        const auto itemPath = path + ".missingItems[" + std::to_string(index) + "]";
+        MissingItemRecord record;
+        if (!ReadRequiredString(item, "key", itemPath + ".key", record.key, error) ||
+            !ReadRequiredInteger(item, "index", itemPath + ".index", record.index, error))
+            return false;
+        if (record.key.empty() || record.index < 0)
+            return Fail(error, itemPath, "requires a nonempty key and a nonnegative index");
+        const auto* stamp = item.Find("missingSince");
+        // JSON numbers must represent UTC seconds exactly, including after 2038.
+        constexpr double maxExactInteger = 9007199254740991.0;
+        if (!stamp || !stamp->IsNumber() || !std::isfinite(stamp->number) ||
+            std::trunc(stamp->number) != stamp->number || stamp->number <= 0 ||
+            stamp->number > maxExactInteger)
+            return Fail(error, itemPath + ".missingSince", "must be a positive exact integer");
+        record.missingSince = static_cast<std::int64_t>(stamp->number);
+        output.push_back(std::move(record));
+    }
+    return true;
+}
+
 bool DecodeWidgets(const JsonValue& root, Document& document,
     std::string* error)
 {
@@ -515,6 +544,7 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 record.categoryTabOrder, error) ||
             !ReadStringArray(object, "items", path + ".items",
                 record.items, error) ||
+            !DecodeMissingItems(object, path, record.missingItems, error) ||
             !ReadStringArray(object, "childWidgets",
                 path + ".childWidgets", record.childWidgets, error))
         {
@@ -915,6 +945,24 @@ std::string SerializeDockLayout(const DockLayoutSettings& settings)
     output.imbue(std::locale::classic());
     output << std::setprecision(std::numeric_limits<float>::max_digits10);
     WriteJsonValue(output, EncodeDockLayout(settings));
+    return output.str();
+}
+
+std::string SerializeMissingItems(const std::vector<MissingItemRecord>& items)
+{
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << '[';
+    for (size_t index = 0; index < items.size(); ++index)
+    {
+        if (index) output << ',';
+        const auto& item = items[index];
+        output << "{\"key\":";
+        WriteJsonString(output, item.key);
+        output << ",\"index\":" << item.index
+               << ",\"missingSince\":" << item.missingSince << '}';
+    }
+    output << ']';
     return output.str();
 }
 

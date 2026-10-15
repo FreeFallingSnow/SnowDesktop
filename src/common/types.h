@@ -475,6 +475,16 @@ public:
     }
 };
 
+// Saved ownership for a desktop member temporarily removed by an installer.
+struct MissingDesktopWidgetItem
+{
+    std::wstring key;
+    size_t index = 0;
+    std::int64_t missingSince = 0; // UTC Unix seconds; survives host restarts.
+
+    bool operator==(const MissingDesktopWidgetItem&) const = default;
+};
+
 /**
  * @brief 桌面组件
  * @details 表示桌面上的一个组件实例，可以是集合、文件分类、文件夹映射或 Lua 脚本组件。
@@ -543,6 +553,8 @@ struct DesktopWidget
     bool showFileCategories = false;
     bool showSearchBox = false;
     std::vector<std::wstring> itemKeys;
+    // Temporarily absent desktop members never occupy visible collection slots.
+    std::vector<MissingDesktopWidgetItem> missingItems;
     std::vector<std::wstring> childWidgetIds;
     std::vector<FolderEntry> folderEntries;
 };

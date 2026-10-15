@@ -130,6 +130,21 @@ bool DesktopApp::QueueShellFileOperation(
         return false;
     }
 
+    std::vector<std::wstring> removedPaths;
+    for (const auto& step : request.steps)
+        if (step.function == FO_DELETE || step.function == FO_MOVE)
+            removedPaths.insert(removedPaths.end(), step.sources.begin(), step.sources.end());
+    if (!removedPaths.empty())
+    {
+        auto callback = std::move(result->callback);
+        result->callback = [this, removedPaths = std::move(removedPaths),
+            callback = std::move(callback)](bool succeeded) {
+            // A cancelled/failed operation must retain its original ownership.
+            // Successful user deletions/moves must not become recoverable gaps.
+            if (succeeded) RemoveDesktopKeysFromWidgets(removedPaths);
+            if (callback) callback(succeeded);
+        };
+    }
     const bool queued = shellFileOperationWorker_.Enqueue(
         std::move(request),
         [completionWindow, result](bool succeeded) {

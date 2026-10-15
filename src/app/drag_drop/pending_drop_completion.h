@@ -3,6 +3,7 @@
 #include "core/drop_model.h"
 #include "shell/shell_file_operation_worker.h"
 #include "drag_drop/pending_drop_rules.h"
+#include "desktop/desktop_membership_recovery.h"
 
 namespace snowdesktop::pending_drop
 {
@@ -52,8 +53,7 @@ inline bool CommitKeyedLanding(std::vector<DesktopWidget>& widgets, DesktopItem&
     if (target == widgets.end() || target->type == DesktopWidgetType::FolderMapping) return false;
     if (key.empty()) return false;
     for (auto& widget : widgets)
-        if (widget.type != DesktopWidgetType::FolderMapping)
-            std::erase_if(widget.itemKeys, [&](const auto& existing) { return _wcsicmp(existing.c_str(), key.c_str()) == 0; });
+        desktop_membership_recovery::Forget(widget, {key});
     pending_drop_rules::InsertAt(target->itemKeys, landing.insertIndex, std::vector<std::wstring>{key});
     item.gridCell = target->gridCell;
     return true;

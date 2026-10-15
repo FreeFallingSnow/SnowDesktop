@@ -8,6 +8,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "drag_drop/ole_drag_rules.h"
 #include "layout/collection_titleless_rules.h"
+#include "desktop/desktop_membership_recovery.h"
 
 // Desktop animation, dwell and maintenance timer dispatch.
 
@@ -540,6 +541,12 @@ void DesktopApp::OnTimer(WPARAM timerId)
     {
         PollInitialShellRead();
         DrainBackgroundShellWork();
+        if (desktopItemsReady_ && !reloading_ && !layoutReload_.Pending() &&
+            shellFileOperationInFlight_ == 0 && !dragSession_.HasContext() &&
+            !dragDropController_.IsTransportActive() &&
+            snowdesktop::desktop_membership_recovery::PruneExpired(
+                widgets_, snowdesktop::desktop_membership_recovery::NowSeconds()))
+            SaveLayoutSlots();
         RefreshIconBitmapResolution();
         // A failed mapped-folder icon has a retry deadline. Wake a stationary
         // Dock from the existing maintenance timer too, not only from hover or
