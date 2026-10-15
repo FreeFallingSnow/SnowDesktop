@@ -658,9 +658,15 @@ void CheckAttractionSeamPixels(HINSTANCE instance, IDCompositionDesktopDevice *d
                 return p - a::Point{static_cast<double>(area.left), static_cast<double>(area.top)};
             };
             const auto cross = [](a::Point p, a::Point q) { return p.x * q.y - p.y * q.x; };
+            std::map<std::pair<std::size_t, std::size_t>, unsigned> edges;
             for (std::size_t triangle = 0; triangle < a::TriangleCount; ++triangle)
             {
                 const auto indices = a::TriangleVertices(triangle);
+                for (std::size_t edge = 0; edge < 3; ++edge)
+                {
+                    const auto pair = std::minmax(indices[edge], indices[(edge + 1) % 3]);
+                    ++edges[{pair.first, pair.second}];
+                }
                 const std::array<a::Point, 3> points{local(mesh.vertices[indices[0]]), local(mesh.vertices[indices[1]]),
                                                      local(mesh.vertices[indices[2]])};
                 const double signedArea = cross(points[1] - points[0], points[2] - points[0]);
@@ -689,12 +695,21 @@ void CheckAttractionSeamPixels(HINSTANCE instance, IDCompositionDesktopDevice *d
                         if (inside)
                             covered[static_cast<std::size_t>(y) * width + x] = 1;
                     }
-                // Sample the actual shared-edge neighbourhood, including the
-                // cell diagonal, rather than only checking triangle interiors.
-                for (std::size_t edge = 0; edge < 3; ++edge)
+            }
+            // Only topology edges with two incident triangles are seams.
+            // The old mask also sampled the outer silhouette; its 0.005 px
+            // raster tolerance included a few genuinely background pixels.
+            // Keep the internal brightness threshold unchanged and exclude
+            // only a 0.05 px ambiguity band at the actual exterior boundary.
+            for (const auto &[edge, count] : edges)
+            {
+                const auto first = local(mesh.vertices[edge.first]);
+                const auto last = local(mesh.vertices[edge.second]);
+                if (count == 2)
+                {
                     for (const double fraction : {0.17, 0.37, 0.61, 0.83})
                     {
-                        const auto point = points[edge] * (1 - fraction) + points[(edge + 1) % 3] * fraction;
+                        const auto point = first * (1 - fraction) + last * fraction;
                         for (int dy = -1; dy <= 1; ++dy)
                             for (int dx = -1; dx <= 1; ++dx)
                             {
@@ -704,6 +719,25 @@ void CheckAttractionSeamPixels(HINSTANCE instance, IDCompositionDesktopDevice *d
                                     nearEdge[static_cast<std::size_t>(y) * width + x] = 1;
                             }
                     }
+                }
+                else
+                {
+                    const auto direction = last - first;
+                    const double lengthSquared = direction.x * direction.x + direction.y * direction.y;
+                    for (int y = 0; y < height; ++y)
+                        for (int x = 0; x < width; ++x)
+                        {
+                            const auto offset = a::Point{x + 0.5, y + 0.5} - first;
+                            const double along =
+                                lengthSquared > 0
+                                    ? std::clamp((offset.x * direction.x + offset.y * direction.y) / lengthSquared, 0.0,
+                                                 1.0)
+                                    : 0;
+                            const auto distance = offset - direction * along;
+                            if (std::hypot(distance.x, distance.y) < 0.05)
+                                covered[static_cast<std::size_t>(y) * width + x] = 0;
+                        }
+                }
             }
             std::size_t probes = 0;
             for (std::size_t pixel = 0; pixel < covered.size(); ++pixel)
