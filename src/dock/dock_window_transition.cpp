@@ -1380,32 +1380,37 @@ bool DockWindowTransition::StartGenieTimeline()
 
 RECT DockWindowTransition::ResolveImageHostRect() const
 {
+    RECT host{};
     if (effect_ == 4)
     {
         const auto bounds =
             snowdesktop::dock_attraction::Bounds(DeformationRect(windowRect_), DeformationRect(dockRect_));
-        RECT host{static_cast<LONG>(bounds.left), static_cast<LONG>(bounds.top), static_cast<LONG>(bounds.right),
-                  static_cast<LONG>(bounds.bottom)};
-        const bool coversMonitor =
-            std::any_of(animationMonitorRects_.begin(), animationMonitorRects_.end(), [&](RECT m) {
-                return host.left <= m.left && host.top <= m.top && host.right >= m.right && host.bottom >= m.bottom;
-            });
-        if (coversMonitor)
-        {
-            RECT desktop = animationMonitorRects_.front();
-            for (const RECT monitor : animationMonitorRects_)
-                UnionRect(&desktop, &desktop, &monitor);
-            RECT visible{};
-            // Curves beyond the virtual desktop cannot be displayed. Trim
-            // only those pixels before applying the existing one-pixel guard.
-            if (IntersectRect(&visible, &host, &desktop))
-                host = visible;
-        }
-        return host;
+        host = {static_cast<LONG>(bounds.left), static_cast<LONG>(bounds.top), static_cast<LONG>(bounds.right),
+                static_cast<LONG>(bounds.bottom)};
     }
-    if (effect_ == 3)
-        return ResolveDockWindowImageHostRect(windowRect_, dockRect_);
-    return UsesCompositionImage() ? ResolveDockWindowImageHostRect(fromRect_, toRect_) : fromRect_;
+    else if (effect_ == 3)
+        host = ResolveDockWindowImageHostRect(windowRect_, dockRect_);
+    else
+        return UsesCompositionImage() ? ResolveDockWindowImageHostRect(fromRect_, toRect_) : fromRect_;
+
+    const bool coversMonitor =
+        std::any_of(animationMonitorRects_.begin(), animationMonitorRects_.end(), [&](RECT monitor) {
+            return host.left <= monitor.left && host.top <= monitor.top && host.right >= monitor.right &&
+                   host.bottom >= monitor.bottom;
+        });
+    if (coversMonitor)
+    {
+        RECT desktop = animationMonitorRects_.front();
+        for (const RECT monitor : animationMonitorRects_)
+            UnionRect(&desktop, &desktop, &monitor);
+        RECT visible{};
+        // A restored maximized HWND can include resize borders outside the
+        // desktop. Keep the full cross-monitor deformation, but discard only
+        // pixels no display can show before applying the one-pixel Shell guard.
+        if (IntersectRect(&visible, &host, &desktop))
+            host = visible;
+    }
+    return host;
 }
 
 bool DockWindowTransition::ApplyAttractionFrame(double collapsed, BYTE opacity)
@@ -1964,8 +1969,9 @@ bool DockWindowTransition::OnAnimationFrame(
                 // the real window to return to the earlier, now stale bounds.
                 windowRect_ = restoredFrame;
                 fromRect_ = toRect_ = windowRect_;
+                const RECT requestedHost = ResolveImageHostRect();
                 RECT retainedHost{};
-                UnionRect(&retainedHost, &imageHostRect_, &windowRect_);
+                UnionRect(&retainedHost, &imageHostRect_, &requestedHost);
                 const auto safeHost = ResolveDockWindowNonFullscreenHostRect(
                     retainedHost, animationMonitorRects_);
                 bool aligned = safeHost.has_value();
@@ -2137,27 +2143,58 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
         const RECT requestedHost = ResolveImageHostRect();
         const auto safeHost = ResolveDockWindowNonFullscreenHostRect(requestedHost, animationMonitorRects_);
         bool prepared = safeHost.has_value();
+        const wchar_t* rebindStage = L"host-bounds";
+        HRESULT rebindResult = prepared ? S_OK : E_INVALIDARG;
         if (prepared)
         {
+            rebindStage = L"host-position";
             imageHostRect_ = *safeHost;
             prepared = SetWindowPos(hwnd_, nullptr, imageHostRect_.left, imageHostRect_.top,
                 imageHostRect_.right - imageHostRect_.left,
                 imageHostRect_.bottom - imageHostRect_.top,
                 SWP_NOZORDER | SWP_NOACTIVATE) != FALSE;
+            if (!prepared)
+            {
+                const DWORD error = GetLastError();
+                rebindResult = error ? HRESULT_FROM_WIN32(error) : E_FAIL;
+            }
         }
         if (prepared && compositionSharedWindowActive_)
         {
+            rebindStage = L"image-detach";
             ClearGenieStrips();
             compositionWindowImage_.Reset();
-            compositionVisual_->RemoveAllVisuals();
-            prepared = CreateSharedWindowImage();
+            rebindResult = compositionVisual_->RemoveAllVisuals();
+            prepared = SUCCEEDED(rebindResult);
+            if (prepared)
+            {
+                rebindStage = L"shared-image";
+                prepared = CreateSharedWindowImage();
+                rebindResult = imageResult_;
+            }
         }
         hasLastFrame_ = false;
         compositionTimelineActive_ = false;
-        if (prepared) prepared = ApplyFrame(0.0);
+        if (prepared)
+        {
+            rebindStage = L"first-frame";
+            prepared = ApplyFrame(0.0);
+            if (!prepared) rebindResult = E_FAIL;
+        }
         if (!prepared)
         {
-            if (diagnosticCallback_) diagnosticCallback_(L"Dock animation aborted: stage=restore-rebind");
+            if (diagnosticCallback_)
+            {
+                wchar_t diagnostic[512]{};
+                swprintf_s(diagnostic,
+                    L"Dock animation aborted: stage=restore-rebind substage=%ls hr=0x%08X "
+                    L"window=[%ld,%ld,%ld,%ld] host=[%ld,%ld,%ld,%ld] image=%ldx%ld collapse=%.4f",
+                    rebindStage, static_cast<unsigned>(rebindResult),
+                    windowRect_.left, windowRect_.top, windowRect_.right, windowRect_.bottom,
+                    requestedHost.left, requestedHost.top, requestedHost.right, requestedHost.bottom,
+                    compositionImageSize_.cx, compositionImageSize_.cy, collapseFrom_);
+                diagnosticCallback_(diagnostic);
+            }
             CompleteRestoreAfterRenderFailure();
             Finish();
             return false;

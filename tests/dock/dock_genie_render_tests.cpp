@@ -18,10 +18,10 @@
 
 struct DockWindowTransitionTestAccess
 {
-    static RECT AttractionHost(RECT window, RECT dock, std::vector<RECT> monitors)
+    static RECT ImageHost(int effect, RECT window, RECT dock, std::vector<RECT> monitors)
     {
         DockWindowTransition transition;
-        transition.effect_ = 4;
+        transition.effect_ = effect;
         transition.windowRect_ = window;
         transition.dockRect_ = dock;
         transition.animationMonitorRects_ = std::move(monitors);
@@ -489,7 +489,7 @@ void CheckAttractionGeometry()
     const a::Rect window{0, 0, 2560, 1600};
     const std::vector<RECT> monitors{{0, 0, 2560, 1600}, {2560, 510, 4480, 1590}};
     const RECT fullWindow{0, 0, 2560, 1600}, farDock{4400, 1450, 4464, 1514};
-    const auto requested = DockWindowTransitionTestAccess::AttractionHost(fullWindow, farDock, monitors);
+    const auto requested = DockWindowTransitionTestAccess::ImageHost(4, fullWindow, farDock, monitors);
     const auto safe = ResolveDockWindowNonFullscreenHostRect(requested, monitors);
     Check(safe.has_value(), "maximized cross-screen attraction retains an eligible non-fullscreen host");
     if (safe)
@@ -511,6 +511,74 @@ void CheckAttractionGeometry()
         }
         Check(covered, "both displays' visible attraction mesh fits the host with its one-pixel Shell guard");
     }
+}
+
+void CheckMaximizedGenieReversalHost()
+{
+    namespace genie = snowdesktop::dock_genie;
+    struct Scenario
+    {
+        std::vector<RECT> monitors;
+        RECT window, dock;
+    };
+    // First case uses the reported display layout and the restored HWND's
+    // 11px invisible border. Exercise the production envelope used during
+    // Reverse -> PrepareRestoredWindow, with no user windows or DPI dependence.
+    const std::array<Scenario, 4> scenarios{{
+        {{{0, 0, 2560, 1440}, {2560, 0, 5120, 1600}},
+            {2549, -11, 5131, 1611}, {1014, 1365, 1078, 1429}},
+        {{{0, 0, 2560, 1440}, {2560, 0, 5120, 1600}},
+            {-11, -11, 2571, 1451}, {4100, 1500, 4164, 1564}},
+        {{{-2560, -160, 0, 1280}, {0, 0, 2560, 1600}},
+            {-11, -11, 2571, 1611}, {-1500, 1100, -1436, 1164}},
+        {{{0, -1440, 2560, 0}, {0, 0, 2560, 1600}},
+            {-11, -11, 2571, 1611}, {900, -500, 964, -436}},
+    }};
+    const auto rect = [](RECT value) {
+        return genie::Rect{static_cast<double>(value.left), static_cast<double>(value.top),
+            static_cast<double>(value.right), static_cast<double>(value.bottom)};
+    };
+    for (const auto& scenario : scenarios)
+    {
+        const RECT requested = DockWindowTransitionTestAccess::ImageHost(
+            3, scenario.window, scenario.dock, scenario.monitors);
+        const auto safe = ResolveDockWindowNonFullscreenHostRect(requested, scenario.monitors);
+        Check(safe.has_value(), "maximized cross-monitor Genie reversal retains an eligible host");
+        if (!safe) continue;
+        Check(std::none_of(scenario.monitors.begin(), scenario.monitors.end(), [&](RECT monitor) {
+            return safe->left <= monitor.left && safe->top <= monitor.top &&
+                safe->right >= monitor.right && safe->bottom >= monitor.bottom;
+        }), "maximized Genie reversal preserves the Shell fullscreen exclusion");
+        bool visibleOutlineRetained = true;
+        for (const auto edge : {genie::Edge::Bottom, genie::Edge::Top, genie::Edge::Left, genie::Edge::Right})
+            for (const double reverseFrom : {0.05, 0.3, 0.65})
+                for (int step = 0; step <= 16; ++step)
+                    for (std::size_t band = 0; band <= genie::StripCount; ++band)
+                    {
+                        const auto section = genie::SectionAt(rect(scenario.window), rect(scenario.dock), edge,
+                            reverseFrom * (1.0 - step / 16.0), static_cast<double>(band) / genie::StripCount);
+                        for (const double cross : {section.center - section.width * 0.5,
+                                section.center + section.width * 0.5})
+                        {
+                            const double x = genie::Vertical(edge) ? cross : section.axis;
+                            const double y = genie::Vertical(edge) ? section.axis : cross;
+                            const bool visible = std::any_of(scenario.monitors.begin(), scenario.monitors.end(),
+                                [&](RECT monitor) { return x >= monitor.left && x <= monitor.right &&
+                                    y >= monitor.top && y <= monitor.bottom; });
+                            if (visible)
+                                visibleOutlineRetained = visibleOutlineRetained &&
+                                    x >= safe->left - 1.0 && x <= safe->right + 1.0 &&
+                                    y >= safe->top - 1.0 && y <= safe->bottom + 1.0;
+                        }
+                    }
+        Check(visibleOutlineRetained,
+            "early and midflight Genie reversals keep every display's visible outline within the one-pixel guard");
+    }
+    const RECT ordinaryWindow{2800, -20, 3600, 900}, ordinaryDock{1014, 1365, 1078, 1429};
+    const RECT expected{1014, -20, 3600, 1429};
+    const RECT ordinaryHost = DockWindowTransitionTestAccess::ImageHost(
+        3, ordinaryWindow, ordinaryDock, scenarios.front().monitors);
+    Check(EqualRect(&ordinaryHost, &expected), "ordinary cross-monitor Genie bounds retain their full envelope");
 }
 
 LRESULT CALLBACK FrameFixtureProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -1844,6 +1912,7 @@ int main()
     CheckContinuousOutline();
     CheckTimelineGeometry();
     CheckAttractionGeometry();
+    CheckMaximizedGenieReversalHost();
     CheckFramePixelAlignment();
     CheckRetainedWindowImage();
     if (!failures) std::cout << "Genie outline, minimize protocol and cache-independent DWM image checks passed\n";
