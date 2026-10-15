@@ -1,7 +1,22 @@
 #pragma once
 
+#include <windows.h>
+#include <oleidl.h>
+
 namespace snowdesktop::ole_drag_rules
 {
+inline DWORD ChooseDropEffect(DWORD keyState, DWORD allowed) noexcept
+{
+    const DWORD available = allowed & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
+    DWORD requested = DROPEFFECT_NONE;
+    if (keyState & MK_ALT) requested = DROPEFFECT_LINK;
+    else if (keyState & MK_SHIFT) requested = DROPEFFECT_MOVE;
+    else if (keyState & MK_CONTROL) requested = DROPEFFECT_COPY;
+    if (requested != DROPEFFECT_NONE) return requested & available;
+    if (available & DROPEFFECT_MOVE) return DROPEFFECT_MOVE;
+    if (available & DROPEFFECT_COPY) return DROPEFFECT_COPY;
+    return available & DROPEFFECT_LINK;
+}
 
 enum class DwellTargetRefreshRoute
 {

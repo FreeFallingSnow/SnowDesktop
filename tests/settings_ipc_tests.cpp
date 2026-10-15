@@ -2,6 +2,8 @@
 #include "settings/settings_ipc_values.h"
 #include "system/status_bar/status_bar_appearance.h"
 #include "../src/winui/home_about_ipc_values.h"
+#include "winui/general_advanced_feature_ipc_values.h"
+#include "settings/category_rule_creation.h"
 #include "icons/large_icon_edit_rules.h"
 #include "icons/large_icon_preset_rules.h"
 #include "settings/settings_process.h"
@@ -542,6 +544,46 @@ void TestCodec()
         "prepared secret fields retain only opaque status across IPC");
 }
 
+void TestCustomCategoryCreation()
+{
+    CategorySettings persisted;
+    for (unsigned index = 1; index <= 32; ++index)
+        persisted.rules.push_back({L"custom-winui-1-" + std::to_wstring(index),
+            L"已有分类 " + std::to_wstring(index), L"TXT", index % 2 == 0});
+    const auto original = persisted.rules;
+    // Reopening a settings process resets its old generation/counter, but the
+    // complete previous rules arrive over the actual production codec.
+    for (unsigned session = 0; session < 4; ++session)
+    {
+        CategorySettings edit = Unpack<CategorySettings>(Pack(persisted));
+        for (unsigned index = 0; index < 8; ++index)
+        {
+            const std::wstring label = L"新分类 日本語 " + std::to_wstring(session * 8 + index);
+            const auto acknowledged = snowdesktop::AppendCustomCategoryRule(edit, label, L"PDF DOCX");
+            Check(acknowledged.has_value(), "creating a category returns its actual inserted identity");
+            if (!acknowledged) continue;
+            const auto snapshot = Unpack<CategorySettings>(Pack(edit));
+            unsigned matches = 0;
+            for (const auto& rule : snapshot.rules)
+                if (rule.id == *acknowledged)
+                {
+                    ++matches;
+                    Check(rule.customLabel == label && rule.extensions == L"PDF DOCX" && rule.enabled,
+                        "creation acknowledgement identifies the newly inserted row after IPC projection");
+                }
+            Check(matches == 1, "reopened settings never reuse an existing category identity");
+        }
+        persisted = Unpack<CategorySettings>(Pack(edit));
+    }
+    Check(persisted.rules.size() == original.size() + 32, "every successful creation is retained across settings sessions");
+    for (std::size_t index = 0; index < original.size(); ++index)
+        Check(persisted.rules[index].id == original[index].id &&
+            persisted.rules[index].customLabel == original[index].customLabel &&
+            persisted.rules[index].extensions == original[index].extensions &&
+            persisted.rules[index].enabled == original[index].enabled,
+            "new category creation preserves the identity, text, order and state of old rows");
+}
+
 void TestChannel()
 {
     DWORD handlesBefore = 0;
@@ -568,6 +610,8 @@ void TestChannel()
                     return ui.Call<int>("host.preview", value) + 1;
                 });
                 ui.Bind<std::string, std::string>("ui.snapshot", [](std::string value) { return value; });
+                ui.Bind<snowdesktop::winui::GeneralAdvancedFeatureStatus,
+                    snowdesktop::winui::GeneralAdvancedFeatureStatus>("ui.advanced-status", [](auto value) { return value; });
                 ui.Bind<void>("ui.close", [] { PostQuitMessage(0); });
                 started.set_value(ui.Window());
                 MSG message{};
@@ -584,6 +628,25 @@ void TestChannel()
             const std::string large(2 * 1024 * 1024, 'x');
             Check(parent.Call<std::string>("ui.snapshot", large) == large,
                 "snapshots larger than pipe buffer arrive intact");
+            for (unsigned problem = 0;
+                problem <= static_cast<unsigned>(snowdesktop::steam_bridge::SteamConnectionProblem::SteamworksUnavailable);
+                ++problem)
+            {
+                snowdesktop::winui::GeneralAdvancedFeatureStatus value;
+                value.state = snowdesktop::winui::GeneralAdvancedFeatureState::RegistrationFailed;
+                value.failure = snowdesktop::winui::GeneralAdvancedFeatureFailure::BridgeError;
+                value.connectionProblem = static_cast<snowdesktop::steam_bridge::SteamConnectionProblem>(problem);
+                value.errorDetail = iteration % 2 ? L"DLL 初始化失败 / 日本語 / 126" : L"";
+                value.bridgeAvailable = true; value.registered = true;
+                value.validUntil = INT64_MAX; value.cardVisible = true; value.offerSteamStore = true;
+                const auto copy = parent.Call<snowdesktop::winui::GeneralAdvancedFeatureStatus>("ui.advanced-status", value);
+                Check(copy.state == value.state && copy.failure == value.failure &&
+                    copy.connectionProblem == value.connectionProblem && copy.errorDetail == value.errorDetail &&
+                    copy.bridgeAvailable == value.bridgeAvailable && copy.registered == value.registered &&
+                    copy.validUntil == value.validUntil && copy.cardVisible == value.cardVisible &&
+                    copy.offerSteamStore == value.offerSteamStore,
+                    "every advanced-feature status field survives the real private IPC channel");
+            }
             parent.Notify("ui.close");
             child.join();
             Reject([&] { (void)parent.Request("ui.flush", Pack(1), 1000); },
@@ -622,9 +685,9 @@ void TestRetiredUpdateProtocol()
     {
         Channel channel;
         channel.Open(mainRead, mainWrite, CurrentProcessHandle());
-        // Version 35 omitted the independent global window-pin border fields.
+        // Version 37 omitted the advanced-feature connection diagnostics.
         // An old peer must disconnect before its payload can be interpreted.
-        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{35},
+        const auto header = Pack(std::uint32_t{0x53444950}, std::uint32_t{37},
             std::uint32_t{1}, std::uint32_t{0}, std::uint64_t{1});
         DWORD written = 0;
         Check(WriteFile(uiWrite, header.data(), static_cast<DWORD>(header.size()),
@@ -633,7 +696,7 @@ void TestRetiredUpdateProtocol()
         const auto deadline = GetTickCount64() + 2000;
         while (channel.Connected() && GetTickCount64() < deadline) Sleep(1);
         Check(!channel.Connected(),
-            "settings peers without the new display preferences disconnect before dispatch");
+            "settings peers without connection diagnostics disconnect before dispatch");
     }
     CloseHandle(uiWrite);
     CloseHandle(uiRead);
@@ -1100,6 +1163,7 @@ int RunSettingsIpcTests()
     TestCodec();
     TestPermissionAndRelocatedRoutesCodec();
     TestLargeIconEditing();
+    TestCustomCategoryCreation();
     TestChannel();
     TestAsyncOpening();
     TestOverlappingSettingsRefresh();

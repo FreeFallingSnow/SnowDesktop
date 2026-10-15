@@ -376,7 +376,9 @@ struct BackendServer::Impl
             if (!engine || !current || !current->sessionActive || current->generation != generation || current->route.page != SettingsPage::Calendar) return {false, {}, 0, "unavailable"};
             if (remove) return engine->RuntimeCalendarSeriesRemove(series.id, series.revision);
             if (series.id.empty()) return engine->RuntimeCalendarSeriesCreate(std::move(series));
-            return engine->RuntimeCalendarSeriesUpdate(series.id, series.revision, std::move(series));
+            const auto id = series.id;
+            const auto revision = series.revision;
+            return engine->RuntimeCalendarSeriesUpdate(id, revision, std::move(series));
         });
         channel.Bind<PageLayoutSnapshot>("pages.capture", [this] {
             return options.pageLayoutPage.capture ? options.pageLayoutPage.capture() : PageLayoutSnapshot{};

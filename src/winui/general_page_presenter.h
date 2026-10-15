@@ -3,6 +3,7 @@
 #include "settings/settings_controller.h"
 #include "hotkey_recorder.h"
 #include "settings_focus_feedback.h"
+#include "general_advanced_feature_status.h"
 #include "start_page_presenter.h"
 #include "../../steam_bridge/src/steam_connection_feedback.h"
 
@@ -37,40 +38,6 @@ struct GeneralStartupConflict
 {
     GeneralStartupConflictKind kind = GeneralStartupConflictKind::None;
     std::wstring ownerCommand;
-};
-
-enum class GeneralAdvancedFeatureState : std::uint8_t
-{
-    BridgeUnavailable,
-    Unregistered,
-    Checking,
-    Registered,
-    RegistrationFailed,
-};
-
-enum class GeneralAdvancedFeatureFailure : std::uint8_t
-{
-    None,
-    SteamUnavailable,
-    NotOwned,
-    BridgeError,
-    StorageError,
-};
-
-struct GeneralAdvancedFeatureStatus
-{
-    GeneralAdvancedFeatureState state =
-        GeneralAdvancedFeatureState::BridgeUnavailable;
-    GeneralAdvancedFeatureFailure failure =
-        GeneralAdvancedFeatureFailure::None;
-    steam_bridge::SteamConnectionProblem connectionProblem =
-        steam_bridge::SteamConnectionProblem::None;
-    std::wstring errorDetail;
-    bool bridgeAvailable = false;
-    bool registered = false;
-    std::int64_t validUntil = 0;
-    bool cardVisible = false;
-    bool offerSteamStore = false;
 };
 
 /** Commands emitted by the cached General settings presenter. */

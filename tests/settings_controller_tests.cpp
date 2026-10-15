@@ -3,6 +3,7 @@
 #include "settings/settings_ipc_values.h"
 #include "settings/settings_search_catalog.h"
 #include "desktop/desktop_style_presets.h"
+#include "winui/category_creation_acknowledgement.h"
 
 #include <algorithm>
 #include <array>
@@ -934,6 +935,73 @@ void TestFailureRetryAndExplicitApply()
         "explicit apply normalizes once and persists a category draft");
 }
 
+void TestCategoryCreationAcknowledgesPersistedSnapshot()
+{
+    auto store = std::make_shared<FakeStore>();
+    SettingsController controller(store);
+    (void)controller.Initialize();
+    (void)controller.Open(SettingsRoute::ForPage(SettingsPage::DesktopCategories));
+    const auto generation = controller.Generation();
+    const std::wstring createdId = L"custom-pending-persistence";
+    Check(!winui::CanAcknowledgeCategoryCreation(*controller.Snapshot(), createdId, generation),
+        "a clean snapshot without the newly created category cannot acknowledge it");
+
+    // Observe the real controller's publications, including its optimistic
+    // draft and save result. Only the persistence boundary injects failure.
+    struct Observation
+    {
+        SettingsController::SnapshotPtr snapshot;
+        bool canAcknowledge = false;
+    };
+    std::vector<Observation> observations;
+    controller.SetSnapshotChangedCallback([&](auto snapshot) {
+        const bool canAcknowledge = winui::CanAcknowledgeCategoryCreation(*snapshot, createdId, generation);
+        observations.push_back({std::move(snapshot), canAcknowledge});
+    });
+    CategorySettings category = controller.Snapshot()->values.category;
+    category.rules.push_back({createdId, L"待保存的分类 日本語", L"PDF DOCX"});
+    store->failingDomains = SettingsDomain::Category;
+    controller.UpdateCategory(std::move(category), SettingsUpdateMode::PreviewAndCommit);
+    const auto draft = controller.Snapshot();
+    Check(!observations.empty() && !observations.back().canAcknowledge &&
+            store->categorySaveCount == 0,
+        "publishing a new category before persistence cannot acknowledge the input form");
+    const auto failed = controller.FlushPending();
+    Check(!failed.Succeeded() && store->categorySaveCount == 1 &&
+            controller.Snapshot()->retryRequired &&
+            std::none_of(observations.begin(), observations.end(),
+                [](const auto& observation) { return observation.canAcknowledge; }),
+        "a failed category save never acknowledges creation in any intermediate snapshot");
+
+    const auto failedSnapshot = controller.Snapshot();
+    store->failingDomains = SettingsDomain::None;
+    Check(controller.RetryPending(), "a failed category save can be retried without recreating the rule");
+    Check(!observations.back().canAcknowledge,
+        "requesting a retry still cannot acknowledge an unsaved category");
+    const auto retried = controller.FlushPending();
+    const auto saved = controller.Snapshot();
+    Check(retried.Succeeded() && store->categorySaveCount == 2 &&
+            !observations.empty() && observations.back().canAcknowledge,
+        "the successful save publication acknowledges the same pending category");
+    Check(saved->revision > failedSnapshot->revision &&
+            saved->domainRevisions.category == failedSnapshot->domainRevisions.category &&
+            saved->domainRevisions.category == draft->domainRevisions.category &&
+            !HasSettingsDomain(saved->dirtyDomains, SettingsDomain::Category) &&
+            !HasSettingsDomain(saved->pendingCommitDomains, SettingsDomain::Category),
+        "acknowledgement observes save-result flags even when the category domain revision stays unchanged");
+    Check(!winui::CanAcknowledgeCategoryCreation(*saved, L"custom-not-created", generation) &&
+            !winui::CanAcknowledgeCategoryCreation(*saved, createdId, generation + 1),
+        "saving cannot acknowledge a missing identity or a creation from a different session");
+
+    GeneralSettings unrelated = saved->values.general;
+    unrelated.demoModeEnabled = !unrelated.demoModeEnabled;
+    controller.UpdateGeneral(std::move(unrelated), SettingsUpdateMode::Commit);
+    Check(HasSettingsDomain(controller.Snapshot()->dirtyDomains, SettingsDomain::General) &&
+            observations.back().canAcknowledge,
+        "an unrelated dirty settings domain does not hide the saved category acknowledgement");
+    controller.SetSnapshotChangedCallback({});
+}
+
 void TestReloadAndExternalSynchronization()
 {
     auto store = std::make_shared<FakeStore>();
@@ -1538,6 +1606,7 @@ int main()
     TestTypedHotkeyRequestTransport();
     TestPreviewCoalescingAndCommit();
     TestFailureRetryAndExplicitApply();
+    TestCategoryCreationAcknowledgesPersistedSnapshot();
     TestReloadAndExternalSynchronization();
     TestSummonOnlyLinkedPreferencesRemainBaseValues();
     TestSystemTaskbarFieldSynchronization();

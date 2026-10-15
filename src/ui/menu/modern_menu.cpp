@@ -337,7 +337,7 @@ public:
                     message.message == WM_NCRBUTTONDOWN ||
                     message.message == WM_NCMBUTTONDOWN ||
                     message.message == WM_NCXBUTTONDOWN;
-                if (pointerPress && !IsPopupWindow(message.hwnd))
+                if (pointerPress && !IsSessionWindow(message.hwnd))
                 {
                     // Desktop, Dock and popup hosts can use MA_NOACTIVATE,
                     // so an outside press need not generate WM_ACTIVATE.
@@ -389,7 +389,7 @@ public:
         // Sample while our popup HWNDs still exist so their normal destruction
         // cannot be mistaken for the user switching to an unrelated window.
         const HWND foreground = GetForegroundWindow();
-        if (foreground && !IsPopupWindow(foreground) &&
+        if (foreground && !IsSessionWindow(foreground) &&
             !IsOwnerWindow(foreground))
             externalActivation_ = true;
         result_.reason = superseded_ ? ExitReason::Replaced :
@@ -541,7 +541,7 @@ public:
             return 0;
         case WM_ACTIVATE:
             if (popup.depth == 0 && LOWORD(wParam) == WA_INACTIVE &&
-                !closing_ && !IsPopupWindow(
+                !closing_ && !IsSessionWindow(
                     reinterpret_cast<HWND>(lParam)))
             {
                 // Returning to the owner is an ordinary dismissal; another
@@ -1516,6 +1516,14 @@ private:
         return std::ranges::any_of(popups_, [hwnd](const auto& popup) {
             return popup && popup->hwnd == hwnd;
         });
+    }
+
+    bool IsSessionWindow(HWND hwnd) const
+    {
+        if (IsPopupWindow(hwnd)) return true;
+        const HWND companion = options_.zOrderCompanion ? options_.zOrderCompanion() : nullptr;
+        return hwnd && companion && IsWindow(companion) && IsWindowVisible(companion) &&
+            (hwnd == companion || IsChild(companion, hwnd));
     }
 
     bool IsOwnerWindow(HWND hwnd) const

@@ -9,6 +9,7 @@
  */
 
 #include "core/widget.h"
+#include "layout/file_date_category.h"
 #include "layout/folder_mapping_rules.h"
 #include "core/slot.h"
 #include "core/item.h"
@@ -63,22 +64,6 @@ static std::wstring FolderEntryDateGroupLabel(const std::wstring& id)
     return _LW("widget.categories.earlier");
 }
 
-static int FolderEntryDayDiff(const SYSTEMTIME& newer, const SYSTEMTIME& older)
-{
-    FILETIME newerFileTime{}, olderFileTime{};
-    SystemTimeToFileTime(&newer, &newerFileTime);
-    SystemTimeToFileTime(&older, &olderFileTime);
-    ULARGE_INTEGER newerValue{}, olderValue{};
-    newerValue.LowPart = newerFileTime.dwLowDateTime;
-    newerValue.HighPart = newerFileTime.dwHighDateTime;
-    olderValue.LowPart = olderFileTime.dwLowDateTime;
-    olderValue.HighPart = olderFileTime.dwHighDateTime;
-    if (newerValue.QuadPart < olderValue.QuadPart)
-        return -1;
-    return static_cast<int>(
-        (newerValue.QuadPart - olderValue.QuadPart) / 864000000000ULL);
-}
-
 static std::wstring FolderEntryDateGroupId(const FolderEntry& entry)
 {
     FILETIME localFileTime{};
@@ -88,37 +73,7 @@ static std::wstring FolderEntryDateGroupId(const FolderEntry& entry)
         return L"older";
     GetLocalTime(&nowTime);
 
-    SYSTEMTIME todayStart = nowTime;
-    todayStart.wHour = 0;
-    todayStart.wMinute = 0;
-    todayStart.wSecond = 0;
-    todayStart.wMilliseconds = 0;
-    SYSTEMTIME fileDayStart = fileTime;
-    fileDayStart.wHour = 0;
-    fileDayStart.wMinute = 0;
-    fileDayStart.wSecond = 0;
-    fileDayStart.wMilliseconds = 0;
-    int daysFromToday = FolderEntryDayDiff(todayStart, fileDayStart);
-
-    if (daysFromToday <= 0) return L"today";
-    if (daysFromToday == 1) return L"yesterday";
-    int todayDayOfWeek =
-        nowTime.wDayOfWeek == 0 ? 7 : static_cast<int>(nowTime.wDayOfWeek);
-    if (daysFromToday < todayDayOfWeek) return L"this_week";
-    if (daysFromToday < todayDayOfWeek + 7) return L"last_week";
-    if (fileTime.wYear == nowTime.wYear &&
-        fileTime.wMonth == nowTime.wMonth)
-        return L"this_month";
-
-    int previousMonth = nowTime.wMonth == 1 ? 12 : nowTime.wMonth - 1;
-    int previousMonthYear = nowTime.wMonth == 1
-        ? nowTime.wYear - 1
-        : nowTime.wYear;
-    if (fileTime.wYear == previousMonthYear &&
-        fileTime.wMonth == previousMonth)
-        return L"last_month";
-    if (fileTime.wYear == nowTime.wYear) return L"this_year";
-    return L"older";
+    return snowdesktop::file_date_category::ForLocalDate(fileTime, nowTime, true);
 }
 
 static size_t FolderEntryDateGroupRank(const FolderEntry& entry)
@@ -1330,7 +1285,7 @@ WidgetHit FolderMapping::HitTestWidget(POINT pt) const
  * @brief 获取当前选中的所有条目对象
  * @return 选中条目的 Item 指针向量
  *
- * 遍历当前槽位，收集所有被选中（entry.selected == true）的条目，
+ * 遍历完整过滤结果，收集所有被选中（entry.selected == true）的条目，
  * 创建对应的 FolderEntryIcon 并缓存到 dragSourceCache_ 中
  * 以支持拖放操作。
  */
@@ -1340,16 +1295,16 @@ std::vector<Item*> FolderMapping::GetSelectedItems() const
     std::vector<Item*> result;
     if (!data_) return result;
 
-    for (const auto& slot : const_cast<FolderMapping*>(this)->GetSlots())
+    const auto& visible = GetVisibleEntryIndices();
+    for (size_t visualIndex = 0; visualIndex < visible.size(); ++visualIndex)
     {
-        if (!slot) continue;
-        Item* slotItem = slot->GetItem();
-        auto* slotIcon = dynamic_cast<FolderEntryIcon*>(slotItem);
-        FolderEntry* entry = slotIcon ? slotIcon->GetFolderEntry() : nullptr;
-        if (!entry || !entry->selected) continue;
+        const size_t sourceIndex = visible[visualIndex];
+        if (sourceIndex >= data_->folderEntries.size()) continue;
+        auto* entry = &data_->folderEntries[sourceIndex];
+        if (!entry->selected) continue;
 
         auto icon = std::make_unique<FolderEntryIcon>(entry, const_cast<FolderMapping*>(this), app_);
-        icon->SetBounds(slot->GetBounds());
+        icon->SetBounds(GetMemberLayoutRect(visualIndex));
         result.push_back(icon.get());
         dragSourceCache_.push_back(std::move(icon));
     }

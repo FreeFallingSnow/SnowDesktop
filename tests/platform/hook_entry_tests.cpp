@@ -1,6 +1,7 @@
 // Forty implementation-image paths are loaded through one registered entry.
 // All targets are owned fixture processes, never Explorer or user windows.
 #include "platform/hook_entry_deployment.h"
+#include "platform/injectable_runtime_cache.h"
 #include <windows.h>
 #include <tlhelp32.h>
 #include <filesystem>
@@ -139,7 +140,19 @@ int wmain(int argc, wchar_t** argv)
     passed = passed && thread && targetOwner == target.dwProcessId;
     const auto first = root / L"implementation-0.dll";
     std::filesystem::copy_file(argv[2 + offset], first);
-    const auto entry = Prepare(root / L"cache", entrySource, payload, first);
+    // A fresh per-run path creates a new User32 module identity even though
+    // only the payload changes. Keep this test-only entry stable across runs;
+    // private payloads/catalogs/targets still belong to the current test.
+    const auto entryCache = std::filesystem::temp_directory_path() /
+        L"SnowDesktopHookEntryTests" / L"abi-1";
+    const auto entry = Prepare(entryCache, entrySource, payload, first);
+    if (!entry.empty() && snowdesktop::deployment::InjectableRuntimeCache::Digest(entry) !=
+            snowdesktop::deployment::InjectableRuntimeCache::Digest(entrySource))
+    {
+        std::cerr << "FAIL stable test entry differs from this run's source image; "
+            "a prior fixture may still own the old image\n";
+        passed = false;
+    }
     passed = passed && entry.size() < std::size(fixture->entryPath);
     if (passed) wcscpy_s(fixture->entryPath, entry.c_str());
     passed = passed && !entry.empty() && HasEntryAbi(entry, machine) &&
@@ -160,7 +173,13 @@ int wmain(int argc, wchar_t** argv)
     passed = passed && SendMessageTimeoutW(fixture->Window(), kDirect, owner, 0,
         SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &retained) && retained == 1;
     std::cout << "entryRetainedAfterCallerRelease=" << retained << " beforeUser32Registration=1\n";
+    SetLastError(ERROR_SUCCESS);
     const HHOOK hook = procedure ? SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread) : nullptr;
+    const DWORD registrationError = hook ? ERROR_SUCCESS : GetLastError();
+    if (!hook && !cross)
+        std::cerr << "Hook registration failed: error=" << registrationError
+            << "; valid loaded entry/export and private target do not prove "
+            "a new session module-path slot is available\n";
     const auto readyName = name + L".ready", stopName = name + L".stop";
     HANDLE ready = nullptr, stop = nullptr;
     PROCESS_INFORMATION injector{};
@@ -181,7 +200,7 @@ int wmain(int argc, wchar_t** argv)
     {
         const auto image = version ? root / (L"implementation-" + std::to_wstring(version) + L".dll") : first;
         if (version) std::filesystem::copy_file(version % 2 ? argv[3 + offset] : argv[2 + offset], image);
-        const auto selected = Prepare(root / L"cache", entrySource, payload, image);
+        const auto selected = Prepare(entryCache, entrySource, payload, image);
         passed = selected == entry;
         DWORD_PTR ignored = 0;
         passed = passed && SendMessageTimeoutW(fixture->Window(), kMarkerMessage, owner, 0,

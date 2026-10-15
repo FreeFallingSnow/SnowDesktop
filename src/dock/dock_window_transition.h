@@ -113,7 +113,7 @@ public:
     using RestoreCallback = std::function<void(
         HWND, DockWindowRestoreTransitionPhase)>;
 
-    DockWindowTransition() = default;
+    DockWindowTransition();
     ~DockWindowTransition();
 
     DockWindowTransition(const DockWindowTransition&) = delete;
@@ -166,6 +166,7 @@ public:
 private:
     friend struct DockWindowTransitionTestAccess;
     struct PresentationBarrier;
+    struct RetiredScene;
     enum class RestorePresentationPhase { None, PreparedImage, AlignedImage, ExposedSource, TransparentOverlay };
     static constexpr ULONGLONG kAnimationDurationMs = 240;
     static constexpr ULONGLONG
@@ -180,6 +181,7 @@ private:
         HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
     bool EnsureWindow();
+    bool RegisterWindowClass();
     bool Start(
         HWND sourceWindow, RECT dockRect,
         DockWindowTransitionDirection direction,
@@ -217,6 +219,8 @@ private:
     bool BeginPresentationBarrier(RestorePresentationPhase phase);
     std::optional<HRESULT> PresentationBarrierResult(double nowMilliseconds) const;
     static void CALLBACK RunPresentationBarrier(PTP_CALLBACK_INSTANCE instance, void* context);
+    static void CALLBACK RunRetiredScene(PTP_CALLBACK_INSTANCE, void*, PTP_WORK);
+    bool ReserveSceneRetirement();
     bool RestoreGeometryReady(RECT& frame) const;
     void Finish();
     void CompleteRestoreAfterRenderFailure();
@@ -303,6 +307,10 @@ private:
     double presentationBarrierDeadlineMs_ = 0.0;
     bool restorePresentationAcknowledged_ = false;
     std::function<HRESULT(IDCompositionDesktopDevice*)> presentationWait_;
+    std::function<HRESULT(IDCompositionDesktopDevice*)> cleanupWait_;
+    std::function<BOOL(HWND, UINT, WPARAM, LPARAM)> retirementPost_;
+    std::function<HRESULT(HWND, HWND)> sourceRelease_;
+    std::unique_ptr<RetiredScene> sceneRetirement_;
     double restoreGeometryStableTimeMs_ = 0.0;
     RECT restoreGeometryRect_{};
     bool sourceCloaked_ = false;

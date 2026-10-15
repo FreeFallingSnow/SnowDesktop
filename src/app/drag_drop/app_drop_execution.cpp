@@ -8,6 +8,7 @@
 #include "drag_drop/empty_group_drop_rules.h"
 #include "shell/shortcut_category_target.h"
 #include "drag_drop/drop_staging.h"
+#include "drag_drop/file_backed_drop_request.h"
 
 // Internal and file-backed drop-plan execution.
 
@@ -906,88 +907,17 @@ bool DesktopApp::MaterializeFilesToFolder(const DragSourceList& sourceList,
     bool executeSynchronously,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
-    std::vector<std::wstring> paths = sourceList.FilePaths();
-    if (paths.empty() || folderPath.empty()) return false;
-    // 文件夹不能拖进它自身或其子目录：SHFileOperation 会成功地把
-    // 文件夹递归复制进自己（如 foo 拖入自身弹窗产生 foo\foo），
-    // 而 Explorer 会直接拒绝。这里统一拦截所有落地入口。
-    if (IsSelfContainedFolderDrop(paths, folderPath))
-        return false;
-
-    std::wstring folder = folderPath;
-    if (!folder.empty() && folder.back() != L'\\') folder += L'\\';
-
-    if (action == DropAction::Link)
-    {
-        std::unordered_set<std::wstring> reservedDestinations;
-        snowdesktop::ShellFileOperationRequest request;
-    request.result = result;
-        for (const auto& path : paths)
-        {
-            std::wstring name = PathFindFileNameW(path.c_str());
-            std::wstring stem = name;
-            if (stem.size() > 4 && _wcsicmp(stem.c_str() + stem.size() - 4, L".lnk") == 0)
-                stem = stem.substr(0, stem.size() - 4);
-
-            std::wstring linkPath;
-            bool reserved = false;
-            for (int i = 1; i <= 10000; ++i)
-            {
-                linkPath = folder + stem + (i == 1 ? L".lnk" : L" (" + std::to_wstring(i) + L").lnk");
-                const std::wstring key =
-                    ToUpperInvariant(linkPath);
-                if (GetFileAttributesW(linkPath.c_str()) ==
-                        INVALID_FILE_ATTRIBUTES &&
-                    !reservedDestinations.contains(key))
-                {
-                    reservedDestinations.insert(key);
-                    reserved = true;
-                    break;
-                }
-            }
-            if (!reserved)
-                continue;
-            request.shortcuts.push_back({
-                path, linkPath, folder });
-        }
-        if (request.shortcuts.empty())
-            return false;
-        if (!executeSynchronously)
-        {
-            return QueueShellFileOperation(
-                std::move(request), std::move(completion));
-        }
-        const bool succeeded =
-            snowdesktop::ShellFileOperationWorker::Execute(request);
-        if (completion)
-            completion(succeeded);
-        return succeeded;
-    }
-
-    std::vector<snowdesktop::ShellFileOperationStep> steps;
-    steps.push_back({
-        static_cast<UINT>(
-            action == DropAction::Move ? FO_MOVE : FO_COPY),
-        std::move(paths),
-        folder,
-        static_cast<FILEOP_FLAGS>(
-            FOF_NOCONFIRMATION |
-            FOF_NOERRORUI |
-            FOF_RENAMEONCOLLISION) });
+    const auto paths = sourceList.FilePaths();
+    if (IsSelfContainedFolderDrop(paths, folderPath)) return false;
+    const DWORD effect = action == DropAction::Link ? DROPEFFECT_LINK :
+        action == DropAction::Move ? DROPEFFECT_MOVE : DROPEFFECT_COPY;
+    auto request = snowdesktop::file_backed_drop::BuildRequest(
+        paths, folderPath, effect, std::move(result));
+    if (!request) return false;
     if (!executeSynchronously)
-    {
-        snowdesktop::ShellFileOperationRequest request;
-        request.steps = std::move(steps);
-        request.result = result;
-        return QueueShellFileOperation(std::move(request), std::move(completion));
-    }
-    snowdesktop::ShellFileOperationRequest request;
-    request.result = result;
-    request.steps = std::move(steps);
-    const bool succeeded =
-        snowdesktop::ShellFileOperationWorker::Execute(request);
-    if (completion)
-        completion(succeeded);
+        return QueueShellFileOperation(std::move(*request), std::move(completion));
+    const bool succeeded = snowdesktop::ShellFileOperationWorker::Execute(*request);
+    if (completion) completion(succeeded);
     return succeeded;
 }
 

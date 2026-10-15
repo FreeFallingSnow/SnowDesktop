@@ -188,9 +188,14 @@ private:
             }, false);
         });
         flyout.Closed([weak](auto const&, auto const&) { if (auto self = weak.lock()) self->Flush(); });
-        picker.KeyDown([weak, flyout](auto const&, auto const& args) {
+        const auto weakFlyout = winrt::make_weak(flyout);
+        picker.KeyDown([weak, weakFlyout](auto const&, auto const& args) {
             if (args.Key() == winrt::Windows::System::VirtualKey::Escape)
-                if (auto self = weak.lock()) { self->Cancel(); args.Handled(true); flyout.Hide(); }
+                if (auto self = weak.lock())
+                {
+                    self->Cancel(); args.Handled(true);
+                    if (auto live = weakFlyout.get()) live.Hide();
+                }
         });
         sync_.push_back([this, index, picker, swatch, text] {
             if (index >= value_.stops.size()) return;

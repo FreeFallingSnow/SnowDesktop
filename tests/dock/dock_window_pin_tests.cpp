@@ -7,7 +7,9 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include <atomic>
 #include <iostream>
+#include <thread>
 
 namespace
 {
@@ -102,6 +104,93 @@ HWND FindFixtureManager()
     }
     return nullptr;
 }
+
+struct BlockedPinWindow
+{
+    static constexpr UINT Block = WM_APP + 101;
+    static constexpr UINT ResetAndBlock = WM_APP + 102;
+    HANDLE created = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::atomic<HWND> window{nullptr};
+    std::atomic<bool> stop{false};
+    std::thread thread;
+    static LRESULT CALLBACK Proc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+    {
+        if (message == WM_NCCREATE)
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
+                reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+        auto* self = reinterpret_cast<BlockedPinWindow*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (self && (message == Block || message == ResetAndBlock))
+        {
+            if (message == ResetAndBlock)
+                SetWindowPos(window, HWND_NOTOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            SetEvent(self->entered);
+            WaitForSingleObject(self->release, 3000);
+            return 0;
+        }
+        if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
+        if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
+        return DefWindowProcW(window, message, wp, lp);
+    }
+    BlockedPinWindow()
+    {
+        if (!created || !entered || !release) return;
+        thread = std::thread([this] {
+            WNDCLASSW cls{};
+            cls.hInstance = GetModuleHandleW(nullptr);
+            cls.lpfnWndProc = Proc;
+            cls.lpszClassName = L"SnowDesktopBlockedPinFixture";
+            RegisterClassW(&cls);
+            window = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+                cls.lpszClassName, L"blocked-pin-fixture", WS_OVERLAPPEDWINDOW,
+                -12000, -12000, 200, 120, nullptr, nullptr, cls.hInstance, this);
+            SetEvent(created);
+            if (!window) return;
+            if (stop.load()) { DestroyWindow(window); return; }
+            MSG message{};
+            while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+        });
+        if (WaitForSingleObject(created, 1000) != WAIT_OBJECT_0) stop = true;
+    }
+    ~BlockedPinWindow()
+    {
+        stop = true;
+        SetEvent(release);
+        PostMessageW(window, WM_CLOSE, 0, 0);
+        if (thread.joinable()) thread.join();
+        CloseHandle(created); CloseHandle(entered); CloseHandle(release);
+    }
+    template<class Action> bool WhileBlocked(Action action, bool resetTopmost = false, DWORD responseDeadline = 200)
+    {
+        ResetEvent(entered); ResetEvent(release);
+        PostMessageW(window, resetTopmost ? ResetAndBlock : Block, 0, 0);
+        if (WaitForSingleObject(entered, 1000) != WAIT_OBJECT_0) return false;
+        HANDLE returned = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        std::atomic<bool> responsive{false};
+        std::thread controller([&] {
+            responsive = WaitForSingleObject(returned, responseDeadline) == WAIT_OBJECT_0;
+            SetEvent(release);
+        });
+        action();
+        SetEvent(returned);
+        controller.join();
+        CloseHandle(returned);
+        return responsive.load();
+    }
+    template<class Predicate> bool Until(Predicate predicate)
+    {
+        const ULONGLONG deadline = GetTickCount64() + 1500;
+        while (!predicate() && GetTickCount64() < deadline)
+        {
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+            MsgWaitForMultipleObjects(0, nullptr, FALSE, 10, QS_ALLINPUT);
+        }
+        return predicate();
+    }
+};
 }
 
 int RunDockWindowPinTests()
@@ -115,6 +204,41 @@ int RunDockWindowPinTests()
             std::cerr << "FAIL: " << message << '\n';
         }
     };
+    // Real cross-input-queue calls: a controller always releases the fixture,
+    // so the old synchronous implementation fails an assertion, not a timeout.
+    {
+        BlockedPinWindow target;
+        auto pin = std::make_unique<DockWindowPin>();
+        bool accepted = false;
+        check(target.window && target.WhileBlocked([&] { accepted = pin->Toggle(target.window); }) && accepted,
+            "pin request returns while its target GUI thread is blocked");
+        check(target.Until([&] { pin->Refresh(); return IsNativeTopmost(target.window); }),
+            "queued pin is confirmed after its target resumes");
+        check(target.WhileBlocked([&] { accepted = pin->Toggle(target.window); }) && accepted,
+            "unpin request returns while its target GUI thread is blocked");
+        check(target.Until([&] { pin->Refresh(); return !IsNativeTopmost(target.window) &&
+            !GetPropW(target.window, kPinProperty); }), "queued unpin releases the tracked lease after confirmation");
+        pin->Toggle(target.window);
+        check(target.Until([&] { pin->Refresh(); return IsNativeTopmost(target.window); }), "maintenance fixture is pinned");
+        check(target.WhileBlocked([&] { pin->Refresh(); }, true),
+            "repairing an application-reset pin does not wait on its blocked GUI thread");
+        check(target.Until([&] { pin->Refresh(); return IsNativeTopmost(target.window); }), "asynchronous maintenance restores the pin");
+        check(target.WhileBlocked([&] { pin->Clear(); }), "clearing pins does not wait on a blocked GUI thread");
+        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty); }),
+            "clear eventually withdraws its native topmost change");
+        bool expired = false;
+        check(target.WhileBlocked([&] {
+            accepted = pin->Toggle(target.window);
+            expired = target.Until([&] { pin->Refresh(); return !GetPropW(target.window, kPinProperty); });
+        }, false, 2000) && accepted && expired,
+            "an unconfirmed pin expires while its target is still blocked");
+        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty); }),
+            "a pin delivered after its confirmation deadline is withdrawn by its queued inverse");
+        check(target.WhileBlocked([&] { accepted = pin->Toggle(target.window); pin.reset(); }) && accepted,
+            "destroying a pending pin queues its inverse without waiting on the target");
+        check(target.Until([&] { return !IsNativeTopmost(target.window) && !GetPropW(target.window, kPinProperty); }),
+            "a late queued pin cannot survive destruction of its owner");
+    }
     // A protected consent broker can reject process-path reads while exposing
     // a normal task window. The discovery identity must retain each such window
     // separately, and later metadata must refine it to a normal app identity.

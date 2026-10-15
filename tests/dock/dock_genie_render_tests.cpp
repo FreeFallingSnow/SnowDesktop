@@ -15,6 +15,7 @@
 #include <iostream>
 #include <map>
 #include <string>
+#include <thread>
 
 struct DockWindowTransitionTestAccess
 {
@@ -31,6 +32,25 @@ struct DockWindowTransitionTestAccess
         std::function<HRESULT(IDCompositionDesktopDevice*)> wait)
     {
         transition.presentationWait_ = std::move(wait);
+    }
+    static void SetCleanupWait(DockWindowTransition& transition,
+        std::function<HRESULT(IDCompositionDesktopDevice*)> wait)
+    {
+        transition.cleanupWait_ = std::move(wait);
+    }
+    static void SetRetirementPost(DockWindowTransition& transition,
+        std::function<BOOL(HWND, UINT, WPARAM, LPARAM)> post)
+    {
+        transition.retirementPost_ = std::move(post);
+    }
+    static void SetSourceRelease(DockWindowTransition& transition,
+        std::function<HRESULT(HWND, HWND)> release)
+    {
+        transition.sourceRelease_ = std::move(release);
+    }
+    static void ExpireRestoreDeadline(DockWindowTransition& transition)
+    {
+        transition.restoreCleanupDeadlineMs_ = 1.0;
     }
     static void SetRetainedImageSize(DockWindowTransition& transition, SIZE size)
     {
@@ -171,6 +191,23 @@ void Check(bool passed, const char* name)
 {
     if (!passed) { ++failures; std::cerr << "FAIL: " << name << '\n'; }
 }
+void DrainWindowRetirement(HWND window)
+{
+    const ULONGLONG deadline = GetTickCount64() + 1500;
+    while (window && IsWindow(window) && GetTickCount64() < deadline)
+    {
+        MSG message{};
+        while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, 5, QS_ALLINPUT);
+    }
+    Check(!window || !IsWindow(window), "normal fixture dispatches its completed scene retirement");
+}
+void CancelAndDrain(DockWindowTransition& transition)
+{
+    const HWND window = transition.GetPresentationWindow();
+    transition.Cancel();
+    DrainWindowRetirement(window);
+}
 struct Point { double x, y; };
 
 struct ControlledPresentationWait
@@ -203,6 +240,26 @@ struct ControlledPresentationWait
         if (SUCCEEDED(result)) result = device->WaitForCommitCompletion();
         if (SUCCEEDED(result)) result = DwmFlush();
         if (first) SetEvent(finished);
+        return result;
+    }
+};
+
+struct ControlledCleanupWait
+{
+    const DWORD uiThread = GetCurrentThreadId();
+    HANDLE entered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    HANDLE finished = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    std::atomic<bool> ranOnUiThread{false};
+    ~ControlledCleanupWait() { CloseHandle(entered); CloseHandle(release); CloseHandle(finished); }
+    HRESULT Wait(IDCompositionDesktopDevice* device)
+    {
+        ranOnUiThread = GetCurrentThreadId() == uiThread;
+        SetEvent(entered);
+        HRESULT result = WaitForSingleObject(release, 3000) == WAIT_OBJECT_0 ? S_OK : E_ABORT;
+        if (SUCCEEDED(result)) result = device->WaitForCommitCompletion();
+        if (SUCCEEDED(result)) result = DwmFlush();
+        SetEvent(finished);
         return result;
     }
 };
@@ -855,7 +912,7 @@ void CheckAttractionSeamPixels(HINSTANCE instance, IDCompositionDesktopDevice *d
                       << " probes=" << probes << " dark=" << dark << " white=" << peak << '\n';
             Check(peak >= 64 && dark == 0,
                   "shared attraction edges have no background gaps or independent alpha seams");
-            overlay.Cancel();
+            CancelAndDrain(overlay);
         }
     SetWindowLongPtrW(backing, GWLP_USERDATA, 0);
     InvalidateRect(backing, nullptr, TRUE);
@@ -995,7 +1052,7 @@ void CheckFramePixelAlignment()
                             std::abs(actual[1] - expected[1]) < 2,
                             "source strip clips move with perspective beyond the original image bounds");
                     }
-                    displaced.Cancel();
+                    CancelAndDrain(displaced);
                 }
             SetWindowPos(backing, HWND_TOPMOST, host.left, host.top, host.right - host.left,
                 host.bottom - host.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
@@ -1078,7 +1135,7 @@ void CheckFramePixelAlignment()
                 Check(DockWindowTransitionTestAccess::TimelineActive(transition) && requests == 2 &&
                     DockWindowTransitionTestAccess::HostContainsGenieOutline(transition),
                     "repeated restore preparation preserves the entire remaining Genie silhouette");
-                transition.Cancel();
+                CancelAndDrain(transition);
                 DWORD flags = 0;
                 Check(!transition.IsActive() && scheduler.Metrics().activeAnimations == 0 &&
                     scheduler.Metrics().activeTimers == 0 &&
@@ -1129,7 +1186,7 @@ void CheckFramePixelAlignment()
                           "actual attraction image pixels follow the independent curved surface within the cell "
                           "sampling tolerance");
                 }
-                attraction.Cancel();
+                CancelAndDrain(attraction);
                 const HWND tail = DockWindowTransitionTestAccess::PresentAttraction(attraction, source, frame,
                                                                                     displacedDock, timeline, 1.0);
                 Check(tail != nullptr, "owned attraction tail prepares with finite geometry");
@@ -1147,7 +1204,7 @@ void CheckFramePixelAlignment()
                     Check(markers[0] < 0 && markers[1] < 0,
                           "a transparent subpixel tail cannot reappear as coloured source fragments");
                 }
-                attraction.Cancel();
+                CancelAndDrain(attraction);
             }
             snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn, 2, 0, 60, false, false, 4);
             ShowWindow(source, SW_SHOWNOACTIVATE);
@@ -1213,7 +1270,7 @@ void CheckFramePixelAlignment()
                 Check(requests == 2 && DockWindowTransitionTestAccess::TimelineActive(transition) &&
                           DockWindowTransitionTestAccess::HostContainsGenieOutline(transition),
                       "repeated attraction restore rebind preserves the full curved render envelope");
-                transition.Cancel();
+                CancelAndDrain(transition);
                 DWORD cloak = 0;
                 Check(!transition.IsActive() && scheduler.Metrics().activeTimers == 0 &&
                           scheduler.Metrics().activeAnimations == 0 &&
@@ -1384,8 +1441,10 @@ void CheckRetainedWindowImage()
                 Check(restores == 1 && requestedWhileCloaked,
                     "restore is requested under the source cloak before the visual timeline, not after it");
                 const auto drain = [&] {
+                    const HWND retiringWindow = transition.GetPresentationWindow();
                     const ULONGLONG deadline = GetTickCount64() + 3000;
-                    while (transition.IsActive() && GetTickCount64() < deadline)
+                    while ((transition.IsActive() || (retiringWindow && IsWindow(retiringWindow))) &&
+                        GetTickCount64() < deadline)
                     {
                         scheduler.DispatchDue();
                         MSG message{};
@@ -1397,7 +1456,8 @@ void CheckRetainedWindowImage()
                         const HANDLE timer = scheduler.WaitHandle();
                         MsgWaitForMultipleObjects(1, &timer, FALSE, 10, QS_ALLINPUT);
                     }
-                    Check(!transition.IsActive() && !transition.GetPresentationWindow(),
+                    Check(!transition.IsActive() && !transition.GetPresentationWindow() &&
+                        (!retiringWindow || !IsWindow(retiringWindow)),
                         "animation completes and retires its entire presentation");
                     Check((GetWindowLongPtrW(destination, GWL_EXSTYLE) & WS_EX_TOPMOST) != 0,
                         "retiring a target animation keeps the independently promoted Dock topmost");
@@ -1794,6 +1854,157 @@ void CheckRetainedWindowImage()
                 Check(failedFallback == 1 && !appCloaked(source) && !IsIconic(source),
                     "failed presentation falls back once without leaving a hidden source or stale overlay");
                 DockWindowTransitionTestAccess::SetPresentationWait(transition, {});
+                // The ready-geometry branch used to bypass its total deadline
+                // when the real source could not be exposed. Inject only that
+                // OS boundary; restore, geometry, image and scheduling stay real.
+                {
+                    auto cleanup = std::make_shared<ControlledCleanupWait>();
+                    DockWindowTransitionTestAccess::SetCleanupWait(transition,
+                        [cleanup](IDCompositionDesktopDevice* device) { return cleanup->Wait(device); });
+                    int releaseAttempts = 0;
+                    DockWindowTransitionTestAccess::SetSourceRelease(transition,
+                        [&](HWND, HWND) { ++releaseAttempts; return HRESULT_FROM_WIN32(ERROR_TIMEOUT); });
+                    ShowWindow(source, SW_MINIMIZE);
+                    Check(transition.StartRestore(source, dock,
+                        [](HWND window, DockWindowRestoreTransitionPhase phase) {
+                            if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                                ShowWindow(window, SW_SHOWNOACTIVATE);
+                        }), "release-failure restore starts through its production entry");
+                    Check(pumpUntil([&] { return releaseAttempts > 0; }, 1500) &&
+                        transition.IsActive() && appCloaked(source),
+                        "ready restore geometry reaches the failing source-release boundary");
+                    const auto lease = snowdesktop::dock_source_cloak::ReadOwner(source);
+                    DockWindowTransitionTestAccess::ExpireRestoreDeadline(transition);
+                    Check(pumpUntil([&] { return !transition.IsActive(); }, 150) &&
+                        !transition.GetPresentationWindow(),
+                        "the total restore deadline ends polling even when geometry is ready and release keeps failing");
+                    Check(snowdesktop::dock_source_cloak::SameOwner(source, lease) &&
+                        snowdesktop::dock_source_cloak::IsLiveOwner(lease) &&
+                        GetPropW(source, snowdesktop::dock_source_cloak::RecoveryProperty) == lease.token,
+                        "timed-out restore transfers its exact live lease with a persistent recovery request");
+                    DockWindowTransitionTestAccess::SetSourceRelease(transition, {});
+                    transition.Cancel();
+                    SetEvent(cleanup->release);
+                    Check(pumpUntil([&] { return !appCloaked(source) &&
+                        !snowdesktop::dock_source_cloak::ReadOwner(source).window; }, 1500),
+                        "deferred cleanup recovers the real source without further transition polling");
+                    DockWindowTransitionTestAccess::SetCleanupWait(transition, {});
+                }
+                // Cleanup itself can stall independently of the earlier
+                // presentation wait. A controller releases old blocking code
+                // after an ordinary failed assertion, avoiding a hung test.
+                {
+                    auto cleanup = std::make_shared<ControlledCleanupWait>();
+                    auto retiring = std::make_unique<DockWindowTransition>();
+                    Check(retiring->Initialize(type.hInstance, &scheduler, d2d.Get(), composition.Get()),
+                        "stalled scene retirement fixture initializes");
+                    DockWindowTransitionTestAccess::SetCleanupWait(*retiring,
+                        [cleanup](IDCompositionDesktopDevice* device) { return cleanup->Wait(device); });
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    Check(retiring->StartMinimize(source, dock), "stalled cleanup fixture acquires a real shared scene");
+                    const HWND oldWindow = retiring->GetPresentationWindow();
+                    HANDLE returned = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+                    std::atomic<bool> responsive{false};
+                    std::thread controller([&] {
+                        responsive = WaitForSingleObject(returned, 200) == WAIT_OBJECT_0;
+                        if (!responsive.load()) SetEvent(cleanup->release);
+                    });
+                    retiring->Cancel();
+                    SetEvent(returned);
+                    controller.join();
+                    CloseHandle(returned);
+                    Check(responsive.load() && !cleanup->ranOnUiThread.load(),
+                        "cancellation returns while its cleanup acknowledgement is blocked off the UI thread");
+                    Check(pumpUntil([&] { return WaitForSingleObject(cleanup->entered, 0) == WAIT_OBJECT_0; }, 1000) &&
+                        IsWindow(oldWindow) && !IsWindowVisible(oldWindow) &&
+                        GetWindowLongPtrW(oldWindow, GWLP_USERDATA) == 0,
+                        "pending cleanup retains a hidden old scene window without a host pointer");
+                    DockWindowTransitionTestAccess::SetCleanupWait(*retiring, {});
+                    Check(retiring->StartMinimize(source, dock) &&
+                        retiring->GetPresentationWindow() != oldWindow,
+                        "a new animation owns a separate scene while the old cleanup remains pending");
+                    SetEvent(cleanup->release);
+                    Check(pumpUntil([&] { return !IsWindow(oldWindow); }, 1000) &&
+                        retiring->IsActive() && appCloaked(source),
+                        "old cleanup completion retires only its own window and preserves the new animation lease");
+                    const HWND newWindow = retiring->GetPresentationWindow();
+                    retiring.reset();
+                    Check(!appCloaked(source) && pumpUntil([&] { return !IsWindow(newWindow); }, 1000),
+                        "owner destruction remains safe after a deferred scene completion");
+                }
+                {
+                    auto cleanup = std::make_shared<ControlledCleanupWait>();
+                    std::weak_ptr<ControlledCleanupWait> lifetime = cleanup;
+                    auto owner = std::make_unique<DockWindowTransition>();
+                    owner->Initialize(type.hInstance, &scheduler, d2d.Get(), composition.Get());
+                    DockWindowTransitionTestAccess::SetCleanupWait(*owner,
+                        [cleanup](IDCompositionDesktopDevice* device) { return cleanup->Wait(device); });
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    Check(owner->StartMinimize(source, dock), "early-window-destruction scene starts");
+                    const HWND oldWindow = owner->GetPresentationWindow();
+                    owner.reset();
+                    Check(DestroyWindow(oldWindow) && !IsWindow(oldWindow) &&
+                        !lifetime.expired(), "early NCDESTROY releases only the UI reference while cleanup remains pending");
+                    SetEvent(cleanup->release);
+                    cleanup.reset();
+                    Check(pumpUntil([&] { return lifetime.expired(); }, 1500),
+                        "worker safely releases its retained scene after early UI window destruction");
+                }
+                {
+                    std::array<std::shared_ptr<ControlledCleanupWait>, 4> waits;
+                    std::array<HWND, 4> oldWindows{};
+                    auto allowPost = std::make_shared<std::atomic<bool>>(false);
+                    auto failedPosts = std::make_shared<std::atomic<unsigned>>(0);
+                    bool allStarted = true;
+                    for (std::size_t index = 0; index < waits.size(); ++index)
+                    {
+                        waits[index] = std::make_shared<ControlledCleanupWait>();
+                        auto owner = std::make_unique<DockWindowTransition>();
+                        owner->Initialize(type.hInstance, &scheduler, d2d.Get(), composition.Get());
+                        DockWindowTransitionTestAccess::SetCleanupWait(*owner,
+                            [wait = waits[index]](IDCompositionDesktopDevice* device) { return wait->Wait(device); });
+                        DockWindowTransitionTestAccess::SetRetirementPost(*owner,
+                            [allowPost, failedPosts](HWND window, UINT message, WPARAM wp, LPARAM lp) -> BOOL {
+                                if (!allowPost->load()) { ++*failedPosts; SetLastError(ERROR_NOT_ENOUGH_QUOTA); return FALSE; }
+                                return PostMessageW(window, message, wp, lp);
+                            });
+                        ShowWindow(source, SW_SHOWNOACTIVATE);
+                        const bool started = owner->StartMinimize(source, dock);
+                        allStarted = allStarted && started;
+                        oldWindows[index] = owner->GetPresentationWindow();
+                        owner.reset(); // Destruction must not wait for the cleanup acknowledgement.
+                    }
+                    Check(allStarted, "four stalled retired scenes retain their own resources after owner destruction");
+                    ShowWindow(source, SW_SHOWNOACTIVATE);
+                    Check(!transition.StartMinimize(source, dock) && !appCloaked(source) && !transition.IsActive(),
+                        "exhausted retirement budget falls back before acquiring another scene or source lease");
+                    for (const auto& wait : waits) SetEvent(wait->release);
+                    const auto withoutDispatch = [&](const auto& predicate) {
+                        const ULONGLONG deadline = GetTickCount64() + 1500;
+                        while (!predicate() && GetTickCount64() < deadline) Sleep(1);
+                        return predicate();
+                    };
+                    Check(withoutDispatch([&] { return failedPosts->load() >= waits.size(); }),
+                        "completed cleanup retains retry ownership when its UI notification fails");
+                    Check(!transition.StartMinimize(source, dock) &&
+                        std::all_of(oldWindows.begin(), oldWindows.end(), [](HWND window) { return IsWindow(window); }),
+                        "failed retirement notifications keep all four window budget slots occupied");
+                    allowPost->store(true);
+                    Check(withoutDispatch([&] {
+                        return std::all_of(oldWindows.begin(), oldWindows.end(), [](HWND window) {
+                            MSG message{};
+                            return PeekMessageW(&message, window, WM_APP, 0xBFFF, PM_NOREMOVE) != FALSE;
+                        });
+                    }), "retirement notifications are retried and queued without dispatching their destruction");
+                    Check(!transition.StartMinimize(source, dock) &&
+                        std::all_of(oldWindows.begin(), oldWindows.end(), [](HWND window) { return IsWindow(window); }),
+                        "worker completion cannot return the four slots before the UI destroys their old windows");
+                    Check(pumpUntil([&] {
+                        return std::all_of(oldWindows.begin(), oldWindows.end(), [](HWND window) { return !IsWindow(window); });
+                    }, 1500), "completed retired scenes release their windows and restore the bounded resource budget");
+                    Check(transition.StartMinimize(source, dock), "animation resumes after stalled retirement slots are released");
+                    transition.Cancel();
+                }
                 snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                     2, 0, 60, false, false, 3);
                 const DWORD preparationStart = GetTickCount();

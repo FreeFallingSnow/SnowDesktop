@@ -88,7 +88,7 @@ void DesktopApp::ApplyPendingRenames()
         const auto changes = snowdesktop::rename_model_update::Apply(
             *result, ToUpperInvariant(result->path), items_, widgets_, dockEntries_,
             dockFolderPopupOpen_ ? &dockFolderPopupWidget_ : nullptr);
-        if (changes.needsReload) RequestShellRefresh();
+        if (changes.needsReload || changes.folderRootsChanged) RequestShellRefresh();
         changed = changed || !result->path.empty();
         categoryChanged = categoryChanged ||
             (!changes.desktopItems.empty() &&

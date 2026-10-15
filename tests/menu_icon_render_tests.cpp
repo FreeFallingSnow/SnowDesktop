@@ -1,6 +1,7 @@
 #include "ui/menu/menu_icon_render.h"
 #include "ui/menu/modern_menu_scroll_hint.h"
 #include "ui/menu/menu_fluent_glyphs.h"
+#include "ui/menu/menu_label.h"
 #include "resources/resource.h"
 
 #include <algorithm>
@@ -150,6 +151,52 @@ RECT FindPixelsDifferentFromColorInRect(const std::uint32_t* pixels,
         }
     }
     return result;
+}
+
+// Compare normalized rasterized glyphs with an independent literal GDI draw.
+// Cropping removes placement policy from the expected text semantics.
+void CheckLiteralLabels(HDC dc, HFONT font, std::uint32_t* pixels, int width, int height,
+    const snowdesktop::menu_icon::Palette& palette, const snowdesktop::menu_icon::Metrics& metrics)
+{
+    const RECT bounds{0, 0, width, metrics.quickActionHeight};
+    const auto glyphs = [&] {
+        GdiFlush();
+        const RECT ink = FindPixelsDifferentFromColorInRect(pixels, width, height, bounds, palette.background);
+        std::vector<std::uint32_t> result;
+        result.push_back(static_cast<std::uint32_t>((std::max)(0L, ink.right - ink.left)));
+        result.push_back(static_cast<std::uint32_t>((std::max)(0L, ink.bottom - ink.top)));
+        for (LONG y = ink.top; y < ink.bottom; ++y)
+            for (LONG x = ink.left; x < ink.right; ++x)
+                result.push_back(pixels[y * width + x] & 0x00ffffff);
+        return result;
+    };
+    const auto clear = [&] { std::fill_n(pixels, width * height, PixelColor(palette.background)); };
+    const auto decoded = snowdesktop::DecodeMenuLabel(L"R&&D");
+    Expect(decoded.text == L"R&D", "native escaped ampersands decode to a literal display label");
+    for (const auto& label : {std::wstring(L"&"), decoded.text, std::wstring(L"鱼&米")})
+    for (const bool quick : {false, true})
+    {
+        clear();
+        const auto oldFont = SelectObject(dc, font);
+        const auto oldMode = SetBkMode(dc, TRANSPARENT);
+        const auto oldColor = SetTextColor(dc, palette.text);
+        RECT reference = bounds;
+        DrawTextW(dc, label.c_str(), static_cast<int>(label.size()), &reference,
+            DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        const auto expected = glyphs();
+        SelectObject(dc, oldFont); SetBkMode(dc, oldMode); SetTextColor(dc, oldColor);
+        clear();
+        const snowdesktop::menu_icon::ItemView item{label.c_str(), L""};
+        if (quick) snowdesktop::menu_icon::DrawQuickAction(dc, font, nullptr,
+            snowdesktop::MenuQuickIcon::FontGlyph, item, bounds, 0, palette, metrics);
+        else snowdesktop::menu_icon::DrawItem(dc, font, nullptr, item, bounds, 0, palette, metrics);
+        Expect(expected.size() > 2 && glyphs() == expected,
+            "ordinary and quick-action decoded labels preserve literal ampersand glyphs");
+    }
+    clear();
+    const snowdesktop::menu_icon::ItemView shortcut{L"\t&", L""};
+    snowdesktop::menu_icon::DrawItem(dc, font, nullptr, shortcut, bounds, 0, palette, metrics);
+    Expect(glyphs().size() > 2, "a literal ampersand in the shortcut column is also drawn");
 }
 
 bool SavePreviewBitmap(const std::filesystem::path& path,
@@ -629,6 +676,7 @@ int wmain(int argc, wchar_t** argv)
     CheckIconlessRows(dc, pixels, kWidth, kHeight);
     CheckBuiltinArtwork(dc, font, fluentFont, pixels, kWidth, kHeight);
     CheckSemanticArtwork(dc, font, fluentFont, pixels, kWidth, kHeight);
+    CheckLiteralLabels(dc, font, pixels, kWidth, kHeight, light, metrics96);
 
     const snowdesktop::menu_icon::ItemView normal{
         L"Open", L"O", false, false, false,

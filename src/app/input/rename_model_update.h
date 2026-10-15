@@ -4,6 +4,7 @@
 #include "layout/folder_sort_rules.h"
 #include "shell/shell_file_operation_worker.h"
 
+#include <algorithm>
 #include <filesystem>
 
 namespace snowdesktop::rename_model_update
@@ -31,7 +32,28 @@ struct Changes
     std::vector<std::wstring> folders;
     bool popup = false;
     bool needsReload = false;
+    bool folderRootsChanged = false;
 };
+
+inline bool MigrateDirectoryPath(std::wstring& value,
+    const std::wstring& source, const std::wstring& destination)
+{
+    auto normalize = [](std::wstring path) {
+        std::replace(path.begin(), path.end(), L'/', L'\\');
+        while (!path.empty() && path.back() == L'\\') path.pop_back();
+        return path;
+    };
+    const auto oldRoot = normalize(source);
+    const auto path = normalize(value);
+    if (oldRoot.empty() || path.size() < oldRoot.size() ||
+        !desktop_item_reference_migration::KeysEqual(path.substr(0, oldRoot.size()), oldRoot) ||
+        (path.size() > oldRoot.size() && path[oldRoot.size()] != L'\\'))
+        return false;
+    const auto replacement = normalize(destination) + path.substr(oldRoot.size());
+    if (replacement == value) return false;
+    value = replacement;
+    return true;
+}
 
 // Apply metadata by stable path, preserving selection, position, existing
 // bitmaps and unrelated items. No filesystem/Shell queries belong here.
@@ -55,6 +77,30 @@ inline Changes Apply(const ShellRenameResult& result, const std::wstring& newLay
     changes.needsReload = !result.metadataComplete || result.absoluteId.empty();
     const bool directory =
         (result.attributes.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    // A matching existing mapping root also identifies a directory when Shell
+    // renamed it successfully but could not complete the metadata refresh.
+    if (directory || !result.metadataComplete)
+    {
+        const auto migrateRoot = [&](DesktopWidget& widget) {
+            if (widget.type != DesktopWidgetType::FolderMapping ||
+                !MigrateDirectoryPath(widget.sourceFolderPath, result.sourcePath, result.path))
+                return false;
+            for (auto& entry : widget.folderEntries)
+                MigrateDirectoryPath(entry.fullPath, result.sourcePath, result.path);
+            for (auto& key : widget.itemKeys)
+                MigrateDirectoryPath(key, result.sourcePath, result.path);
+            for (auto& missing : widget.missingItems)
+                MigrateDirectoryPath(missing.key, result.sourcePath, result.path);
+            return true;
+        };
+        for (auto& widget : widgets)
+            changes.folderRootsChanged |= migrateRoot(widget);
+        if (popup && migrateRoot(*popup))
+        {
+            changes.folderRootsChanged = true;
+            changes.popup = true;
+        }
+    }
     const std::optional<std::uint64_t> size = directory
         ? std::nullopt : std::optional<std::uint64_t>(
             (static_cast<std::uint64_t>(result.attributes.nFileSizeHigh) << 32) |
@@ -123,7 +169,7 @@ inline Changes Apply(const ShellRenameResult& result, const std::wstring& newLay
         if (widget.type == DesktopWidgetType::FolderMapping && updateFolder(widget))
             changes.folders.push_back(widget.id);
     if (popup)
-        changes.popup = updateFolder(*popup);
+        changes.popup |= updateFolder(*popup);
     return changes;
 }
 }

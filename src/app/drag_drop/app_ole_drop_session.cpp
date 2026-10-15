@@ -335,19 +335,19 @@ HRESULT DesktopApp::HandleOleDragEnter(
     else
         dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
-    std::wstring hint;
-    if (targetContainer && targetRegion != HitRegion::None)
-        hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
-    ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = ((desktopIconsHidden_ && !targetContainer) ||
         targetRegion == HitRegion::Blocked)
         ? DROPEFFECT_NONE
         : (externalLogicalReference
-            ? DROPEFFECT_COPY
+            ? (*effect & DROPEFFECT_COPY)
             : externalDockMapping
             ? snowdesktop::dock_drop_rules::
                 ChooseExternalMappingEffect(*effect)
             : ChooseDropEffect(keyState, *effect));
+    std::wstring hint;
+    if (*effect != DROPEFFECT_NONE && targetContainer && targetRegion != HitRegion::None)
+        hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
+    ShowDragHintWindowScreen({ point.x, point.y }, hint);
     PresentOleDragInteractionFrame();
     return S_OK;
 }
@@ -458,19 +458,19 @@ HRESULT DesktopApp::HandleOleDragOver(
     else
         dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
-    std::wstring hint;
-    if (targetContainer && targetRegion != HitRegion::None)
-        hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
-    ShowDragHintWindowScreen({ point.x, point.y }, hint);
     *effect = ((desktopIconsHidden_ && !targetContainer) ||
         targetRegion == HitRegion::Blocked)
         ? DROPEFFECT_NONE
         : (externalLogicalReference
-            ? DROPEFFECT_COPY
+            ? (*effect & DROPEFFECT_COPY)
             : externalDockMapping
             ? snowdesktop::dock_drop_rules::
                 ChooseExternalMappingEffect(*effect)
             : ChooseDropEffect(keyState, *effect));
+    std::wstring hint;
+    if (*effect != DROPEFFECT_NONE && targetContainer && targetRegion != HitRegion::None)
+        hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
+    ShowDragHintWindowScreen({ point.x, point.y }, hint);
     PresentOleDragInteractionFrame();
     return S_OK;
 }
@@ -543,6 +543,15 @@ HRESULT DesktopApp::HandleOleDrop(
     SetPageNavHotEdgeHover(0);
     navAutoFlipDir_ = 0;
     navAutoFlipTick_ = 0;
+
+    if (!dragDropController_.IsSelfDragActive() &&
+        (*effect & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK)) == 0)
+    {
+        dragDropController_.EndExternalDrag();
+        EndDragSession();
+        *effect = DROPEFFECT_NONE;
+        return S_OK;
+    }
 
     POINT clientPoint = ScreenPointToClient(point);
     if (keyState & MK_RBUTTON)
@@ -1032,6 +1041,12 @@ HRESULT DesktopApp::HandleOleDrop(
             : GetFileAttributesW(targetPath.c_str());
         if (recycleBinTarget && !dropPaths.empty())
         {
+            if ((*effect & DROPEFFECT_MOVE) == 0)
+            {
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
             const bool queued = QueueShellFileOperation(
                 snowdesktop::CreateRecycleBinDeleteRequest(
                     std::move(dropPaths)),
@@ -2139,6 +2154,12 @@ HRESULT DesktopApp::HandleOleDrop(
         if (auto* logicalSlot =
                 dynamic_cast<LuaLogicalSlotContainer*>(target))
         {
+            if ((*effect & DROPEFFECT_COPY) == 0)
+            {
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
             bool committed = false;
             if (stagedDropPathLease)
             {
@@ -2244,6 +2265,12 @@ HRESULT DesktopApp::HandleOleDrop(
                 ? DROPEFFECT_MOVE
                 : preview.action == DropAction::Link
                     ? DROPEFFECT_LINK : DROPEFFECT_COPY;
+        if ((performedEffect & *effect) == 0)
+        {
+            *effect = DROPEFFECT_NONE;
+            EndDragSession();
+            return S_OK;
+        }
         FileOperationCompletion asyncCompletion;
         const bool sourceSupportsAsync =
             PrepareOleAsyncFileOperation(

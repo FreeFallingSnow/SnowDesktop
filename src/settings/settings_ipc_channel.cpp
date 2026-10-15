@@ -15,8 +15,8 @@ namespace
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr UINT_PTR AsyncTimerId = 1;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
-// Icon background sources, multi-stop gradients and coloring extend the snapshot.
-constexpr std::uint32_t Version = 37;
+// Advanced-feature connection diagnostics extend the private status payload.
+constexpr std::uint32_t Version = 38;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;

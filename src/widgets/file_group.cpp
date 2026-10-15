@@ -1252,25 +1252,7 @@ std::vector<Item*> FileGroup::GetSelectedItems() const
         return result;
     }
 
-    auto* source = GetActiveSourceContainer();
-    if (!source) return result;
-    const auto& slots =
-        const_cast<FileGroup*>(this)->GetSlots();
-    for (const auto& slot : slots)
-    {
-        if (!slot || !slot->GetItem() ||
-            !slot->GetItem()->IsSelected())
-            continue;
-        auto clone = CloneHostedItem(
-            slot->GetItem(),
-            const_cast<FileGroup*>(this), app_);
-        if (!clone) continue;
-        clone->SetBounds(slot->GetBounds());
-        Item* raw = clone.get();
-        dragSourceCache_.push_back(std::move(clone));
-        result.push_back(raw);
-    }
-    return result;
+    return GetHostedSelectedItemsForSource(GetActiveSourceId());
 }
 
 std::vector<size_t>

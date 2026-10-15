@@ -586,9 +586,69 @@ int main(int argc, char** argv)
         Check(app_fonts::ResolveXamlResource(L"Files/SnowDesktopUserFonts/../secret.ttf", data).empty() &&
             app_fonts::ResolveXamlResource(L"Files/SnowDesktopUserFonts/id/../../secret.ttf", data).empty(),
             "custom XAML resource lookup rejects traversal and unrelated resources");
+        {
+            namespace fs = std::filesystem;
+            const auto source = data / L"import-source";
+            fs::create_directories(source);
+            const auto sourceFont = source / L"valid.ttf";
+            fs::copy_file(assets / L"fonts/HarmonyOS-Sans/HarmonyOS_Sans_SC_Regular.ttf", sourceFont);
+            const auto notice = source / L"LICENSE.txt";
+            { std::ofstream output(notice); output << "source license remains intact"; }
+            const auto existing = data / L"fonts/existing-package/keep.txt";
+            fs::create_directories(existing.parent_path());
+            { std::ofstream output(existing); output << "keep existing package"; }
+            const auto packageNames = [&] {
+                std::vector<fs::path> result;
+                for (const auto& entry : fs::directory_iterator(data / L"fonts"))
+                    result.push_back(entry.path().filename());
+                std::sort(result.begin(), result.end());
+                return result;
+            };
+            const auto beforeNames = packageNames();
+            const auto beforeFontSize = fs::file_size(sourceFont);
+            const auto existingChoices = app_fonts::List(assets, data);
+            const HANDLE held = CreateFileW(notice.c_str(), GENERIC_READ, 0,
+                nullptr, OPEN_EXISTING, 0, nullptr);
+            Check(held != INVALID_HANDLE_VALUE, "lock a real notice after font-copy input enumeration remains possible");
+            std::vector<app_fonts::Choice> failedChoices;
+            std::string failedError;
+            const bool succeeded = app_fonts::Import(source, data, failedChoices, failedError);
+            if (held != INVALID_HANDLE_VALUE) CloseHandle(held);
+            Check(!succeeded && failedChoices.empty() && failedError == "font.importFailed" &&
+                packageNames() == beforeNames,
+                "a second-copy I/O failure rolls back only its new font package and leaves no visible or staging residue");
+            const auto afterChoices = app_fonts::List(assets, data);
+            const auto readText = [](const fs::path& path) {
+                std::ifstream input(path, std::ios::binary);
+                return std::string(std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>());
+            };
+            const auto managedIds = [](const auto& values) {
+                std::vector<std::string> ids;
+                for (const auto& value : values)
+                    if (value.selection.package != "system" && value.selection.package != "installed" &&
+                        value.selection.package != "MiSans" && value.selection.package != "HarmonyOS-Sans")
+                        ids.push_back(value.selection.package);
+                std::sort(ids.begin(), ids.end()); return ids;
+            };
+            Check(managedIds(existingChoices) == managedIds(afterChoices) &&
+                readText(existing) == "keep existing package" &&
+                fs::file_size(sourceFont) == beforeFontSize && readText(notice) == "source license remains intact",
+                "failed import cannot advertise a partial family or delete earlier packages/source inputs");
+            Check(app_fonts::Import(source, data, failedChoices, failedError) && !failedChoices.empty() &&
+                packageNames().size() == beforeNames.size() + 1 &&
+                fs::is_directory(data / L"fonts" / failedChoices.front().selection.package),
+                "the same source imports into one final GUID package after the copy lock is released");
+        }
         Check(!app_fonts::Import(assets / "fonts" / "README.md", data, imported, error), "non-font packages are rejected");
         app_fonts::Select({}, assets, data);
-        std::error_code ec; std::filesystem::remove_all(data, ec);
+        std::error_code ec;
+        const auto cleanup = std::filesystem::weakly_canonical(data, ec);
+        std::error_code temporaryError;
+        const auto temporaryRoot = std::filesystem::weakly_canonical(std::filesystem::temp_directory_path(), temporaryError);
+        const bool owned = !ec && !temporaryError && cleanup.is_absolute() && cleanup.parent_path() == temporaryRoot &&
+            cleanup.filename() == L"SnowDesktopFontPackageTests-" + std::to_wstring(GetCurrentProcessId());
+        Check(owned, "font test cleanup resolves to exactly its own temporary package directory");
+        if (owned) std::filesystem::remove_all(cleanup, ec);
         Check(!ec, "only the test-owned imported package directory is removed");
     }
     {

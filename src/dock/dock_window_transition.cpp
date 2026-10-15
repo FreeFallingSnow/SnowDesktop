@@ -21,6 +21,8 @@ namespace
 constexpr wchar_t kDockWindowTransitionClassName[] =
     L"SnowDesktopDockWindowTransition";
 std::atomic<unsigned> presentationWaitJobs{0};
+std::atomic<unsigned> sceneRetirementJobs{0};
+constexpr UINT kRetireSceneWindow = WM_APP + 51;
 
 BOOL CALLBACK CollectAnimationMonitor(HMONITOR monitor, HDC, LPRECT, LPARAM parameter)
 {
@@ -142,6 +144,118 @@ struct DockWindowTransition::PresentationBarrier
     std::atomic<bool> completed{false};
     HRESULT result = E_PENDING;
 };
+
+// Reserve the complete retirement owner before publishing a scene. No
+// allocation or fallible thread-pool submission is needed during cancellation.
+struct DockWindowTransition::RetiredScene
+{
+    std::atomic<unsigned> references{1};
+    std::atomic<bool> windowDestroyed{false};
+    std::atomic<bool> completed{false};
+    PTP_WORK work = nullptr;
+    HWND window = nullptr;
+    HANDLE token = nullptr;
+    HWND source = nullptr;
+    snowdesktop::dock_source_cloak::Owner owner;
+    Microsoft::WRL::ComPtr<IDCompositionDesktopDevice> device;
+    Microsoft::WRL::ComPtr<IDCompositionTarget> target;
+    Microsoft::WRL::ComPtr<IDCompositionVisual2> visual;
+    Microsoft::WRL::ComPtr<IDCompositionScaleTransform> scale;
+    Microsoft::WRL::ComPtr<IDCompositionEffectGroup> effect;
+    Microsoft::WRL::ComPtr<IDCompositionRectangleClip> clip;
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual3>> strips;
+    std::vector<Microsoft::WRL::ComPtr<IDCompositionVisual2>> triangles;
+    snowdesktop::dock_thumbnail::SharedVisual image, previousImage;
+    std::vector<snowdesktop::dock_thumbnail::SharedVisual> images, previousImages;
+    std::function<HRESULT(IDCompositionDesktopDevice*)> wait;
+    std::function<BOOL(HWND, UINT, WPARAM, LPARAM)> post;
+
+    void ReleaseResources() noexcept
+    {
+        // Thumbnail unregistration and COM release belong to this worker too.
+        // Keep the resource budget until those releases have finished.
+        image.Reset(); previousImage.Reset();
+        images.clear(); previousImages.clear();
+        strips.clear(); triangles.clear();
+        clip.Reset(); effect.Reset(); scale.Reset(); visual.Reset();
+        target.Reset(); device.Reset();
+    }
+    void Release() noexcept
+    {
+        if (references.fetch_sub(1, std::memory_order_acq_rel) == 1) delete this;
+    }
+    ~RetiredScene()
+    {
+        ReleaseResources();
+        if (work) CloseThreadpoolWork(work);
+        sceneRetirementJobs.fetch_sub(1, std::memory_order_relaxed);
+    }
+};
+
+DockWindowTransition::DockWindowTransition() = default;
+
+bool DockWindowTransition::ReserveSceneRetirement()
+{
+    if (sceneRetirement_) return true;
+    if (sceneRetirementJobs.fetch_add(1, std::memory_order_relaxed) >= 4)
+    {
+        sceneRetirementJobs.fetch_sub(1, std::memory_order_relaxed);
+        return false;
+    }
+    auto state = std::unique_ptr<RetiredScene>(new (std::nothrow) RetiredScene());
+    if (!state)
+    {
+        sceneRetirementJobs.fetch_sub(1, std::memory_order_relaxed);
+        return false;
+    }
+    try { state->wait = cleanupWait_; state->post = retirementPost_; }
+    catch (...) { return false; }
+    state->work = CreateThreadpoolWork(RunRetiredScene, state.get(), nullptr);
+    if (!state->work) return false;
+    sceneRetirement_ = std::move(state);
+    return true;
+}
+
+void CALLBACK DockWindowTransition::RunRetiredScene(
+    PTP_CALLBACK_INSTANCE instance, void* context, PTP_WORK)
+{
+    CallbackMayRunLong(instance);
+    auto* state = static_cast<RetiredScene*>(context);
+    try
+    {
+        if (state->wait) state->wait(state->device.Get());
+        else if (state->device && SUCCEEDED(state->device->WaitForCommitCompletion())) DwmFlush();
+    }
+    catch (...) { /* A failed acknowledgement still retires this hidden scene. */ }
+    // The source-thread recovery timer can finish a timed-out release while
+    // composition is stalled. Otherwise retain this exact old lease and retry
+    // away from the UI. A newer owner is never released by this completion.
+    while (state->source && IsWindow(state->source) &&
+        snowdesktop::dock_source_cloak::SameOwner(state->source, state->owner))
+    {
+        if (SUCCEEDED(snowdesktop::dock_source_cloak::Release(state->source, state->owner))) break;
+        Sleep(100);
+    }
+    state->ReleaseResources();
+    state->completed.store(true, std::memory_order_release);
+    // The HWND owns a second reference and keeps its budget until NCDESTROY.
+    // Failed notification still has this worker owner and can be retried.
+    while (state->window && !state->windowDestroyed.load(std::memory_order_acquire))
+    {
+        BOOL posted = FALSE;
+        try
+        {
+            posted = state->post ? state->post(state->window, kRetireSceneWindow,
+                reinterpret_cast<WPARAM>(state->token), reinterpret_cast<LPARAM>(state)) :
+                PostMessageW(state->window, kRetireSceneWindow,
+                    reinterpret_cast<WPARAM>(state->token), reinterpret_cast<LPARAM>(state));
+        }
+        catch (...) {}
+        if (posted) break;
+        Sleep(30);
+    }
+    state->Release();
+}
 
 void CALLBACK DockWindowTransition::RunPresentationBarrier(
     PTP_CALLBACK_INSTANCE instance, void* context)
@@ -461,20 +575,23 @@ bool DockWindowTransition::Initialize(
     compositionDevice_.Reset();
     if (compositionDevice)
         DCompositionCreateDevice2(nullptr, IID_PPV_ARGS(&compositionDevice_));
+    const bool registered = RegisterWindowClass();
+    if (registered) EnsureWindow();
+    return registered;
+}
+
+bool DockWindowTransition::RegisterWindowClass()
+{
     WNDCLASSEXW windowClass{};
     windowClass.cbSize = sizeof(windowClass);
+    windowClass.cbWndExtra = sizeof(LONG_PTR);
     windowClass.lpfnWndProc = WindowProc;
     windowClass.hInstance = instance_;
     windowClass.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     windowClass.hbrBackground = nullptr;
     windowClass.lpszClassName =
         kDockWindowTransitionClassName;
-    const bool registered =
-        RegisterClassExW(&windowClass) != 0 ||
-        GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
-    if (registered)
-        EnsureWindow();
-    return registered;
+    return RegisterClassExW(&windowClass) != 0 || GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
 
 bool DockWindowTransition::EnsureWindow()
@@ -483,6 +600,9 @@ bool DockWindowTransition::EnsureWindow()
         return true;
     if (!instance_)
         return false;
+    // Another initialized transition can retire its last HWND and unregister
+    // the shared class while this object temporarily has no presentation HWND.
+    if (!RegisterWindowClass()) return false;
 
     hwnd_ = snowdesktop::CreateShellOverlayWindowEx(
         kDockWindowTransitionExStyle,
@@ -1022,6 +1142,16 @@ bool DockWindowTransition::ResolveRestoreWindowRect(
 
 bool DockWindowTransition::EnsureCompositionVisuals()
 {
+    if (!compositionDevice_)
+    {
+        imageResult_ = E_NOTIMPL;
+        return false;
+    }
+    if (!ReserveSceneRetirement() || !EnsureWindow())
+    {
+        imageResult_ = E_OUTOFMEMORY;
+        return false;
+    }
     if (!compositionDevice_ || !hwnd_ || !IsWindow(hwnd_))
     {
         imageResult_ = E_NOTIMPL;
@@ -1867,6 +1997,13 @@ bool DockWindowTransition::OnAnimationFrame(
     }
     if (awaitingRestoreVisibility_)
     {
+        // This deadline covers every handoff branch, including ready geometry
+        // with a failed uncloak and each asynchronous presentation phase.
+        if (now >= restoreCleanupDeadlineMs_)
+        {
+            Finish();
+            return false;
+        }
         if (restorePresentationPhase_ == RestorePresentationPhase::AlignedImage)
         {
             const auto result = PresentationBarrierResult(now);
@@ -2253,7 +2390,8 @@ void DockWindowTransition::ReleaseSourceCloak()
     if (!sourceCloaked_) return;
     if (sourceCloakWindow_ && IsWindow(sourceCloakWindow_))
     {
-        const HRESULT hr = snowdesktop::dock_source_cloak::Release(sourceCloakWindow_, hwnd_);
+        const HRESULT hr = sourceRelease_ ? sourceRelease_(sourceCloakWindow_, hwnd_) :
+            snowdesktop::dock_source_cloak::Release(sourceCloakWindow_, hwnd_);
         if (FAILED(hr))
         {
             if (diagnosticCallback_) diagnosticCallback_(L"Dock source uncloak failed");
@@ -2267,8 +2405,6 @@ void DockWindowTransition::ReleaseSourceCloak()
 void DockWindowTransition::Finish()
 {
     snowdesktop::performance::Scope performanceScope("dock.transition", "scene.retire");
-    const bool presentationAlreadyRetired = restorePresentationAcknowledged_ &&
-        direction_ == DockWindowTransitionDirection::Restore && !sourceCloaked_;
     presentationBarrier_.reset();
     restorePresentationPhase_ = RestorePresentationPhase::None;
     presentationBarrierDeadlineMs_ = 0.0;
@@ -2283,22 +2419,11 @@ void DockWindowTransition::Finish()
         animationScheduler_->Cancel(animationToken_);
     animationToken_ = 0;
     HWND transitionWindow = hwnd_;
-    const bool hadCompositionImage = compositionImageActive_;
-    // Retire the visible scene before changing HWND visibility, Dock layers,
-    // strip transforms or its source. Restoring the full-size image while
-    // the previous scene is still being composed can flash the application.
-    if (hadCompositionImage && compositionDevice_)
-    {
-        if (compositionEffect_) compositionEffect_->SetOpacity(0.0f);
-        if (compositionVisual_)
-        {
-            compositionVisual_->RemoveAllVisuals();
-            compositionVisual_->SetContent(nullptr);
-        }
-        if (SUCCEEDED(compositionDevice_->Commit()) && !presentationAlreadyRetired)
-            compositionDevice_->WaitForCommitCompletion();
-    }
-    if (!presentationAlreadyRetired && (presenting_ || sourceCloaked_)) DwmFlush();
+    // Hide and detach without waiting for the compositor on the UI thread.
+    // The preallocated owner retains all old visuals and shared thumbnails.
+    if (compositionEffect_) compositionEffect_->SetOpacity(0.0f);
+    if (compositionTarget_) compositionTarget_->SetRoot(nullptr);
+    if (compositionImageActive_ && compositionDevice_) compositionDevice_->Commit();
     if (presenting_ && diagnosticCallback_)
         diagnosticCallback_(L"Dock taskbar phase: overlay-before-hide");
     if (transitionWindow)
@@ -2318,33 +2443,52 @@ void DockWindowTransition::Finish()
         presentationCallback_(nullptr);
     if (wasPresenting && diagnosticCallback_)
         diagnosticCallback_(L"Dock taskbar phase: after-dock-layer-restore");
-    if (compositionEffect_)
-        compositionEffect_->SetOpacity(0.0f);
-    ClearGenieStrips();
-    compositionWindowImage_.Reset();
-    retiredWindowImage_.Reset();
-    retiredGenieWindowImages_.clear();
-    compositionSharedWindowActive_ = false;
-    if (compositionScaleTransform_)
+    ReleaseSourceCloak();
+    if (sceneRetirement_)
     {
-        compositionScaleTransform_->SetScaleX(1.0f);
-        compositionScaleTransform_->SetScaleY(1.0f);
+        auto state = std::move(sceneRetirement_);
+        state->device = compositionDevice_;
+        state->target = std::move(compositionTarget_);
+        state->visual = std::move(compositionVisual_);
+        state->scale = std::move(compositionScaleTransform_);
+        state->effect = std::move(compositionEffect_);
+        state->clip = std::move(compositionClip_);
+        state->strips = std::move(genieStrips_);
+        state->triangles = std::move(attractionTriangles_);
+        state->image = std::move(compositionWindowImage_);
+        state->images = std::move(genieWindowImages_);
+        state->previousImage = std::move(retiredWindowImage_);
+        state->previousImages = std::move(retiredGenieWindowImages_);
+        state->window = transitionWindow;
+        state->token = transitionWindow ? GetPropW(transitionWindow,
+            snowdesktop::dock_source_cloak::HostTokenProperty) : nullptr;
+        if (sourceCloaked_)
+        {
+            state->source = sourceCloakWindow_;
+            state->owner = snowdesktop::dock_source_cloak::ReadOwner(state->source);
+            if (state->owner.window == transitionWindow)
+                SetPropW(state->source, snowdesktop::dock_source_cloak::RecoveryProperty, state->owner.token);
+        }
+        if (transitionWindow)
+        {
+            // Transfer the UI reference to this HWND before the worker starts.
+            // An early NCDESTROY releases only that reference.
+            state->references.fetch_add(1, std::memory_order_relaxed);
+            SetWindowLongPtrW(transitionWindow, 0, reinterpret_cast<LONG_PTR>(state.get()));
+            SetWindowLongPtrW(transitionWindow, GWLP_USERDATA, 0);
+        }
+        hwnd_ = nullptr;
+        sourceCloaked_ = false;
+        sourceCloakWindow_ = nullptr;
+        const PTP_WORK work = state->work;
+        state.release();
+        SubmitThreadpoolWork(work);
     }
-    if (compositionVisual_)
-        compositionVisual_->SetContent(nullptr);
+    compositionSharedWindowActive_ = false;
     compositionImageSize_ = {};
     compositionSourceRegion_ = {};
-    if (compositionImageActive_ && compositionDevice_)
-        compositionDevice_->Commit();
     compositionImageActive_ = false;
     compositionTimelineActive_ = false;
-    if (sourceCloaked_)
-    {
-        // Release the real window only after retiring the composition scene
-        // and acknowledging the minimized/restored frame.
-        DwmFlush();
-        ReleaseSourceCloak();
-    }
     sourceWindow_ = nullptr;
     fromRect_ = {};
     toRect_ = {};
@@ -2438,6 +2582,22 @@ LRESULT CALLBACK DockWindowTransition::WindowProc(
         SetWindowLongPtrW(
             window, GWLP_USERDATA,
             reinterpret_cast<LONG_PTR>(self));
+    }
+
+    auto* retired = reinterpret_cast<RetiredScene*>(GetWindowLongPtrW(window, 0));
+    if (message == kRetireSceneWindow && !self && retired &&
+        reinterpret_cast<LPARAM>(retired) == lParam &&
+        retired->completed.load(std::memory_order_acquire) &&
+        GetPropW(window, snowdesktop::dock_source_cloak::HostTokenProperty) == reinterpret_cast<HANDLE>(wParam))
+    {
+        DestroyWindow(window);
+        return 0;
+    }
+    if (message == WM_NCDESTROY && retired)
+    {
+        SetWindowLongPtrW(window, 0, 0);
+        retired->windowDestroyed.store(true, std::memory_order_release);
+        retired->Release();
     }
 
     switch (message)

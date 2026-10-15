@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "desktop/desktop_drop_search.h"
+#include "layout/selected_grid_move.h"
 #include "widgets/collection_group_rules.h"
 #include "desktop/windows_desktop_layout.h"
 #include "desktop/windows_desktop_layout_rules.h"
@@ -411,79 +412,11 @@ bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan s
  */
 std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell targetCell) const
 {
+    const auto plan = snowdesktop::selected_grid_move::Build(items_, gridPages_, std::move(targetCell),
+        [this](const GridCell& cell, GridSpan span) { return IsGridAreaOccupiedByUnselected(cell, span); });
     std::vector<PendingGridMove> moves;
-    std::vector<size_t> selectedIndexes;
-    int minColumn = INT_MAX, minRow = INT_MAX;
-    int maxColumn = 0, maxRow = 0;
-    for (size_t i = 0; i < items_.size(); ++i)
-    {
-        if (items_[i].selected)
-        {
-            selectedIndexes.push_back(i);
-            minColumn = std::min(minColumn, items_[i].gridCell.column);
-            minRow = std::min(minRow, items_[i].gridCell.row);
-            maxColumn = std::max(maxColumn, items_[i].gridCell.column + std::max(1, items_[i].gridSpan.columns));
-            maxRow = std::max(maxRow, items_[i].gridCell.row + std::max(1, items_[i].gridSpan.rows));
-        }
-    }
-    if (selectedIndexes.empty()) return moves;
-
-    const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
-    if (!page) return moves;
-
-    const int groupColumns = std::max(1, maxColumn - minColumn);
-    const int groupRows = std::max(1, maxRow - minRow);
-    const bool stacked = (groupColumns == 1 && groupRows == 1 && selectedIndexes.size() > 1);
-    const int spreadCols = stacked ? std::min(static_cast<int>(selectedIndexes.size()), page->columns) : groupColumns;
-    const bool hasLargeIcon = std::any_of(selectedIndexes.begin(), selectedIndexes.end(),
-        [&](size_t index) { return items_[index].largeIcon.has_value(); });
-    if (hasLargeIcon && (targetCell.column < 0 || targetCell.row < 0 ||
-        targetCell.column + spreadCols > page->columns || targetCell.row + groupRows > page->rows)) return moves;
-    targetCell.column = std::clamp(targetCell.column, 0, std::max(0, page->columns - spreadCols));
-    targetCell.row = std::clamp(targetCell.row, 0, std::max(0, page->rows - groupRows));
-
-    int seqIndex = 0;
-    std::unordered_set<std::wstring> usedSlots;
-    for (size_t itemIndex : selectedIndexes)
-    {
-        GridCell movedCell = targetCell;
-        if (stacked)
-        {
-            for (int attempt = 0; attempt < page->columns * page->rows; ++attempt)
-            {
-                int col = seqIndex / page->rows;
-                int row = seqIndex % page->rows;
-                GridCell probe = targetCell;
-                probe.column += col;
-                probe.row += row;
-                ++seqIndex;
-                std::wstring slotKey = probe.pageId + L":" + std::to_wstring(SlotFromCell(gridPages_, probe));
-                if (probe.column <= page->columns - 1 && probe.row <= page->rows - 1 &&
-                    !usedSlots.contains(slotKey) &&
-                    !IsGridAreaOccupiedByUnselected(probe, items_[itemIndex].gridSpan))
-                {
-                    movedCell = probe;
-                    usedSlots.insert(slotKey);
-                    break;
-                }
-            }
-        }
-        else
-        {
-            movedCell.column += items_[itemIndex].gridCell.column - minColumn;
-            movedCell.row += items_[itemIndex].gridCell.row - minRow;
-        }
-
-        if (!IsGridAreaValid(movedCell, items_[itemIndex].gridSpan) ||
-            movedCell.column + items_[itemIndex].gridSpan.columns > page->columns ||
-            movedCell.row + items_[itemIndex].gridSpan.rows > page->rows ||
-            IsGridAreaOccupiedByUnselected(movedCell, items_[itemIndex].gridSpan))
-        {
-            moves.clear();
-            return moves;
-        }
-        moves.push_back({ itemIndex, movedCell });
-    }
+    moves.reserve(plan.size());
+    for (const auto& move : plan) moves.push_back({move.index, move.cell});
     return moves;
 }
 

@@ -7,12 +7,28 @@
 #include <string>
 #include <functional>
 #include <filesystem>
+#include <thread>
+
+extern "C" LRESULT CALLBACK SnowDesktopDockSourceCloakHook(int, WPARAM, LPARAM);
 
 using namespace snowdesktop::dock_minimize;
 namespace
 {
 std::atomic<unsigned> cbt{0}, cloak{0}, removed{0};
 int failures = 0;
+constexpr wchar_t kRaceFixture[] = L"SnowDesktop.Dock.LeaseRaceFixture";
+HANDLE raceEntered = nullptr, raceRelease = nullptr;
+std::atomic<bool> pauseRaceInstall{false};
+HHOOK WINAPI RaceInstall(int, HOOKPROC, HINSTANCE, DWORD)
+{
+    if (pauseRaceInstall.exchange(false))
+    {
+        SetEvent(raceEntered);
+        WaitForSingleObject(raceRelease, 1000);
+    }
+    return reinterpret_cast<HHOOK>(static_cast<UINT_PTR>(1));
+}
+BOOL WINAPI RaceRemove(HHOOK) { return TRUE; }
 void Check(bool value, const char* message)
 {
     if (!value) { ++failures; std::cerr << "FAIL " << message << '\n'; }
@@ -27,6 +43,13 @@ HHOOK WINAPI Deny(int, HOOKPROC, HINSTANCE, DWORD) { SetLastError(ERROR_MOD_NOT_
 struct Fixture { HWND window = nullptr; };
 LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
 {
+    if (message == WM_COPYDATA && GetPropW(window, kRaceFixture))
+    {
+        CWPSTRUCT payload{};
+        payload.hwnd = window; payload.message = message; payload.wParam = wp; payload.lParam = lp;
+        SnowDesktopDockSourceCloakHook(HC_ACTION, 0, reinterpret_cast<LPARAM>(&payload));
+        return TRUE;
+    }
     if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
     if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(window, message, wp, lp);
@@ -52,6 +75,90 @@ bool WaitFor(const std::function<bool()>& predicate, DWORD timeout = 4000)
     }
     return true;
 }
+void RunLeaseMessageRaceTests()
+{
+    namespace lease = snowdesktop::dock_source_cloak;
+    const HWND source = CreateWindowFixture(), first = CreateWindowFixture(), second = CreateWindowFixture();
+    raceEntered = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    raceRelease = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+    Check(source && first && second && raceEntered && raceRelease, "lease-message race fixture initializes");
+    if (!source || !first || !second || !raceEntered || !raceRelease) return;
+    for (const HWND host : {first, second})
+    {
+        lease::RegisterOwner(host);
+        SetPropW(host, kOwnerProperty, ULongToHandle(GetCurrentProcessId()));
+        SetPropW(host, kRevisionProperty, ULongToHandle(1));
+    }
+    SetPropW(source, kRaceFixture, ULongToHandle(1));
+    SetPropW(source, kTargetProperty, first);
+    CloakDispatcher dispatcher;
+    Check(dispatcher.Start(GetModuleHandleW(nullptr), SnowDesktopDockSourceCloakHook,
+        {RaceInstall, RaceRemove}), "real dispatcher starts without installing a native Hook");
+    SetPropW(source, kCloakDispatcherProperty, dispatcher.Window());
+    bool acquired = false;
+    Check(SUCCEEDED(lease::Acquire(source, first, acquired)) && acquired &&
+        SUCCEEDED(lease::StartRecoveryTimer(source)), "old lease is cloaked with its real source-thread recovery timer");
+    const auto ownerA = lease::ReadOwner(source);
+    const auto oldRequest = lease::MakeRequest(source, ownerA, FALSE);
+    pauseRaceInstall = true;
+    std::atomic<bool> sent{false};
+    std::thread sender([&] {
+        DWORD_PTR ignored = 0;
+        SendCloakRequest(dispatcher.Window(), oldRequest, 500, ignored);
+        sent = true;
+    });
+    Check(WaitForSingleObject(raceEntered, 500) == WAIT_OBJECT_0,
+        "old uncloak message pauses in the actual dispatcher after validating lease A");
+    SetPropW(source, lease::RecoveryProperty, ownerA.token);
+    lease::RecoverOnSourceThread(source, WM_TIMER,
+        reinterpret_cast<UINT_PTR>(GetPropW(source, lease::TimerProperty)), GetTickCount());
+    Check(!lease::ReadOwner(source).window, "source-thread recovery retires A before its delayed release is delivered");
+    SetPropW(source, kTargetProperty, second);
+    acquired = false;
+    Check(SUCCEEDED(lease::Acquire(source, second, acquired)) && acquired &&
+        SUCCEEDED(lease::StartRecoveryTimer(source)), "a new real lease B is cloaked before the old request resumes");
+    const auto ownerB = lease::ReadOwner(source);
+    const HANDLE timerB = GetPropW(source, lease::TimerProperty);
+    SetEvent(raceRelease);
+    Check(WaitFor([&] { return sent.load(); }), "delayed dispatcher request completes through the real target Hook export");
+    sender.join();
+    const auto unchanged = [&] {
+        DWORD flags = 0;
+        return SUCCEEDED(DwmGetWindowAttribute(source, DWMWA_CLOAKED, &flags, sizeof(flags))) &&
+            (flags & DWM_CLOAKED_APP) && lease::SameOwner(source, ownerB) &&
+            GetPropW(source, lease::TimerProperty) == timerB &&
+            GetPropW(source, lease::RecoveryProperty) != ownerB.token;
+    };
+    Check(unchanged(), "target Hook rejects A after delivery; B remains cloaked with its timer and lease");
+    const auto attempts = dispatcher.Statistics().attempts;
+    DWORD_PTR result = 0;
+    Check(SendCloakRequest(dispatcher.Window(), oldRequest, 180, result) &&
+        static_cast<HRESULT>(result) == E_ABORT && dispatcher.Statistics().attempts == attempts && unchanged(),
+        "dispatcher rejects an already stale complete lease before registering or forwarding");
+    auto wrongOwner = lease::MakeRequest(source, ownerB, FALSE);
+    wrongOwner.owner = oldRequest.owner;
+    Check(SendCloakRequest(dispatcher.Window(), wrongOwner, 180, result) &&
+        static_cast<HRESULT>(result) == E_ABORT && unchanged(),
+        "matching token alone cannot authorize a different owner window");
+    SendCloakRequest(source, oldRequest, 120, result);
+    Check(unchanged(), "direct source delivery also preserves the frozen old owner and token");
+    auto malformed = lease::MakeRequest(source, ownerB, FALSE);
+    malformed.version = 99;
+    SendCloakRequest(dispatcher.Window(), malformed, 180, result);
+    malformed.version = 2;
+    COPYDATASTRUCT truncated{kCloakRequestTag, sizeof(malformed) - 1, &malformed};
+    SendMessageTimeoutW(dispatcher.Window(), WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&truncated),
+        SMTO_ABORTIFHUNG, 180, &result);
+    Check(dispatcher.Statistics().attempts == attempts && unchanged(),
+        "bad version or byte count cannot mutate an active source lease");
+    Check(SUCCEEDED(lease::Release(source, ownerB)), "current frozen owner can still release its source");
+    lease::StopRecoveryTimer(source);
+    RemovePropW(source, kCloakDispatcherProperty);
+    dispatcher.Stop();
+    DestroyWindow(source); DestroyWindow(first); DestroyWindow(second);
+    CloseHandle(raceEntered); CloseHandle(raceRelease);
+    raceEntered = raceRelease = nullptr;
+}
 int Target(const wchar_t* name)
 {
     const HANDLE mapping = OpenFileMappingW(FILE_MAP_ALL_ACCESS, FALSE, name);
@@ -69,6 +176,8 @@ int wmain(int argc, wchar_t** argv)
 {
     if (argc == 3 && std::wstring_view(argv[1]) == L"--target") return Target(argv[2]);
     if (argc != 2) return 2;
+    RunLeaseMessageRaceTests();
+    if (std::wstring_view(argv[1]) == L"--lease-race-only") return failures ? 1 : 0;
     auto library = std::filesystem::path(argv[1]);
     if (!std::filesystem::is_regular_file(library))
         library = library.parent_path() / L"SnowDesktop.Runtime" / library.filename();

@@ -122,7 +122,11 @@ inline DWORD ConnectTaskbarThreads(HWND primary, std::span<const HWND> taskbars,
         if (entryAbi && *entryAbi == hook_entry::kAbi &&
             !SetPropW(window, hook_entry::kOwnerProperty, ULongToHandle(hostProcessId))) return GetLastError();
         if (stage) *stage = ConnectionStage::RegisterHook;
-        hook = SetWindowsHookExW(WH_CALLWNDPROC, procedure, module, thread);
+        // Current-process callbacks are already mapped and owned by the
+        // caller/resident DLL. User32 requires no module identity for them;
+        // recording a DLL path here also consumes a session-wide Hook slot.
+        hook = SetWindowsHookExW(WH_CALLWNDPROC, procedure,
+            processId == GetCurrentProcessId() ? nullptr : module, thread);
         if (!hook)
         {
             const DWORD error = GetLastError();

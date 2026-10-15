@@ -25,6 +25,29 @@ bool SafePart(std::wstring_view part)
     return !part.empty() && part != L"." && part != L".." &&
         part.find_first_not_of(L"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.") == std::wstring_view::npos;
 }
+struct ImportStaging
+{
+    fs::path root;
+    fs::path path;
+    bool committed = false;
+    ~ImportStaging() noexcept
+    {
+        try
+        {
+            if (committed || !path.is_absolute() || path.parent_path() != root) return;
+            std::error_code error;
+            const auto resolved = fs::weakly_canonical(path, error);
+            const DWORD attributes = GetFileAttributesW(path.c_str());
+            // The rollback owns exactly one freshly-created staging child. Never
+            // follow a substituted junction or expand cleanup to the fonts root.
+            if (error || resolved.parent_path() != root || resolved != path ||
+                attributes == INVALID_FILE_ATTRIBUTES ||
+                (attributes & FILE_ATTRIBUTE_REPARSE_POINT)) return;
+            fs::remove_all(path, error);
+        }
+        catch (...) {} // A failed rollback stays unlisted; never throw from cleanup.
+    }
+};
 struct Package
 {
     ComPtr<IDWriteFactory6> factory;
@@ -212,19 +235,31 @@ bool Import(const fs::path& source, const fs::path& data, std::vector<Choice>& c
         if (FAILED(CoCreateGuid(&guid))) { error = "font.importFailed"; return false; }
         wchar_t buffer[40]{}; StringFromGUID2(guid, buffer, 40);
         const std::wstring id(buffer + 1, buffer + 37);
-        const auto target = data / L"fonts" / id;
-        fs::create_directories(target);
+        const auto fontRoot = fs::absolute(data / L"fonts").lexically_normal();
+        fs::create_directories(fontRoot);
+        const auto canonicalRoot = fs::weakly_canonical(fontRoot);
+        const auto target = canonicalRoot / id;
+        // '~' is deliberately outside SafePart: List must never advertise an
+        // uncommitted package, even if an external lock prevents its cleanup.
+        const auto staging = canonicalRoot / (id + L".importing~");
+        if (!staging.is_absolute() || staging.parent_path() != canonicalRoot ||
+            !fs::create_directory(staging)) { error = "font.importFailed"; return false; }
+        ImportStaging rollback{canonicalRoot, staging};
         for (std::size_t i = 0; i < files.size(); ++i)
-            fs::copy_file(files[i], target / (L"font" + std::to_wstring(i) + files[i].extension().wstring()));
+            fs::copy_file(files[i], staging / (L"font" + std::to_wstring(i) + files[i].extension().wstring()));
         for (std::size_t i = 0; i < notices.size(); ++i)
             if (fs::file_size(notices[i]) <= 8 * 1024 * 1024)
-                fs::copy_file(notices[i], target / (L"notice" + std::to_wstring(i) + L"-" + notices[i].filename().wstring()));
-        auto package = Load(Utf8(id), target, false);
-        choices = std::move(package.choices);
-        if (choices.empty()) { fs::remove_all(target); error = "font.invalidPackage"; return false; }
+                fs::copy_file(notices[i], staging / (L"notice" + std::to_wstring(i) + L"-" + notices[i].filename().wstring()));
+        {
+            auto package = Load(Utf8(id), staging, false);
+            choices = std::move(package.choices);
+        } // Release font-file references before publishing the directory.
+        if (choices.empty()) { error = "font.invalidPackage"; return false; }
+        fs::rename(staging, target);
+        rollback.committed = true;
         return true;
     }
-    catch (const fs::filesystem_error&) { error = "font.importFailed"; return false; }
+    catch (const fs::filesystem_error&) { choices.clear(); error = "font.importFailed"; return false; }
 }
 
 fs::path ResolveXamlResource(std::wstring_view name, const fs::path& data)

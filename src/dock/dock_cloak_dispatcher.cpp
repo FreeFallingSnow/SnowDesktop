@@ -37,22 +37,25 @@ LRESULT CALLBACK CloakDispatcher::WindowProc(HWND window, UINT message, WPARAM w
         SetWindowLongPtrW(window, GWLP_USERDATA,
             reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
     auto* self = reinterpret_cast<CloakDispatcher*>(GetWindowLongPtrW(window, GWLP_USERDATA));
-    if (self && message >= 0xC000 && message == CloakDispatchMessage() && (lp == 0 || lp == 1))
-        return self->Apply(reinterpret_cast<HWND>(wp), lp != 0);
+    CloakRequest request;
+    if (self && message == WM_COPYDATA && ReadCloakRequest(reinterpret_cast<const COPYDATASTRUCT*>(lp), request))
+        return self->Apply(request);
     if (message == WM_CLOSE) { DestroyWindow(window); return 0; }
     if (message == WM_DESTROY) { PostQuitMessage(0); return 0; }
     return DefWindowProcW(window, message, wp, lp);
 }
-LRESULT CloakDispatcher::Apply(HWND source, bool cloak) noexcept
+LRESULT CloakDispatcher::Apply(const CloakRequest& request) noexcept
 {
+    const HWND source = reinterpret_cast<HWND>(static_cast<UINT_PTR>(request.source));
+    const bool cloak = request.cloak != 0;
     if (GetPropW(source, kCloakDispatcherProperty) != window_) return E_ABORT;
     const HWND receiver = reinterpret_cast<HWND>(GetPropW(source, kTargetProperty));
     if (!HasLiveOwner(receiver)) return E_ABORT;
     DWORD process = 0;
     const DWORD thread = GetWindowThreadProcessId(source, &process);
     if (!thread || !process) return E_INVALIDARG;
-    const auto owner = dock_source_cloak::ReadOwner(source);
-    if (!owner.window || !owner.process || !owner.token || (cloak && !dock_source_cloak::IsLiveOwner(owner))) return E_ABORT;
+    const auto owner = dock_source_cloak::RequestOwner(request);
+    if (!dock_source_cloak::SameOwner(source, owner) || (cloak && !dock_source_cloak::IsLiveOwner(owner))) return E_ABORT;
     {
         std::lock_guard lock(mutex_);
         if (!retry_.Ready(GetTickCount64())) return HRESULT_FROM_WIN32(retry_.Error());
@@ -69,8 +72,8 @@ LRESULT CloakDispatcher::Apply(HWND source, bool cloak) noexcept
     if (!hook) return HRESULT_FROM_WIN32(error);
     DWORD_PTR ignored = 0;
     SetLastError(0);
-    const bool sent = SendMessageTimeoutW(source, dock_source_cloak::CommandMessage(), cloak ? 1 : 0,
-        static_cast<LPARAM>(reinterpret_cast<UINT_PTR>(owner.token)), SMTO_ABORTIFHUNG, 120, &ignored) != 0;
+    // Forward the caller's frozen lease; never substitute a newer ReadOwner.
+    const bool sent = SendCloakRequest(source, request, 120, ignored);
     const DWORD sendError = GetLastError();
     api_.remove(hook);
     { std::lock_guard lock(mutex_); --activeHooks_; }

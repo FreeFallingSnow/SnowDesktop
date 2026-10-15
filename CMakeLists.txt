@@ -448,6 +448,10 @@ set(SNOWDESKTOP_SOURCES
     src/winui/SettingsShell.xaml.h
     src/winui/general_page_presenter.cpp
     src/winui/general_page_presenter.h
+    src/winui/general_advanced_feature_status.h
+    src/winui/general_advanced_feature_ipc_values.h
+    src/winui/category_creation_acknowledgement.h
+    src/settings/category_rule_creation.h
     src/winui/home_about_page_presenter.cpp
     src/winui/start_page_presenter.cpp
     src/winui/start_page_presenter.h
@@ -2170,7 +2174,9 @@ if (BUILD_TESTING)
     snowdesktop_add_test(
         SnowDesktopTextInputWindowTests
         text_input_window
-        SOURCES tests/text_input_window_tests.cpp
+        SOURCES
+            tests/text_input_window_tests.cpp
+            tests/ui/text_input_clipboard_tests.cpp
         INCLUDE_DIRECTORIES src
         COMMAND_ARGUMENTS ${CMAKE_SOURCE_DIR}
         LABELS core contract interaction accessibility security)
@@ -2513,6 +2519,13 @@ if (BUILD_TESTING)
         LABELS integration shell interaction)
     set_tests_properties(shell_file_operation_worker PROPERTIES
         SKIP_RETURN_CODE 77 LABELS "integration;shell;interaction;manual")
+    add_test(NAME shell_folder_link_requests
+        COMMAND SnowDesktopShellFileOperationWorkerTests --folder-link-request-tests)
+    add_test(NAME shell_allowed_effect_requests
+        COMMAND SnowDesktopShellFileOperationWorkerTests --allowed-effect-request-tests)
+    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
+        TIMEOUT 90 LABELS "integration;shell;interaction;storage")
     add_test(NAME shell_file_operation_worker_network_preflight
         COMMAND SnowDesktopShellFileOperationWorkerTests --network-preflight-tests)
     set_tests_properties(shell_file_operation_worker_network_preflight PROPERTIES
@@ -2571,7 +2584,10 @@ if (BUILD_TESTING)
         SnowDesktopDockHookResourceTests
         dock_hook_resources
         NATIVE_WINDOW_COMPATIBILITY
-        SOURCES tests/dock/dock_hook_resource_tests.cpp src/dock/dock_cloak_dispatcher.cpp
+        SOURCES
+            tests/dock/dock_hook_resource_tests.cpp
+            src/dock/dock_cloak_dispatcher.cpp
+            src/dock/dock_minimize_hook.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES user32 dwmapi
         COMMAND_ARGUMENTS "$<TARGET_FILE:SnowDesktopDockMinimizeHook>"

@@ -20,7 +20,8 @@ constexpr UINT_PTR kRefreshTimer = 1;
 constexpr UINT kRefreshIntervalMs = 100;
 constexpr UINT kRefreshMessage = WM_APP + 1;
 constexpr UINT kPositionFlags =
-    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER;
+    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS;
+constexpr ULONGLONG kPinConfirmationTimeoutMs = 1000;
 
 struct BorderAppearance
 {
@@ -54,8 +55,7 @@ bool IsTopmost(HWND window)
 bool ChangeTopmost(HWND window, bool pinned)
 {
     return SetWindowPos(window, pinned ? HWND_TOPMOST : HWND_NOTOPMOST,
-        0, 0, 0, 0, kPositionFlags) != FALSE &&
-        IsTopmost(window) == pinned;
+        0, 0, 0, 0, kPositionFlags) != FALSE;
 }
 }
 
@@ -73,6 +73,9 @@ struct DockWindowPin::State
         UINT32 rgb = 0;
         float opacity = -1.0f;
         bool restoreTopmost = false;
+        bool requestedPinned = true;
+        bool requestPending = false;
+        ULONGLONG requestDeadline = 0;
         Microsoft::WRL::ComPtr<ID2D1Factory> factory;
         Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> renderTarget;
 
@@ -161,24 +164,41 @@ struct DockWindowPin::State
         {
             if (OwnsTarget())
             {
-                if (restoreTopmost && IsTopmost(target))
+                // A pin can still be queued on an unresponsive target even
+                // while WS_EX_TOPMOST is clear. Queue its inverse as well.
+                if (restoreTopmost)
                     ChangeTopmost(target, false);
                 RemovePropW(target, kPinProperty);
             }
             if (border) DestroyWindow(border);
         }
 
-        void MaintainPin(const BorderAppearance& appearance)
+        bool MaintainPin(const BorderAppearance& appearance)
         {
+            if (!OwnsTarget()) return false;
+            const ULONGLONG now = GetTickCount64();
+            const bool topmost = IsTopmost(target);
+            if (!requestedPinned)
+            {
+                ShowWindow(border, SW_HIDE);
+                return topmost && now < requestDeadline;
+            }
             // Keep the user's request when an application resets TOPMOST during
             // movement, focus changes or restore, as PowerToys does. Only repair
             // a lost flag; refreshing a stable pin must not raise the window.
-            if (!IsTopmost(target) && !ChangeTopmost(target, true))
+            if (!topmost)
             {
                 ShowWindow(border, SW_HIDE);
-                return;
+                if (requestPending)
+                    return now < requestDeadline;
+                if (!ChangeTopmost(target, true)) return false;
+                requestPending = true;
+                requestDeadline = now + kPinConfirmationTimeoutMs;
+                return true;
             }
+            requestPending = false;
             UpdateBorder(appearance);
+            return true;
         }
 
         void UpdateBorder(const BorderAppearance& appearance)
@@ -330,7 +350,9 @@ struct DockWindowPin::State
         if (!entry) return;
         refreshing = true;
         if (entry->OwnsTarget())
-            entry->MaintainPin(appearance);
+        {
+            if (!entry->MaintainPin(appearance)) QueueRefresh();
+        }
         else
             QueueRefresh();
         // Keep ownership changes and vector erasure in the manager handler.
@@ -463,10 +485,9 @@ struct DockWindowPin::State
     {
         if (refreshing) return;
         refreshing = true;
-        std::erase_if(entries, [](const auto& entry) {
-            return !entry->OwnsTarget();
+        std::erase_if(entries, [this](const auto& entry) {
+            return !entry->MaintainPin(appearance);
         });
-        for (const auto& entry : entries) entry->MaintainPin(appearance);
         if (entries.empty())
         {
             if (manager) KillTimer(manager, kRefreshTimer);
@@ -520,15 +541,15 @@ bool DockWindowPin::Toggle(HWND window)
             // Retire the request before refreshing so explicit cancellation
             // cannot be mistaken for another application resetting TOPMOST.
             const bool wasRefreshing = std::exchange(state_->refreshing, true);
-            if (IsTopmost(window) && !ChangeTopmost(window, false))
+            if (!ChangeTopmost(window, false))
             {
                 state_->refreshing = wasRefreshing;
                 return false;
             }
             entry->restoreTopmost = false;
-            std::erase_if(state_->entries, [window](const auto& tracked) {
-                return tracked->target == window;
-            });
+            entry->requestedPinned = false;
+            entry->requestPending = true;
+            entry->requestDeadline = GetTickCount64() + kPinConfirmationTimeoutMs;
             state_->refreshing = wasRefreshing;
             Refresh();
             return true;
@@ -562,6 +583,8 @@ bool DockWindowPin::Toggle(HWND window)
     DwmSetWindowAttribute(entry->border, DWMWA_EXCLUDED_FROM_PEEK, &excluded, sizeof(excluded));
     if (!ChangeTopmost(window, true)) return false;
     entry->restoreTopmost = true;
+    entry->requestPending = !IsTopmost(window);
+    entry->requestDeadline = GetTickCount64() + kPinConfirmationTimeoutMs;
     if (!SetTimer(state_->manager, kRefreshTimer, kRefreshIntervalMs, nullptr)) return false;
     entry->UpdateBorder(state_->appearance);
     state_->entries.push_back(std::move(entry));

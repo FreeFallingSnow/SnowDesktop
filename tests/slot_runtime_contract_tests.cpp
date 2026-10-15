@@ -37,6 +37,7 @@
 #include "desktop/desktop_hover_rules.h"
 #include "layout/floating_popup_rules.h"
 #include "layout/desktop_item_sort_rules.h"
+#include "layout/selected_grid_move.h"
 #include "layout/popup_animation_rules.h"
 #include "drag_drop/ole_drag_rules.h"
 
@@ -3257,6 +3258,102 @@ void TestRenameUpdatesOnlyMatchingModels()
         "failed async renames must leave the displayed name and references unchanged");
 }
 
+void TestDirectoryRenameMigratesMappedRoots()
+{
+    snowdesktop::ShellRenameResult rename;
+    rename.status = S_OK;
+    rename.sourcePath = L"C:\\Parent\\Before";
+    rename.path = L"C:\\Parent\\After";
+    rename.displayName = L"After";
+    rename.attributes.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+    rename.metadataComplete = true;
+    rename.absoluteId = {0, 0};
+    std::vector<DesktopWidget> widgets(4);
+    for (auto& widget : widgets) widget.type = DesktopWidgetType::FolderMapping;
+    widgets[0].sourceFolderPath = L"c:/parent/BEFORE/";
+    widgets[0].folderEntries.resize(1);
+    widgets[0].folderEntries[0].fullPath = L"C:\\Parent\\Before\\文件.txt";
+    widgets[0].folderEntries[0].selected = true;
+    widgets[0].itemKeys = {L"C:\\Parent\\Before\\文件.txt"};
+    widgets[0].missingItems.push_back({});
+    widgets[0].missingItems[0].key = L"C:\\Parent\\Before\\missing.txt";
+    widgets[1].sourceFolderPath = L"C:\\Parent\\Before\\Child";
+    widgets[2].sourceFolderPath = L"C:\\Parent\\Before-Sibling";
+    widgets[3].sourceFolderPath = L"C:\\UnrelatedTarget";
+    widgets[3].sourceDesktopItemKey = L"C:\\Parent\\Before.lnk";
+    DesktopWidget popup = widgets[0];
+    std::vector<DesktopItem> items;
+    std::vector<DockEntry> dock;
+    const auto changed = snowdesktop::rename_model_update::Apply(
+        rename, rename.path, items, widgets, dock, &popup);
+    Check(changed.folderRootsChanged && changed.popup &&
+        widgets[0].sourceFolderPath == L"C:\\Parent\\After" &&
+        widgets[1].sourceFolderPath == L"C:\\Parent\\After\\Child" &&
+        widgets[2].sourceFolderPath == L"C:\\Parent\\Before-Sibling" &&
+        widgets[3].sourceFolderPath == L"C:\\UnrelatedTarget",
+        "successful directory rename updates exact/descendant mapping roots and fences refresh without matching siblings or shortcut targets");
+    Check(widgets[0].folderEntries[0].fullPath == L"C:\\Parent\\After\\文件.txt" &&
+        widgets[0].folderEntries[0].selected && widgets[0].itemKeys[0] == L"C:\\Parent\\After\\文件.txt" &&
+        widgets[0].missingItems[0].key == L"C:\\Parent\\After\\missing.txt" &&
+        popup.sourceFolderPath == widgets[0].sourceFolderPath &&
+        popup.folderEntries[0].fullPath == widgets[0].folderEntries[0].fullPath,
+        "renamed mapping content and popup retain selection while every cached child path moves with its root");
+    rename.sourcePath = L"C:\\Parent\\Before.lnk";
+    rename.path = L"C:\\Parent\\Alias.lnk";
+    rename.attributes.dwFileAttributes = FILE_ATTRIBUTE_NORMAL;
+    const auto shortcut = snowdesktop::rename_model_update::Apply(rename, rename.path, items, widgets, dock, nullptr);
+    Check(!shortcut.folderRootsChanged && widgets[3].sourceFolderPath == L"C:\\UnrelatedTarget" &&
+        widgets[3].sourceDesktopItemKey == rename.path,
+        "renaming a folder shortcut changes its identity without redirecting the mapped target directory");
+    rename.sourcePath = L"C:\\Parent\\After";
+    rename.path = L"C:\\Parent\\after";
+    rename.attributes.dwFileAttributes = FILE_ATTRIBUTE_DIRECTORY;
+    Check(snowdesktop::rename_model_update::Apply(rename, rename.path, items, widgets, dock, nullptr).folderRootsChanged &&
+        widgets[1].sourceFolderPath == L"C:\\Parent\\after\\Child",
+        "case-only directory rename retains the new spelling for descendant roots");
+    rename.sourcePath = rename.path;
+    rename.path = L"C:\\Parent\\Final";
+    rename.metadataComplete = false;
+    rename.attributes = {};
+    const auto fallback = snowdesktop::rename_model_update::Apply(rename, rename.path, items, widgets, dock, nullptr);
+    Check(fallback.folderRootsChanged && fallback.needsReload &&
+        widgets[0].sourceFolderPath == rename.path && widgets[1].sourceFolderPath == rename.path + L"\\Child",
+        "successful rename with unavailable Shell metadata migrates known mapping roots before its fallback refresh");
+    rename.status = E_ACCESSDENIED;
+    rename.path = L"C:\\Parent\\Failed";
+    Check(!snowdesktop::rename_model_update::Apply(rename, rename.path, items, widgets, dock, nullptr).folderRootsChanged &&
+        widgets[0].sourceFolderPath == L"C:\\Parent\\Final",
+        "failed directory rename never migrates root paths or subscriptions");
+}
+
+void TestSelectedGridMoveCapacity()
+{
+    std::vector<DesktopItem> selected(2);
+    selected[0].selected = selected[1].selected = true;
+    selected[0].gridCell = {L"source-a", 0, 0};
+    selected[1].gridCell = {L"source-b", 0, 0};
+    GridPage landing;
+    landing.id = L"destination"; landing.columns = 2; landing.rows = 1;
+    const auto build = [&](auto occupied) {
+        return snowdesktop::selected_grid_move::Build(selected, {landing}, {landing.id, 0, 0}, occupied);
+    };
+    auto moves = build([](const GridCell& probe, GridSpan) { return probe.column == 1; });
+    Check(moves.empty() && selected[0].gridCell.pageId == L"source-a" && selected[1].gridCell.pageId == L"source-b",
+        "two-page same-cell selections reject a one-free-cell destination without returning a partial/repeated landing");
+    Check(build([](const GridCell&, GridSpan) { return true; }).empty(),
+        "a full destination rejects the complete selected group");
+    moves = build([](const GridCell&, GridSpan) { return false; });
+    Check(moves.size() == 2 && moves[0].index == 0 && moves[1].index == 1 &&
+        moves[0].cell.column == 0 && moves[1].cell.column == 1 &&
+        moves[0].cell.pageId == landing.id && moves[1].cell.pageId == landing.id,
+        "sufficient capacity creates one independent exact landing for every selected source");
+    selected[0].gridSpan = {2, 1};
+    selected[1].gridSpan = {2, 1};
+    landing.columns = 4;
+    Check(build([](const GridCell&, GridSpan) { return false; }).empty(),
+        "non-stacked cross-page spans also reject overlap within the new plan");
+}
+
 void TestPopupDwellControllerHandlesCandidateChanges()
 {
     PopupDwellController controller;
@@ -3615,6 +3712,8 @@ int wmain(int argc, wchar_t** argv)
     TestLayoutReloadReplacesLargeIconState();
     TestRenameNotificationsPreserveUnrelatedChanges();
     TestRenameUpdatesOnlyMatchingModels();
+    TestDirectoryRenameMigratesMappedRoots();
+    TestSelectedGridMoveCapacity();
     TestPopupDwellControllerHandlesCandidateChanges();
     TestPassivePopupHoverTiming();
     if (failures != 0)

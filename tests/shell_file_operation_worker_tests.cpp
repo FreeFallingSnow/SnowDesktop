@@ -8,6 +8,8 @@
 #include "ui/input/low_level_mouse_hook.h"
 #include "shell_network_preflight.h"
 #include "shell_clipboard_cases.h"
+#include "drag_drop/file_backed_drop_request.h"
+#include "drag_drop/ole_drag_rules.h"
 #include <wincodec.h>
 
 #include <algorithm>
@@ -630,12 +632,113 @@ void TestBackgroundReadsDoNotBlockFileOperations(const std::filesystem::path& ro
     std::cout << "metadata read enqueue us=" << enqueueUs << '\n';
 }
 
+int RunFileBackedDropRegression(bool links, bool effects)
+{
+    using namespace snowdesktop;
+    const auto root = CreateTemporaryDirectory();
+    struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); } } cleanup{root};
+    const HRESULT initialized = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (FAILED(initialized)) return 1;
+    struct Apartment { ~Apartment() { CoUninitialize(); } } apartment;
+    const auto require = [](bool passed, const char* message) {
+        if (!passed) throw std::runtime_error(message);
+    };
+    try
+    {
+        if (links)
+        {
+            const auto first = root / L"first" / L"same.txt";
+            const auto second = root / L"second" / L"same.txt";
+            const auto folder = root / L"links";
+            std::filesystem::create_directories(first.parent_path());
+            std::filesystem::create_directories(second.parent_path());
+            std::filesystem::create_directory(folder);
+            std::ofstream(first) << "first source";
+            std::ofstream(second) << "second source";
+            // Both host requests are accepted while the destination is still
+            // absent. Execute afterwards to reproduce a queued-request race.
+            const auto a = file_backed_drop::BuildRequest({first.wstring()}, folder.wstring(), DROPEFFECT_LINK);
+            const auto b = file_backed_drop::BuildRequest({second.wstring()}, folder.wstring(), DROPEFFECT_LINK);
+            require(a && b && a->shortcuts.size() == 1 && b->shortcuts.size() == 1 &&
+                a->shortcuts[0].destination == b->shortcuts[0].destination,
+                "both pending folder-link requests exercise the same initially free destination");
+            require(ShellFileOperationWorker::Execute(*a), "first upstream folder-link request creates a shortcut");
+            const bool collisionSucceeded = ShellFileOperationWorker::Execute(*b);
+            Microsoft::WRL::ComPtr<IShellLinkW> loaded;
+            require(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&loaded))), "read materialized folder shortcut");
+            Microsoft::WRL::ComPtr<IPersistFile> persist;
+            require(SUCCEEDED(loaded.As(&persist)) && SUCCEEDED(persist->Load(
+                a->shortcuts[0].destination.c_str(), STGM_READ)), "reload the winning shortcut");
+            std::array<wchar_t, 32768> path{};
+            require(SUCCEEDED(loaded->GetPath(path.data(), static_cast<int>(path.size()), nullptr, SLGP_RAWPATH)),
+                "read the winning shortcut target");
+            require(!collisionSucceeded && std::filesystem::path(path.data()) == first &&
+                ReadContents(first) == "first source" && ReadContents(second) == "second source",
+                "a second queued host link must report conflict and preserve the first link and both sources");
+            const auto raced = file_backed_drop::BuildRequest({first.wstring()}, folder.wstring(), DROPEFFECT_LINK);
+            require(raced && raced->shortcuts.size() == 1, "host allocates another link destination");
+            std::ofstream(std::filesystem::path(raced->shortcuts[0].destination)) << "competitor payload";
+            require(!ShellFileOperationWorker::Execute(*raced) &&
+                ReadContents(std::filesystem::path(raced->shortcuts[0].destination)) == "competitor payload",
+                "a file created after host planning is never overwritten by shortcut persistence");
+        }
+        if (effects)
+        {
+            struct Case { DWORD allowed; DWORD keys; DWORD expected; };
+            const Case cases[]{{DROPEFFECT_COPY, MK_SHIFT, DROPEFFECT_NONE},
+                {DROPEFFECT_NONE, 0, DROPEFFECT_NONE}, {DROPEFFECT_MOVE, MK_CONTROL, DROPEFFECT_NONE},
+                {DROPEFFECT_COPY, MK_CONTROL, DROPEFFECT_COPY}, {DROPEFFECT_MOVE, MK_SHIFT, DROPEFFECT_MOVE},
+                {DROPEFFECT_LINK, MK_ALT, DROPEFFECT_LINK},
+                {DROPEFFECT_COPY | DROPEFFECT_MOVE, 0, DROPEFFECT_MOVE}};
+            int serial = 0;
+            for (const auto& test : cases)
+            {
+                const auto source = root / (L"effect-source-" + std::to_wstring(serial) + L".txt");
+                const auto folder = root / (L"effect-target-" + std::to_wstring(serial++));
+                std::filesystem::create_directory(folder);
+                std::ofstream(source) << "source payload";
+                const DWORD effect = ole_drag_rules::ChooseDropEffect(test.keys, test.allowed);
+                const auto request = file_backed_drop::BuildRequest({source.wstring()}, folder.wstring(), effect);
+                const bool executed = request && ShellFileOperationWorker::Execute(*request);
+                if (test.expected == DROPEFFECT_NONE)
+                    require(!request && std::filesystem::is_empty(folder) && ReadContents(source) == "source payload",
+                        "a source-forbidden effect never creates a file request or removes the source");
+                else
+                {
+                    require(effect == test.expected && executed, "an allowed source effect reaches its real file operation");
+                    require(std::filesystem::exists(source) == (test.expected != DROPEFFECT_MOVE),
+                        "only an authorized move removes its source");
+                    if (test.expected != DROPEFFECT_LINK)
+                        require(request->steps.size() == 1 && request->steps[0].function ==
+                            static_cast<UINT>(test.expected == DROPEFFECT_MOVE ? FO_MOVE : FO_COPY) &&
+                            ReadContents(folder / source.filename()) == "source payload",
+                            "negotiated copy/move produces the matching request and destination contents");
+                }
+            }
+            constexpr std::array<DWORD, 5> modifiers{0, MK_SHIFT, MK_CONTROL, MK_ALT, MK_CONTROL | MK_SHIFT};
+            for (DWORD mask = 0; mask < 8; ++mask)
+            for (DWORD keys : modifiers)
+                require((ole_drag_rules::ChooseDropEffect(keys, mask) & ~mask) == 0,
+                    "every modifier combination stays within the source allowed effects");
+        }
+        return 0;
+    }
+    catch (const std::exception& error)
+    {
+        std::cerr << "FAILED file-backed host request: " << error.what() << '\n';
+        return 1;
+    }
+}
+
 int wmain(int argc, wchar_t** argv)
 {
     using namespace shell_network_preflight;
     if (argc == 2)
     {
         const std::wstring mode(argv[1]);
+        if (mode == L"--folder-link-request-tests") return RunFileBackedDropRegression(true, false);
+        if (mode == L"--allowed-effect-request-tests") return RunFileBackedDropRegression(false, true);
         if (mode == L"--tracked-path-alias-tests")
         {
             try { TestTrackedDropPathAliases(); }
@@ -687,6 +790,7 @@ int wmain(int argc, wchar_t** argv)
     if (argc != 1) return 1;
     const int environment = CheckEnvironment();
     if (environment != Ready) return environment;
+    if (RunFileBackedDropRegression(true, true) != 0) return 1;
 
     const HRESULT comResult =
         CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);

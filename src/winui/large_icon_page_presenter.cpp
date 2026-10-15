@@ -593,9 +593,14 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             { const auto color = args.NewColor(); self->draft.*member = color.R << 16 | color.G << 8 | color.B; self->Mark(member); self->Preview(); }
         });
         flyout.Closed([weak](auto const&, auto const&) { if (auto self = weak.lock(); self && self->dirty) self->Send("commit"); });
-        picker.KeyDown([weak, flyout](auto const&, auto const& args) {
+        const auto weakFlyout = winrt::make_weak(flyout);
+        picker.KeyDown([weak, weakFlyout](auto const&, auto const& args) {
             if (args.Key() == winrt::Windows::System::VirtualKey::Escape)
-                if (auto self = weak.lock()) { self->Cancel(); args.Handled(true); flyout.Hide(); }
+                if (auto self = weak.lock())
+                {
+                    self->Cancel(); args.Handled(true);
+                    if (auto live = weakFlyout.get()) live.Hide();
+                }
         });
         synchronize.push_back([this, picker, swatch, label, member] {
             const auto color = Color(draft.*member); picker.Color(color); swatch.Background(m::SolidColorBrush(color));

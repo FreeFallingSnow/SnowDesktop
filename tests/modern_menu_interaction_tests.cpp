@@ -1001,6 +1001,84 @@ void CheckPreviewCompanionOrder(HWND owner)
     gMenuScript = {};
 }
 
+struct CompanionClicks
+{
+    int downs = 0, ups = 0, pages = 0, options = 0, applications = 0;
+    bool pressed = false, activeOnEveryMessage = true;
+    static void PostPair(HWND window, int action)
+    {
+        PostMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(action, 2));
+        PostMessageW(window, WM_LBUTTONUP, 0, MAKELPARAM(action, 2));
+    }
+    static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
+    {
+        if (message == WM_NCCREATE)
+            SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
+                reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+        auto* self = reinterpret_cast<CompanionClicks*>(GetWindowLongPtrW(window, GWLP_USERDATA));
+        if (message == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+        if (self && (message == WM_LBUTTONDOWN || message == WM_LBUTTONUP))
+        {
+            self->activeOnEveryMessage &= snowdesktop::modern_menu::IsActive();
+            if (message == WM_LBUTTONDOWN) { ++self->downs; self->pressed = true; }
+            else
+            {
+                ++self->ups;
+                if (std::exchange(self->pressed, false))
+                {
+                    const int action = GET_X_LPARAM(lp);
+                    if (action == 0) ++self->pages;
+                    else if (action == 1) ++self->options;
+                    else { ++self->applications; snowdesktop::modern_menu::DismissActive(); }
+                    if (action < 2) PostPair(window, action + 1);
+                }
+            }
+            return 0;
+        }
+        return DefWindowProcW(window, message, wp, lp);
+    }
+};
+
+void CheckPreviewCompanionClicks(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    WNDCLASSW type{};
+    type.hInstance = GetModuleHandleW(nullptr);
+    type.lpfnWndProc = CompanionClicks::Procedure;
+    type.lpszClassName = L"SnowDesktop.MenuCompanionClicks";
+    RegisterClassW(&type);
+    for (const bool childTarget : {false, true})
+    {
+        CompanionClicks clicks;
+        HWND companion = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, type.lpszClassName,
+            L"preview", WS_POPUP | WS_VISIBLE, 20, 20, 80, 60, owner, nullptr, type.hInstance, &clicks);
+        HWND target = companion;
+        if (childTarget) target = CreateWindowExW(0, type.lpszClassName, L"preview button",
+            WS_CHILD | WS_VISIBLE, 0, 0, 60, 30, companion, nullptr, type.hInstance, &clicks);
+        Expect(companion && target, "a live preview companion and optional child are created");
+        HANDLE wake = CreateEventW(nullptr, FALSE, TRUE, nullptr);
+        Options options;
+        options.owner = owner; options.anchor = {80, 80};
+        options.zOrderCompanion = [&] { return companion; };
+        options.eventPump.scheduledWorkHandle = wake;
+        options.eventPump.dispatchScheduledWork = [&] { CompanionClicks::PostPair(target, 0); };
+        gWatchdogFired = false;
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = Show({{9103, L"Menu stays open", L"", true}}, options);
+        KillTimer(owner, kWatchdogTimer);
+        // Match the host: the preview is closed immediately after Show returns.
+        // Do not dispatch a stray UP after the session has already cancelled.
+        MSG pending{};
+        while (PeekMessageW(&pending, target, WM_LBUTTONDOWN, WM_LBUTTONUP, PM_REMOVE)) {}
+        DestroyWindow(companion);
+        CloseHandle(wake);
+        Expect(!gWatchdogFired && clicks.activeOnEveryMessage && clicks.downs == 3 && clicks.ups == 3 &&
+            clicks.pages == 1 && clicks.options == 1 && clicks.applications == 1 &&
+            result.command == 0 && !IsActive(),
+            "queued DOWN/UP on the registered companion or child reaches paging, options and one explicit apply dismissal");
+    }
+}
+
 } // namespace
 
 // Exercise the same rows and layout metadata as the host, on an isolated desktop.
@@ -1198,6 +1276,7 @@ int wmain(int argc, wchar_t** argv)
     if (sortNegativeControl) return 2; // Expected to fail the same geometry assertion above.
     CheckCascadeWorkArea(owner);
     CheckPreviewCompanionOrder(owner);
+    CheckPreviewCompanionClicks(owner);
     CheckDockRunningMenuTransition(owner);
     CheckLazySubmenuPreparation(owner);
     gDriveMode = DriveMode::Cascade;

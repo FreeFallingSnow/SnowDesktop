@@ -1517,7 +1517,7 @@ size_t ScrollingItemWidget::HitTestSearchTextPosition(
         searchRect.right - Cu(10.0f), searchRect.bottom);
     IDWriteFactory* dwrite = app_->GetDWriteFactory();
     IDWriteTextFormat* format =
-        GetCuTextFormat(15.0f, false, false);
+        GetCuTextFormat(GetCategorizedTabFontSize(), false, false);
     if (!dwrite || !format)
         return point.x <= textRect.left
             ? 0 : searchText_.size();

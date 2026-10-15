@@ -1062,12 +1062,12 @@ bool DrawItem(HDC dc, HFONT textFont, HFONT iconFont,
     OpticallyCenterTextBounds(dc, alignmentSample, textBounds);
     DrawTextW(dc, primary.c_str(), static_cast<int>(primary.size()),
         &textBounds, DT_LEFT | DT_VCENTER | DT_SINGLELINE |
-            DT_END_ELLIPSIS | DT_HIDEPREFIX);
+            DT_END_ELLIPSIS | DT_NOPREFIX);
     if (!shortcut.empty())
     {
         DrawTextW(dc, shortcut.c_str(), static_cast<int>(shortcut.size()),
             &textBounds, DT_RIGHT | DT_VCENTER | DT_SINGLELINE |
-                DT_END_ELLIPSIS | DT_HIDEPREFIX);
+                DT_END_ELLIPSIS | DT_NOPREFIX);
     }
     if (oldFont)
         SelectObject(dc, oldFont);
@@ -1146,7 +1146,7 @@ bool DrawQuickAction(HDC dc, HFONT textFont, HFONT iconFont,
     OpticallyCenterTextBounds(dc, primary, labelBounds);
     DrawTextW(dc, primary.c_str(), static_cast<int>(primary.size()),
         &labelBounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE |
-            DT_END_ELLIPSIS | DT_HIDEPREFIX);
+            DT_END_ELLIPSIS | DT_NOPREFIX);
     if (oldFont)
         SelectObject(dc, oldFont);
     SetTextColor(dc, oldTextColor);

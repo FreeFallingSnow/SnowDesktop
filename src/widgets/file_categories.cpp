@@ -20,6 +20,7 @@
 #include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "layout/category_collection_rules.h"
+#include "layout/file_date_category.h"
 #include "desktop/desktop_category_item_rules.h"
 #include "storage_title_bar_layout.h"
 #include <algorithm>
@@ -107,22 +108,6 @@ static std::wstring FileCategoryLabelByDate(const std::wstring& id)
 }
 
 /**
- * @brief 计算两个 SYSTEMTIME 之间的天数差（date1 - date2 的差）。
- */
-static int DayDiff(const SYSTEMTIME& st1, const SYSTEMTIME& st2)
-{
-    FILETIME ft1{}, ft2{};
-    SystemTimeToFileTime(&st1, &ft1);
-    SystemTimeToFileTime(&st2, &ft2);
-    ULARGE_INTEGER u1{}, u2{};
-    u1.LowPart = ft1.dwLowDateTime;
-    u1.HighPart = ft1.dwHighDateTime;
-    u2.LowPart = ft2.dwLowDateTime;
-    u2.HighPart = ft2.dwHighDateTime;
-    return static_cast<int>((u1.QuadPart - u2.QuadPart) / 864000000000ULL);
-}
-
-/**
  * @brief 根据文件修改日期确定所属的日期分类 ID。
  *        类似 Windows 资源管理器的"按修改日期分组"。
  * @param item 桌面项目。
@@ -141,40 +126,7 @@ static std::wstring FileCategoryIdForItemByDate(const DesktopItem& item)
 
     GetLocalTime(&nowTime);
 
-    SYSTEMTIME todayStart = nowTime;
-    todayStart.wHour = 0; todayStart.wMinute = 0;
-    todayStart.wSecond = 0; todayStart.wMilliseconds = 0;
-
-    SYSTEMTIME fileDayStart = fileTime;
-    fileDayStart.wHour = 0; fileDayStart.wMinute = 0;
-    fileDayStart.wSecond = 0; fileDayStart.wMilliseconds = 0;
-
-    int daysFromToday = DayDiff(todayStart, fileDayStart);
-
-    if (daysFromToday == 0)
-        return L"today";
-    if (daysFromToday == 1)
-        return L"yesterday";
-
-    int todayDOW = (nowTime.wDayOfWeek == 0) ? 7 : nowTime.wDayOfWeek;
-    if (daysFromToday >= 1 && daysFromToday < todayDOW)
-        return L"this_week";
-
-    if (daysFromToday >= todayDOW && daysFromToday < todayDOW + 7)
-        return L"last_week";
-
-    if (daysFromToday >= 0 && fileTime.wMonth == nowTime.wMonth && fileTime.wYear == nowTime.wYear)
-        return L"this_month";
-
-    if (fileTime.wYear == nowTime.wYear &&
-        (fileTime.wMonth == nowTime.wMonth - 1 ||
-         (nowTime.wMonth == 1 && fileTime.wMonth == 12 && fileTime.wYear == nowTime.wYear - 1)))
-        return L"last_month";
-
-    if (fileTime.wYear == nowTime.wYear)
-        return L"this_year";
-
-    return L"older";
+    return snowdesktop::file_date_category::ForLocalDate(fileTime, nowTime, false);
 }
 
 /**

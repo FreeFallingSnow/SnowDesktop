@@ -10,6 +10,8 @@
 #include "common/constants.h"
 #include "ui/render/font_weight_rules.h"
 #include "layout/layout_spacing_rules.h"
+#include "settings/category_rule_creation.h"
+#include "category_creation_acknowledgement.h"
 #include "icons/icon_beautify.h"
 
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
@@ -19,7 +21,6 @@
 
 #include <algorithm>
 #include <array>
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <limits>
@@ -675,6 +676,7 @@ struct DesktopPagePresenter::Impl
     std::wstring pendingCategoryId;
     std::wstring pendingCategoryLabel;
     std::wstring pendingCategoryExtensions;
+    std::uint64_t pendingCategoryGeneration = 0;
     muxc::TextBox newCategoryLabel{nullptr};
     muxc::TextBox newCategoryExtensions{nullptr};
     muxc::Button addCategory{nullptr};
@@ -1370,21 +1372,16 @@ struct DesktopPagePresenter::Impl
         if (label.empty())
             label = L("app.settings.new_category", L"New category");
         const std::wstring extensions = newCategoryExtensions.Text().c_str();
-        static std::atomic<std::uint64_t> nextId{1};
-        const std::wstring id = L"custom-winui-" +
-            std::to_wstring(generation) + L"-" +
-            std::to_wstring(nextId.fetch_add(1));
-        pendingCategoryId = id;
+        pendingCategoryId.clear();
         pendingCategoryLabel = newCategoryLabel.Text().c_str();
         pendingCategoryExtensions = extensions;
+        pendingCategoryGeneration = generation;
+        // EditCategory applies this edit before publishing the updated snapshot.
         UpdateCategory(SettingsUpdateMode::PreviewAndCommit,
-            [id, label = std::move(label), extensions](
+            [this, label = std::move(label), extensions](
                 CategorySettings& settings) mutable {
-                CategoryRule rule;
-                rule.id = std::move(id);
-                rule.customLabel = std::move(label);
-                rule.extensions = extensions;
-                settings.rules.push_back(std::move(rule));
+                if (auto id = AppendCustomCategoryRule(settings, std::move(label), extensions))
+                    pendingCategoryId = std::move(*id);
             });
     }
 
@@ -1782,12 +1779,19 @@ struct DesktopPagePresenter::Impl
     {
         collectPrograms.IsOn(settings.collectProgramsEnabled);
         PatchRuleRows(settings);
-        // Acknowledge the creation only when it is present in the host snapshot.
-        // Failed writes retain the user's form, and later edits aren't erased.
+    }
+
+    void AcknowledgeCategoryCreation(const SettingsSnapshot& snapshot)
+    {
+        if (!CanAcknowledgeCategoryCreation(snapshot, pendingCategoryId, pendingCategoryGeneration))
+            return;
+        // A saved rule acknowledges the form only if the user has not changed
+        // that form while persistence was pending or waiting for a retry.
         for (const auto& row : ruleRows)
         {
             if (pendingCategoryId.empty() || row->id != pendingCategoryId) continue;
             pendingCategoryId.clear();
+            pendingCategoryGeneration = 0;
             if (newCategoryLabel.Text() == pendingCategoryLabel &&
                 newCategoryExtensions.Text() == pendingCategoryExtensions)
             {
@@ -1887,6 +1891,9 @@ struct DesktopPagePresenter::Impl
             PatchCategory(snapshot.values.category);
             categoryRevision = snapshot.domainRevisions.category;
         }
+        // Saving clears pending/dirty flags without changing the category
+        // domain revision, so confirmation must observe every snapshot.
+        AcknowledgeCategoryCreation(snapshot);
         if (newGeneration ||
             snapshot.domainRevisions.personalization !=
                 personalizationRevision)
