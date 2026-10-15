@@ -348,6 +348,8 @@ void CheckTimelineGeometry()
 
 void CheckAttractionGeometry()
 {
+    // Individual cell accuracy cannot establish shared-edge continuity between
+    // compositor keys; that requires a separate adjacency check.
     namespace a = snowdesktop::dock_attraction;
     const auto golden = a::ControlPoints({0, 0, 320, 200}, {336, 208, 400, 272}, 0.5);
     // Independently evaluated upstream top-left trajectory: p0=(0,0),
