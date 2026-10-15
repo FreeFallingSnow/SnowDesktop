@@ -1,6 +1,7 @@
 #include "ui_animation_scheduler.h"
 #include "settings/animation_settings.h"
 #include "ui_animation_scheduler_rules.h"
+#include "ui_presentation_scope.h"
 
 #include <algorithm>
 #include <cmath>
@@ -398,7 +399,16 @@ bool UiAnimationScheduler::RequestScheduledPresentation(
     const void* owner, std::function<bool()> callback)
 {
     if (!callback) return false;
-    if (!dispatchingTimers_ && !advancingFrame_) return callback();
+    if (UiImmediatePresentationScope::IsActive() ||
+        (!dispatchingTimers_ && !advancingFrame_))
+    {
+        // Immediate feedback publishes the current owner state, superseding
+        // any presentation queued before the native message was dispatched.
+        std::erase_if(pendingPresentations_, [owner](const auto& entry) {
+            return entry.owner == owner;
+        });
+        return callback();
+    }
     QueuePresentation(owner, [callback = std::move(callback)] { (void)callback(); });
     return true;
 }

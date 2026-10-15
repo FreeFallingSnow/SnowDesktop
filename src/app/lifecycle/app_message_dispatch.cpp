@@ -7,6 +7,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "diagnostics/performance_trace.h"
 #include "dock/dock_minimize_protocol.h"
+#include "ui/render/ui_presentation_scope.h"
 
 #include <imm.h>
 #include <shldisp.h>
@@ -75,6 +76,7 @@ bool DesktopApp::HandleShellContextMenuMessage(
 
 LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     if (dockShellHookMessage_ && msg == dockShellHookMessage_ &&
         hwnd == dockShellHookWindow_)
     {

@@ -2,6 +2,7 @@
 #include "app/render/desktop_backdrop_update_rules.h"
 #include "diagnostics/performance_trace.h"
 #include "widget/view/widget_surface_retention.h"
+#include "ui/render/ui_presentation_scope.h"
 
 namespace
 {
@@ -120,8 +121,8 @@ bool DesktopApp::QueueDesktopWidgetComposition(
     }
 
     pendingDesktopWidgetCompositions_.insert(widgetId);
-    if (desktopWidgetPointerBatchActive_)
-        return PresentQueuedDesktopWidgetComposition();
+    const snowdesktop::UiImmediatePresentationScope immediatePresentation(
+        desktopWidgetPointerBatchActive_);
     // Every timed widget update adds its ID before the scheduler presents the
     // owner once. Direct input and non-scheduled invalidation still present now.
     return uiAnimationScheduler_.RequestScheduledPresentation(

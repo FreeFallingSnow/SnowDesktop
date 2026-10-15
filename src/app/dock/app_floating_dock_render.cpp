@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "ui/render/ui_presentation_scope.h"
 #include "dock_taskbar_diagnostics.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "diagnostics/performance_trace.h"
@@ -310,6 +311,7 @@ LRESULT DesktopApp::HandleFloatingDockMessage(
     PersistentDockHost& host,
     HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 {
+    const snowdesktop::UiImmediatePresentationScope immediatePresentation;
     if ((msg == WM_MOUSEACTIVATE || msg == WM_NCHITTEST ||
             (msg >= WM_MOUSEFIRST && msg <= WM_MOUSELAST) || msg == WM_CONTEXTMENU ||
             msg == WM_KEYDOWN || msg == WM_SYSKEYDOWN || msg == WM_CHAR) &&

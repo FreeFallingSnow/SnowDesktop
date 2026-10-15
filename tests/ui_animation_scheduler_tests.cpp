@@ -1,5 +1,6 @@
 #include "ui/render/ui_animation_scheduler.h"
 #include "ui/render/ui_animation_scheduler_rules.h"
+#include "ui/render/ui_presentation_scope.h"
 #include "settings/animation_settings.h"
 #include "layout/popup_animation_rules.h"
 #include "system/status_bar/status_bar_shell_shortcut.h"
@@ -35,6 +36,33 @@ void WaitAndDispatch(
             WAIT_OBJECT_0,
         "scheduled deadline becomes signaled");
     scheduler.DispatchDue();
+}
+
+struct ScheduledNativeInput
+{
+    snowdesktop::UiAnimationScheduler* scheduler = nullptr;
+    int owner = 0;
+    int paints = 0;
+    bool synchronous = false;
+};
+
+LRESULT CALLBACK ScheduledNativeInputProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    const snowdesktop::UiImmediatePresentationScope immediatePresentation;
+    if (message == WM_NCCREATE)
+        SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(
+            reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams));
+    auto* input = reinterpret_cast<ScheduledNativeInput*>(
+        GetWindowLongPtrW(window, GWLP_USERDATA));
+    if (input && message == WM_APP + 91)
+    {
+        const int before = input->paints;
+        input->scheduler->RequestScheduledPresentation(&input->owner,
+            [input] { ++input->paints; return true; });
+        input->synchronous = input->paints == before + 1;
+        return 0;
+    }
+    return DefWindowProcW(window, message, wp, lp);
 }
 
 template <typename Predicate>
@@ -913,6 +941,48 @@ int main()
         batch.DispatchDue();
         Check(cancelledPresentations == 1 && !batch.HasScheduledWork(),
             "failed deadline callbacks still publish their queued terminal state");
+
+        // Use a private real HWND and nested dispatch, never the desktop host.
+        // Restoring the old no-input-guard path delays this feedback and fails.
+        ScheduledNativeInput input{&batch};
+        WNDCLASSW nativeClass{};
+        nativeClass.hInstance = GetModuleHandleW(nullptr);
+        nativeClass.lpfnWndProc = ScheduledNativeInputProc;
+        nativeClass.lpszClassName = L"SnowDesktopScheduledNativeInputTest";
+        Check(RegisterClassW(&nativeClass) != 0,
+            "native input fixture registers its private window class");
+        const HWND inputWindow = CreateWindowExW(0, nativeClass.lpszClassName,
+            L"", 0, 0, 0, 0, 0, HWND_MESSAGE, nullptr, nativeClass.hInstance, &input);
+        Check(inputWindow != nullptr, "native input fixture creates a message-only window");
+        int backgroundPaints = 0;
+        batch.ScheduleOnce(0, [&](auto) {
+            batch.RequestScheduledPresentation(&input.owner, [&] { ++input.paints; return true; });
+            Check(input.paints == 0, "background preparation initially remains batched");
+            SendMessageW(inputWindow, WM_APP + 91, 0, 0);
+            Check(input.synchronous && input.paints == 1,
+                "native input inside a scheduled modal pump presents synchronously");
+            Check(!snowdesktop::UiImmediatePresentationScope::IsActive(),
+                "returning from native dispatch restores the scheduled batch boundary");
+            batch.RequestScheduledPresentation(&otherOwner, [&] { ++backgroundPaints; return true; });
+            Check(backgroundPaints == 0, "background work continues batching after immediate input");
+        });
+        batch.DispatchDue();
+        Check(input.paints == 1 && backgroundPaints == 1,
+            "immediate input supersedes its queued owner without duplicate presentation");
+        batch.StartAnimation(UiAnimationSurface::Desktop, [&](double) {
+            Check(PostMessageW(inputWindow, WM_APP + 91, 0, 0) != FALSE,
+                "frame fixture posts only to its own native input window");
+            MSG message{};
+            Check(PeekMessageW(&message, inputWindow, WM_APP + 91, WM_APP + 91, PM_REMOVE) != FALSE,
+                "frame fixture receives its private input inside the active snapshot");
+            DispatchMessageW(&message);
+            Check(input.synchronous && input.paints == 2,
+                "posted native input also remains synchronous within an animation snapshot");
+            return false;
+        });
+        batch.DispatchDue();
+        DestroyWindow(inputWindow);
+        UnregisterClassW(nativeClass.lpszClassName, nativeClass.hInstance);
     }
 
     int firstFrames = 0;

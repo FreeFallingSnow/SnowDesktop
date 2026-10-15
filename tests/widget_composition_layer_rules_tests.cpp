@@ -7,9 +7,11 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <initializer_list>
 #include <regex>
 #include <sstream>
 #include <string>
+#include <utility>
 
 namespace rules = snowdesktop::widget_composition_layer_rules;
 
@@ -294,6 +296,22 @@ int main(int argc, char** argv)
         const std::string floatingPopup = ReadFile(
             root / "src/app/popup/app_floating_popup_window.cpp");
 
+        // Boundary guard: nested native input must opt out of timed batching.
+        // Runtime behavior is exercised by the private HWND scheduler fixture.
+        for (const auto& [path, entry] : std::initializer_list<std::pair<const char*, const char*>>{
+                {"src/app/lifecycle/app_message_dispatch.cpp", "LRESULT DesktopApp::HandleMessage("},
+                {"src/app/dock/app_floating_dock_render.cpp", "LRESULT DesktopApp::HandleFloatingDockMessage("},
+                {"src/app/popup/app_floating_popup_window.cpp", "LRESULT DesktopApp::HandleFloatingPopupMessage("}})
+        {
+            const auto source = snowdesktop::test::CompactSource(std::regex_replace(
+                ReadFile(root / path), std::regex(R"(//[^\r\n]*|/\*[\s\S]*?\*/)"), ""));
+            const auto begin = source.find(snowdesktop::test::CompactSource(entry));
+            const auto body = begin == std::string::npos ? begin : source.find('{', begin);
+            Check(body != std::string::npos && std::regex_search(source.substr(body + 1),
+                std::regex(R"(^constsnowdesktop::UiImmediatePresentationScope[a-zA-Z_][a-zA-Z0-9_]*;)")),
+                "every desktop/Dock/popup native message boundary must keep foreground presentation synchronous");
+        }
+
         // Architectural guard for the WM_SIZE/topology recovery defect:
         // parent teardown owns child-cache retirement. This checks source
         // structure only; it does not claim that DComp pixels were presented.
@@ -479,6 +497,11 @@ int main(int argc, char** argv)
         const std::size_t luaPanelOverlay = inRootOrder(
             "desktopOverlayVisual(luaWidgetPanelAnimationOverlay_)");
         Check(!rootZOrder.empty() &&
+                widgetLayer != std::string::npos &&
+                foregroundLayer != std::string::npos &&
+                pageOverlay != std::string::npos &&
+                popupOverlay != std::string::npos &&
+                luaPanelOverlay != std::string::npos &&
                 widgetLayer < foregroundLayer &&
                 foregroundLayer < pageOverlay &&
                 pageOverlay < popupOverlay &&
