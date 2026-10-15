@@ -450,6 +450,7 @@ struct SettingsWindowHost::Impl
         std::uint64_t generation = 0;
         ThemeLibraryRequest request;
         unsigned previewScope = themes::All;
+        int iconProcessingMode = 0;
         themes::Package snapshot;
         steam_bridge::ThemePublishPlan plan;
         std::vector<themes::preview::Image> images;
@@ -591,6 +592,7 @@ struct SettingsWindowHost::Impl
         if (themeTask || !controller || !controller->IsGenerationCurrent(generation) || !shell)
         { if (completed) completed({}); return; }
         auto task = std::make_shared<ThemeTask>(); task->generation = generation;
+        task->iconProcessingMode = controller->Snapshot()->values.desktop.iconBeautify.mode;
         task->request = std::move(request); task->completed = std::move(completed); themeTask = task;
         if (!CurrentThemeTask(task)) { CompleteThemeTask(task, false, "cancelled"); return; }
         const bool sync = task->request.command == ThemeLibraryCommand::SyncSubscriptions;
@@ -692,13 +694,13 @@ struct SettingsWindowHost::Impl
                         success = themes::workshop::Prepare(task->snapshot, task->request.id, scope, task->directory, data,
                             task->customCover, [host, task](const auto& package, auto root, auto applicable, const auto& directory,
                                 auto& cover, auto& error, auto* cancel) {
-                                return themes::preview::RenderGallery(host, package, root, applicable, directory, task->images, cover, error, cancel, task->customBackground);
+                                return themes::preview::RenderGallery(host, package, root, applicable, directory, task->images, cover, error, cancel, task->customBackground, task->iconProcessingMode);
                             }, task->plan, detail, &task->cancel, task->request.tags);
                         task->cover = task->plan.preview;
                     }
                     else
                     {
-                        success = themes::preview::RenderGallery(host, task->snapshot, task->request.id, scope, task->directory, task->images, task->cover, detail, &task->cancel, task->customBackground);
+                        success = themes::preview::RenderGallery(host, task->snapshot, task->request.id, scope, task->directory, task->images, task->cover, detail, &task->cancel, task->customBackground, task->iconProcessingMode);
                         if (success && !task->customCover.empty())
                         {
                             success = themes::preview::NormalizeCover(task->customCover, task->cover, detail);

@@ -142,13 +142,14 @@ int main()
         previous.mode = 1;
         previous.contentScale = .79f;
         const auto loaded = beautify::ResolvePersistedSettings(previous, true);
+        auto refreshed = beautify::MakePreset(preset); refreshed.mode = previous.mode;
         Check(beautify::Equal(loaded, preset == IconBeautifyPreset::Custom
-                ? previous : beautify::MakePreset(preset)),
+                ? previous : refreshed),
             "explicit built-in icon presets refresh while custom parameters survive loading");
         if (preset != IconBeautifyPreset::None && preset != IconBeautifyPreset::Custom)
         {
             previous.enabled = false;
-            auto expected = beautify::MakePreset(preset); expected.enabled = false;
+            auto expected = beautify::MakePreset(preset); expected.enabled = false; expected.mode = previous.mode;
             Check(beautify::Equal(beautify::ResolvePersistedSettings(previous, true), expected),
                 "refreshing an icon recipe does not re-enable disabled beautification");
         }
@@ -465,6 +466,61 @@ int main()
         unlitPlate[52 * 104 + 52] == nativePlate[52 * 104 + 52] &&
         preservedPlate != unlitPlate,
         "smart glass preserves the opaque native plate color while adding its edge reflection");
+
+    {
+        IconBeautifySettings style;
+        style.enabled = true; style.preset = IconBeautifyPreset::Custom; style.mode = 1;
+        style.shape = IconBeautifyShape::ContinuousRounded;
+        style.backgroundOpacity = 1; style.shadowStrength = 0;
+        style.backgroundGradient = {true, 0, 0, 1, {{0, 0xff0000, 1}, {.5, 0x00ff00, 1}, {1, 0x0000ff, 1}}};
+        const auto icon = TestIcon(64);
+        const auto gradient = beautify::Render(icon, 64, 64, style);
+        const auto middle = gradient[8 * 64 + 32];
+        Check(((middle >> 8) & 255) > 245 && ((middle >> 16) & 255) < 10 && (middle & 255) < 10,
+            "multi-stop background reaches its middle color away from the foreground");
+        style.backgroundGradient.stops = {{0, 0xff0000, 0}, {1, 0x0000ff, 1}};
+        const auto fade = beautify::Render(icon, 64, 64, style)[8 * 64 + 32];
+        Check((fade >> 24) >= 125 && (fade >> 24) <= 132 && ((fade >> 16) & 255) == 0 &&
+            (fade & 255) == (fade >> 24), "transparent gradient endpoints do not introduce a dark or red fringe");
+        style.backgroundGradient.enabled = false;
+        Check(beautify::BackgroundGradient(style).stops == style.backgroundGradient.stops,
+            "turning a gradient off retains its edited stops for the next enable");
+        style.backgroundStartR = 1; style.backgroundStartG = style.backgroundStartB = 0;
+        const std::vector<std::uint32_t> green(64 * 64, 0xff00bb55);
+        const auto shrink = beautify::Render(green, 64, 64, style, beautify::EdgeColor{0, 187, 85});
+        Check(shrink[8 * 64 + 32] == 0xffff0000,
+            "shrink-all strategy honors the theme background even if a caller supplies a detected plate");
+        style.backgroundSource = 2;
+        auto redIcon = icon, blueIcon = icon;
+        for (auto& pixel : redIcon) if (pixel >> 24) pixel = 0xffe03020;
+        for (auto& pixel : blueIcon) if (pixel >> 24) pixel = 0xff2050e0;
+        const auto red = beautify::Render(redIcon, 64, 64, style)[8 * 64 + 32];
+        const auto blue = beautify::Render(blueIcon, 64, 64, style)[8 * 64 + 32];
+        Check(((red >> 16) & 255) > (red & 255) + 100 && (blue & 255) > ((blue >> 16) & 255) + 100,
+            "one accent-based theme resolves distinct colors for distinct source icons");
+        style.backgroundSource = 1;
+        const auto plate = beautify::Render(green, 64, 64, style)[8 * 64 + 32];
+        Check(plate == 0xff00bb55, "original-background source preserves an opaque source plate color");
+
+        style.mode = 0; style.filterEnabled = true; style.filterMode = 1; style.filterStrength = 1;
+        style.filterTintR = .1f; style.filterTintG = .45f; style.filterTintB = 1;
+        std::vector<std::uint32_t> tones(64 * 64);
+        for (int y = 0; y < 64; ++y) for (int x = 0; x < 64; ++x)
+            tones[static_cast<std::size_t>(y) * 64 + x] = x < 24 ? 0xff000000 : x < 40 ? 0xff808080 : 0xffffffff;
+        const auto colored = beautify::Render(tones, 64, 64, style, beautify::EdgeColor{0, 0, 0});
+        const auto gray = colored[32 * 64 + 32];
+        const double luminosity = ((gray >> 16) & 255) * .299 + ((gray >> 8) & 255) * .587 + (gray & 255) * .114;
+        Check(colored[32 * 64 + 16] == 0xff000000 && colored[32 * 64 + 48] == 0xffffffff &&
+            std::abs(luminosity - 128) < 1, "tonal coloring preserves black, white and midtone luminosity");
+        style.filterMode = 2;
+        const auto mono = beautify::Render(tones, 64, 64, style, beautify::EdgeColor{0, 0, 0});
+        Check(mono[32 * 64 + 16] == mono[32 * 64 + 32] && mono[32 * 64 + 32] == mono[32 * 64 + 48],
+            "monochrome is an explicit flat foreground treatment rather than a multiplied gray filter");
+        auto builtIn = beautify::MakePreset(IconBeautifyPreset::FrostedGlass); builtIn.mode = 1;
+        Check(beautify::ResolvePersistedSettings(builtIn, true).mode == 1 &&
+            beautify::IdentifyPreset(builtIn) == IconBeautifyPreset::FrostedGlass,
+            "built-in preset detection and layout reload preserve the separate processing strategy");
+    }
 
     if (failures != 0)
     {

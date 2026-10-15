@@ -2756,5 +2756,15 @@
   "settings.animation.option.slower": "Slower (0.5×)",
   "settings.animation.option.verySlow": "Very slow (0.33×)",
   "settings.animation.option.slowest": "Slowest (0.25×)",
-  "themeLibrary.icon": "Icon theme"
+  "themeLibrary.icon": "Icon theme",
+  "iconStyle.backgroundSource": "Background color source",
+  "iconStyle.iconBackground": "Original icon background",
+  "iconStyle.iconAccent": "Icon accent color",
+  "iconStyle.coloring": "Color treatment",
+  "iconStyle.legacyTint": "Legacy tint",
+  "iconStyle.tonalTint": "Tonal tint",
+  "iconStyle.monochrome": "Monochrome",
+  "iconStyle.strategy": "Icon processing",
+  "iconStyle.smart": "Smart beautification",
+  "iconStyle.shrinkAll": "Shrink all with theme background"
 }

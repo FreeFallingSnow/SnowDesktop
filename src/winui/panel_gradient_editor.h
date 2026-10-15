@@ -35,6 +35,9 @@ public:
     void Close() noexcept { preview_.Close(); change_ = {}; localize_ = {}; }
     Panel Content() const { return root_; }
     const PanelGradient& Value() const { return value_; }
+    winrt::Microsoft::UI::Xaml::Controls::Control FocusTarget() const { return focusTarget_; }
+    void SetAutomaticColors(bool automatic)
+    { if (automaticColors_ != automatic) { automaticColors_ = automatic; Build(); } }
     void SetValue(const PanelGradient& value, bool force = false)
     {
         if (!ValidatePanelGradient(value) || (dirty_ && !force && value != value_)) return;
@@ -62,6 +65,7 @@ public:
     void RefreshLocalizedText() { Build(); }
 private:
     Panel root_;
+    winrt::Microsoft::UI::Xaml::Controls::Control focusTarget_{nullptr};
     presenter_controls::CoalescedPreviewTimer<PanelGradient> preview_;
     PanelGradient value_, committed_;
     Localize localize_;
@@ -69,6 +73,7 @@ private:
     PickerExtras pickerExtras_;
     std::vector<std::function<void()>> sync_;
     bool syncing_ = false, dirty_ = false, expanded_ = false, required_ = false, compact_ = false;
+    bool automaticColors_ = false;
     std::wstring L(std::string_view key) const { return localize_ ? localize_(key) : std::wstring{}; }
     bool FirstRow() const
     {
@@ -221,8 +226,20 @@ private:
     }
     void Stop(size_t index, bool first, bool last)
     {
-        Color(first ? "panelGradient.startColor" : last ? "panelGradient.endColor" : "panelGradient.stopColor",
+        if (!automaticColors_) Color(first ? "panelGradient.startColor" : last ? "panelGradient.endColor" : "panelGradient.stopColor",
             index, first ? 0xb6d6ef : last ? 0xd5c7ef : 0xc8d0ef, first || last ? 1 : 2);
+        else if (!first && !last)
+        {
+            winrt::Microsoft::UI::Xaml::Controls::Button remove;
+            remove.Content(winrt::box_value(L("panelGradient.removeStop")));
+            std::weak_ptr<PanelGradientEditor> weak = shared_from_this();
+            remove.Click([weak, index](auto const&, auto const&) {
+                if (auto self = weak.lock()) self->Apply([index](auto& v) {
+                    if (index > 0 && index + 1 < v.stops.size()) v.stops.erase(v.stops.begin() + index);
+                }, true);
+            });
+            ActionRow("panelGradient.stopColor", remove, 2);
+        }
         Numeric(first ? "panelGradient.startOpacity" : last ? "panelGradient.endOpacity" : "panelGradient.stopOpacity",
             [index](auto const& v) { return v.stops[index].opacity * 100; },
             [index](auto& v, double n) { if (index < v.stops.size()) v.stops[index].opacity = n / 100; }, 0, 100, 1, 65,
@@ -248,6 +265,7 @@ private:
         if (!required_)
         {
             c::ComboBox fill;
+            focusTarget_ = fill;
             fill.HorizontalAlignment(x::HorizontalAlignment::Right);
             fill.Items().Append(winrt::box_value(L("largeIcon.solidBackground")));
             fill.Items().Append(winrt::box_value(L("largeIcon.gradientBackground")));
@@ -270,7 +288,7 @@ private:
                     std::swap(v.stops.front().opacity, v.stops.back().opacity);
                 }, true);
             });
-            if (compact_)
+            if (compact_ && !automaticColors_)
             {
                 c::StackPanel colors; colors.Orientation(c::Orientation::Horizontal); colors.Spacing(6);
                 colors.HorizontalAlignment(x::HorizontalAlignment::Right);
@@ -285,7 +303,7 @@ private:
                 }, 0);
             }
             Numeric("panelGradient.angle", [](auto const& v) { return v.angle; }, [](auto& v, double n) { v.angle = n; }, 0, 360, 1, 90, L"°", compact_ ? 0 : 1);
-            if (!compact_) ActionRow("panelGradient.swap", swap);
+            if (!compact_ && !automaticColors_) ActionRow("panelGradient.swap", swap);
             c::Button more; more.Content(winrt::box_value(L(expanded_ ? "largeIcon.hideDetails" : "largeIcon.showDetails")));
             more.HorizontalAlignment(x::HorizontalAlignment::Right);
             more.Click([weak](auto const&, auto const&) {

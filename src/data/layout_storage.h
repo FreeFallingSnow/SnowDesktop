@@ -158,6 +158,9 @@ struct Document
     std::optional<float> iconBeautifyEdgeHighlightWidth;
     std::optional<float> iconBeautifyEdgeHighlightStrength;
     std::optional<EdgeLightSettings> iconBeautifyEdgeLight;
+    std::optional<PanelGradient> iconBeautifyBackgroundGradient;
+    std::optional<int> iconBeautifyBackgroundSource;
+    std::optional<int> iconBeautifyFilterMode;
 
     std::optional<int> iconBeautifyMode;
     std::optional<float> iconBeautifyBgOpacity;

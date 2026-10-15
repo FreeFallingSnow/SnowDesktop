@@ -199,7 +199,7 @@ int PackageVersion(const Package& package)
     return 1;
 }
 bool SupportedVersion(const JsonValue* version)
-{ return version && version->IsNumber() && (version->number == 1 || version->number == kPackageVersion); }
+{ return version && version->IsNumber() && (version->number == 1 || version->number == 2 || version->number == kPackageVersion); }
 std::string Sections(const Package& package, bool includeIcon = false)
 {
     std::string out;
@@ -233,7 +233,7 @@ bool ReadSections(const JsonValue& document, Package& package, std::string& erro
         if (kind == Kind::Icon && section)
         {
             const auto* version = document.Find("version");
-            if (!version || !version->IsNumber() || version->number != kPackageVersion) return Fail(error, "unsupportedVersion");
+            if (!SupportedVersion(version) || version->number < 2) return Fail(error, "unsupportedVersion");
         }
         if (!section || !section->IsArray() || section->array.size() > 512) return Fail(error, "invalidPackage");
         for (const auto& entry : section->array)
@@ -575,7 +575,7 @@ Theme Capture(Kind kind, const PersonalizationSettings& appearance, const Naviga
 std::string EncodeLibrary(const Library& library, std::string& error)
 {
     if (!Validate(library.themes, error)) return {};
-    std::string out = "{\"format\":\"snowdesktop.theme-library\",\"version\":2" + Sections(library.themes, true) + ",\"references\":{";
+    std::string out = "{\"format\":\"snowdesktop.theme-library\",\"version\":3" + Sections(library.themes, true) + ",\"references\":{";
     bool first = true;
     for (const auto& [target, ref] : library.references)
     {

@@ -2756,5 +2756,15 @@
   "settings.animation.option.slower": "更慢（0.5×）",
   "settings.animation.option.verySlow": "很慢（0.33×）",
   "settings.animation.option.slowest": "最慢（0.25×）",
-  "themeLibrary.icon": "圖示主題"
+  "themeLibrary.icon": "圖示主題",
+  "iconStyle.backgroundSource": "背景色彩來源",
+  "iconStyle.iconBackground": "圖示原有背景色",
+  "iconStyle.iconAccent": "圖示主題色",
+  "iconStyle.coloring": "著色方式",
+  "iconStyle.legacyTint": "舊版染色",
+  "iconStyle.tonalTint": "保留明暗著色",
+  "iconStyle.monochrome": "單色",
+  "iconStyle.strategy": "圖示處理方式",
+  "iconStyle.smart": "智慧美化",
+  "iconStyle.shrinkAll": "全部縮小並加入主題背景"
 }

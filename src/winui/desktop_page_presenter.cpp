@@ -2,6 +2,7 @@
 
 #include "desktop_page_presenter.h"
 #include "edge_light_editor.h"
+#include "panel_gradient_editor.h"
 #include "appearance_sections.h"
 #include "settings_presenter_controls.h"
 #include "theme_library_controls.h"
@@ -642,12 +643,9 @@ struct DesktopPagePresenter::Impl
     SettingRow glassEnabledRow, edgeReflectionRow;
     winrt::event_token glassEnabledToken{}, edgeReflectionToken{};
     std::unique_ptr<NumericEditor> glassBlurRadius, reflectionWidth, reflectionStrength;
-    muxc::ToggleSwitch gradientEnabled{nullptr};
-    SettingRow gradientEnabledRow;
-    std::unique_ptr<ColorEditor> backgroundEnd;
-    muxc::TextBlock gradientDirectionLabel{nullptr};
-    muxc::ComboBox gradientDirection{nullptr};
-    SettingRow gradientDirectionRow;
+    std::shared_ptr<PanelGradientEditor> gradientEditor;
+    muxc::ComboBox backgroundSource{nullptr}, filterMode{nullptr};
+    SettingRow backgroundSourceRow, filterModeRow;
     muxc::TextBlock shapeLabel{nullptr};
     muxc::ComboBox shape{nullptr};
     SettingRow shapeRow;
@@ -700,8 +698,7 @@ struct DesktopPagePresenter::Impl
     winrt::event_token collectProgramsToken{};
     winrt::event_token beautifyPresetToken{};
     winrt::event_token beautifyModeToken{};
-    winrt::event_token gradientEnabledToken{};
-    winrt::event_token gradientDirectionToken{};
+    winrt::event_token backgroundSourceToken{}, filterModeToken{};
     winrt::event_token shapeToken{};
     winrt::event_token filterEnabledToken{};
     winrt::event_token outlineEnabledToken{};
@@ -906,23 +903,16 @@ struct DesktopPagePresenter::Impl
                     static_cast<float>(value / 100.0);
             });
         backgroundOpacity->SetUnit(L"%");
-        gradientEnabled = muxc::ToggleSwitch{};
-        gradientEnabled.HorizontalAlignment(mux::HorizontalAlignment::Right);
-        gradientEnabledRow.Initialize(gradientEnabled);
-        gradientEnabledRow.SetControlAlignment(
-            mux::HorizontalAlignment::Right);
-        backgroundEnd = MakeBeautifyColor(
-            [](IconBeautifySettings& settings,
-               const winrt::Windows::UI::Color& color) {
-                settings.backgroundEndR = ColorFloat(color.R);
-                settings.backgroundEndG = ColorFloat(color.G);
-                settings.backgroundEndB = ColorFloat(color.B);
+        AppendAdvancedCombo(backgroundSourceRow, backgroundSource);
+        gradientEditor = PanelGradientEditor::Create([this](auto key) { return L(key); },
+            [this](const PanelGradient& gradient, bool commit) {
+                UpdateBeautify(commit ? SettingsUpdateMode::PreviewAndCommit : SettingsUpdateMode::Preview,
+                    [gradient](auto& settings) { settings.backgroundGradient = gradient; settings.gradientEnabled = false; });
+                UpdateConditionalStates();
             });
         beautifyAdvanced.Children().Append(backgroundStart->root);
         beautifyAdvanced.Children().Append(backgroundOpacity->root);
-        beautifyAdvanced.Children().Append(gradientEnabledRow.root);
-        beautifyAdvanced.Children().Append(backgroundEnd->root);
-        AppendAdvancedCombo(gradientDirectionRow, gradientDirection);
+        beautifyAdvanced.Children().Append(gradientEditor->Content());
         AppendAdvancedCombo(shapeRow, shape);
 
         glassEnabled = muxc::ToggleSwitch{};
@@ -1041,6 +1031,9 @@ struct DesktopPagePresenter::Impl
                 settings.outlineB = ColorFloat(color.B);
             });
         beautifyAdvanced.Children().Append(filterEnabledRow.root);
+        filterMode = muxc::ComboBox{};
+        filterModeRow.Initialize(filterMode);
+        filterDetails.Children().Append(filterModeRow.root);
         filterDetails.Children().Append(filterTint->root);
         filterDetails.Children().Append(filterStrength->root);
         beautifyAdvanced.Children().Append(filterDetails);
@@ -1062,11 +1055,11 @@ struct DesktopPagePresenter::Impl
         muxc::StackPanel geometry;
         geometry.Spacing(8);
         beautifyAdvanced.Children().Append(geometry);
-        geometry.Children().Append(beautifyModeRow.root);
+        beautifyCard.content.Children().InsertAt(0, beautifyModeRow.root);
         geometry.Children().Append(shapeRow.root);
         geometry.Children().Append(contentScale->root);
         beautifySections.Initialize(beautifyAdvanced, true, false, false);
-        for (auto const& control : {backgroundStart->root, backgroundOpacity->root, gradientEnabledRow.root, backgroundEnd->root, gradientDirectionRow.root})
+        for (auto const& control : std::array<mux::UIElement, 4>{backgroundSourceRow.root, backgroundStart->root, backgroundOpacity->root, gradientEditor->Content()})
             beautifySections.colors.Children().Append(control);
         beautifySections.material.Children().Append(glassEnabledRow.root); beautifySections.material.Children().Append(glassBlurRadius->root);
         beautifySections.border.Children().Append(outlineEnabledRow.root); beautifySections.border.Children().Append(outlineDetails);
@@ -1243,7 +1236,8 @@ struct DesktopPagePresenter::Impl
                     static_cast<std::size_t>(selection) >=
                         kBeautifyPresets.size())
                     return;
-                if (!updatingControls && active && hasSnapshot) edgeLightEditor->Cancel();
+                if (!updatingControls && active && hasSnapshot)
+                { edgeLightEditor->Cancel(); gradientEditor->Cancel(); }
                 const IconBeautifyPreset preset =
                     kBeautifyPresets[static_cast<std::size_t>(selection)];
                 UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
@@ -1255,8 +1249,9 @@ struct DesktopPagePresenter::Impl
                         }
                         else
                         {
-                            desktop.iconBeautify =
-                                icon_beautify::MakePreset(preset);
+                            const int strategy = desktop.iconBeautify.mode;
+                            desktop.iconBeautify = icon_beautify::MakePreset(preset);
+                            desktop.iconBeautify.mode = strategy;
                         }
                     });
                 UpdateConditionalStates();
@@ -1265,10 +1260,8 @@ struct DesktopPagePresenter::Impl
             [this](const auto&, const auto&) {
                 const int selection = beautifyMode.SelectedIndex();
                 if (selection < 0) return;
-                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
-                    [selection](IconBeautifySettings& settings) {
-                        settings.mode = selection;
-                    });
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                    [selection](DesktopDisplaySettings& settings) { settings.iconBeautify.mode = selection; });
             });
         glassEnabledToken = glassEnabled.Toggled([this](auto const&, auto const&) {
             const bool v = glassEnabled.IsOn();
@@ -1279,24 +1272,15 @@ struct DesktopPagePresenter::Impl
             const bool v = edgeReflection.IsOn();
             UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [v](auto& settings) { settings.edgeHighlightEnabled = v; });
         });
-        gradientEnabledToken = gradientEnabled.Toggled(
-            [this](const auto&, const auto&) {
-                const bool enabled = gradientEnabled.IsOn();
-                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
-                    [enabled](IconBeautifySettings& settings) {
-                        settings.gradientEnabled = enabled;
-                    });
-                UpdateConditionalStates();
-            });
-        gradientDirectionToken = gradientDirection.SelectionChanged(
-            [this](const auto&, const auto&) {
-                const int selection = gradientDirection.SelectedIndex();
-                if (selection < 0) return;
-                UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
-                    [selection](IconBeautifySettings& settings) {
-                        settings.gradientDirection = selection;
-                    });
-            });
+        backgroundSourceToken = backgroundSource.SelectionChanged([this](auto const&, auto const&) {
+            const int source = backgroundSource.SelectedIndex(); if (source < 0) return;
+            UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [source](auto& settings) { settings.backgroundSource = source; });
+            UpdateConditionalStates();
+        });
+        filterModeToken = filterMode.SelectionChanged([this](auto const&, auto const&) {
+            const int mode = filterMode.SelectedIndex(); if (mode < 0) return;
+            UpdateBeautify(SettingsUpdateMode::PreviewAndCommit, [mode](auto& settings) { settings.filterMode = mode; });
+        });
         shapeToken = shape.SelectionChanged(
             [this](const auto&, const auto&) {
                 const int selection = shape.SelectedIndex();
@@ -1316,6 +1300,8 @@ struct DesktopPagePresenter::Impl
                 const bool enabled = filterEnabled.IsOn();
                 UpdateBeautify(SettingsUpdateMode::PreviewAndCommit,
                     [enabled](IconBeautifySettings& settings) {
+                        if (enabled && !settings.filterEnabled && settings.filterMode == 0)
+                        { settings.filterMode = 1; settings.filterStrength = .35f; }
                         settings.filterEnabled = enabled;
                     });
                 UpdateConditionalStates();
@@ -1702,18 +1688,17 @@ struct DesktopPagePresenter::Impl
         SetDependentVisibility(glassBlurRadius->root, glassEnabled.IsOn(), glassEnabled);
         SetDependentVisibility(reflectionWidth->root, edgeReflection.IsOn(), edgeReflection);
         SetDependentVisibility(reflectionStrength->root, edgeReflection.IsOn(), edgeReflection);
-        SetDependentVisibility(backgroundEnd->root, gradientEnabled.IsOn(), gradientEnabled);
-        SetDependentVisibility(gradientDirectionRow.root, gradientEnabled.IsOn(), gradientEnabled);
-        backgroundEnd->SetEnabled(gradientEnabled.IsOn());
-        gradientDirection.IsEnabled(gradientEnabled.IsOn());
+        const bool customSolid = backgroundSource.SelectedIndex() == 0 && !gradientEditor->Value().enabled;
+        SetDependentVisibility(backgroundStart->root, customSolid, backgroundSource);
+        backgroundStart->SetEnabled(customSolid);
+        gradientEditor->SetAutomaticColors(backgroundSource.SelectedIndex() != 0);
         SetDependentVisibility(filterDetails, filterEnabled.IsOn(), filterEnabled);
         SetDependentVisibility(outlineDetails, outlineEnabled.IsOn(), outlineEnabled);
         beautifySections.UpdateRows();
         presenter_controls::UpdateSettingsSubrows(beautifyFinish, 0);
         presenter_controls::UpdateSettingsSubrows(filterDetails, 16);
         presenter_controls::UpdateSettingsSubrows(outlineDetails, 16);
-        for (const auto& child : {backgroundEnd->root, gradientDirectionRow.root,
-                 glassBlurRadius->root, reflectionWidth->root, reflectionStrength->root})
+        for (const auto& child : {glassBlurRadius->root, reflectionWidth->root, reflectionStrength->root})
             presenter_controls::StyleSettingsSubrow(child, false, 16);
     }
 
@@ -1744,13 +1729,9 @@ struct DesktopPagePresenter::Impl
         edgeLightEditor->SetValue(value.edgeLight);
         reflectionWidth->SetValue(value.edgeHighlightWidth);
         reflectionStrength->SetValue(value.edgeHighlightStrength * 100.0);
-        gradientEnabled.IsOn(value.gradientEnabled);
-        backgroundEnd->SetColor(MakeColor(
-            value.backgroundEndR,
-            value.backgroundEndG,
-            value.backgroundEndB));
-        gradientDirection.SelectedIndex(
-            std::clamp(value.gradientDirection, 0, 3));
+        backgroundSource.SelectedIndex(value.backgroundSource);
+        gradientEditor->SetValue(icon_beautify::BackgroundGradient(value));
+        gradientEditor->SetAutomaticColors(value.backgroundSource != 0);
         shape.SelectedIndex(IndexOf(kBeautifyShapes, value.shape));
         contentScale->SetValue(value.contentScale * 100.0);
         highlightStrength->SetValue(
@@ -1760,6 +1741,7 @@ struct DesktopPagePresenter::Impl
         shadeStrength->SetValue(value.textureShadeStrength * 100.0);
         edgeHighlight->SetValue(value.textureEdgeHighlight * 100.0);
         filterEnabled.IsOn(value.filterEnabled);
+        filterMode.SelectedIndex(value.filterMode);
         filterTint->SetColor(MakeColor(
             value.filterTintR, value.filterTintG, value.filterTintB));
         filterStrength->SetValue(value.filterStrength * 100.0);
@@ -1786,7 +1768,7 @@ struct DesktopPagePresenter::Impl
             if (editor->IsEditing()) return true;
         }
         for (const ColorEditor* editor : {
-                 backgroundStart.get(), backgroundEnd.get(),
+                 backgroundStart.get(),
                  filterTint.get(), outlineColor.get()})
         {
             if (editor->IsEditing()) return true;
@@ -1844,7 +1826,7 @@ struct DesktopPagePresenter::Impl
     std::vector<ColorEditor*> ContinuousColors() const
     {
         return {
-            backgroundStart.get(), backgroundEnd.get(), filterTint.get(),
+            backgroundStart.get(), filterTint.get(),
             outlineColor.get(),
         };
     }
@@ -1852,6 +1834,7 @@ struct DesktopPagePresenter::Impl
     void CommitContinuousEdits()
     {
         if (edgeLightEditor) edgeLightEditor->Flush();
+        if (gradientEditor) gradientEditor->Flush();
         for (NumericEditor* editor : ContinuousNumbers())
             editor->CommitPending();
         for (ColorEditor* editor : ContinuousColors())
@@ -1861,6 +1844,7 @@ struct DesktopPagePresenter::Impl
     void CancelContinuousEdits() noexcept
     {
         if (edgeLightEditor) edgeLightEditor->Cancel();
+        if (gradientEditor) gradientEditor->Cancel();
         for (NumericEditor* editor : ContinuousNumbers())
             editor->CancelPending();
         for (ColorEditor* editor : ContinuousColors())
@@ -2003,37 +1987,25 @@ struct DesktopPagePresenter::Impl
         }, std::clamp(iconThemes->NativeSelection(), 0, 5));
         iconThemes->LocalizeText();
         beautifyModeRow.SetText(
-            L("app.settings.beautify_mode", L"Beautification mode"));
+            L("iconStyle.strategy", L"Icon processing"));
         muxa::AutomationProperties::SetName(
             beautifyMode, beautifyModeRow.label.Text());
         SetComboItems(beautifyMode, {
-            L("app.settings.beautify_smart", L"Smart"),
-            L("app.settings.beautify_shrink_bg", L"Shrink background"),
+            L("iconStyle.smart", L"Smart beautification"),
+            L("iconStyle.shrinkAll", L"Shrink all with theme background"),
         }, std::max(0, beautifyMode.SelectedIndex()));
         backgroundStart->SetLabel(
             L("app.settings.default_bg", L"Background color"),
             L("app.settings.cancel", L"Cancel"));
         backgroundOpacity->SetLabel(
             L("app.settings.bg_opacity_val", L"Background opacity"));
-        gradientEnabledRow.SetText(L(
-            "app.settings.enable_gradient_bg", L"Enable gradient"));
-        muxa::AutomationProperties::SetName(gradientEnabled,
-            gradientEnabledRow.label.Text());
-        backgroundEnd->SetLabel(L(
-            "app.settings.gradient_end_color", L"Gradient end color"),
-            L("app.settings.cancel", L"Cancel"));
-        gradientDirectionRow.SetText(
-            L("app.settings.beautify_gradient_dir", L"Gradient direction"));
-        muxa::AutomationProperties::SetName(
-            gradientDirection, gradientDirectionRow.label.Text());
-        SetComboItems(gradientDirection, {
-            L("app.settings.beautify_gradient_updown", L"Top to bottom"),
-            L("app.settings.beautify_gradient_leftright", L"Left to right"),
-            L("app.settings.beautify_gradient_topleft_bottomright",
-                L"Top-left to bottom-right"),
-            L("app.settings.beautify_gradient_bottomleft_topright",
-                L"Bottom-left to top-right"),
-        }, std::max(0, gradientDirection.SelectedIndex()));
+        backgroundSourceRow.SetText(L("iconStyle.backgroundSource"));
+        muxa::AutomationProperties::SetName(backgroundSource, backgroundSourceRow.label.Text());
+        SetComboItems(backgroundSource, {L("app.settings.custom"), L("iconStyle.iconBackground"), L("iconStyle.iconAccent")}, std::max(0, backgroundSource.SelectedIndex()));
+        filterModeRow.SetText(L("iconStyle.coloring"));
+        muxa::AutomationProperties::SetName(filterMode, filterModeRow.label.Text());
+        SetComboItems(filterMode, {L("iconStyle.legacyTint"), L("iconStyle.tonalTint"), L("iconStyle.monochrome")}, std::max(0, filterMode.SelectedIndex()));
+        gradientEditor->RefreshLocalizedText();
         shapeRow.SetText(L("app.settings.beautify_shape", L"Shape"));
         muxa::AutomationProperties::SetName(shape, shapeRow.label.Text());
         SetComboItems(shape, {
@@ -2156,9 +2128,15 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.iconBeautify" ||
             id == "desktop.iconBeautify.preset")
             return beautifyPreset;
-        if (id == "desktop.iconBeautify.mode") return appearanceTarget(beautifyMode);
+        if (id == "desktop.iconBeautify.mode") return beautifyMode;
+        if (id == "desktop.iconBeautify.backgroundSource") return appearanceTarget(backgroundSource);
+        if (id == "desktop.iconBeautify.filterMode") return dependentTarget(filterEnabled.IsOn(), filterMode, filterEnabled);
         if (id == "desktop.iconBeautify.backgroundColor")
+        {
+            if (backgroundSource.SelectedIndex() != 0) return appearanceTarget(backgroundSource);
+            if (gradientEditor->Value().enabled) return appearanceTarget(gradientEditor->FocusTarget());
             return appearanceTarget(backgroundStart->editor.button);
+        }
         if (id == "desktop.iconBeautify.glass") return appearanceTarget(glassEnabled);
         if (id == "desktop.iconBeautify.blurRadius") return dependentTarget(glassEnabled.IsOn(), glassBlurRadius->slider, glassEnabled);
         if (id == "desktop.iconBeautify.edgeReflection") return appearanceTarget(edgeReflection);
@@ -2166,12 +2144,8 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.iconBeautify.reflectionStrength") return dependentTarget(edgeReflection.IsOn(), reflectionStrength->slider, edgeReflection);
         if (id == "desktop.iconBeautify.backgroundOpacity")
             return appearanceTarget(backgroundOpacity->slider);
-        if (id == "desktop.iconBeautify.gradient")
-            return appearanceTarget(gradientEnabled);
-        if (id == "desktop.iconBeautify.gradientEndColor")
-            return dependentTarget(gradientEnabled.IsOn(), backgroundEnd->editor.button, gradientEnabled);
-        if (id == "desktop.iconBeautify.gradientDirection")
-            return dependentTarget(gradientEnabled.IsOn(), gradientDirection, gradientEnabled);
+        if (id == "desktop.iconBeautify.gradient" || id == "desktop.iconBeautify.gradientEndColor" || id == "desktop.iconBeautify.gradientDirection")
+            return appearanceTarget(gradientEditor->FocusTarget());
         if (id == "desktop.iconBeautify.shape") return appearanceTarget(shape);
         if (id == "desktop.iconBeautify.contentScale")
             return appearanceTarget(contentScale->slider);
@@ -2213,6 +2187,7 @@ struct DesktopPagePresenter::Impl
     void CloseEditors() noexcept
     {
         if (edgeLightEditor) edgeLightEditor->Close();
+        if (gradientEditor) gradientEditor->Close();
         iconSpacing->Close();
         iconSize->Close();
         itemFontSize->Close();
@@ -2224,7 +2199,6 @@ struct DesktopPagePresenter::Impl
         backgroundStart->Close();
         backgroundOpacity->Close();
         glassBlurRadius->Close(); reflectionWidth->Close(); reflectionStrength->Close();
-        backgroundEnd->Close();
         contentScale->Close();
         highlightStrength->Close();
         highlightSize->Close();
@@ -2242,7 +2216,6 @@ struct DesktopPagePresenter::Impl
     void CommitOpenColorEditors() noexcept
     {
         backgroundStart->Dismiss();
-        backgroundEnd->Dismiss();
         filterTint->Dismiss();
         outlineColor->Dismiss();
     }
@@ -2265,9 +2238,9 @@ struct DesktopPagePresenter::Impl
             collectPrograms.Toggled(collectProgramsToken);
             beautifyPreset.SelectionChanged(beautifyPresetToken);
             beautifyMode.SelectionChanged(beautifyModeToken);
-            gradientEnabled.Toggled(gradientEnabledToken);
+            backgroundSource.SelectionChanged(backgroundSourceToken);
+            filterMode.SelectionChanged(filterModeToken);
             glassEnabled.Toggled(glassEnabledToken); edgeReflection.Toggled(edgeReflectionToken);
-            gradientDirection.SelectionChanged(gradientDirectionToken);
             shape.SelectionChanged(shapeToken);
             filterEnabled.Toggled(filterEnabledToken);
             outlineEnabled.Toggled(outlineEnabledToken);

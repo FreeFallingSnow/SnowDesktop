@@ -15,8 +15,8 @@ namespace
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr UINT_PTR AsyncTimerId = 1;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
-// Independent mapping modes and per-widget sorting extend the private snapshot.
-constexpr std::uint32_t Version = 36;
+// Icon background sources, multi-stop gradients and coloring extend the snapshot.
+constexpr std::uint32_t Version = 37;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;

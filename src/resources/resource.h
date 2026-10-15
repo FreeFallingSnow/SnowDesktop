@@ -47,3 +47,7 @@
 
 // Self-contained default wallpaper for theme previews.
 #define IDR_THEME_PREVIEW_BACKGROUND 54
+#define IDR_ICON_PREVIEW_BROWSER 55
+#define IDR_ICON_PREVIEW_FOLDER 56
+#define IDR_ICON_PREVIEW_MAIL 57
+#define IDR_ICON_PREVIEW_MEDIA 58

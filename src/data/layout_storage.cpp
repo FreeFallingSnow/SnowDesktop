@@ -835,6 +835,17 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         if (!DecodeEdgeLight(*light, value)) return Fail(error, "iconBeautifyEdgeLight", "has invalid edge-light parameters");
         decoded.iconBeautifyEdgeLight = value;
     }
+    if (const auto* gradient = root.Find("iconBeautifyBackgroundGradient"))
+    {
+        PanelGradient value;
+        if (!DecodePanelGradient(*gradient, value)) return Fail(error, "iconBeautifyBackgroundGradient", "has invalid gradient parameters");
+        decoded.iconBeautifyBackgroundGradient = value;
+    }
+    if (!ReadOptionalInteger(root, "iconBeautifyBackgroundSource", "iconBeautifyBackgroundSource", decoded.iconBeautifyBackgroundSource, error) ||
+        !ReadOptionalInteger(root, "iconBeautifyFilterMode", "iconBeautifyFilterMode", decoded.iconBeautifyFilterMode, error)) return false;
+    if ((decoded.iconBeautifyBackgroundSource && (*decoded.iconBeautifyBackgroundSource < 0 || *decoded.iconBeautifyBackgroundSource > 2)) ||
+        (decoded.iconBeautifyFilterMode && (*decoded.iconBeautifyFilterMode < 0 || *decoded.iconBeautifyFilterMode > 2)))
+        return Fail(error, "iconBeautify", "has an unsupported color source or filter mode");
 
     // Schema 0 used the same structural fields but had no explicit version.
     // Decoding it into the current in-memory model is its v0 -> v1 migration.

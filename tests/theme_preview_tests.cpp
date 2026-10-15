@@ -64,10 +64,38 @@ int wmain(int argc, wchar_t** argv)
                 std::ofstream marker(count, std::ios::binary | std::ios::app); marker << '1';
             }
         }
-        std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\"]}\n";
+        std::cout << "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"test\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\"]}\n";
         return 0;
     }
     const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    // Manual evidence export reuses production gallery rendering without
+    // starting the desktop or exercising unrelated component previews.
+    if (argc == 4 && std::wstring_view(argv[1]) == L"--icon-preview")
+    {
+        const std::filesystem::path output(argv[3]); std::filesystem::create_directories(output);
+        bool ok = true;
+        for (const std::string variant : {"glass", "smart", "gradient", "automatic", "tonal"})
+        {
+            Theme icon; icon.id = "theme/icon-evidence"; icon.name = "Icon preview"; icon.kind = Kind::Icon;
+            icon.icon = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassLight);
+            icon.icon.preset = IconBeautifyPreset::Custom;
+            if (variant != "glass" && variant != "smart")
+            {
+                icon.icon.glassEnabled = false; icon.icon.edgeHighlightEnabled = false; icon.icon.backgroundOpacity = 1;
+                icon.icon.backgroundGradient = {true, 135, 0, 1,
+                    {{0, 0xdef0ff, 1}, {.45, 0xdcddf8, 1}, {1, 0xbedfd8, 1}}};
+            }
+            if (variant == "automatic") icon.icon.backgroundSource = 2;
+            if (variant == "tonal") { icon.icon.filterEnabled = true; icon.icon.filterMode = 1; icon.icon.filterStrength = .6f; }
+            std::vector<preview::Image> images; std::filesystem::path cover; std::string detail;
+            const bool rendered = preview::RenderGallery(argv[2], {{icon.id, icon}}, icon.id, Components,
+                output / variant, images, cover, detail, nullptr, {}, variant == "smart" ? 0 : 1);
+            ok = ok && rendered;
+            std::cout << variant << ": " << (rendered ? cover.string() : detail) << '\n';
+        }
+        if (SUCCEEDED(initialized)) CoUninitialize();
+        return ok ? 0 : 1;
+    }
     int failures = 0;
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAIL preview: " << message << '\n'; } };
     const auto directory = std::filesystem::temp_directory_path() / (L"SnowDesktop-theme-tests-" + std::to_wstring(GetCurrentProcessId()));
@@ -129,6 +157,13 @@ int wmain(int argc, wchar_t** argv)
         "partial global previews require only their selected bars and no child bindings");
     auto missing = package; missing.erase(quick.id);
     check(preview::Parts(missing, global.id, All, error).empty(), "missing dependency rejects complete preview");
+    auto ramp = widget_preview::GenerateWallpaper(1024, 1024, false);
+    for (int y = 0; y < 1024; ++y) for (int x = 0; x < 1024; ++x)
+        ramp.pixels[static_cast<std::size_t>(y) * 1024 + x] = 0xff000000u |
+            static_cast<unsigned>(x / 4) << 16 | static_cast<unsigned>(y / 4) << 8 | static_cast<unsigned>((x + y) / 8);
+    const auto rampPath = directory / L"smooth-gradient.png";
+    check(preview::SaveCover(rampPath, ramp, error) && Compare(ramp, widget_preview::LoadWallpaperImage(rampPath)).pixels == 0,
+        "compressible 8-bit gradient covers keep every color level without posterization");
     auto noise = widget_preview::GenerateWallpaper(1024,1024,false);
     std::uint32_t seed = 19;
     for (auto& pixel : noise.pixels) { seed = seed * 1664525u + 1013904223u; pixel = 0xff000000u | (seed & 0xffffffu); }
@@ -235,6 +270,12 @@ int wmain(int argc, wchar_t** argv)
                 std::filesystem::file_size(cover) < preview::kCoverMaximumBytes,
                 "icon gallery renders a complete production effect under the Workshop image limit");
             const auto original = iconOk ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
+            const bool smartOk = preview::RenderGallery(argv[1], icons, icon.id, Components,
+                directory / L"icon-gallery-smart", gallery, cover, error, nullptr, {}, 0);
+            check(smartOk && Compare(original, widget_preview::LoadWallpaperImage(cover)).material > 10000 &&
+                steam_bridge::ThemeFileSha256(iconDirectory / L"package.snowtheme") ==
+                    steam_bridge::ThemeFileSha256(directory / L"icon-gallery-smart" / L"package.snowtheme"),
+                "preview applies the caller's local strategy while the exported theme remains identical");
             auto different = icons; auto& effect = different.at(icon.id).icon;
             effect.shape = IconBeautifyShape::Circle; effect.backgroundOpacity = 1.f;
             effect.backgroundStartR = 1.f; effect.backgroundStartG = effect.backgroundStartB = 0.f;

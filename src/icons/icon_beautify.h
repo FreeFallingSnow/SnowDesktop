@@ -4,6 +4,7 @@
 #include <optional>
 #include <vector>
 #include "theme/edge_light_settings.h"
+#include "theme/panel_gradient.h"
 
 namespace snowdesktop
 {
@@ -79,6 +80,9 @@ struct IconBeautifySettings
     float backgroundEndR = 222.0f / 255.0f;
     float backgroundEndG = 228.0f / 255.0f;
     float backgroundEndB = 240.0f / 255.0f;
+    // 0: custom, 1: original icon plate, 2: icon accent. Resolved per icon.
+    int backgroundSource = 0;
+    PanelGradient backgroundGradient{false, 90, 0, 1, {{0, 0xe8ecf4, 1}, {1, 0xdee4f0, 1}}};
 
     IconBeautifyShape shape = IconBeautifyShape::LegacyRounded;
     float contentScale = 0.68f;
@@ -88,6 +92,8 @@ struct IconBeautifySettings
     float textureShadeStrength = 0.0f;
     float textureEdgeHighlight = 0.0f;
     bool filterEnabled = false;
+    // 0 retains the legacy multiply filter; 1 preserves luminosity; 2 is flat mono.
+    int filterMode = 0;
     float filterStrength = 1.0f;
     float filterTintR = 90.0f / 255.0f;
     float filterTintG = 140.0f / 255.0f;
@@ -117,6 +123,7 @@ struct ShapePoint
 };
 
 IconBeautifySettings Normalize(IconBeautifySettings settings);
+PanelGradient BackgroundGradient(const IconBeautifySettings& settings);
 bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs);
 bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings);
 IconBeautifySettings MakePreset(IconBeautifyPreset preset);

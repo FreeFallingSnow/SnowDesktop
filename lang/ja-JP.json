@@ -2756,5 +2756,15 @@
   "settings.animation.option.slower": "さらに遅い（0.5×）",
   "settings.animation.option.verySlow": "とても遅い（0.33×）",
   "settings.animation.option.slowest": "最も遅い（0.25×）",
-  "themeLibrary.icon": "アイコンテーマ"
+  "themeLibrary.icon": "アイコンテーマ",
+  "iconStyle.backgroundSource": "背景色の取得元",
+  "iconStyle.iconBackground": "アイコン本来の背景色",
+  "iconStyle.iconAccent": "アイコンのアクセントカラー",
+  "iconStyle.coloring": "色の処理",
+  "iconStyle.legacyTint": "従来の色付け",
+  "iconStyle.tonalTint": "明暗を保つ色付け",
+  "iconStyle.monochrome": "単色",
+  "iconStyle.strategy": "アイコンの処理方法",
+  "iconStyle.smart": "スマート美化",
+  "iconStyle.shrinkAll": "すべて縮小してテーマの背景を追加"
 }

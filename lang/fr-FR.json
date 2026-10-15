@@ -2756,5 +2756,15 @@
   "settings.animation.option.slower": "Plus lente (0.5×)",
   "settings.animation.option.verySlow": "Très lente (0.33×)",
   "settings.animation.option.slowest": "La plus lente (0.25×)",
-  "themeLibrary.icon": "Thème des icônes"
+  "themeLibrary.icon": "Thème des icônes",
+  "iconStyle.backgroundSource": "Source de la couleur de fond",
+  "iconStyle.iconBackground": "Fond d’origine de l’icône",
+  "iconStyle.iconAccent": "Couleur d’accent de l’icône",
+  "iconStyle.coloring": "Traitement des couleurs",
+  "iconStyle.legacyTint": "Ancienne teinte",
+  "iconStyle.tonalTint": "Teinte tonale",
+  "iconStyle.monochrome": "Monochrome",
+  "iconStyle.strategy": "Traitement des icônes",
+  "iconStyle.smart": "Embellissement intelligent",
+  "iconStyle.shrinkAll": "Tout réduire et ajouter le fond du thème"
 }

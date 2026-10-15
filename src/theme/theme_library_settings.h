@@ -100,7 +100,7 @@ inline Theme CaptureTarget(std::string_view target, const SettingsValues& values
     if (target == "icon")
     {
         Theme theme; theme.kind = Kind::Icon; theme.scopes = Components;
-        theme.icon = values.desktop.iconBeautify; theme.icon.preset = IconBeautifyPreset::Custom;
+        theme.icon = values.desktop.iconBeautify; theme.icon.mode = 0; theme.icon.preset = IconBeautifyPreset::Custom;
         return theme;
     }
     auto appearance = values.personalization;
@@ -324,7 +324,12 @@ inline bool ApplyTarget(const Library& library, std::string_view target, std::st
         (target != "global" && !(theme->scopes & TargetScope(target))))) { error = "invalidSelection"; return false; }
     const SurfaceTheme snapshot{4, true, Capture(theme->kind, theme->appearance).appearance};
     if (target == "icon")
-    { values.desktop.iconBeautify = theme->icon; values.desktop.iconBeautify.preset = IconBeautifyPreset::Custom; }
+    {
+        const int strategy = values.desktop.iconBeautify.mode;
+        values.desktop.iconBeautify = theme->icon;
+        values.desktop.iconBeautify.mode = strategy;
+        values.desktop.iconBeautify.preset = IconBeautifyPreset::Custom;
+    }
     else if (target == "global")
     {
         if (!FullScope(theme->scopes))

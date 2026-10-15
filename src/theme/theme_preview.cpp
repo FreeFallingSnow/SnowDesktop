@@ -8,6 +8,8 @@
 #include <wincodec.h>
 #include <wrl/client.h>
 #include <d3d11.h>
+#include <d2d1_3.h>
+#include <d2d1svg.h>
 #include <cstring>
 #include "../../steam_bridge/src/theme_workshop_publish.h"
 
@@ -84,11 +86,21 @@ bool SaveCover(const std::filesystem::path& path, widget_preview::Wallpaper imag
 {
     if (image.width != kCoverSize || image.height != kCoverSize || image.pixels.size() != kCoverSize * kCoverSize)
         return Fail(error, "previewFailed");
-    for (unsigned bits : {8u, 6u, 5u, 4u, 3u, 2u})
+    for (unsigned bits : {8u, 7u, 6u, 5u, 4u, 3u, 2u})
     {
         auto pixels = image.pixels;
         if (bits < 8)
-            for (auto& p : pixels) { const auto mask = (0xffu << (8 - bits)) & 0xffu; p = 0xff000000u | (p & (mask | mask << 8 | mask << 16)); }
+            for (auto& p : pixels)
+            {
+                const unsigned levels = (1u << bits) - 1;
+                std::uint32_t rounded = 0xff000000;
+                for (unsigned shift : {0u, 8u, 16u})
+                {
+                    const unsigned quantized = (((p >> shift) & 255u) * levels + 127u) / 255u;
+                    rounded |= ((quantized * 255u + levels / 2) / levels) << shift;
+                }
+                p = rounded;
+            }
         if (!preview_png::Save(path, kCoverSize, kCoverSize, pixels, error)) return false;
         std::error_code ec; const auto size = std::filesystem::file_size(path, ec);
         if (!ec && size > 0 && size < kCoverMaximumBytes) return true;
@@ -203,10 +215,61 @@ static bool BlurIconBackdrop(const widget_preview::Wallpaper& source, float radi
             mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(source.width) * 4);
     return SUCCEEDED(readback->Unmap()) || Fail(error, "previewFailed");
 }
+static bool IconSample(const std::filesystem::path& host, int resourceId, int side,
+    std::vector<std::uint32_t>& pixels, std::string& error)
+{
+    const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    struct ComCleanup { HRESULT result; ~ComCleanup() { if (SUCCEEDED(result)) CoUninitialize(); } } cleanup{initialized};
+    const auto module = LoadLibraryExW(host.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+    if (!module) return Fail(error, "previewFailed");
+    struct ModuleCleanup { HMODULE value; ~ModuleCleanup() { FreeLibrary(value); } } moduleCleanup{module};
+    const auto resource = FindResourceW(module, MAKEINTRESOURCEW(resourceId), RT_RCDATA);
+    const auto bytes = resource ? SizeofResource(module, resource) : 0;
+    const auto loaded = resource ? LoadResource(module, resource) : nullptr;
+    const auto data = loaded ? LockResource(loaded) : nullptr;
+    if (!data || !bytes) return Fail(error, "previewFailed");
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IStream> stream;
+    ULONG written = 0;
+    if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) || FAILED(stream->Write(data, bytes, &written)) || written != bytes ||
+        FAILED(stream->Seek({}, STREAM_SEEK_SET, nullptr))) return Fail(error, "previewFailed");
+    ComPtr<ID3D11Device> graphics; ComPtr<IDXGIDevice> dxgi;
+    ComPtr<ID2D1Factory1> factory; ComPtr<ID2D1Device> device;
+    ComPtr<ID2D1DeviceContext> context; ComPtr<ID2D1DeviceContext5> svgContext;
+    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            nullptr, 0, D3D11_SDK_VERSION, &graphics, nullptr, nullptr)) || FAILED(graphics.As(&dxgi)) ||
+        FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) ||
+        FAILED(factory->CreateDevice(dxgi.Get(), &device)) || FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)) ||
+        FAILED(context.As(&svgContext))) return Fail(error, "previewFailed");
+    ComPtr<ID2D1SvgDocument> svg; ComPtr<ID2D1SvgElement> root;
+    if (FAILED(svgContext->CreateSvgDocument(stream.Get(), D2D1::SizeF(static_cast<float>(side), static_cast<float>(side)), &svg)))
+        return Fail(error, "previewFailed");
+    svg->GetRoot(&root);
+    const D2D1_SVG_LENGTH length{static_cast<float>(side), D2D1_SVG_LENGTH_UNITS_NUMBER};
+    if (!root || FAILED(root->SetAttributeValue(L"width", length)) || FAILED(root->SetAttributeValue(L"height", length)))
+        return Fail(error, "previewFailed");
+    const auto size = D2D1::SizeU(static_cast<UINT32>(side), static_cast<UINT32>(side));
+    const auto format = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+    const auto properties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, format, 96, 96);
+    ComPtr<ID2D1Bitmap1> target, readback;
+    if (FAILED(context->CreateBitmap(size, nullptr, 0, &properties, &target))) return Fail(error, "previewFailed");
+    context->SetTarget(target.Get()); context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
+    svgContext->DrawSvgDocument(svg.Get());
+    const auto result = context->EndDraw(); context->SetTarget(nullptr);
+    const auto cpu = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96);
+    if (FAILED(result) || FAILED(context->CreateBitmap(size, nullptr, 0, &cpu, &readback)) ||
+        FAILED(readback->CopyFromBitmap(nullptr, target.Get(), nullptr))) return Fail(error, "previewFailed");
+    D2D1_MAPPED_RECT mapped{};
+    if (FAILED(readback->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return Fail(error, "previewFailed");
+    pixels.resize(static_cast<std::size_t>(side) * side);
+    for (int y = 0; y < side; ++y) std::memcpy(pixels.data() + static_cast<std::size_t>(y) * side,
+        mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(side) * 4);
+    return SUCCEEDED(readback->Unmap()) || Fail(error, "previewFailed");
+}
 static bool RenderImages(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
     std::string& error, const std::atomic_bool* cancel, std::vector<Image>* images,
-    const std::filesystem::path& background)
+    const std::filesystem::path& background, int iconProcessingMode)
 {
     if (images) images->clear();
     cover.clear(); const auto parts = Parts(package, root, scope, error); if (parts.empty()) return false;
@@ -238,29 +301,25 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
     const auto rootTheme = Resolve(package, root);
     if (rootTheme && rootTheme->kind == Kind::Icon)
     {
-        // Fixed transparent/solid sample glyphs use the actual icon renderer.
+        // Vector sample artwork is rasterized at the actual output resolution.
         // No desktop shortcuts, application paths or user icons are enumerated.
-        constexpr int side = 224;
-        constexpr std::uint32_t colors[]{0xff53a6f0u, 0xfff5b43cu, 0xff62c098u, 0xffa888dfu};
+        constexpr int side = 256;
+        constexpr int resources[]{IDR_ICON_PREVIEW_BROWSER, IDR_ICON_PREVIEW_FOLDER, IDR_ICON_PREVIEW_MAIL, IDR_ICON_PREVIEW_MEDIA};
         const bool glass = rootTheme->icon.enabled && rootTheme->icon.glassEnabled;
         widget_preview::Wallpaper blurred;
         if (glass && !BlurIconBackdrop(backdrop, rootTheme->icon.glassBlurRadius, blurred, error)) return false;
         for (int sample = 0; sample < 4; ++sample)
         {
             if (cancel && cancel->load()) return Fail(error, "cancelled");
-            std::vector<std::uint32_t> source(side * side);
-            for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
-            {
-                const int dx = x - side / 2, dy = y - side / 2;
-                const bool plate = sample % 2 == 0 && dx * dx + dy * dy < 94 * 94;
-                const bool glyph = sample % 2 == 0 ? (std::abs(dx) < 17 || std::abs(dy) < 17) && std::abs(dx) < 57 && std::abs(dy) < 57 :
-                    (x >= 43 && x < 181 && y >= 71 && y < 164) || (x >= 43 && x < 107 && y >= 51 && y < 71);
-                if (plate) source[static_cast<std::size_t>(y) * side + x] = colors[sample];
-                if (glyph) source[static_cast<std::size_t>(y) * side + x] = plate ? 0xffffffffu : colors[sample];
-            }
-            const auto rendered = icon_beautify::Render(source, side, side, rootTheme->icon,
-                icon_beautify::DetectEdgeFill(source, side, side));
-            const int left = 176 + sample % 2 * 448, top = 176 + sample / 2 * 448;
+            std::vector<std::uint32_t> source;
+            if (!IconSample(host, resources[sample], side, source, error)) return false;
+            // Theme packages own appearance, not the local processing strategy.
+            // The settings caller freezes its local strategy separately from the
+            // shared package. Offline callers default to showing every background.
+            auto style = rootTheme->icon; style.mode = iconProcessingMode == 0 ? 0 : 1;
+            const auto rendered = icon_beautify::Render(source, side, side, style,
+                style.mode == 0 ? icon_beautify::DetectEdgeFill(source, side, side) : std::nullopt);
+            const int left = 160 + sample % 2 * 448, top = 160 + sample / 2 * 448;
             for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
             {
                 const auto pixel = rendered[static_cast<std::size_t>(y) * side + x];
@@ -349,12 +408,12 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
 bool Render(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
     std::string& error, const std::atomic_bool* cancel)
-{ return RenderImages(host, package, root, scope, directory, cover, error, cancel, nullptr, {}); }
+{ return RenderImages(host, package, root, scope, directory, cover, error, cancel, nullptr, {}, 1); }
 bool RenderGallery(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::vector<Image>& images,
     std::filesystem::path& cover, std::string& error, const std::atomic_bool* cancel,
-    const std::filesystem::path& background)
+    const std::filesystem::path& background, int iconProcessingMode)
 {
-    if (RenderImages(host, package, root, scope, directory, cover, error, cancel, &images, background)) return true;
+    if (RenderImages(host, package, root, scope, directory, cover, error, cancel, &images, background, iconProcessingMode)) return true;
     images.clear(); cover.clear(); return false;
 }}

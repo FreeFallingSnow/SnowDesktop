@@ -27,15 +27,24 @@ invalid parameters and missing/wrong-kind dependencies reject the entire
 package. The filename suffix selects the parser and does not bypass content
 validation. A successful installation does not apply any theme.
 
-Independent icon themes use version 2 with an additional required `icon` array.
+Independent icon themes use version 3 with an additional required `icon` array.
 Each entry contains only `id`, `name` and an `icon` object. The strict icon codec
 includes the shape, background, glass, reflection, gradient, texture, filter,
-outline, shadow and enablement values. It excludes application paths, icon
+outline, shadow, per-icon background color sources, multi-stop gradients and tonal/monochrome coloring values. It excludes application paths, icon
 replacements, size, typography and layout. Preset identity is local; applying an
 icon theme selects the custom preset and changes only icon beautification.
+Smart versus shrink-all processing is a separate local preference; capture,
+selection, reference reconciliation and theme updates never replace that choice.
+Version 2's `mode` is validated on import and discarded. Built-in presets and
+layout reload also preserve the local strategy.
 Packages without icon themes continue to export version 1. New readers accept
-both versions; old readers reject version 2. The private library writes version
-2 and reads version 1, retaining old references and immutable snapshots.
+versions 1, 2 and 3; older readers reject version 3. The private library writes version
+3 and reads versions 1 and 2, retaining old references and immutable snapshots.
+Legacy tint and two-color gradients remain available when loading older settings.
+New tint defaults to 35% luminosity-preserving coloring; monochrome is explicit.
+Background color is resolved per icon: original plate (accent fallback) or a
+chroma-weighted dominant color cluster. Automatic gradient colors form a lighter
+to-original ramp; custom gradients retain 2–5 stops, opacity, angle and range.
 
 Custom themes contain an opaque stable `id`, a display-only `name` and an
 `appearance` object encoded by the panel material codec plus
@@ -114,9 +123,13 @@ layout without changing personal search settings.
 and passes that file to the host's private offscreen renderer. Component cards,
 quick panel, popup, Dock and status bar call their production renderers; taskbar
 material uses the production panel fill and taskbar physical-edge rasterizer.
-Icon previews run fixed transparent and solid sample glyphs through the production
+Icon previews rasterize the existing Fluent preview SVGs at their target size and run them through the production
 icon beautification renderer, with the same immutable package and approved
-background. They do not enumerate user desktop icons or application paths.
+background. Settings freeze the current local processing strategy separately for
+preview/share; offline previews default to shrink-all backgrounds. The strategy
+is never included in a shared package. They do not enumerate
+user desktop icons or application paths. PNG adaptive filtering is attempted before
+bounded rounded color reduction, preserving neutral colors and reducing banding.
 Taskbar buttons are fixed stock fixtures because Explorer owns real buttons.
 No desktop enumeration, notifications, search history or personal shortcuts are
 loaded. The fixed background and demonstration data are repeatable.
@@ -140,7 +153,7 @@ and rechecks the saved snapshot before invoking the bridge. Closing the session,
 cancelling or receiving a stale generation prevents a later confirmation from
 publishing. Every operation has a single active request. Steam capability
 `workshop.theme.v1`, `workshop.theme.tags.v1`, `workshop.theme.gallery.v1`,
-`workshop.theme.color-alpha.v1`, `workshop.theme.icon.v1` and workflow protocol 1
+`workshop.theme.color-alpha.v1`, `workshop.theme.icon.v1`, `workshop.theme.icon-style.v1` and workflow protocol 1
 are required independently of bridge presence and the application version.
 Old component commands and version 1 packages remain readable; taskbar protocol remains version 13.
 

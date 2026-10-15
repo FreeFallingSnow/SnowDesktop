@@ -2756,5 +2756,15 @@
   "settings.animation.option.slower": "더 느리게 (0.5×)",
   "settings.animation.option.verySlow": "매우 느리게 (0.33×)",
   "settings.animation.option.slowest": "가장 느리게 (0.25×)",
-  "themeLibrary.icon": "아이콘 테마"
+  "themeLibrary.icon": "아이콘 테마",
+  "iconStyle.backgroundSource": "배경색 출처",
+  "iconStyle.iconBackground": "아이콘의 원래 배경색",
+  "iconStyle.iconAccent": "아이콘 강조 색상",
+  "iconStyle.coloring": "색상 처리",
+  "iconStyle.legacyTint": "기존 색조",
+  "iconStyle.tonalTint": "명암을 유지하는 색조",
+  "iconStyle.monochrome": "단색",
+  "iconStyle.strategy": "아이콘 처리 방식",
+  "iconStyle.smart": "스마트 꾸미기",
+  "iconStyle.shrinkAll": "모두 축소하고 테마 배경 추가"
 }

@@ -67,9 +67,16 @@ bool Save(const std::filesystem::path& output,
         result = encoder->Initialize(
             stream.Get(), WICBitmapEncoderNoCache);
     ComPtr<IWICBitmapFrameEncode> frame;
+    ComPtr<IPropertyBag2> options;
     if (SUCCEEDED(result))
-        result = encoder->CreateNewFrame(&frame, nullptr);
-    if (SUCCEEDED(result)) result = frame->Initialize(nullptr);
+        result = encoder->CreateNewFrame(&frame, &options);
+    if (SUCCEEDED(result))
+    {
+        PROPBAG2 property{}; property.pstrName = const_cast<wchar_t*>(L"FilterOption");
+        VARIANT value{}; value.vt = VT_UI1; value.bVal = WICPngFilterAdaptive;
+        result = options->Write(1, &property, &value);
+    }
+    if (SUCCEEDED(result)) result = frame->Initialize(options.Get());
     if (SUCCEEDED(result))
         result = frame->SetSize(
             static_cast<UINT>(width), static_cast<UINT>(height));

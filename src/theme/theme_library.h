@@ -15,7 +15,7 @@
 namespace snowdesktop::themes
 {
 // The package version is independent of the widget API and Steam bridge CLI.
-inline constexpr int kPackageVersion = 2;
+inline constexpr int kPackageVersion = 3;
 enum class Kind { Global, QuickPanel, Popup, Icon };
 enum Scope : unsigned { Components = 1, Dock = 2, StatusBar = 4, Taskbar = 8, All = 15 };
 inline constexpr unsigned Bars = Dock | StatusBar | Taskbar;

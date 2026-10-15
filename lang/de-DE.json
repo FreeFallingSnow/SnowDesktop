@@ -2756,5 +2756,15 @@
   "settings.animation.option.slower": "Langsamer (0.5×)",
   "settings.animation.option.verySlow": "Sehr langsam (0.33×)",
   "settings.animation.option.slowest": "Am langsamsten (0.25×)",
-  "themeLibrary.icon": "Symboldesign"
+  "themeLibrary.icon": "Symboldesign",
+  "iconStyle.backgroundSource": "Quelle der Hintergrundfarbe",
+  "iconStyle.iconBackground": "Ursprünglicher Symbolhintergrund",
+  "iconStyle.iconAccent": "Akzentfarbe des Symbols",
+  "iconStyle.coloring": "Farbbehandlung",
+  "iconStyle.legacyTint": "Bisherige Einfärbung",
+  "iconStyle.tonalTint": "Tonale Einfärbung",
+  "iconStyle.monochrome": "Einfarbig",
+  "iconStyle.strategy": "Symbolverarbeitung",
+  "iconStyle.smart": "Intelligente Verschönerung",
+  "iconStyle.shrinkAll": "Alle verkleinern und Designhintergrund hinzufügen"
 }

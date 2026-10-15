@@ -128,7 +128,7 @@ bool Capabilities(std::string_view configuration, std::string_view hostVersion)
         std::any_of(capabilities->array.begin(), capabilities->array.end(),
             [key](const auto& value) { return value.IsString() && value.string == key; }); };
     return has("workshop.theme.v1") && has("workshop.theme.tags.v1") && has("workshop.theme.gallery.v1") &&
-        has("workshop.theme.color-alpha.v1") && has("workshop.theme.icon.v1");
+        has("workshop.theme.color-alpha.v1") && has("workshop.theme.icon.v1") && has("workshop.theme.icon-style.v1");
 }
 bool Available(const std::filesystem::path& bridge, std::string_view hostVersion)
 {

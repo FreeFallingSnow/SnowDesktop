@@ -292,6 +292,9 @@ void DesktopApp::LoadLayoutSlots()
     if (document.iconBeautifyShadowStrength)
         iconBeautifySettings_.shadowStrength = *document.iconBeautifyShadowStrength;
     if (document.iconBeautifyEdgeLight) iconBeautifySettings_.edgeLight = *document.iconBeautifyEdgeLight;
+    if (document.iconBeautifyBackgroundGradient) iconBeautifySettings_.backgroundGradient = *document.iconBeautifyBackgroundGradient;
+    if (document.iconBeautifyBackgroundSource) iconBeautifySettings_.backgroundSource = *document.iconBeautifyBackgroundSource;
+    if (document.iconBeautifyFilterMode) iconBeautifySettings_.filterMode = *document.iconBeautifyFilterMode;
     iconBeautifySettings_ = snowdesktop::icon_beautify::ResolvePersistedSettings(
         iconBeautifySettings_, document.iconBeautifyPreset.has_value());
 
@@ -1059,6 +1062,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"iconBeautifyEdgeHighlightStrength\": " << iconBeautifySettings_.edgeHighlightStrength
          << ",\n  \"iconBeautifyEdgeLight\": " << snowdesktop::EncodeEdgeLight(iconBeautifySettings_.edgeLight)
          << ",\n  \"iconBeautifyMode\": " << iconBeautifySettings_.mode
+         << ",\n  \"iconBeautifyBackgroundSource\": " << iconBeautifySettings_.backgroundSource
+         << ",\n  \"iconBeautifyBackgroundGradient\": " << snowdesktop::EncodePanelGradient(iconBeautifySettings_.backgroundGradient)
+         << ",\n  \"iconBeautifyFilterMode\": " << iconBeautifySettings_.filterMode
          << ",\n  \"iconBeautifyBgOpacity\": " << iconBeautifySettings_.backgroundOpacity
          << ",\n  \"iconBeautifyGradientEnabled\": " << (iconBeautifySettings_.gradientEnabled ? "true" : "false")
          << ",\n  \"iconBeautifyGradientDirection\": " << iconBeautifySettings_.gradientDirection

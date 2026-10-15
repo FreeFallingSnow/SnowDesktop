@@ -2913,6 +2913,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             registerDesktopFocus({
                 "desktop.iconBeautify",
                 "desktop.iconBeautify.mode",
+                "desktop.iconBeautify.backgroundSource",
+                "desktop.iconBeautify.filterMode",
                 "desktop.iconBeautify.backgroundColor",
                 "desktop.iconBeautify.backgroundOpacity",
                 "desktop.iconBeautify.glass",

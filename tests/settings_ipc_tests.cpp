@@ -359,6 +359,11 @@ void TestCodec()
     settings.values.desktop.iconBeautify.edgeHighlightEnabled = true;
     settings.values.desktop.iconBeautify.edgeHighlightWidth = 1.7f;
     settings.values.desktop.iconBeautify.edgeHighlightStrength = .65f;
+    settings.values.desktop.iconBeautify.mode = 1;
+    settings.values.desktop.iconBeautify.backgroundSource = 2;
+    settings.values.desktop.iconBeautify.filterMode = 1;
+    settings.values.desktop.iconBeautify.backgroundGradient = {true, 125, .2, .9,
+        {{0, 0x113355, .4}, {.6, 0x7799aa, .8}, {1, 0xaaccff, 1}}};
     settings.values.category.rules.push_back({L"中文", L"文档", L"txt,md"});
     settings.values.personalization.panelGradient.enabled = true;
     settings.values.personalization.showGroupTabCounts = true;
@@ -411,6 +416,9 @@ void TestCodec()
         restored.values.desktop.iconBeautify.edgeHighlightEnabled && restored.values.desktop.iconBeautify.edgeHighlightWidth == 1.7f &&
         restored.values.desktop.iconBeautify.edgeHighlightStrength == .65f,
         "glass, blur and directional reflection survive the settings process boundary");
+    Check(restored.values.desktop.iconBeautify.mode == 1 && restored.values.desktop.iconBeautify.backgroundSource == 2 &&
+        restored.values.desktop.iconBeautify.filterMode == 1 && restored.values.desktop.iconBeautify.backgroundGradient == settings.values.desktop.iconBeautify.backgroundGradient,
+        "local processing strategy, automatic color source and every gradient stop cross settings IPC");
     for (const auto preset : {snowdesktop::IconBeautifyPreset::FrostedGlassDark, snowdesktop::IconBeautifyPreset::FrostedGlassLight})
     {
         auto variant = settings;

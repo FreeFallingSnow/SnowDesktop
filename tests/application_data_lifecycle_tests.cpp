@@ -344,6 +344,19 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
         }
     }
     layout::Document legacy;
+    Expect(layout::ParseDocument(R"({"iconBeautifyEnabled":true,"iconBeautifyPreset":5,"iconBeautifyMode":1,"iconBeautifyGradientEnabled":true,"iconBeautifyGradientDirection":3,"iconBeautifyFilterEnabled":true,"iconBeautifyFilterStrength":0.7,"iconBeautifyBgOpacity":0.4})", legacy) &&
+            legacy.iconBeautifyMode == 1 && legacy.iconBeautifyGradientDirection == 3 && legacy.iconBeautifyFilterStrength == .7f &&
+            !legacy.iconBeautifyBackgroundGradient && !legacy.iconBeautifyBackgroundSource && !legacy.iconBeautifyFilterMode,
+        "old icon layouts retain their original strategy and filter without opting into new appearance rules");
+    Expect(layout::ParseDocument(R"({"iconBeautifyMode":1,"iconBeautifyBackgroundSource":2,"iconBeautifyFilterMode":1,"iconBeautifyBackgroundGradient":{"enabled":true,"angle":135,"start":0.1,"end":0.9,"stops":[{"position":0,"color":16711680,"opacity":0.3},{"position":0.4,"color":65280,"opacity":0.7},{"position":1,"color":255,"opacity":1}]}})", legacy) &&
+            legacy.iconBeautifyMode == 1 && legacy.iconBeautifyBackgroundSource == 2 && legacy.iconBeautifyFilterMode == 1 &&
+            legacy.iconBeautifyBackgroundGradient && legacy.iconBeautifyBackgroundGradient->stops.size() == 3 &&
+            legacy.iconBeautifyBackgroundGradient->stops[1].position == .4,
+        "new icon appearances reload every gradient stop independently of their local strategy");
+    Expect(!layout::ParseDocument(R"({"iconBeautifyBackgroundSource":3})", legacy) &&
+            !layout::ParseDocument(R"({"iconBeautifyFilterMode":-1})", legacy) &&
+            !layout::ParseDocument(R"({"iconBeautifyBackgroundGradient":{"stops":[{"position":0,"color":0,"opacity":1},{"position":0,"color":255,"opacity":1}]}})", legacy),
+        "unknown color sources, coloring modes and invalid gradients reject before layout state is replaced");
     for (const char* savedLayout : {
              R"({"pages":[{"id":"empty-page","columns":22,"rows":10}]})",
              R"({"items":[{"key":"file","page":"old","x":1,"y":0}]})",

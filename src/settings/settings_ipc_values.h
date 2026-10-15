@@ -94,7 +94,7 @@ SD_IPC_FIELDS(IconBeautifySettings,
     v.textureHighlightAngle, v.textureShadeStrength, v.textureEdgeHighlight, v.filterEnabled,
     v.filterStrength, v.filterTintR, v.filterTintG, v.filterTintB,
     v.outlineEnabled, v.outlineWidth, v.outlineOpacity, v.outlineR,
-    v.outlineG, v.outlineB, v.shadowStrength);
+    v.outlineG, v.outlineB, v.shadowStrength, v.backgroundSource, v.backgroundGradient, v.filterMode);
 SD_IPC_FIELDS(DesktopDisplaySettings,
     v.dockEnabled, v.iconSpacingScale, v.itemIconSizeScale, v.itemFontSizeCu,
     v.listItemFontSizeCu, v.fanTitleFontSizeCu, v.itemFontWeight, v.desktopTitleLines, v.largeFolderTitleLines, v.scrollingTitleLines, v.shortcutArrowMode, v.iconBeautify, v.titleEllipsis);

@@ -111,7 +111,7 @@ int RunThemeLibraryTests()
     Library loaded;
     check(DecodeLibrary(serialized, loaded, error) && EncodeLibrary(loaded, error) == serialized, "complete snapshot configuration round-trip");
     auto legacyLibraryText = serialized;
-    legacyLibraryText.replace(legacyLibraryText.find("\"version\":2"), 11, "\"version\":1");
+    legacyLibraryText.replace(legacyLibraryText.find("\"version\":3"), 11, "\"version\":1");
     legacyLibraryText.erase(legacyLibraryText.find(",\"icon\":[]"), 10);
     check(DecodeLibrary(legacyLibraryText, loaded, error) && EncodeLibrary(loaded, error) == serialized,
         "existing version 1 libraries retain all themes and references when upgraded");
@@ -141,7 +141,7 @@ int RunThemeLibraryTests()
     check(!Import(destination, broken, mapping, error) && EncodeLibrary(destination, error) == beforeImport,
         "missing dependency rolls back the entire install");
     check(!DecodePackage("{\"format\":\"snowdesktop.theme\",\"version\":1,\"global\":[],\"quickPanel\":[],\"popup\":[]}", decoded, error), "all-empty package is rejected");
-    auto unsupported = packageText; unsupported.replace(unsupported.find("\"version\":1"), 11, "\"version\":3");
+    auto unsupported = packageText; unsupported.replace(unsupported.find("\"version\":1"), 11, "\"version\":4");
     check(!DecodePackage(unsupported, decoded, error) && error == "unsupportedVersion", "unsupported independent format version is rejected");
     check(!DecodePackage("{\"format\":\"snowdesktop.theme\",\"version\":1,\"global\":[],\"popup\":[]}", decoded, error), "missing section is rejected");
     check(!DecodePackage(std::string("\xff", 1), decoded, error), "invalid UTF-8 is rejected before parsing");
@@ -810,15 +810,43 @@ int RunThemeLibraryTests()
         iconValues.desktop.iconBeautify.backgroundOpacity = .31234567f;
         iconValues.desktop.iconBeautify.glassEnabled = true;
         iconValues.desktop.iconBeautify.edgeLight.direction = 123.f;
+        iconValues.desktop.iconBeautify.mode = 1;
+        iconValues.desktop.iconBeautify.backgroundSource = 2;
+        iconValues.desktop.iconBeautify.filterMode = 1;
+        iconValues.desktop.iconBeautify.backgroundGradient = {true, 137, .1, .8,
+            {{0, 0xffaa00, .4}, {.3, 0x00ddcc, .7}, {1, 0x3300aa, 1}}};
         auto icon = CaptureTarget("icon", iconValues); icon.id = "theme/icon-sample"; icon.name = "图标主题";
         Package iconPackage{{icon.id, icon}}, iconDecoded;
         const auto encoded = EncodePackage(iconPackage, error);
-        check(encoded.find("\"version\":2") != std::string::npos && encoded.find("\"appearance\"") == std::string::npos &&
+        check(encoded.find("\"version\":3") != std::string::npos && encoded.find("\"appearance\"") == std::string::npos &&
             DecodePackage(encoded, iconDecoded, error) && SameIconTheme(iconDecoded.at(icon.id).icon, icon.icon),
             "independent icon package preserves every visual value and omits unrelated panel data");
+        check(encoded.find("\"mode\":") == std::string::npos && icon.icon.mode == 0,
+            "shared icon themes omit the local smart versus shrink-all strategy");
+        JsonValue oldIcon;
+        check(ParseJson(EncodeIconTheme(icon.icon), oldIcon), "legacy icon migration fixture parses");
+        oldIcon.object.erase("backgroundGradient"); oldIcon.object.erase("backgroundSource"); oldIcon.object.erase("filterMode");
+        JsonValue legacyMode; legacyMode.type = JsonValue::Type::Number; legacyMode.number = 1;
+        oldIcon.object["mode"] = legacyMode;
+        IconBeautifySettings migrated;
+        check(DecodeIconTheme(oldIcon, migrated) && migrated.mode == 0 && migrated.filterMode == 0 && migrated.backgroundSource == 0,
+            "v2 appearance imports preserve legacy rendering while discarding its processing strategy");
+        auto legacyText = EncodeIconTheme(icon.icon);
+        const auto extensionAt = legacyText.find(",\"backgroundSource\":");
+        legacyText.erase(extensionAt, legacyText.find(",\"backgroundOpacity\":", extensionAt) - extensionAt);
+        legacyText.insert(1, "\"mode\":1,");
+        const auto legacyPackage = "{\"format\":\"snowdesktop.theme\",\"version\":2,\"global\":[],\"quickPanel\":[],\"popup\":[],\"icon\":[{\"id\":\"theme/legacy-icon\",\"name\":\"Legacy\",\"icon\":" + legacyText + "}]}";
+        Package legacyDecoded;
+        check(DecodePackage(legacyPackage, legacyDecoded, error) && legacyDecoded.at("theme/legacy-icon").icon.mode == 0 &&
+            legacyDecoded.at("theme/legacy-icon").icon.backgroundOpacity == icon.icon.backgroundOpacity,
+            "an actual v2 package migrates its appearance while its embedded strategy is discarded");
+        auto invalidGradient = oldIcon;
+        auto source = legacyMode; source.number = 2;
+        invalidGradient.object["backgroundSource"] = source;
+        check(!DecodeIconTheme(invalidGradient, migrated), "partial new appearance descriptions reject atomically");
         auto invalid = encoded; const auto at = invalid.find("\"shape\":10"); invalid.replace(at, 10, "\"shape\":9");
         check(!DecodePackage(invalid, iconDecoded, error), "unknown icon geometry rejects the whole package");
-        invalid = encoded; invalid.insert(invalid.find("\"mode\":"), "\"path\":\"private.exe\",");
+        invalid = encoded; invalid.insert(invalid.find("\"shape\":"), "\"path\":\"private.exe\",");
         check(!DecodePackage(invalid, iconDecoded, error), "icon themes cannot carry application paths or unknown settings");
         auto badIcon = icon; badIcon.icon.contentScale = 1.f;
         check(EncodePackage({{badIcon.id, badIcon}}, error).empty(), "out-of-range icon parameters cannot be exported");
@@ -834,9 +862,10 @@ int RunThemeLibraryTests()
         Library icons; std::map<std::string, std::string> ids;
         check(Import(icons, iconPackage, ids, error) && icons.references.empty(), "installing icon themes does not apply them");
         SettingsValues applied; applied.desktop.itemIconSizeScale = 1.25f; applied.dock.position = DockPosition::Left;
+        applied.desktop.iconBeautify.mode = 1;
         const auto unchangedPanel = applied.personalization;
         check(ApplyTarget(icons, "icon", icon.id, applied, error) && SameIconTheme(applied.desktop.iconBeautify, icon.icon) &&
-            applied.desktop.itemIconSizeScale == 1.25f && applied.dock.position == DockPosition::Left && applied.personalization == unchangedPanel &&
+            applied.desktop.itemIconSizeScale == 1.25f && applied.desktop.iconBeautify.mode == 1 && applied.dock.position == DockPosition::Left && applied.personalization == unchangedPanel &&
             !ApplyTarget(icons, "global", icon.id, applied, error), "icon application changes only beautification and rejects other targets");
         check(Select(icons, "icon", icon.id, Kind::Icon, Components, error), "icon selection owns an independent immutable reference");
         Library restored;
@@ -844,11 +873,14 @@ int RunThemeLibraryTests()
             SameIconTheme(restored.themes.at(icon.id).icon, icon.icon), "icon themes and references survive local library reload");
         ReconcileReferences(restored, applied);
         check(restored.references.at("icon").id == icon.id, "unchanged icon effects retain their selected theme");
+        applied.desktop.iconBeautify.mode = 0; ReconcileReferences(restored, applied);
+        check(restored.references.at("icon").id == icon.id, "changing only the processing strategy keeps the selected theme bound");
         applied.desktop.iconBeautify.shadowStrength = .79f; ReconcileReferences(restored, applied);
         check(restored.references.at("icon").id.empty(), "editing icon effects detaches the saved source without rewriting it");
         icons.themes.at(icon.id).icon.backgroundOpacity = .72f;
+        applied.desktop.iconBeautify.mode = 1;
         const auto updated = ApplySavedUpdate(icons, icon.id, applied, error);
-        check(updated == std::vector<std::string>{"icon"} && applied.desktop.iconBeautify.backgroundOpacity == .72f,
+        check(updated == std::vector<std::string>{"icon"} && applied.desktop.iconBeautify.backgroundOpacity == .72f && applied.desktop.iconBeautify.mode == 1,
             "explicit icon source updates refresh only its active target");
         using namespace winui::theme_controls;
         check(MatchesFilter(icon, FilterTab::Icon) && !MatchesFilter(icon, FilterTab::Global) &&

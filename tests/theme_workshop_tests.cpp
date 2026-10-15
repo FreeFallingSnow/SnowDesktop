@@ -191,7 +191,7 @@ int RunThemeWorkshopTests(const std::filesystem::path& directory)
         repeatedHashesValid = worker.get() && repeatedHashesValid;
     check(repeatedHashesValid,
         "repeated concurrent production hashes release objects and retain known empty/nonempty digests");
-    const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\"]}";
+    const std::string current = "{\"ok\":true,\"protocolVersion\":1,\"expectedAppId\":5080330,\"version\":\"1\",\"steamworksCompiled\":true,\"themeWorkflowProtocolVersion\":1,\"capabilities\":[\"workshop.theme.v1\",\"workshop.theme.tags.v1\",\"workshop.theme.gallery.v1\",\"workshop.theme.color-alpha.v1\",\"workshop.theme.icon.v1\",\"workshop.theme.icon-style.v1\"]}";
     check(workshop::Capabilities(current,"1") && !workshop::Capabilities(current,"2"), "bridge capability and compatible version are independent requirements");
     check(workshop::Capabilities("{\"progress\":\"starting\"}\n" + current + "\n","1") &&
         !workshop::Capabilities(current + "\n{\"ok\":false}\n","1"),
