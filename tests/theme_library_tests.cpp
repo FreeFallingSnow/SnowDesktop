@@ -822,6 +822,15 @@ int RunThemeLibraryTests()
         check(!DecodePackage(invalid, iconDecoded, error), "icon themes cannot carry application paths or unknown settings");
         auto badIcon = icon; badIcon.icon.contentScale = 1.f;
         check(EncodePackage({{badIcon.id, badIcon}}, error).empty(), "out-of-range icon parameters cannot be exported");
+        JsonValue decimalBounds;
+        check(ParseJson(EncodeIconTheme(icon.icon), decimalBounds), "external icon parameter fixture parses");
+        decimalBounds.object.at("contentScale").number = .9;
+        decimalBounds.object.at("textureHighlightSize").number = .1;
+        IconBeautifySettings boundaryIcon;
+        check(DecodeIconTheme(decimalBounds, boundaryIcon) && boundaryIcon.contentScale == .9f && boundaryIcon.textureHighlightSize == .1f,
+            "external decimal endpoints remain valid after conversion to stored float parameters");
+        decimalBounds.object.at("contentScale").number = 1.;
+        check(!DecodeIconTheme(decimalBounds, boundaryIcon), "decimal endpoint handling still rejects values outside the supported range");
         Library icons; std::map<std::string, std::string> ids;
         check(Import(icons, iconPackage, ids, error) && icons.references.empty(), "installing icon themes does not apply them");
         SettingsValues applied; applied.desktop.itemIconSizeScale = 1.25f; applied.dock.position = DockPosition::Left;

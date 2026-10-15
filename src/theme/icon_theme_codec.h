@@ -83,8 +83,10 @@ inline bool DecodeIconTheme(const JsonValue& json, IconBeautifySettings& value)
     for (const auto& [key, entry] : light->object) { (void)entry; if (!lightKeys.contains(key)) valid = false; }
     VisitIconThemeNumbers([&](auto name, auto field, float low, float high) {
         keys.insert(name); const auto* entry = json.Find(name);
-        if (!entry || !entry->IsNumber() || !std::isfinite(entry->number) || entry->number < low || entry->number > high) valid = false;
-        else out.*field = static_cast<float>(entry->number);
+        if (!entry || !entry->IsNumber() || !std::isfinite(entry->number)) { valid = false; return; }
+        const auto decoded = static_cast<float>(entry->number);
+        if (!std::isfinite(decoded) || decoded < low || decoded > high) valid = false;
+        else out.*field = decoded;
     });
     VisitIconThemeFlags([&](auto name, auto field) {
         keys.insert(name); const auto* entry = json.Find(name);
