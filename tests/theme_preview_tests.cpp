@@ -243,10 +243,30 @@ int wmain(int argc, wchar_t** argv)
             check(changedIcon && Compare(original, widget_preview::LoadWallpaperImage(cover)).material > 10000,
                 "icon preview changes with the frozen shape and material values");
             steam_bridge::ThemePublishPlan iconPlan;
+            const auto iconData = directory / L"icon-publish-data";
+            std::filesystem::create_directory(iconData);
             check(iconOk && steam_bridge::WriteThemePreparation(iconDirectory, icon.id, icon.name, 1700000000, error, tags::Applicable(icon)) &&
-                steam_bridge::BuildThemePublishPlan(iconDirectory, directory / L"icon-publish-data", iconPlan, error) &&
+                steam_bridge::BuildThemePublishPlan(iconDirectory, iconData, iconPlan, error) &&
                 iconPlan.tags == std::vector<std::string>{"Icon Theme"},
                 "actual bridge preparation accepts icon packages, their gallery and canonical tag");
+            auto glassIcons = icons;
+            auto& glassEffect = glassIcons.at(icon.id).icon;
+            glassEffect.glassEnabled = true; glassEffect.glassBlurRadius = 4.f; glassEffect.backgroundOpacity = .1f;
+            auto checker = widget_preview::GenerateWallpaper(1024, 1024, false);
+            for (int y = 0; y < 1024; ++y) for (int x = 0; x < 1024; ++x)
+                checker.pixels[static_cast<std::size_t>(y) * 1024 + x] = (x / 16 + y / 16) % 2 ? 0xff202030u : 0xffe0d8cfu;
+            const auto checkerPath = directory / L"icon-backdrop.png";
+            check(preview_png::Save(checkerPath, 1024, 1024, checker.pixels, error), "frosted icon fixture has a high-contrast background");
+            const bool sharpGlass = preview::RenderGallery(argv[1], glassIcons, icon.id, Components,
+                directory / L"icon-glass-4", gallery, cover, error, nullptr, checkerPath);
+            const auto firstGlass = sharpGlass ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
+            glassEffect.glassBlurRadius = 48.f;
+            const bool softGlass = preview::RenderGallery(argv[1], glassIcons, icon.id, Components,
+                directory / L"icon-glass-48", gallery, cover, error, nullptr, checkerPath);
+            const auto secondGlass = softGlass ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
+            check(sharpGlass && softGlass && Compare(firstGlass, secondGlass).material > 10000 &&
+                firstGlass.pixels.front() == secondGlass.pixels.front() && firstGlass.pixels.back() == secondGlass.pixels.back(),
+                "frosted radius changes the production backdrop inside icon shapes and preserves the surrounding stage");
         }
         const auto galleryDirectory = directory / L"gallery";
         const bool galleryOk = preview::RenderGallery(argv[1],package,global.id,All,galleryDirectory,gallery,cover,error);
