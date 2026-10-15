@@ -374,6 +374,26 @@ void TestQuotaErrorIsProtected()
     Expect(lua_gethook(test.state) == nullptr,
         "no quota hook remains after an error");
 }
+
+void TestComparisonTableIndices()
+{
+    // Exercise the vendored compiler and VM, including the _ENV access that
+    // upstream Lua 5.4.7 compiled incorrectly for a comparison expression.
+    for (const auto* source : {
+        "_ENV[true] = 42; return _ENV[1 < 2]",
+        "_ENV[true] = 42; return _ENV[2 > 1]",
+        "_ENV[false] = 42; return _ENV[2 < 1]",
+        "local t = {[true] = 42}; return t[1 < 2]" })
+    {
+        TestState test;
+        const int loaded = luaL_loadstring(test.state, source);
+        const int status = loaded == LUA_OK
+            ? snowdesktop::lua_runtime::ProtectedCall(test.state, 0, 1) : loaded;
+        Expect(status == LUA_OK && lua_isinteger(test.state, -1) &&
+            lua_tointeger(test.state, -1) == 42,
+            "comparison indices return the intended table value through the production compiler");
+    }
+}
 }
 
 int main()
@@ -385,6 +405,7 @@ int main()
     TestReentryDepthLimit();
     TestRepeatedShortReentryCannotResetQuota();
     TestQuotaErrorIsProtected();
+    TestComparisonTableIndices();
 
     if (failures == 0)
         std::cout << "Lua runtime tests passed\n";

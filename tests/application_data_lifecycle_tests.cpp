@@ -115,6 +115,39 @@ void MakeStoredZipEntryFragment(const std::filesystem::path& path,
     }
 }
 
+void TestJsonNestingBoundary()
+{
+    for (const bool mixed : {false, true})
+    {
+        for (const int levels : {128, 129})
+        {
+            std::string text;
+            for (int index = 0; index < levels; ++index)
+                text += mixed && index % 2 ? "{\"child\":" : "[";
+            text += '0';
+            for (int index = levels - 1; index >= 0; --index)
+                text += mixed && index % 2 ? '}' : ']';
+            JsonValue value;
+            std::string error;
+            const bool parsed = ParseJson(text, value, &error);
+            Expect(levels == 128 ? parsed : !parsed && error.find("nesting") != std::string::npos,
+                "JSON accepts 128 containers and rejects the next array/object nesting level");
+        }
+    }
+    JsonValue value;
+    std::string error;
+    Expect(!ParseJson(std::string(129, '['), value, &error) &&
+        error.find("nesting") != std::string::npos,
+        "an unclosed nested input is bounded before reaching end-of-file");
+    Expect(!ParseJson(std::string(129, '[') + std::string(129, ']'), value, &error),
+        "empty containers cannot bypass the same nesting boundary");
+    std::string wide = "[[]";
+    for (int index = 0; index < 512; ++index) wide += ",[]";
+    wide += ']';
+    Expect(ParseJson(wide, value, &error) && value.array.size() == 513,
+        "many sibling containers do not consume a cumulative nesting budget");
+}
+
 void MakePackage(const std::filesystem::path& root, std::string version,
     std::string id = "3af4c6ab-15d3-4f2a-8b8c-80e57600a87d",
     std::string permissions = "\"ui.input\"",
@@ -826,6 +859,7 @@ void TestDockFolderOrderPersistence(const std::filesystem::path& root)
 int RunDataCleanupTests();
 int main()
 {
+    TestJsonNestingBoundary();
     failures += RunDataCleanupTests();
     // PIDs are reused across runs, and a previous interrupted cleanup can
     // leave an installed version behind. Never reuse or delete that tree.
@@ -2748,6 +2782,27 @@ int main()
         "a rejected backup commit gate removes its staging directory");
 
     const auto createdFullBackup = fullBackupManager.Create();
+    if (createdFullBackup.ok)
+    {
+        const auto manifestPath = createdFullBackup.backup.root / L"backup.json";
+        const std::string originalManifest = Read(manifestPath);
+        const auto opening = originalManifest.find('{');
+        Expect(opening != std::string::npos, "the production backup has an object manifest");
+        if (opening != std::string::npos)
+        {
+            const std::string nested = std::string(129, '[') + "0" + std::string(129, ']');
+            std::string extended = originalManifest;
+            extended.insert(opening + 1, "\"extension\":" + nested + ",");
+            Write(manifestPath, extended);
+            int commitCalls = 0;
+            const auto rejected = fullBackupManager.QueueRestore(createdFullBackup.backup,
+                {{}, [&] { ++commitCalls; return false; }});
+            Expect(!rejected.ok && !rejected.cancelled && commitCalls == 0 &&
+                rejected.error.find("invalid JSON") != std::string::npos,
+                "the real backup restore rejects an otherwise valid deep manifest before migration commit");
+            Write(manifestPath, originalManifest);
+        }
+    }
     Expect(Read(createdFullBackup.backup.data / L"large-icons" / L"import-user.png") == "retained original image bytes" &&
         Read(createdFullBackup.backup.data / L"large-icons" / L"steam-999-portrait-english.png") == "retained offline cover bytes",
         "complete backups retain user image sources and the currently needed offline covers");

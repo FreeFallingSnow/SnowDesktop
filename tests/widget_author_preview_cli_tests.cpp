@@ -677,6 +677,114 @@ void CopyManifestAndPreview(const std::filesystem::path& source,
     }
 }
 
+std::string MakeBinaryModule()
+{
+    // lua_dump(strip=1) of `return { value = 42 }`, generated with the
+    // vendored Lua 5.4 Windows ABI (32-bit instructions, 64-bit integer/double).
+    // The original host successfully executes this valid harmless fixture;
+    // the corrected module loader must reject it before execution.
+    const unsigned char bytes[] = {
+        0x1b,0x4c,0x75,0x61,0x54,0x00,0x19,0x93,0x0d,0x0a,0x1a,0x0a,
+        0x04,0x08,0x08,0x78,0x56,0x00,0x00,0x00,0x00,0x00,0x00,0x00,
+        0x00,0x00,0x00,0x00,0x28,0x77,0x40,0x01,0x80,0x80,0x80,0x00,
+        0x01,0x02,0x86,0x51,0x00,0x00,0x00,0x13,0x00,0x01,0x00,0x52,
+        0x00,0x00,0x00,0x12,0x80,0x00,0x01,0x46,0x00,0x02,0x01,0x46,
+        0x00,0x01,0x01,0x82,0x04,0x86,0x76,0x61,0x6c,0x75,0x65,0x03,
+        0x2a,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x81,0x01,0x00,0x00,
+        0x80,0x80,0x80,0x80,0x80,
+    };
+    return {reinterpret_cast<const char*>(bytes), sizeof(bytes)};
+}
+
+void CheckRuntimeBoundaryRegressions(const std::filesystem::path& snowwidget,
+    const std::filesystem::path& host, const std::filesystem::path& root,
+    const std::filesystem::path& manifestSource)
+{
+    std::vector<std::string> failures;
+    const auto preview = [&](const char* name, const std::string& script,
+                             const auto& prepare) {
+        try
+        {
+            const auto source = root / name;
+            Check(std::filesystem::create_directories(source / L"modules"),
+                "runtime boundary fixture is created");
+            CopyManifestAndPreview(manifestSource, source);
+            prepare(source);
+            Write(source / L"main.lua", script);
+            const auto output = source / L"result.png";
+            const auto [exit, json] = Run(snowwidget,
+                {L"preview", source.wstring(), output.wstring(), L"--host", host.wstring()});
+            if (exit != 0) std::cerr << name << ": " << json << '\n';
+            Check(exit == 0 && json.find("\"ok\":true") != std::string::npos &&
+                    std::filesystem::is_regular_file(output),
+                "runtime boundary fixture loads and renders through the production sandbox");
+            CheckPng(output);
+        }
+        catch (const ProcessTimeout&) { throw; }
+        catch (const std::exception& error) { failures.emplace_back(std::string(name) + ": " + error.what()); }
+    };
+    const auto noFiles = [](const std::filesystem::path&) {};
+    preview("numeric-preset-key", R"lua(
+return widget.define({
+    settings = {
+        fields = {{ key = "message", type = "text", label = "Message", default = "ok" }},
+        presets = {{ id = "p", label = "P", values = { message = "ok", [1] = "ignored" } }},
+    },
+    render = function() draw.text(8, 8, "preset survived", 14, 0xFFFFFF) end,
+})
+)lua", noFiles);
+    preview("module-text-only", R"lua(
+local ok, failure = pcall(module.require, "modules/binary.lua")
+assert(not ok and tostring(failure):find("binary", 1, true),
+    "module.require must reject valid binary bytecode")
+assert(module.require("modules/good.lua").value == 42, "rejected binary module must not poison loading")
+return widget.define({ render = function() draw.text(8, 8, "text only", 14, 0xFFFFFF) end })
+)lua", [](const std::filesystem::path& source) {
+        Write(source / L"modules" / L"binary.lua", MakeBinaryModule());
+        Write(source / L"modules" / L"good.lua", "return { value = 42 }");
+    });
+    preview("nested-module-quota", R"lua(
+local good = module.require("modules/good.lua")
+module.require("modules/parent1.lua")
+module.require("modules/parent2.lua")
+for attempt = 1, 3 do
+    local ok, failure = pcall(module.require, "modules/parent3.lua")
+    assert(not ok and tostring(failure):find("quota exceeded", 1, true),
+        "nested module loading must consume the same per-instance quota")
+    assert(module.require("modules/good.lua") == good, "failed parent must preserve successful cache")
+    assert(module.require("modules/leaf3_1.lua").value == 1, "successful children remain cached")
+end
+return widget.define({ render = function() draw.text(8, 8, "quota held", 14, 0xFFFFFF) end })
+)lua", [](const std::filesystem::path& source) {
+        Write(source / L"modules" / L"good.lua", "return { value = 42 }");
+        for (int parent = 1; parent <= 3; ++parent)
+        {
+            std::string script;
+            for (int child = 1; child <= 24; ++child)
+            {
+                const std::string leaf = "leaf" + std::to_string(parent) + "_" + std::to_string(child);
+                Write(source / L"modules" / (leaf + ".lua"), "return { value = " + std::to_string(child) + " }");
+                script += "module.require('modules/" + leaf + ".lua')\n";
+            }
+            script += "return { value = 42 }";
+            Write(source / L"modules" / ("parent" + std::to_string(parent) + ".lua"), script);
+        }
+    });
+    preview("empty-filesystem-write", R"lua(
+local handle = "filesystem:00000000000000000000000000000000"
+local ok, result, failure = pcall(task.start, "filesystem.write", { handle = handle, text = "" })
+assert(ok and result == nil and failure == "widget instance is not loaded",
+    "empty UTF-8 text must reach the task boundary during entry loading")
+for _, request in ipairs({ {handle = handle}, {handle = handle, text = false},
+        {handle = handle, text = "\0"} }) do
+    assert(not pcall(task.start, "filesystem.write", request), "invalid write text must remain rejected")
+end
+return widget.define({ render = function() draw.text(8, 8, "empty accepted", 14, 0xFFFFFF) end })
+)lua", noFiles);
+    for (const auto& failure : failures) std::cerr << "REGRESSION: " << failure << '\n';
+    Check(failures.empty(), "all runtime boundary regressions pass");
+}
+
 void CheckModuleRequireErrors(const std::filesystem::path& snowwidget,
     const std::filesystem::path& host, const std::filesystem::path& root,
     const std::filesystem::path& manifestSource)
@@ -2289,6 +2397,7 @@ void TestGpuDiagnosticsCli(const std::filesystem::path& tool, const std::filesys
 
 int wmain(int argc, wchar_t** argv) try
 {
+    SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     if (argc == 2 && std::wstring_view(argv[1]) == L"--runner-hang")
     {
         std::cout << "ready\n" << std::flush;
@@ -3059,6 +3168,7 @@ int wmain(int argc, wchar_t** argv) try
                 monitorPreviews[1].pixels == monitorPreviews[2].pixels &&
                 monitorPreviews[2].pixels == monitorPreviews[3].pixels,
             "System Monitor defaults, legacy all-GPU selection and missing saved selection render a concrete available device");
+        CheckRuntimeBoundaryRegressions(snowwidget, host, temporary.path, monitorSource);
         CheckModuleRequireErrors(snowwidget, host, temporary.path, monitorSource);
         CheckSystemMonitorMenu(snowwidget, host, temporary.path, monitorSource);
         CheckRemindersInteraction(snowwidget, host, temporary.path, repository);

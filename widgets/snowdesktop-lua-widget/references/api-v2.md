@@ -2254,7 +2254,8 @@ local releaseTask = task.start("filesystem.release", {
 `{ handle,kind,name,size?,modifiedMs,readOnly,revision }`；`list` 只枚举一层，分页范围
 0–10000、每页 1–100，并把非 reparse 子项转换为同一实例的新 opaque handle；超过
 10000 个可枚举子项返回 `directoryTooLarge`。`read`/`write` 默认使用 `encoding=utf8`；
-UTF-8 读取返回 `text`，NUL 或非法编码返回 `invalidEncoding`。探测到
+UTF-8 读取返回 `text`，NUL 或非法编码返回 `invalidEncoding`。UTF-8 写入允许 `text=""`，
+表示将文件内容清空；省略 `text` 仍是无效请求。探测到
 `task.filesystem.binary` 后可显式使用 `encoding=binary`，读取结果改为 `data`，写入也必须
 传 `data`；Lua 字符串中的 NUL 和非 UTF-8 字节会被原样保留。两种模式的调用方上限与宿主
 硬上限都不超过 1 MiB，整文件读写不会因此开放路径或扩展句柄范围。
@@ -3040,7 +3041,10 @@ Lua 调用 `filesystem.release` 释放这种宿主管理 handle 会得到 `hostM
 ### `module` 与 `resource`
 
 `module.require("modules/example.lua")` 只能在入口脚本求值期间加载包内 `.lua`
-模块；结果按实例缓存。禁止循环依赖、包外路径以及 `require/package/io/os/load`。
+文本模块；不接受 Lua 二进制字节码。结果按实例缓存。每个实例最多加载 64 个模块、
+模块内容合计不超过 4 MiB，单个文件不超过 1 MiB；嵌套加载也计入这些限额。
+加载失败的模块可重试，其已成功加载的子模块仍保留缓存并占用配额。
+禁止循环依赖、包外路径以及 `require/package/io/os/load`。
 
 资源必须在 `widget.json` 中声明，例如：
 

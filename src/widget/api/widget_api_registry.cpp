@@ -813,7 +813,9 @@ bool StateValuesEqual(lua_State* state, int left, int right,
     case LUA_TBOOLEAN:
         return lua_toboolean(state, left) == lua_toboolean(state, right);
     case LUA_TNUMBER:
-        return lua_tonumber(state, left) == lua_tonumber(state, right);
+        // lua_rawequal already compared numbers using Lua's exact integer /
+        // float rules. Converting unequal integers to double loses low bits.
+        return false;
     case LUA_TSTRING:
     {
         std::size_t leftLength = 0;
@@ -1269,12 +1271,13 @@ bool IsDefinedWidget(lua_State* state, int index) noexcept
 
 int LuaTransientStateGet(lua_State* state)
 {
+    const bool hasDefault = !lua_isnone(state, 2);
     const std::string key = CheckedTransientStateKey(state, 1);
     PushTransientStateTable(state);
     const int values = lua_absindex(state, -1);
     lua_pushlstring(state, key.data(), key.size());
     lua_rawget(state, values);
-    if (lua_isnil(state, -1) && !lua_isnone(state, 2))
+    if (lua_isnil(state, -1) && hasDefault)
     {
         lua_pop(state, 1);
         StateCopyBudget budget;

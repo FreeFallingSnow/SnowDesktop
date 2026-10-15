@@ -1353,7 +1353,7 @@ static void ReadLuaPresetValues(lua_State* L, int tableIndex,
     lua_pushnil(L);
     while (lua_next(L, tableIndex) != 0)
     {
-        if (lua_isstring(L, -2))
+        if (lua_type(L, -2) == LUA_TSTRING)
         {
             std::string key = lua_tostring(L, -2);
             if (!IsHostStructureSettingKey(key))
@@ -6345,7 +6345,7 @@ static __declspec(noinline) int LuaTaskStartWithDeferredSecretError(lua_State* s
                     WidgetFilesystemTaskExecutor::MaximumTextBytes ||
                 (encoding == "utf8" &&
                     (text.find('\0') != std::string::npos ||
-                        !IsValidUtf8Local(text))))
+                        (!text.empty() && !IsValidUtf8Local(text)))))
                 return luaL_error(state,
                     "task.start: filesystem.write payload is invalid or exceeds 1048576 bytes");
             arguments.emplace(payloadField, std::move(text));
@@ -9573,8 +9573,8 @@ static __declspec(noinline) int LoadRequiredWidgetModule(lua_State* L,
     const std::string chunkName = "@module/" +
         WidgetWideToUtf8(std::filesystem::path(relativePath).
             lexically_normal().generic_wstring());
-    if (luaL_loadbuffer(L, source.data(), source.size(),
-            chunkName.c_str()) != LUA_OK)
+    if (luaL_loadbufferx(L, source.data(), source.size(),
+            chunkName.c_str(), "t") != LUA_OK)
     {
         ClearModuleCacheEntry(L, cache, cacheKey);
         return 0;
@@ -9587,8 +9587,24 @@ static __declspec(noinline) int LoadRequiredWidgetModule(lua_State* L,
         error = "module.require: sandbox environment is unavailable";
         return 0;
     }
+    // Reserve this module before its code can load children. Failed parents
+    // release only their own reservation; successful cached children remain.
+    lua_pushinteger(L, moduleCount + 1);
+    lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_count");
+    lua_pushinteger(L, moduleBytes + static_cast<lua_Integer>(fileSize));
+    lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
     if (snowdesktop::lua_runtime::ProtectedCall(L, 0, 1) != LUA_OK)
     {
+        lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_count");
+        const lua_Integer currentCount = lua_tointeger(L, -1);
+        lua_pop(L, 1);
+        lua_getfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
+        const lua_Integer currentBytes = lua_tointeger(L, -1);
+        lua_pop(L, 1);
+        lua_pushinteger(L, currentCount - 1);
+        lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_count");
+        lua_pushinteger(L, currentBytes - static_cast<lua_Integer>(fileSize));
+        lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
         ClearModuleCacheEntry(L, cache, cacheKey);
         return 0;
     }
@@ -9599,10 +9615,6 @@ static __declspec(noinline) int LoadRequiredWidgetModule(lua_State* L,
     }
     lua_pushvalue(L, -1);
     lua_setfield(L, cache, cacheKey.c_str());
-    lua_pushinteger(L, moduleCount + 1);
-    lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_count");
-    lua_pushinteger(L, moduleBytes + static_cast<lua_Integer>(fileSize));
-    lua_setfield(L, LUA_REGISTRYINDEX, "__widget_module_bytes");
     lua_remove(L, cache);
     return 1;
 }
