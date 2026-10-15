@@ -1,4 +1,5 @@
 #include "icons/icon_beautify.h"
+#include "icons/icon_beautify_preview.h"
 
 #include <algorithm>
 #include <array>
@@ -436,6 +437,37 @@ int main()
     Check(!beautify::Equal(glass, changedGlass) &&
         beautify::IdentifyPreset(changedGlass) == IconBeautifyPreset::Custom,
         "editing blur creates a custom preset rather than losing the change");
+    {
+        auto style = glass;
+        style.preset = IconBeautifyPreset::Custom; style.mode = 1;
+        style.backgroundOpacity = 0; style.shadowStrength = 0;
+        style.edgeHighlightWidth = 4; style.edgeHighlightStrength = 1;
+        style.edgeLight.outerGlow = 3;
+        const auto highSource = TestIcon(256);
+        const auto reference = beautify::RenderEdgeReflection(64, 64, style);
+        const auto supersampled = beautify::RenderPreview(highSource, 256, 256, style, {}, 4);
+        const auto unscaled = beautify::Render(highSource, 256, 256, style);
+        unsigned maximum = 0, scaledError = 0, unscaledError = 0;
+        const auto averageAlpha = [](const auto& pixels, int x, int y) {
+            unsigned sum = 0;
+            for (int dy = 0; dy < 4; ++dy) for (int dx = 0; dx < 4; ++dx)
+                sum += pixels[(y * 4 + dy) * 256 + x * 4 + dx] >> 24;
+            return static_cast<int>((sum + 8) / 16);
+        };
+        // This uncovered top band isolates the reflection. The ordinary 256px
+        // render is the reported negative control: its 3px support is unscaled.
+        for (int y = 1; y < 6; ++y) for (int x = 24; x < 40; ++x)
+        {
+            const int expected = static_cast<int>(reference[y * 64 + x] >> 24);
+            const auto error = static_cast<unsigned>(std::abs(averageAlpha(supersampled, x, y) - expected));
+            scaledError += error; maximum = std::max(maximum, error);
+            unscaledError += static_cast<unsigned>(std::abs(averageAlpha(unscaled, x, y) - expected));
+        }
+        std::cout << "Supersampled rim: maximum alpha difference=" << maximum << ", error=" << scaledError
+            << ", ordinary high-resolution error=" << unscaledError << '\n';
+        Check(maximum <= 12 && unscaledError > scaledError * 4 + 200,
+            "supersampling preserves the native rim profile and rejects unscaled fixed support");
+    }
     for (IconBeautifyShape shape : shapes)
     {
         auto style = glass; style.shape = shape;

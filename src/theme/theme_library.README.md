@@ -7,7 +7,7 @@ the existing `.snowwidget` parser. Hosts without theme package support reject
 `.snowtheme`; a bridge file or matching application version does not prove
 that future online theme operations are supported.
 
-## Package versions 1 and 2
+## Package versions 1, 2 and 3
 
 The package is a UTF-8 JSON document, at most 4 MiB, with these required fields:
 
@@ -45,12 +45,13 @@ New tint defaults to 35% luminosity-preserving coloring; duotone gradient-maps b
 Background color is resolved per icon: original plate (accent fallback) or a
 chroma-weighted dominant color cluster. Automatic gradient colors form a lighter
 to-original ramp; custom gradients retain 2–5 stops, opacity, angle and range.
-Icon galleries render a 256-pixel scene with 64-pixel vector samples using the
-production icon renderer and plate detector. Reflection and backdrop blur run in
-that native pixel space; the complete scene is then enlarged to the 1024-pixel
-gallery image. The private `icon-scene.png` retains the unscaled frame for pixel
-comparisons. Its filename is not part of the published gallery. This avoids
-changing the rim's fixed outer support or blur-to-icon-size ratio in a large cover.
+Icon galleries keep a 256-pixel reference scene with 64-pixel vector samples and
+supersample the complete scene at 4x for a crisp 1024-pixel cover. The shared icon
+renderer evaluates fixed rim support in native units; blur, shadow offsets,
+texture seams and outlines scale with the sampling density. Native desktop
+rendering stays at 1x. The private `icon-scene.png` retains the reference for pixel
+comparisons and is not a published gallery filename. Both renders use the host
+plate detector; the cover does not enlarge the small reference bitmap.
 
 Custom themes contain an opaque stable `id`, a display-only `name` and an
 `appearance` object encoded by the panel material codec plus

@@ -330,7 +330,9 @@ int wmain(int argc, wchar_t** argv)
             glassEffect.glassEnabled = true; glassEffect.glassBlurRadius = 4.f; glassEffect.backgroundOpacity = .1f;
             auto checker = widget_preview::GenerateWallpaper(1024, 1024, false);
             for (int y = 0; y < 1024; ++y) for (int x = 0; x < 1024; ++x)
-                checker.pixels[static_cast<std::size_t>(y) * 1024 + x] = (x / 16 + y / 16) % 2 ? 0xff202030u : 0xffe0d8cfu;
+                // 16px squares in the native 256px scene. Four-pixel squares
+                // are already erased at radius 4 and cannot distinguish 4/48.
+                checker.pixels[static_cast<std::size_t>(y) * 1024 + x] = (x / 64 + y / 64) % 2 ? 0xff202030u : 0xffe0d8cfu;
             const auto checkerPath = directory / L"icon-backdrop.png";
             check(preview_png::Save(checkerPath, 1024, 1024, checker.pixels, error), "frosted icon fixture has a high-contrast background");
             const bool sharpGlass = preview::RenderGallery(argv[1], glassIcons, icon.id, Components,

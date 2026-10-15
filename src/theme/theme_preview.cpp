@@ -3,6 +3,7 @@
 #include "common/json_value.h"
 #include "steam/steam_child_environment.h"
 #include "resources/resource.h"
+#include "icons/icon_beautify_preview.h"
 #include <fstream>
 #include <thread>
 #include <wincodec.h>
@@ -10,6 +11,7 @@
 #include <d3d11.h>
 #include <d2d1_3.h>
 #include <d2d1svg.h>
+#include <d2d1effects.h>
 #include <cstring>
 #include "../../steam_bridge/src/theme_workshop_publish.h"
 
@@ -179,7 +181,7 @@ static bool SaveFramedCover(const std::filesystem::path& raw, const std::filesys
             side, frame.data() + static_cast<std::size_t>(row) * side);
     return preview_png::Save(raw, side, side, frame, error) && NormalizeCover(raw, destination, error);
 }
-static bool BlurIconBackdrop(const widget_preview::Wallpaper& source, float radius,
+static bool BlurIconBackdrop(const widget_preview::Wallpaper& source, float radius, int rasterScale,
     widget_preview::Wallpaper& output, std::string& error)
 {
     const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
@@ -200,12 +202,19 @@ static bool BlurIconBackdrop(const widget_preview::Wallpaper& source, float radi
     const auto targetProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET, format, 96, 96);
     ComPtr<ID2D1Bitmap1> target, readback;
     if (FAILED(context->CreateBitmap(size, nullptr, 0, &targetProperties, &target))) return Fail(error, "previewFailed");
-    context->SetTarget(target.Get()); context->BeginDraw();
-    const bool drawn = widget_preview::DrawStage(context.Get(), {0, 0, source.width, source.height},
-        {false, true, radius, 0}, {source.width, source.height, 0, 0}, &source);
+    ComPtr<ID2D1Bitmap1> sourceBitmap; ComPtr<ID2D1Effect> blur;
+    const auto sourceProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_NONE, format, 96, 96);
+    if (FAILED(context->CreateBitmap(size, source.pixels.data(), source.width * 4, &sourceProperties, &sourceBitmap)) ||
+        FAILED(context->CreateEffect(CLSID_D2D1GaussianBlur, &blur))) return Fail(error, "previewFailed");
+    blur->SetInput(0, sourceBitmap.Get());
+    if (FAILED(blur->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, std::clamp(radius, 0.f, 48.f) * rasterScale)) ||
+        FAILED(blur->SetValue(D2D1_GAUSSIANBLUR_PROP_OPTIMIZATION, D2D1_GAUSSIANBLUR_OPTIMIZATION_BALANCED)) ||
+        FAILED(blur->SetValue(D2D1_GAUSSIANBLUR_PROP_BORDER_MODE, D2D1_BORDER_MODE_HARD))) return Fail(error, "previewFailed");
+    context->SetTarget(target.Get()); context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
+    context->DrawImage(blur.Get());
     const auto rendered = context->EndDraw(); context->SetTarget(nullptr);
     const auto readProperties = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW, format, 96, 96);
-    if (!drawn || FAILED(rendered) || FAILED(context->CreateBitmap(size, nullptr, 0, &readProperties, &readback)) ||
+    if (FAILED(rendered) || FAILED(context->CreateBitmap(size, nullptr, 0, &readProperties, &readback)) ||
         FAILED(readback->CopyFromBitmap(nullptr, target.Get(), nullptr))) return Fail(error, "previewFailed");
     output = source;
     D2D1_MAPPED_RECT mapped{};
@@ -322,69 +331,75 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
     const auto rootTheme = Resolve(package, root);
     if (rootTheme && rootTheme->kind == Kind::Icon)
     {
-        // Render the complete scene at a normal desktop source-size bucket,
-        // then enlarge that scene for the gallery. Rendering the icons at 256
-        // while retaining an unscaled blur and the rim's three-pixel outer
-        // support changes the material. Keep artwork, rim and backdrop in one
-        // pixel coordinate system, as in the host's bitmap/backdrop paths.
+        // Keep a native 64px reference and supersample the whole gallery scene
+        // at 4x. Both use native material units: fixed rim support, blur, glyph
+        // shadows, texture seams and outlines scale with the sampling density.
+        // The SVG artwork stays crisp without enlarging the reference bitmap.
         // No desktop shortcuts, application paths or user icons are enumerated.
-        constexpr int side = 64, stageSide = 256;
-        widget_preview::Wallpaper sceneBackdrop;
-        if (!ResizeIconScene(backdrop, stageSide, sceneBackdrop, error)) return false;
-        canvas = sceneBackdrop;
         constexpr int resources[]{IDR_ICON_PREVIEW_BROWSER, IDR_ICON_PREVIEW_FOLDER, IDR_ICON_PREVIEW_MAIL, IDR_ICON_PREVIEW_MEDIA};
         const bool glass = rootTheme->icon.enabled && rootTheme->icon.glassEnabled;
-        widget_preview::Wallpaper blurred;
-        if (glass && !BlurIconBackdrop(sceneBackdrop, rootTheme->icon.glassBlurRadius, blurred, error)) return false;
-        for (int sample = 0; sample < 4; ++sample)
+        const auto coverPath = directory / L"cover.png";
+        for (int rasterScale : {1, 4})
         {
-            if (cancel && cancel->load()) return Fail(error, "cancelled");
-            std::vector<std::uint32_t> source;
-            if (!IconSample(host, resources[sample], side, source, error)) return false;
-            // Theme packages own appearance, not the local processing strategy.
-            // The settings caller freezes its local strategy separately from the
-            // shared package. Offline callers default to showing every background.
-            auto style = rootTheme->icon; style.mode = iconProcessingMode == 0 ? 0 : 1;
-            const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(source, side, side) : std::nullopt;
-            const auto rendered = icon_beautify::Render(source, side, side, style, edge);
-            const int left = 40 + sample % 2 * 112, top = 40 + sample / 2 * 112;
-            for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
+            const int side = 64 * rasterScale, stageSide = 256 * rasterScale;
+            widget_preview::Wallpaper sceneBackdrop;
+            if (rasterScale == 1)
             {
-                const auto pixel = rendered[static_cast<std::size_t>(y) * side + x];
-                const auto offset = static_cast<std::size_t>(top + y) * stageSide + left + x;
-                auto& destination = canvas.pixels[offset];
-                if (glass && !edge)
-                {
-                    const unsigned coverage = icon_beautify::ShapeMaskAlpha(rootTheme->icon.shape, x, y, side, side);
-                    std::uint32_t backgroundPixel = 0xff000000u;
-                    for (unsigned shift : {0u, 8u, 16u}) backgroundPixel |=
-                        ((((blurred.pixels[offset] >> shift) & 255u) * coverage +
-                            ((destination >> shift) & 255u) * (255u - coverage) + 127u) / 255u) << shift;
-                    destination = backgroundPixel;
-                }
-                const unsigned alpha = pixel >> 24;
-                std::uint32_t blended = 0xff000000u;
-                for (unsigned shift : {0u, 8u, 16u}) blended |= std::min(255u,
-                    ((pixel >> shift) & 255u) + (((destination >> shift) & 255u) * (255u - alpha) + 127u) / 255u) << shift;
-                destination = blended;
+                if (!ResizeIconScene(backdrop, stageSide, sceneBackdrop, error)) return false;
             }
+            else sceneBackdrop = backdrop;
+            canvas = sceneBackdrop;
+            widget_preview::Wallpaper blurred;
+            if (glass && !BlurIconBackdrop(sceneBackdrop, rootTheme->icon.glassBlurRadius, rasterScale, blurred, error)) return false;
+            for (int sample = 0; sample < 4; ++sample)
+            {
+                if (cancel && cancel->load()) return Fail(error, "cancelled");
+                std::vector<std::uint32_t> source;
+                if (!IconSample(host, resources[sample], side, source, error)) return false;
+                // Theme packages own appearance, not the local processing strategy.
+                // The settings caller freezes its local strategy separately from the
+                // shared package. Offline callers default to showing every background.
+                auto style = rootTheme->icon; style.mode = iconProcessingMode == 0 ? 0 : 1;
+                const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(source, side, side) : std::nullopt;
+                const auto rendered = icon_beautify::RenderPreview(source, side, side, style, edge, rasterScale);
+                const int left = (40 + sample % 2 * 112) * rasterScale, top = (40 + sample / 2 * 112) * rasterScale;
+                for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
+                {
+                    const auto pixel = rendered[static_cast<std::size_t>(y) * side + x];
+                    const auto offset = static_cast<std::size_t>(top + y) * stageSide + left + x;
+                    auto& destination = canvas.pixels[offset];
+                    if (glass && !edge)
+                    {
+                        const unsigned coverage = icon_beautify::ShapeMaskAlpha(rootTheme->icon.shape, x, y, side, side);
+                        std::uint32_t backgroundPixel = 0xff000000u;
+                        for (unsigned shift : {0u, 8u, 16u}) backgroundPixel |=
+                            ((((blurred.pixels[offset] >> shift) & 255u) * coverage +
+                                ((destination >> shift) & 255u) * (255u - coverage) + 127u) / 255u) << shift;
+                        destination = backgroundPixel;
+                    }
+                    const unsigned alpha = pixel >> 24;
+                    std::uint32_t blended = 0xff000000u;
+                    for (unsigned shift : {0u, 8u, 16u}) blended |= std::min(255u,
+                        ((pixel >> shift) & 255u) + (((destination >> shift) & 255u) * (255u - alpha) + 127u) / 255u) << shift;
+                    destination = blended;
+                }
+            }
+            // Retain the native-size frame for pixel-level evidence. Only the
+            // generated cover/gallery filenames participate in Workshop images.
+            if (rasterScale == 1)
+            {
+                if (!preview_png::Save(directory / L"icon-scene.png", stageSide, stageSide, canvas.pixels, error)) return false;
+            }
+            else if (!SaveCover(coverPath, std::move(canvas), error)) return false;
         }
-        const auto destination = directory / L"cover.png";
-        // Retain the native-size frame for pixel-level evidence. Only the
-        // generated cover/gallery filenames participate in Workshop images.
-        const auto nativeScene = directory / L"icon-scene.png";
-        widget_preview::Wallpaper enlarged;
-        if (!preview_png::Save(nativeScene, stageSide, stageSide, canvas.pixels, error) ||
-            !ResizeIconScene(canvas, kCoverSize, enlarged, error) ||
-            !SaveCover(destination, std::move(enlarged), error)) return false;
         if (images)
         {
             const auto imagePath = directory / GalleryFilename(steam_bridge::ThemeSha256(root), "icon");
-            std::filesystem::copy_file(destination, imagePath, std::filesystem::copy_options::none, ec);
+            std::filesystem::copy_file(coverPath, imagePath, std::filesystem::copy_options::none, ec);
             if (ec) return Fail(error, "writeFailed");
             images->push_back({"icon", imagePath});
         }
-        cover = destination; cleanup.keep = true; return true;
+        cover = coverPath; cleanup.keep = true; return true;
     }
     const int columns = parts.size() > 1 ? 2 : 1, rows = static_cast<int>((parts.size() + columns - 1) / columns);
     for (std::size_t index = 0; index < parts.size(); ++index)

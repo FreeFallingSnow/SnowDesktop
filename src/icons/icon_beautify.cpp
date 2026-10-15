@@ -1,4 +1,5 @@
 #include "icon_beautify.h"
+#include "icon_beautify_preview.h"
 #include "theme/flat_glass_rim.h"
 #include "theme/appearance_edge_presets.h"
 
@@ -421,7 +422,7 @@ std::uint32_t SampleBilinear(const std::vector<std::uint32_t>& pixels,
 }
 
 void FillPlate(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings, bool legacyExact)
+    const IconBeautifySettings& settings, bool legacyExact, int rasterScale)
 {
     const EdgeColor start = ColorFromFloats(settings.backgroundStartR,
         settings.backgroundStartG, settings.backgroundStartB);
@@ -431,7 +432,7 @@ void FillPlate(std::vector<std::uint32_t>& output, int width, int height,
     const EdgeColor automatic = AutoOutline(start, end);
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
     const auto& inner = CachedMask(settings.shape, width, height,
-        legacyExact ? 1.0f : std::max(0.0f, settings.outlineWidth));
+        (legacyExact ? 1.0f : std::max(0.0f, settings.outlineWidth)) * rasterScale);
     const int plateOpacity = static_cast<int>(std::round(settings.backgroundOpacity * 255.0f));
     const auto& gradient = settings.backgroundGradient;
     const auto line = ResolvePanelGradientLine(gradient, std::max(1, width - 1), std::max(1, height - 1));
@@ -551,14 +552,14 @@ std::uint32_t ApplyFilter(std::uint32_t pixel,
 }
 
 void ApplyTexture(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings)
+    const IconBeautifySettings& settings, int rasterScale)
 {
     if (settings.textureHighlightStrength <= 0.0005f &&
         settings.textureShadeStrength <= 0.0005f &&
         settings.textureEdgeHighlight <= 0.0005f)
         return;
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
-    const auto& inner = CachedMask(settings.shape, width, height, 1.5f);
+    const auto& inner = CachedMask(settings.shape, width, height, 1.5f * rasterScale);
     for (int y = 0; y < height; ++y)
     {
         const float yt = (static_cast<float>(y) + 0.5f) / height;
@@ -593,7 +594,7 @@ void ApplyTexture(std::vector<std::uint32_t>& output, int width, int height,
 }
 
 void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings)
+    const IconBeautifySettings& settings, int rasterScale = 1)
 {
     if (!settings.edgeHighlightEnabled || settings.edgeHighlightStrength <= 0.0f) return;
     const auto& outline = OutlineFor(settings.shape);
@@ -628,13 +629,15 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
         const float distance = std::sqrt(nearest) - rimInset;
         const float lighting = material.Lighting((static_cast<float>(x) + .5f) / wf,
             (static_cast<float>(y) + .5f) / hf);
-        const float light = material.Intensity(distance, depth, lighting);
+        // Evaluate in native units so the evaluator's fixed outer support is
+        // supersampled together with the normalized contour and depth.
+        const float light = material.Intensity(distance / rasterScale, depth / rasterScale, lighting);
         const int alpha = static_cast<int>(std::lround(light * settings.edgeHighlightStrength * mask[index]));
         output[index] = SourceOver(PackPremultiplied(255, 255, 255, alpha), output[index]);
         if (material.settings.shadowStrength > 0.f)
         {
             const int shadowAlpha = static_cast<int>(std::lround(
-                material.Occlusion(distance, depth, lighting) *
+                material.Occlusion(distance / rasterScale, depth / rasterScale, lighting) *
                 settings.edgeHighlightStrength * material.settings.shadowStrength * mask[index]));
             output[index] = SourceOver(
                 PackPremultiplied(4, 6, 9, shadowAlpha), output[index]);
@@ -643,7 +646,7 @@ void ApplyEdgeReflection(std::vector<std::uint32_t>& output, int width, int heig
 }
 
 void ApplyOutline(std::vector<std::uint32_t>& output, int width, int height,
-    const IconBeautifySettings& settings)
+    const IconBeautifySettings& settings, int rasterScale)
 {
     if (!settings.outlineEnabled || settings.outlineWidth <= 0.0f)
         return;
@@ -651,7 +654,7 @@ void ApplyOutline(std::vector<std::uint32_t>& output, int width, int height,
         settings.outlineR, settings.outlineG, settings.outlineB);
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
     const float outlineWidth = settings.glassEnabled
-        ? settings.outlineWidth * std::min(width, height) / 52.0f : settings.outlineWidth;
+        ? settings.outlineWidth * std::min(width, height) / 52.0f : settings.outlineWidth * rasterScale;
     const auto& inner = CachedMask(settings.shape, width, height, outlineWidth);
     const int opacity = static_cast<int>(std::round(settings.outlineOpacity * 255.0f));
     for (size_t i = 0; i < output.size(); ++i)
@@ -978,9 +981,9 @@ std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,
     return pixels;
 }
 
-std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
+static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& rawSettings,
-    std::optional<EdgeColor> detectedEdgeFill)
+    std::optional<EdgeColor> detectedEdgeFill, int rasterScale)
 {
     if (width <= 0 || height <= 0 ||
         source.size() != static_cast<size_t>(width) * height)
@@ -1044,13 +1047,13 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
         for (size_t i = 0; i < output.size(); ++i)
             output[i] = ScalePixel(SourceOver(
                 ApplyFilter(source[i], settings), background), mask[i]);
-        ApplyTexture(output, width, height, settings);
-        ApplyOutline(output, width, height, settings);
-        ApplyEdgeReflection(output, width, height, settings);
+        ApplyTexture(output, width, height, settings, rasterScale);
+        ApplyOutline(output, width, height, settings, rasterScale);
+        ApplyEdgeReflection(output, width, height, settings, rasterScale);
         return output;
     }
 
-    FillPlate(output, width, height, settings, legacyExact);
+    FillPlate(output, width, height, settings, legacyExact, rasterScale);
     const int sourceW = std::max(1, bounds.right - bounds.left + 1);
     const int sourceH = std::max(1, bounds.bottom - bounds.top + 1);
     int maxW = 0;
@@ -1058,19 +1061,19 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     if (legacyExact)
     {
         const int padding = std::max(5,
-            static_cast<int>(std::round(std::min(width, height) * 0.16f)));
+            static_cast<int>(std::round(static_cast<float>(std::min(width, height)) / rasterScale * 0.16f))) * rasterScale;
         maxW = std::max(1, width - padding * 2);
         maxH = std::max(1, height - padding * 2);
     }
     else
     {
-        maxW = std::max(1, static_cast<int>(std::round(width * settings.contentScale)));
-        maxH = std::max(1, static_cast<int>(std::round(height * settings.contentScale)));
+        maxW = std::max(1, static_cast<int>(std::round(static_cast<float>(width) / rasterScale * settings.contentScale))) * rasterScale;
+        maxH = std::max(1, static_cast<int>(std::round(static_cast<float>(height) / rasterScale * settings.contentScale))) * rasterScale;
     }
     const float scale = std::min(static_cast<float>(maxW) / sourceW,
         static_cast<float>(maxH) / sourceH);
-    const int destW = std::max(1, static_cast<int>(std::round(sourceW * scale)));
-    const int destH = std::max(1, static_cast<int>(std::round(sourceH * scale)));
+    const int destW = std::max(1, static_cast<int>(std::round(sourceW * scale / rasterScale))) * rasterScale;
+    const int destH = std::max(1, static_cast<int>(std::round(sourceH * scale / rasterScale))) * rasterScale;
     const int destLeft = (width - destW) / 2;
     const int destTop = (height - destH) / 2;
 
@@ -1090,8 +1093,8 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
             const int oy = destTop + y;
             for (const auto& [dx, dy, baseOpacity] : passes)
             {
-                const int px = ox + dx;
-                const int py = oy + dy;
+                const int px = ox + dx * rasterScale;
+                const int py = oy + dy * rasterScale;
                 if (px < 0 || py < 0 || px >= width || py >= height) continue;
                 const size_t index = static_cast<size_t>(py) * width + px;
                 const int opacity = static_cast<int>(std::round(baseOpacity * settings.shadowStrength));
@@ -1118,10 +1121,25 @@ std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
             output[index] = SourceOver(sampled, output[index]);
         }
 
-    ApplyTexture(output, width, height, settings);
-    ApplyOutline(output, width, height, settings);
-    ApplyEdgeReflection(output, width, height, settings);
+    ApplyTexture(output, width, height, settings, rasterScale);
+    ApplyOutline(output, width, height, settings, rasterScale);
+    ApplyEdgeReflection(output, width, height, settings, rasterScale);
     return output;
+}
+
+std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
+    int width, int height, const IconBeautifySettings& settings,
+    std::optional<EdgeColor> detectedEdgeFill)
+{
+    return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1);
+}
+
+std::vector<std::uint32_t> RenderPreview(const std::vector<std::uint32_t>& source,
+    int width, int height, const IconBeautifySettings& settings,
+    std::optional<EdgeColor> detectedEdgeFill, int rasterScale)
+{
+    return RenderAtScale(source, width, height, settings, detectedEdgeFill,
+        std::clamp(rasterScale, 1, 4));
 }
 
     static EdgeColor StraightPlateColor(std::uint32_t pixel)
