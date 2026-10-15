@@ -92,7 +92,7 @@ struct IconBeautifySettings
     float textureShadeStrength = 0.0f;
     float textureEdgeHighlight = 0.0f;
     bool filterEnabled = false;
-    // 0 retains the legacy multiply filter; 1 preserves luminosity; 2 is flat mono.
+    // 0 retains the legacy multiply filter; 1 preserves luminosity; 2 maps luminosity to two tones.
     int filterMode = 0;
     float filterStrength = 1.0f;
     float filterTintR = 90.0f / 255.0f;

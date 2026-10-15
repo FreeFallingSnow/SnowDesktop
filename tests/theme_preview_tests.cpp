@@ -74,7 +74,7 @@ int wmain(int argc, wchar_t** argv)
     {
         const std::filesystem::path output(argv[3]); std::filesystem::create_directories(output);
         bool ok = true;
-        for (const std::string variant : {"glass", "smart", "gradient", "automatic", "tonal"})
+        for (const std::string variant : {"glass", "smart", "gradient", "automatic", "tonal", "duotone"})
         {
             Theme icon; icon.id = "theme/icon-evidence"; icon.name = "Icon preview"; icon.kind = Kind::Icon;
             icon.icon = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassLight);
@@ -87,6 +87,7 @@ int wmain(int argc, wchar_t** argv)
             }
             if (variant == "automatic") icon.icon.backgroundSource = 2;
             if (variant == "tonal") { icon.icon.filterEnabled = true; icon.icon.filterMode = 1; icon.icon.filterStrength = .6f; }
+            if (variant == "duotone") { icon.icon.filterEnabled = true; icon.icon.filterMode = 2; icon.icon.filterStrength = 1; }
             std::vector<preview::Image> images; std::filesystem::path cover; std::string detail;
             const bool rendered = preview::RenderGallery(argv[2], {{icon.id, icon}}, icon.id, Components,
                 output / variant, images, cover, detail, nullptr, {}, variant == "smart" ? 0 : 1);
@@ -270,6 +271,40 @@ int wmain(int argc, wchar_t** argv)
                 std::filesystem::file_size(cover) < preview::kCoverMaximumBytes,
                 "icon gallery renders a complete production effect under the Workshop image limit");
             const auto original = iconOk ? widget_preview::LoadWallpaperImage(cover) : widget_preview::Wallpaper{};
+            // Guard the reported thick gallery rim: compare its unscaled scene
+            // against the host's reflection layer at a normal 64px source size.
+            // A 256px rim shrunk afterward has a different outer-support profile.
+            auto rimIcons = icons;
+            auto& rimStyle = rimIcons.at(icon.id).icon;
+            rimStyle.shape = IconBeautifyShape::ContinuousRounded;
+            rimStyle.backgroundOpacity = 0; rimStyle.shadowStrength = 0;
+            rimStyle.edgeHighlightEnabled = true; rimStyle.edgeHighlightWidth = 4;
+            rimStyle.edgeHighlightStrength = 1; rimStyle.edgeLight.outerGlow = 3;
+            auto flatBackdrop = widget_preview::GenerateWallpaper(1024, 1024, false);
+            std::fill(flatBackdrop.pixels.begin(), flatBackdrop.pixels.end(), 0xff303038u);
+            const auto flatPath = directory / L"rim-backdrop.png";
+            const auto rimDirectory = directory / L"icon-native-rim";
+            const bool rimOk = preview_png::Save(flatPath, 1024, 1024, flatBackdrop.pixels, error) &&
+                preview::RenderGallery(argv[1], rimIcons, icon.id, Components, rimDirectory, gallery, cover, error, nullptr, flatPath);
+            const auto nativeScene = rimOk ? widget_preview::LoadWallpaperImage(rimDirectory / L"icon-scene.png") : widget_preview::Wallpaper{};
+            const auto nativeReflection = icon_beautify::RenderEdgeReflection(64, 64, rimStyle);
+            bool rimMatches = nativeScene.width == 256 && nativeScene.height == 256 && nativeScene.pixels.size() == 256 * 256;
+            std::size_t visibleRim = 0;
+            if (rimMatches)
+                for (int sample = 0; sample < 4; ++sample)
+                    for (int y = 0; y < 6; ++y) for (int x = 16; x < 48; ++x)
+                    {
+                        const auto pixel = nativeReflection[y * 64 + x];
+                        const unsigned alpha = pixel >> 24;
+                        std::uint32_t expected = 0xff000000u;
+                        for (unsigned shift : {0u, 8u, 16u}) expected |= std::min(255u,
+                            ((pixel >> shift) & 255u) + (((0xff303038u >> shift) & 255u) * (255u - alpha) + 127u) / 255u) << shift;
+                        const auto actual = nativeScene.pixels[(40 + sample / 2 * 112 + y) * 256 + 40 + sample % 2 * 112 + x];
+                        rimMatches &= expected == actual;
+                        visibleRim += pixel != 0;
+                    }
+            check(rimOk && rimMatches && visibleRim > 100,
+                "gallery native-size reflection agrees with the production vector/bitmap rim before whole-scene enlargement");
             const bool smartOk = preview::RenderGallery(argv[1], icons, icon.id, Components,
                 directory / L"icon-gallery-smart", gallery, cover, error, nullptr, {}, 0);
             check(smartOk && Compare(original, widget_preview::LoadWallpaperImage(cover)).material > 10000 &&

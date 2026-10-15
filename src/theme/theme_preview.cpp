@@ -266,6 +266,27 @@ static bool IconSample(const std::filesystem::path& host, int resourceId, int si
         mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(side) * 4);
     return SUCCEEDED(readback->Unmap()) || Fail(error, "previewFailed");
 }
+static bool ResizeIconScene(const widget_preview::Wallpaper& source, int side,
+    widget_preview::Wallpaper& output, std::string& error)
+{
+    const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+    struct ComCleanup { HRESULT result; ~ComCleanup() { if (SUCCEEDED(result)) CoUninitialize(); } } cleanup{initialized};
+    using Microsoft::WRL::ComPtr;
+    ComPtr<IWICImagingFactory> factory; ComPtr<IWICBitmap> bitmap; ComPtr<IWICBitmapScaler> scaler;
+    if (source.width <= 0 || source.height <= 0 ||
+        source.pixels.size() != static_cast<std::size_t>(source.width) * source.height ||
+        FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(factory->CreateBitmapFromMemory(source.width, source.height, GUID_WICPixelFormat32bppPBGRA,
+            source.width * 4, static_cast<UINT>(source.pixels.size() * 4),
+            reinterpret_cast<BYTE*>(const_cast<std::uint32_t*>(source.pixels.data())), &bitmap)) ||
+        FAILED(factory->CreateBitmapScaler(&scaler)) ||
+        FAILED(scaler->Initialize(bitmap.Get(), side, side, side > source.width
+            ? WICBitmapInterpolationModeHighQualityCubic : WICBitmapInterpolationModeFant)))
+        return Fail(error, "previewFailed");
+    output.width = output.height = side; output.pixels.resize(static_cast<std::size_t>(side) * side);
+    return SUCCEEDED(scaler->CopyPixels(nullptr, side * 4, static_cast<UINT>(output.pixels.size() * 4),
+        reinterpret_cast<BYTE*>(output.pixels.data()))) || Fail(error, "previewFailed");
+}
 static bool RenderImages(const std::filesystem::path& host, const Package& package, std::string_view root,
     unsigned scope, const std::filesystem::path& directory, std::filesystem::path& cover,
     std::string& error, const std::atomic_bool* cancel, std::vector<Image>* images,
@@ -301,13 +322,20 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
     const auto rootTheme = Resolve(package, root);
     if (rootTheme && rootTheme->kind == Kind::Icon)
     {
-        // Vector sample artwork is rasterized at the actual output resolution.
+        // Render the complete scene at a normal desktop source-size bucket,
+        // then enlarge that scene for the gallery. Rendering the icons at 256
+        // while retaining an unscaled blur and the rim's three-pixel outer
+        // support changes the material. Keep artwork, rim and backdrop in one
+        // pixel coordinate system, as in the host's bitmap/backdrop paths.
         // No desktop shortcuts, application paths or user icons are enumerated.
-        constexpr int side = 256;
+        constexpr int side = 64, stageSide = 256;
+        widget_preview::Wallpaper sceneBackdrop;
+        if (!ResizeIconScene(backdrop, stageSide, sceneBackdrop, error)) return false;
+        canvas = sceneBackdrop;
         constexpr int resources[]{IDR_ICON_PREVIEW_BROWSER, IDR_ICON_PREVIEW_FOLDER, IDR_ICON_PREVIEW_MAIL, IDR_ICON_PREVIEW_MEDIA};
         const bool glass = rootTheme->icon.enabled && rootTheme->icon.glassEnabled;
         widget_preview::Wallpaper blurred;
-        if (glass && !BlurIconBackdrop(backdrop, rootTheme->icon.glassBlurRadius, blurred, error)) return false;
+        if (glass && !BlurIconBackdrop(sceneBackdrop, rootTheme->icon.glassBlurRadius, blurred, error)) return false;
         for (int sample = 0; sample < 4; ++sample)
         {
             if (cancel && cancel->load()) return Fail(error, "cancelled");
@@ -319,11 +347,11 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
             auto style = rootTheme->icon; style.mode = iconProcessingMode == 0 ? 0 : 1;
             const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(source, side, side) : std::nullopt;
             const auto rendered = icon_beautify::Render(source, side, side, style, edge);
-            const int left = 160 + sample % 2 * 448, top = 160 + sample / 2 * 448;
+            const int left = 40 + sample % 2 * 112, top = 40 + sample / 2 * 112;
             for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)
             {
                 const auto pixel = rendered[static_cast<std::size_t>(y) * side + x];
-                const auto offset = static_cast<std::size_t>(top + y) * kCoverSize + left + x;
+                const auto offset = static_cast<std::size_t>(top + y) * stageSide + left + x;
                 auto& destination = canvas.pixels[offset];
                 if (glass && !edge)
                 {
@@ -342,7 +370,13 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
             }
         }
         const auto destination = directory / L"cover.png";
-        if (!SaveCover(destination, std::move(canvas), error)) return false;
+        // Retain the native-size frame for pixel-level evidence. Only the
+        // generated cover/gallery filenames participate in Workshop images.
+        const auto nativeScene = directory / L"icon-scene.png";
+        widget_preview::Wallpaper enlarged;
+        if (!preview_png::Save(nativeScene, stageSide, stageSide, canvas.pixels, error) ||
+            !ResizeIconScene(canvas, kCoverSize, enlarged, error) ||
+            !SaveCover(destination, std::move(enlarged), error)) return false;
         if (images)
         {
             const auto imagePath = directory / GalleryFilename(steam_bridge::ThemeSha256(root), "icon");

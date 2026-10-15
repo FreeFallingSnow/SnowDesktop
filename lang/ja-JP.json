@@ -2763,7 +2763,7 @@
   "iconStyle.coloring": "色の処理",
   "iconStyle.legacyTint": "従来の色付け",
   "iconStyle.tonalTint": "明暗を保つ色付け",
-  "iconStyle.monochrome": "単色",
+  "iconStyle.duotone": "ダブルトーン",
   "iconStyle.strategy": "アイコンの処理方法",
   "iconStyle.smart": "スマート美化",
   "iconStyle.shrinkAll": "すべて縮小してテーマの背景を追加"

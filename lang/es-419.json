@@ -2763,7 +2763,7 @@
   "iconStyle.coloring": "Tratamiento del color",
   "iconStyle.legacyTint": "Tinte anterior",
   "iconStyle.tonalTint": "Tinte tonal",
-  "iconStyle.monochrome": "Monocromo",
+  "iconStyle.duotone": "Duotono",
   "iconStyle.strategy": "Procesamiento de íconos",
   "iconStyle.smart": "Mejora inteligente",
   "iconStyle.shrinkAll": "Reducir todos y agregar el fondo del tema"

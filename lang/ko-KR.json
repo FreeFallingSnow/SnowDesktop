@@ -2763,7 +2763,7 @@
   "iconStyle.coloring": "색상 처리",
   "iconStyle.legacyTint": "기존 색조",
   "iconStyle.tonalTint": "명암을 유지하는 색조",
-  "iconStyle.monochrome": "단색",
+  "iconStyle.duotone": "듀오톤",
   "iconStyle.strategy": "아이콘 처리 방식",
   "iconStyle.smart": "스마트 꾸미기",
   "iconStyle.shrinkAll": "모두 축소하고 테마 배경 추가"

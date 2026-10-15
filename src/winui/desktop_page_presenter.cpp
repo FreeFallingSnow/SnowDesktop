@@ -2004,7 +2004,7 @@ struct DesktopPagePresenter::Impl
         SetComboItems(backgroundSource, {L("app.settings.custom"), L("iconStyle.iconBackground"), L("iconStyle.iconAccent")}, std::max(0, backgroundSource.SelectedIndex()));
         filterModeRow.SetText(L("iconStyle.coloring"));
         muxa::AutomationProperties::SetName(filterMode, filterModeRow.label.Text());
-        SetComboItems(filterMode, {L("iconStyle.legacyTint"), L("iconStyle.tonalTint"), L("iconStyle.monochrome")}, std::max(0, filterMode.SelectedIndex()));
+        SetComboItems(filterMode, {L("iconStyle.legacyTint"), L("iconStyle.tonalTint"), L("iconStyle.duotone")}, std::max(0, filterMode.SelectedIndex()));
         gradientEditor->RefreshLocalizedText();
         shapeRow.SetText(L("app.settings.beautify_shape", L"Shape"));
         muxa::AutomationProperties::SetName(shape, shapeRow.label.Text());

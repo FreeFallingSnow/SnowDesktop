@@ -2763,7 +2763,7 @@
   "iconStyle.coloring": "着色方式",
   "iconStyle.legacyTint": "旧版染色",
   "iconStyle.tonalTint": "保留明暗着色",
-  "iconStyle.monochrome": "单色",
+  "iconStyle.duotone": "双色调",
   "iconStyle.strategy": "图标处理方式",
   "iconStyle.smart": "智能美化",
   "iconStyle.shrinkAll": "全部缩小并添加主题背景"

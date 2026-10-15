@@ -30,7 +30,7 @@ validation. A successful installation does not apply any theme.
 Independent icon themes use version 3 with an additional required `icon` array.
 Each entry contains only `id`, `name` and an `icon` object. The strict icon codec
 includes the shape, background, glass, reflection, gradient, texture, filter,
-outline, shadow, per-icon background color sources, multi-stop gradients and tonal/monochrome coloring values. It excludes application paths, icon
+outline, shadow, per-icon background color sources, multi-stop gradients and tonal/duotone coloring values. It excludes application paths, icon
 replacements, size, typography and layout. Preset identity is local; applying an
 icon theme selects the custom preset and changes only icon beautification.
 Smart versus shrink-all processing is a separate local preference; capture,
@@ -41,10 +41,16 @@ Packages without icon themes continue to export version 1. New readers accept
 versions 1, 2 and 3; older readers reject version 3. The private library writes version
 3 and reads versions 1 and 2, retaining old references and immutable snapshots.
 Legacy tint and two-color gradients remain available when loading older settings.
-New tint defaults to 35% luminosity-preserving coloring; monochrome is explicit.
+New tint defaults to 35% luminosity-preserving coloring; duotone gradient-maps bitmap luminosity to dark/light variants of the chosen tint, preserving opaque icon details.
 Background color is resolved per icon: original plate (accent fallback) or a
 chroma-weighted dominant color cluster. Automatic gradient colors form a lighter
 to-original ramp; custom gradients retain 2–5 stops, opacity, angle and range.
+Icon galleries render a 256-pixel scene with 64-pixel vector samples using the
+production icon renderer and plate detector. Reflection and backdrop blur run in
+that native pixel space; the complete scene is then enlarged to the 1024-pixel
+gallery image. The private `icon-scene.png` retains the unscaled frame for pixel
+comparisons. Its filename is not part of the published gallery. This avoids
+changing the rim's fixed outer support or blur-to-icon-size ratio in a large cover.
 
 Custom themes contain an opaque stable `id`, a display-only `name` and an
 `appearance` object encoded by the panel material codec plus

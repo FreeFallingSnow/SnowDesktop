@@ -2763,7 +2763,7 @@
   "iconStyle.coloring": "Farbbehandlung",
   "iconStyle.legacyTint": "Bisherige Einfärbung",
   "iconStyle.tonalTint": "Tonale Einfärbung",
-  "iconStyle.monochrome": "Einfarbig",
+  "iconStyle.duotone": "Zweifarbige Tonung",
   "iconStyle.strategy": "Symbolverarbeitung",
   "iconStyle.smart": "Intelligente Verschönerung",
   "iconStyle.shrinkAll": "Alle verkleinern und Designhintergrund hinzufügen"

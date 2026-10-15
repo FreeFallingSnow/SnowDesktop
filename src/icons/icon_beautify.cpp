@@ -529,9 +529,14 @@ std::uint32_t ApplyFilter(std::uint32_t pixel,
         }
     }
     else if (settings.filterMode == 2)
-    { r = settings.filterTintR; g = settings.filterTintG; b = settings.filterTintB; }
+    {
+        // A raster app icon often includes an opaque plate. Gradient mapping
+        // retains its mark and internal contrast where a flat alpha tint cannot.
+        const auto tone = [gray](float tint) { return std::lerp(tint * .16f, .88f + tint * .12f, gray); };
+        r = tone(settings.filterTintR); g = tone(settings.filterTintG); b = tone(settings.filterTintB);
+    }
     // Preserve the legacy byte rounding for migrated settings. New treatments
-    // keep their exact endpoint, avoiding one-byte variation in flat mono.
+    // keep their exact endpoint, avoiding one-byte variation at a color endpoint.
     if (settings.filterMode == 0 || settings.filterStrength < 1.f)
     {
         r = originalR + (r - originalR) * settings.filterStrength;

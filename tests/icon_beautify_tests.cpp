@@ -513,9 +513,12 @@ int main()
         Check(colored[32 * 64 + 16] == 0xff000000 && colored[32 * 64 + 48] == 0xffffffff &&
             std::abs(luminosity - 128) < 1, "tonal coloring preserves black, white and midtone luminosity");
         style.filterMode = 2;
-        const auto mono = beautify::Render(tones, 64, 64, style, beautify::EdgeColor{0, 0, 0});
-        Check(mono[32 * 64 + 16] == mono[32 * 64 + 32] && mono[32 * 64 + 32] == mono[32 * 64 + 48],
-            "monochrome is an explicit flat foreground treatment rather than a multiplied gray filter");
+        const auto duotone = beautify::Render(tones, 64, 64, style, beautify::EdgeColor{0, 0, 0});
+        const auto dark = duotone[32 * 64 + 16], mid = duotone[32 * 64 + 32], light = duotone[32 * 64 + 48];
+        Check((dark & 255) < (mid & 255) && (mid & 255) < (light & 255) &&
+            ((dark >> 16) & 255) < ((mid >> 16) & 255) && ((mid >> 16) & 255) < ((light >> 16) & 255) &&
+            (dark & 255) > ((dark >> 16) & 255) && (light >> 24) == 255,
+            "duotone retains luminosity structure and opacity inside an opaque app-icon plate");
         auto builtIn = beautify::MakePreset(IconBeautifyPreset::FrostedGlass); builtIn.mode = 1;
         Check(beautify::ResolvePersistedSettings(builtIn, true).mode == 1 &&
             beautify::IdentifyPreset(builtIn) == IconBeautifyPreset::FrostedGlass,
