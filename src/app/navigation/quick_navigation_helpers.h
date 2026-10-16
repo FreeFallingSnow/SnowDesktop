@@ -2,8 +2,8 @@
 
 #include "common/l10n.h"
 
-#include <imm.h>
 #include <windows.h>
+#include <imm.h>
 
 #include <string>
 #include <algorithm>
@@ -23,6 +23,27 @@ inline RECT QuickNavigationRetainedAllocation(const RECT& previous, const RECT& 
         return previous;
     return {std::min(previous.left, required.left), std::min(previous.top, required.top),
         std::max(previous.right, required.right), std::max(previous.bottom, required.bottom)};
+}
+
+// Reserve the invocation monitor before the first visible frame. Retaining only
+// the current panel makes the HWND origin move on the first expansion, while
+// DWM can still display content whose offset belongs to the previous origin.
+// This reserves native coordinates only; the content surface stays panel-sized.
+inline RECT QuickNavigationHostAllocation(const RECT& previous, const RECT& required,
+    const RECT& placementBounds)
+{
+    RECT allocation = QuickNavigationRetainedAllocation(required, placementBounds);
+    InflateRect(&allocation, 2, 2);
+    return QuickNavigationRetainedAllocation(previous, allocation);
+}
+
+inline RECT QuickNavigationWindowFence(const RECT& panel, const RECT& animationPath,
+    const RECT& host, bool expanded)
+{
+    RECT fence = expanded ? QuickNavigationRetainedAllocation(panel, animationPath) : panel;
+    if (expanded) InflateRect(&fence, 2, 2);
+    OffsetRect(&fence, -host.left, -host.top);
+    return fence;
 }
 
 inline RECT QuickNavigationSearchInputRect(RECT search, int inset)

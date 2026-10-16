@@ -636,6 +636,17 @@ void DesktopApp::PositionQuickNavigationWindow()
         return;
 
     const RECT previousHost = quickNavigationHostRect_;
+    RECT placementBounds{};
+    const POINT invocationPoint{
+        quickNavigationOpenPoint_.x + virtualLeft_,
+        quickNavigationOpenPoint_.y + virtualTop_};
+    MONITORINFO monitorInfo{};
+    monitorInfo.cbSize = sizeof(monitorInfo);
+    if (GetMonitorInfoW(MonitorFromPoint(invocationPoint, MONITOR_DEFAULTTONEAREST), &monitorInfo))
+    {
+        placementBounds = monitorInfo.rcMonitor;
+        OffsetRect(&placementBounds, -virtualLeft_, -virtualTop_);
+    }
     RECT nextRect = GetQuickNavigationRect();
     auto& resize = quickNavigationAnimation_.Resize();
     if (resize.IsAnimating())
@@ -682,23 +693,22 @@ void DesktopApp::PositionQuickNavigationWindow()
     if (quickNavigationAnimation_.GetEffect() ==
         snowdesktop::quick_navigation_animation_rules::Effect::Attraction)
     {
-        // Attraction can bend outside the panel/Dock union. Reserve its full
-        // trajectory once so opening, closing and reversals share the envelope.
+        // Reserve from the same monitor-sized source for every panel size, so
+        // a later resize cannot move the native origin for a future Dock warp.
         const auto rect = [](const RECT& r) {
             return snowdesktop::dock_attraction::Rect{static_cast<double>(r.left),
                 static_cast<double>(r.top), static_cast<double>(r.right), static_cast<double>(r.bottom)};
         };
         const auto bounds = snowdesktop::dock_attraction::Bounds(
-            rect(quickNavigationRect_), rect(quickNavigationAnimationDockRect_));
+            rect(IsRectEmpty(&placementBounds) ? quickNavigationRect_ : placementBounds),
+            rect(quickNavigationAnimationDockRect_));
         const RECT envelope{static_cast<LONG>(std::floor(bounds.left)),
             static_cast<LONG>(std::floor(bounds.top)), static_cast<LONG>(std::ceil(bounds.right)),
             static_cast<LONG>(std::ceil(bounds.bottom))};
         UnionRect(&quickNavigationHostRect_, &quickNavigationHostRect_, &envelope);
     }
-    InflateRect(
-        &quickNavigationHostRect_, 2, 2);
-    quickNavigationHostRect_ = QuickNavigationRetainedAllocation(
-        previousHost, quickNavigationHostRect_);
+    quickNavigationHostRect_ = QuickNavigationHostAllocation(
+        previousHost, quickNavigationHostRect_, placementBounds);
     const bool hostChanged = !EqualRect(&previousHost, &quickNavigationHostRect_);
     const int width = std::max<LONG>(
         1,
@@ -711,7 +721,8 @@ void DesktopApp::PositionQuickNavigationWindow()
 
     if (hostChanged || !IsWindowVisible(quickNavigationHwnd_))
     {
-        UpdateQuickNavigationWindowRegion(true);
+        UpdateQuickNavigationWindowRegion(quickNavigationAnimation_.IsAnimating() ||
+            !quickNavigationAnimation_.GetVisual().visible);
         const DWM_WINDOW_CORNER_PREFERENCE cornerPreference = DWMWCP_DONOTROUND;
         DwmSetWindowAttribute(quickNavigationHwnd_, DWMWA_WINDOW_CORNER_PREFERENCE,
             &cornerPreference, sizeof(cornerPreference));
@@ -720,7 +731,8 @@ void DesktopApp::PositionQuickNavigationWindow()
         SetWindowPos(quickNavigationHwnd_, nullptr,
             quickNavigationHostRect_.left + virtualLeft_,
             quickNavigationHostRect_.top + virtualTop_, width, height,
-            SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+            SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER |
+                SWP_NOREDRAW | SWP_NOCOPYBITS);
     }
     EnsureQuickNavigationSearchEdit();
     UpdateQuickNavigationSearchEditRect();
@@ -739,23 +751,36 @@ void DesktopApp::UpdateQuickNavigationWindowRegion(
     bool expanded)
 {
     if (!quickNavigationHwnd_ ||
-        !IsWindow(quickNavigationHwnd_) ||
-        (expanded && quickNavigationWindowRegionExpanded_))
+        !IsWindow(quickNavigationHwnd_))
         return;
+    RECT animationPath{};
     if (expanded)
     {
-        if (SetWindowRgn(
-                quickNavigationHwnd_, nullptr, FALSE))
-            quickNavigationWindowRegionExpanded_ = true;
-        return;
+        animationPath = MakeRect(quickNavigationAnimationAnchorPoint_.x - 1,
+            quickNavigationAnimationAnchorPoint_.y - 1,
+            quickNavigationAnimationAnchorPoint_.x + 2,
+            quickNavigationAnimationAnchorPoint_.y + 2);
+        animationPath = QuickNavigationRetainedAllocation(animationPath, quickNavigationAnimationDockRect_);
+        if (quickNavigationAnimation_.GetEffect() ==
+            snowdesktop::quick_navigation_animation_rules::Effect::Attraction)
+        {
+            const auto rect = [](const RECT& r) {
+                return snowdesktop::dock_attraction::Rect{static_cast<double>(r.left),
+                    static_cast<double>(r.top), static_cast<double>(r.right), static_cast<double>(r.bottom)};
+            };
+            const auto bounds = snowdesktop::dock_attraction::Bounds(
+                rect(quickNavigationRect_), rect(quickNavigationAnimationDockRect_));
+            const RECT envelope{static_cast<LONG>(std::floor(bounds.left)),
+                static_cast<LONG>(std::floor(bounds.top)), static_cast<LONG>(std::ceil(bounds.right)),
+                static_cast<LONG>(std::ceil(bounds.bottom))};
+            animationPath = QuickNavigationRetainedAllocation(animationPath, envelope);
+        }
     }
 
-    const RECT panelRegionRect{
-        quickNavigationRect_.left - quickNavigationHostRect_.left,
-        quickNavigationRect_.top - quickNavigationHostRect_.top,
-        quickNavigationRect_.right - quickNavigationHostRect_.left,
-        quickNavigationRect_.bottom - quickNavigationHostRect_.top
-    };
+    // Even while opening/closing, the input fence covers only the visible
+    // animation path, not the monitor-sized native coordinate reservation.
+    const RECT panelRegionRect = QuickNavigationWindowFence(quickNavigationRect_,
+        animationPath, quickNavigationHostRect_, expanded);
     // Keep the native region rectangular. The DComp surface owns the rounded
     // alpha edge; applying a binary Win32 rounded region here clips away its
     // partial-coverage pixels and leaves visibly jagged corners at rest.
@@ -773,7 +798,7 @@ void DesktopApp::UpdateQuickNavigationWindowRegion(
         if (unchanged)
         {
             DeleteObject(panelRegion);
-            quickNavigationWindowRegionExpanded_ = false;
+            quickNavigationWindowRegionExpanded_ = expanded;
             return;
         }
         if (!SetWindowRgn(
@@ -781,7 +806,7 @@ void DesktopApp::UpdateQuickNavigationWindowRegion(
                 panelRegion, FALSE))
             DeleteObject(panelRegion);
         else
-            quickNavigationWindowRegionExpanded_ = false;
+            quickNavigationWindowRegionExpanded_ = expanded;
     }
 }
 

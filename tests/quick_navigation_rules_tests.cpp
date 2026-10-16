@@ -758,6 +758,87 @@ void TestResizePresentationLifetime()
         "the old rectangle-only backdrop identity detects a replacement at the settling frame");
 }
 
+void TestResizeHostOrigin()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    const RECT monitor{-1920, -240, 0, 840};
+    const ResizeRect collapsed{-1180, 360, -740, 560};
+    const ResizeRect expanded{-1280, 100, -640, 720};
+    const RECT compactPanel{collapsed.left, collapsed.top, collapsed.right, collapsed.bottom};
+    const RECT expandedPanel{expanded.left, expanded.top, expanded.right, expanded.bottom};
+    const RECT empty{};
+    const RECT initialHost = QuickNavigationHostAllocation(empty, compactPanel, monitor);
+    const LONG retainedOffsetX = compactPanel.left - initialHost.left;
+    const LONG retainedOffsetY = compactPanel.top - initialHost.top;
+    const RECT firstExpandHost = QuickNavigationHostAllocation(initialHost, expandedPanel, monitor);
+    Check(EqualRect(&initialHost, &firstExpandHost) &&
+            firstExpandHost.left + retainedOffsetX == compactPanel.left &&
+            firstExpandHost.top + retainedOffsetY == compactPanel.top,
+        "first expansion keeps the old compact frame at its screen position until the new frame is presented");
+
+    RECT host = initialHost;
+    ResizeState resize;
+    resize.Start(collapsed, expanded, 1000, true, 1.0);
+    for (std::uint64_t now = 1000; now <= 1300; ++now)
+    {
+        if (now == 1090)
+            resize.Start(resize.Advance(now, true), collapsed, now, true, 1.0);
+        const auto frame = resize.Advance(now, true);
+        const RECT panel{frame.left, frame.top, frame.right, frame.bottom};
+        host = QuickNavigationHostAllocation(host, panel, monitor);
+        Check(EqualRect(&host, &initialHost),
+            "expansion, reversal and settling share the initial native coordinate system");
+    }
+    Check(!resize.IsAnimating(), "the reversed transition settles inside the reserved host");
+    const RECT repeated = QuickNavigationHostAllocation(host, compactPanel, monitor);
+    Check(EqualRect(&repeated, &initialHost),
+        "repeated positioning does not accumulate the native host border");
+    const RECT restingFence = QuickNavigationWindowFence(compactPanel, expandedPanel, initialHost, false);
+    const POINT panelCorner{compactPanel.left - initialHost.left, compactPanel.top - initialHost.top};
+    const POINT outsidePanel{monitor.left + 10 - initialHost.left, monitor.top + 10 - initialHost.top};
+    Check(PtInRect(&restingFence, panelCorner) && !PtInRect(&restingFence, outsidePanel) &&
+            restingFence.right - restingFence.left == compactPanel.right - compactPanel.left,
+        "the retained host does not enlarge the resting panel's input fence");
+    const RECT openingFence = QuickNavigationWindowFence(compactPanel, expandedPanel, initialHost, true);
+    const POINT expandedCorner{expandedPanel.left - initialHost.left, expandedPanel.top - initialHost.top};
+    Check(PtInRect(&openingFence, panelCorner) && PtInRect(&openingFence, expandedCorner) &&
+            !PtInRect(&openingFence, outsidePanel),
+        "an expanded animation fence covers the actual path without claiming the entire monitor");
+
+    RECT oldHost = compactPanel;
+    InflateRect(&oldHost, 2, 2);
+    RECT oldEnvelope = expandedPanel;
+    InflateRect(&oldEnvelope, 2, 2);
+    const RECT oldExpandedHost = QuickNavigationRetainedAllocation(oldHost, oldEnvelope);
+    const POINT oldFrameAfterMove{oldExpandedHost.left + compactPanel.left - oldHost.left,
+        oldExpandedHost.top + compactPanel.top - oldHost.top};
+    Check(oldFrameAfterMove.x == expandedPanel.left && oldFrameAfterMove.y == expandedPanel.top,
+        "the previous panel-only reservation moves the stale compact frame to the expanded top-left");
+
+    const RECT detachedAnchor{-2050, 0, -2030, 20};
+    const RECT required = QuickNavigationRetainedAllocation(compactPanel, detachedAnchor);
+    const RECT dockHost = QuickNavigationHostAllocation(empty, required, monitor);
+    Check(dockHost.left <= detachedAnchor.left && dockHost.right >= monitor.right,
+        "the stable monitor envelope still includes an anchor on an adjacent screen");
+    const auto attractionRect = [](const RECT& rect) {
+        return snowdesktop::dock_attraction::Rect{static_cast<double>(rect.left),
+            static_cast<double>(rect.top), static_cast<double>(rect.right), static_cast<double>(rect.bottom)};
+    };
+    const auto reservedWarp = snowdesktop::dock_attraction::Bounds(
+        attractionRect(monitor), attractionRect(detachedAnchor));
+    for (const RECT panel : {compactPanel, expandedPanel})
+    {
+        const auto warp = snowdesktop::dock_attraction::Bounds(
+            attractionRect(panel), attractionRect(detachedAnchor));
+        Check(reservedWarp.left <= warp.left && reservedWarp.top <= warp.top &&
+                reservedWarp.right >= warp.right && reservedWarp.bottom >= warp.bottom,
+            "the fixed attraction reserve contains compact and expanded Dock trajectories");
+    }
+    const RECT fallback = QuickNavigationHostAllocation(empty, compactPanel, empty);
+    Check(fallback.left == compactPanel.left - 2 && fallback.bottom == compactPanel.bottom + 2,
+        "missing monitor bounds retain the panel-only allocation fallback");
+}
+
 void TestAnimationEffects()
 {
     using namespace snowdesktop::quick_navigation_animation_rules;
@@ -1442,6 +1523,7 @@ int main()
     TestAnimationRules();
     TestResizeAnimation();
     TestResizePresentationLifetime();
+    TestResizeHostOrigin();
     TestAnimationEffects();
     TestAttractionAnimationAndSurface();
     TestGenieTranslucentContentCoverage();
