@@ -4,6 +4,7 @@
 #include <shobjidl.h>
 #include <wrl/client.h>
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
+#include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <winrt/Windows.Storage.h>
@@ -83,8 +84,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     static std::string ItemId(const winrt::Windows::Foundation::IInspectable& item)
     {
-        const auto container = item.try_as<c::GridViewItem>();
-        return container ? winrt::to_string(winrt::unbox_value_or<winrt::hstring>(container.Tag(), {})) : std::string{};
+        return winrt::to_string(winrt::unbox_value_or<winrt::hstring>(item, {}));
     }
     static winrt::fire_and_forget LoadPreview(c::Image image, c::TextBlock missing, std::wstring path)
     {
@@ -138,7 +138,10 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         c::TextBlock missing; missing.Text(L("iconLibrary.missing")); missing.TextWrapping(x::TextWrapping::Wrap);
         missing.Visibility(entry.missing ? x::Visibility::Visible : x::Visibility::Collapsed);
         checker.Children().Append(image); checker.Children().Append(missing); tile.Children().Append(checker);
-        if (!entry.previewPath.empty() && !entry.missing) LoadPreview(image, missing, entry.previewPath);
+        if (!entry.previewPath.empty() && !entry.missing)
+            image.Loaded([weakMissing=winrt::make_weak(missing), path=entry.previewPath](const auto& sender, auto&&) {
+                if(const auto label=weakMissing.get())LoadPreview(sender.template as<c::Image>(),label,path);
+            });
         c::TextBlock name; name.Text(entry.name); name.TextTrimming(x::TextTrimming::CharacterEllipsis); tile.Children().Append(name);
         c::TextBlock detail; detail.FontSize(11); detail.Opacity(.7);
         detail.Text(entry.missing ? L("iconLibrary.missing") : std::to_wstring(entry.width) + L" × " + std::to_wstring(entry.height) + L" · " + winrt::to_hstring(entry.format).c_str());
@@ -203,16 +206,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 if (groupId == "ungrouped" ? !entry.groupIds.empty() :
                     (!groupId.empty() && std::find(entry.groupIds.begin(), entry.groupIds.end(), groupId) == entry.groupIds.end())) continue;
                 visible.emplace(entry.id, entry);
-                c::GridViewItem item; item.Tag(winrt::box_value(winrt::to_hstring(entry.id)));
-                item.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
-                item.Width(148); item.MinHeight(176);
-                x::Automation::AutomationProperties::SetName(item, entry.name);
-                const auto weak = weak_from_this();
-                item.Loaded([weak, entry](const auto& sender, auto&&) {
-                    if (const auto self = weak.lock())
-                    { const auto container = sender.template as<c::GridViewItem>(); if (!container.Content()) container.Content(self->Tile(entry)); }
-                });
-                item.Unloaded([](const auto& sender, auto&&) { sender.template as<c::GridViewItem>().Content(nullptr); });
+                const auto item = winrt::box_value(winrt::to_hstring(entry.id));
                 grid.Items().Append(item);
                 if (entry.id == selectImported || std::find(selected.begin(), selected.end(), entry.id) != selected.end()) grid.SelectedItems().Append(item);
             }
@@ -377,6 +371,11 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         c::ColumnDefinition searchColumn; searchColumn.Width({1., x::GridUnitType::Star});
         filters.ColumnDefinitions().Append(groupColumn); filters.ColumnDefinitions().Append(searchColumn);
         groups.HorizontalAlignment(x::HorizontalAlignment::Stretch);
+        groups.Height(32); search.Height(32);
+        groups.VerticalAlignment(x::VerticalAlignment::Center); search.VerticalAlignment(x::VerticalAlignment::Center);
+        groups.FontSize(14); search.FontSize(14);
+        groups.Padding({12,4,32,4}); search.Padding({12,4,12,4});
+        groups.VerticalContentAlignment(x::VerticalAlignment::Center); search.VerticalContentAlignment(x::VerticalAlignment::Center);
         filters.Children().Append(groups); c::Grid::SetColumn(search,1); filters.Children().Append(search);
         root.Children().Append(filters); root.Children().Append(toolbar);
         const auto add = [&](c::AppBarButton button, const char* key, auto click) {
@@ -404,11 +403,30 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         add(moveGroup, "iconLibrary.moveGroup", [weak](auto&&, auto&&) { if (auto self = weak.lock()) self->MoveGroup(); });
         add(newGroup, "iconLibrary.newGroup", [weak](auto&&, auto&&) { if (auto self = weak.lock()) self->EditGroup(true); });
         for (auto [button,key] : {std::pair{renameGroup,"iconLibrary.renameGroup"},{deleteGroup,"iconLibrary.deleteGroup"}})
-        { button.Label(L(key)); toolbar.SecondaryCommands().Append(button); }
+        { button.Label(L(key)); toolbar.PrimaryCommands().Append(button); }
         renameGroup.Click([weak](auto&&, auto&&) { if (auto self=weak.lock()) self->EditGroup(false); });
         deleteGroup.Click([weak](auto&&, auto&&) { if (auto self=weak.lock()) self->DeleteGroup(); });
         if (picker) { selectAll.Visibility(x::Visibility::Collapsed); newGroup.Visibility(x::Visibility::Collapsed); renameGroup.Visibility(x::Visibility::Collapsed); deleteGroup.Visibility(x::Visibility::Collapsed); moveGroup.Visibility(x::Visibility::Collapsed); rename.Visibility(x::Visibility::Collapsed); remove.Visibility(x::Visibility::Collapsed); png.Visibility(x::Visibility::Collapsed); ico.Visibility(x::Visibility::Collapsed); }
         grid.Height(picker ? 340 : 460); grid.SelectionMode(picker ? c::ListViewSelectionMode::Single : c::ListViewSelectionMode::Multiple);
+        // Let GridView own and recycle its containers. Mutating Content from
+        // Loaded/Unloaded races dialog transitions and leaves empty cards.
+        grid.ItemTemplate(x::Markup::XamlReader::Load(LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ContentControl HorizontalContentAlignment="Stretch" IsTabStop="False"/></DataTemplate>)").as<x::DataTemplate>());
+        grid.ContainerContentChanging([weak](auto&&, const c::ContainerContentChangingEventArgs& args) {
+            const auto slot = args.ItemContainer().ContentTemplateRoot().try_as<c::ContentControl>();
+            if (!slot) return;
+            if (args.InRecycleQueue()) { slot.Content(nullptr); return; }
+            if (const auto self = weak.lock())
+            {
+                const auto found = self->visible.find(ItemId(args.Item()));
+                if (found == self->visible.end()) return;
+                const auto container = args.ItemContainer();
+                container.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
+                container.Width(148); container.MinHeight(176);
+                x::Automation::AutomationProperties::SetName(container, found->second.name);
+                slot.Content(self->Tile(found->second));
+                args.Handled(true);
+            }
+        });
         x::Automation::AutomationProperties::SetAutomationId(grid, L"IconLibraryGrid");
         grid.SelectionChanged([weak](auto&&, auto&&) { if (auto self = weak.lock(); self && !self->rendering) self->UpdateButtons(); });
         search.TextChanged([weak](auto&&, auto&&) { if (auto self = weak.lock()) self->Render(); });

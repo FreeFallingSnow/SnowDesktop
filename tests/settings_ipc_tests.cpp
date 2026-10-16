@@ -1,5 +1,6 @@
 #include "settings/settings_ipc_channel.h"
 #include "settings/settings_ipc_values.h"
+#include "settings/icon_library_ipc_paging.h"
 #include "system/status_bar/status_bar_appearance.h"
 #include "../src/winui/home_about_ipc_values.h"
 #include "winui/general_advanced_feature_ipc_values.h"
@@ -703,6 +704,75 @@ void TestChannel()
     Check(handlesAfter <= handlesBefore, "repeated IPC sessions release pipes, threads, events and process handles");
 }
 
+void TestIconLibraryPaging()
+{
+    // Real icon packs contain tens of thousands of entries. A single snapshot
+    // exceeded the private frame limit and made a successfully imported pack
+    // unavailable to the settings process. Keep the same frame bound and use
+    // the production paging handlers over actual anonymous pipes.
+    snowdesktop::IconLibrarySnapshot expected;
+    expected.revision = 72; expected.session = 9; expected.succeeded = true;
+    expected.target = L"item:paged"; expected.targetName = L"Target";
+    expected.groups.push_back({"pack", L"Large pack"});
+    expected.imported = {"last"}; expected.importedGroupId = "pack";
+    expected.failures = {L"unsupported resource"};
+    for (unsigned i = 0; i < 42000; ++i)
+    {
+        snowdesktop::IconLibraryEntry entry;
+        entry.id = std::string(64, 'a') + std::to_string(i) + ".png";
+        entry.name = L"Icon " + std::to_wstring(i);
+        entry.previewPath = L"C:\\library\\" + std::wstring(256, L'x') + std::to_wstring(i) + L".png";
+        entry.format = "png"; entry.width = 512; entry.height = 512;
+        entry.packageId = std::string(64, 'b'); entry.groupIds = {"pack"};
+        entry.uses = {L"Desktop"}; expected.entries.push_back(std::move(entry));
+    }
+    Reject([&] { (void)Pack(expected); }, "the real-size library fixture exceeds the old single-frame transport");
+    HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
+    if (!CreatePipe(&mainRead, &uiWrite, nullptr, 0) || !CreatePipe(&uiRead, &mainWrite, nullptr, 0))
+        throw std::runtime_error("paging pipes failed");
+    Channel client; client.Open(mainRead, mainWrite, CurrentProcessHandle());
+    std::promise<bool> ready; std::atomic<unsigned> operations = 0;
+    std::thread host([&] {
+        try
+        {
+            Channel server; server.Open(uiRead, uiWrite, CurrentProcessHandle());
+            BindIconLibraryPages(server, [&](auto) { ++operations; return expected; });
+            server.Bind<void>("paging.exit", [] { PostQuitMessage(0); });
+            ready.set_value(true);
+            MSG message{};
+            while (GetMessageW(&message, nullptr, 0, 0) > 0) DispatchMessageW(&message);
+        }
+        catch (...) { try { ready.set_value(false); } catch (...) {} }
+    });
+    const bool started = ready.get_future().get();
+    try
+    {
+        Check(started, "paged library endpoint starts");
+        if (started)
+        {
+            const auto result = CallIconLibraryPages(client, {});
+            bool entriesMatch = result.entries.size() == expected.entries.size();
+            if (entriesMatch) for (std::size_t i = 0; i < result.entries.size(); ++i)
+                if (Pack(result.entries[i]) != Pack(expected.entries[i])) { entriesMatch = false; break; }
+            Check(entriesMatch && result.revision == 72 && result.session == 9 && result.succeeded &&
+                result.target == expected.target && result.targetName == expected.targetName &&
+                Pack(result.groups) == Pack(expected.groups) && result.imported == expected.imported &&
+                result.importedGroupId == expected.importedGroupId && result.failures == expected.failures,
+                "every filtered resource, group, usage and action field survives multi-frame transport");
+            Check(operations == 1, "reading pages never repeats the import/delete operation");
+            const auto first = client.Call<IconLibraryPage>("iconLibrary.action", snowdesktop::IconLibraryRequest{});
+            const auto token = std::get<0>(first);
+            client.Call<void>("iconLibrary.release", token);
+            Reject([&] { (void)client.Call<IconLibraryPage>("iconLibrary.page", token, std::uint32_t{1024}); },
+                "released snapshots cannot leak stale entries into a newer operation");
+            client.Notify("paging.exit");
+        }
+    }
+    catch (const std::exception& error) { Check(false, error.what()); }
+    PostThreadMessageW(GetThreadId(host.native_handle()), WM_QUIT, 0, 0);
+    host.join();
+}
+
 void TestRetiredUpdateProtocol()
 {
     HANDLE mainRead = nullptr, uiWrite = nullptr, uiRead = nullptr, mainWrite = nullptr;
@@ -1192,6 +1262,7 @@ int RunSettingsIpcTests()
     TestLargeIconEditing();
     TestCustomCategoryCreation();
     TestChannel();
+    TestIconLibraryPaging();
     TestAsyncOpening();
     TestOverlappingSettingsRefresh();
     TestRetiredUpdateProtocol();

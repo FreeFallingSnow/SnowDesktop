@@ -184,6 +184,11 @@ Resources Table(std::string_view bytes)
                         {
                             if(!result.contains(rid)&&result.size()>=100000)throw std::length_error("Android resource count budget");
                             const auto& typeName=At(types,id-1); const auto& keyName=At(keys,key);
+                            const auto validName=[](const std::string& name) {
+                                return !name.empty() && name.size()<=256 &&
+                                    MultiByteToWideChar(CP_UTF8,MB_ERR_INVALID_CHARS,name.data(),static_cast<int>(name.size()),nullptr,0)>0;
+                            };
+                            if(!validName(typeName)||!validName(keyName))throw std::runtime_error("invalid Android resource name");
                             Charge(materialized,typeName.size()+keyName.size()+value.text.size(),64*1024*1024);
                             result[rid]={typeName,keyName,std::move(value),rank};
                         }

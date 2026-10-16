@@ -2301,7 +2301,8 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             windowsVisual.top +
                 (windowsVisual.bottom - windowsVisual.top + backgroundSize) / 2
         };
-        app_->DrawDockControlBackground(context, background, 0, !lt);
+        auto* custom = app_->GetSmallCustomIcon(context, L"control:start", backgroundSize);
+        if (!custom) app_->DrawDockControlBackground(context, background, 0, !lt);
 
         const float logoSize = std::max(1.0f, backgroundSize * 0.58f);
         const float paneGap = std::max(1.5f, logoSize * 0.09f);
@@ -2312,7 +2313,7 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         context->CreateSolidColorBrush(
             D2D1::ColorF(0.0f, 0.47f, 0.84f, 0.94f),
             &windowsBrush);
-        if (auto custom = app_->GetSmallCustomIcon(context, L"control:start", backgroundSize))
+        if (custom)
             app_->DrawIconBitmap(context, custom, background);
         else if (windowsBrush)
         {
@@ -2706,14 +2707,15 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
             searchVisual.top +
                 (searchVisual.bottom - searchVisual.top + backgroundSize) / 2
         };
-        app_->DrawDockControlBackground(
+        auto* custom = app_->GetSmallCustomIcon(context, L"control:search", backgroundSize);
+        if (!custom) app_->DrawDockControlBackground(
             context, searchBackground, 0, !lt);
 
         ComPtr<ID2D1SolidColorBrush> brush;
         context->CreateSolidColorBrush(
             lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.92f), &brush);
-        if (auto custom = app_->GetSmallCustomIcon(context, L"control:search", backgroundSize))
+        if (custom)
             app_->DrawIconBitmap(context, custom, searchBackground);
         else if (brush)
         {

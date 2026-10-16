@@ -554,7 +554,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                         complete = complete && source && source.PixelWidth() == 96 && source.PixelHeight() == 96;
                     }
                 });
-                return count > 0 && complete;
+                return count == 6 && complete;
             };
             PumpUntil(loadedImages);
             grid.SelectedIndex(0); groups.SelectedIndex(2); Settle(shell.as<x::FrameworkElement>());
@@ -636,9 +636,22 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                     return opened&&opened.ActualWidth()>0;
                 });return opened;
             };
+            const auto waitForAllPickerTiles=[&](const c::ContentDialog& opened) {
+                const auto currentGrid=PreviewControl<c::GridView>(opened,L"IconLibraryGrid");
+                PumpUntil([&] {
+                    unsigned loaded=0;
+                    Walk(currentGrid,[&](const x::DependencyObject& node) {
+                        if(const auto image=node.try_as<c::Image>();image&&!winrt::unbox_value_or<bool>(image.Tag(),false))
+                            if(const auto bitmap=image.Source().try_as<x::Media::Imaging::BitmapImage>();bitmap&&bitmap.PixelWidth()==96)++loaded;
+                    });
+                    return currentGrid.Items().Size()==7&&loaded==6;
+                });
+            };
             auto reopened=openDialog();
+            waitForAllPickerTiles(reopened);
             reopened.Hide();PumpUntil([&]{return pickerRequests->size()==1;});
             shell->OpenRequestedIconPicker();reopened=openDialog();
+            waitForAllPickerTiles(reopened);
             const auto reopenedGrid=PreviewControl<c::GridView>(reopened,L"IconLibraryGrid");reopenedGrid.SelectedIndex(1);
             PumpUntil([&]{
                 bool originalLoaded=false;Walk(reopenedGrid,[&](const x::DependencyObject& node){
@@ -650,6 +663,14 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             if(!reopenedUse)throw std::runtime_error("reopened picker use button missing");
             InvokePreview(reopenedUse);PumpUntil([&]{return pickerRequests->size()==2;});
             if(pickerRequests->back().action!="apply"||pickerRequests->back().ids!=std::vector<std::string>{entries[1].id})throw std::runtime_error("reopened picker failed to apply original preview asset");
+            if(!shell->Navigate(SettingsRoute::ForPage(SettingsPage::IconLibrary)))throw std::runtime_error("return to library route failed");
+            const auto currentGrid=PreviewControl<c::GridView>(shell->FindName(L"PageCards").as<c::StackPanel>(),L"IconLibraryGrid");
+            PumpUntil([&] {
+                unsigned loaded=0;Walk(currentGrid,[&](const x::DependencyObject& node) {
+                    if(const auto image=node.try_as<c::Image>();image&&!winrt::unbox_value_or<bool>(image.Tag(),false))
+                        if(const auto bitmap=image.Source().try_as<x::Media::Imaging::BitmapImage>();bitmap&&bitmap.PixelWidth()==96)++loaded;
+                });return currentGrid.Items().Size()==7&&loaded==6;
+            });
             std::ofstream(output / L"icon-library.tsv") << "stream-image-load\tgroup-filter\tstable-selection\tsearch\tempty-hint-removed\npassed\tpassed\tpassed\tpassed\tpassed\n";
         }
         if (page == SettingsPage::WidgetBehavior && expanded)

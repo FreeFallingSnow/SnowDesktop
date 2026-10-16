@@ -175,7 +175,9 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         RECT bitmapTarget = target;
         const bool recycleBin = _wcsicmp(item.desktopIconClsid.c_str(),
             kDesktopIconClsidRecycleBin) == 0;
-        if (recycleBin)
+        auto* custom = GetSmallCustomIcon(ctx, item.layoutKey, target.right - target.left);
+        const bool separateRecyclePlate = recycleBin && !custom && !iconBeautifySettings_.enabled;
+        if (separateRecyclePlate)
         {
             DrawDockControlBackground(ctx, target, 0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
             const int shortSide = std::max(1, static_cast<int>(std::min(
@@ -200,18 +202,17 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 DrawDemoIdentityIcon(
                     ctx, demoIdentity, bitmapTarget, alpha);
         }
-        else if (auto custom = GetSmallCustomIcon(ctx, item.layoutKey, bitmapTarget.right - bitmapTarget.left))
+        else if (custom)
             DrawIconBitmap(ctx, custom, bitmapTarget, alpha, reinterpret_cast<std::uintptr_t>(&item));
         else if (!item.iconBitmap)
-            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
+            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !separateRecyclePlate);
         else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(
                 item.iconBitmap,
-                !recycleBin &&
-                    ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
+                ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
             DrawIconBitmap(ctx, bitmap, bitmapTarget, alpha,
                 reinterpret_cast<std::uintptr_t>(&item));
         else
-            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
+            DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !separateRecyclePlate);
         if (!useDemoIdentity &&
             ShouldDrawShortcutArrow(item.isShortcut, item.isApplicationShortcut) &&
             (item.iconBitmap || item.iconState != IconState::Loading))

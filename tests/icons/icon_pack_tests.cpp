@@ -66,10 +66,10 @@ std::string Type(unsigned id,const std::vector<std::tuple<unsigned,unsigned,unsi
     }
     return out;
 }
-std::string Table(bool compact=false,bool sparse=false,bool cycle=false,bool bitmap=false,std::string globals={},bool systemPalette=false)
+std::string Table(bool compact=false,bool sparse=false,bool cycle=false,bool bitmap=false,std::string globals={},bool systemPalette=false,std::string foregroundName="foreground")
 {
     if(globals.empty())globals=Pool({"res/sample.xml",bitmap?"res/foreground.png":"res/foreground.xml"});
-    const auto types=Pool({"drawable","color"}),keys=Pool({"sample","foreground","back"});
+    const auto types=Pool({"drawable","color"}),keys=Pool({"sample",std::move(foregroundName),"back"});
     auto entries=Type(1,{{0,3,0},{1,3,1}},compact,sparse)+Type(2,{{2,cycle?1u:28u,cycle?0x7f020000u:0xffff0000u}},compact,sparse);
     if(systemPalette)entries+=Type(2,{{2,1,0x01060000u}},compact,sparse,31);
     std::string package;U16(package,0x200);U16(package,288);U32(package,static_cast<unsigned>(288+types.size()+keys.size()+entries.size()));U32(package,127);package.append(256,'\0');
@@ -169,6 +169,10 @@ int RunIconPackTests(const std::filesystem::path& root)
     icon_pack::Archive invalid;invalid.documents={{"resources.arsc",Table(false,false,true)},{"assets/appfilter.xml","<resources><item drawable=\"sample\"/></resources>"},{"res/sample.xml","<adaptive-icon><background drawable=\"@color/back\"/></adaptive-icon>"}};
     check(!android_icon_pack::Convert(invalid,error),"cyclic Android resource references terminate with an explicit unsupported result");
     invalid.documents = {{"resources.arsc",Table()}}; invalid.documents[0].bytes.resize(17);check(!android_icon_pack::Convert(invalid,error),"truncated Android table cannot access outside its bounded input");
+    invalid.documents={{"resources.arsc",Table(false,false,false,false,{},false,"bad\xc0")},
+        {"assets/appfilter.xml","<resources><item drawable=\"sample\"/></resources>"},
+        {"res/sample.xml","<vector viewportWidth=\"24\" viewportHeight=\"24\"><path fillColor=\"#ff0000\" pathData=\"M0,0H24V24H0Z\"/></vector>"}};
+    check(!android_icon_pack::Convert(invalid,error)&&error=="iconLibrary.packUnsupported","invalid resource metadata cannot enter the persisted UTF-8 library index even when the mapped vector is valid");
     {
         // Compact repeated offsets remain valid Android data. Reject their
         // expanded materialization instead of relying on an allocation failure.

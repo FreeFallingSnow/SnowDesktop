@@ -440,6 +440,7 @@ set(SNOWDESKTOP_SOURCES
     src/settings/settings_store_native.cpp
     src/settings/settings_window.cpp
     src/settings/settings_ipc_channel.cpp
+    src/settings/icon_library_ipc_paging.h
     src/settings/settings_ipc_services.cpp
     src/settings/settings_ipc_widget_service.cpp
     src/settings/settings_process.cpp

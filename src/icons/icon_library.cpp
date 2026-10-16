@@ -221,6 +221,9 @@ std::string IconLibrary::Import(const std::filesystem::path& path, std::string& 
     if (ec || !size || size > icon_image::kMaxFileBytes) { error = "iconLibrary.tooLarge"; return {}; }
     std::ifstream input(path, std::ios::binary); std::string bytes(static_cast<size_t>(size), '\0');
     if (!input.read(bytes.data(), static_cast<std::streamsize>(size)) || input.peek() != EOF) { error = "iconLibrary.invalid"; return {}; }
+    // The selected source may already be our hashed original. Release its
+    // Windows read handle before atomically refreshing that same resource.
+    input.close();
     const auto hash = Hash(bytes);
     if (hash.empty()) { error = "iconLibrary.saveFailed"; return {}; }
     const auto stage = directory_ / (L".import-" + Wide(hash) + path.extension().wstring());
