@@ -3,6 +3,7 @@
 #include "desktop/desktop_item_reference_migration.h"
 #include "layout/folder_sort_rules.h"
 #include "shell/shell_file_operation_worker.h"
+#include "shell/shell_item_display_name.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -131,7 +132,8 @@ inline Changes Apply(const ShellRenameResult& result, const std::wstring& newLay
         item.absolutePidl = std::move(absoluteCopy);
         item.childPidl = std::move(childCopy);
         item.parsingName = result.path;
-        item.name = result.displayName;
+        item.name = shell_item_display_name::ForPath(
+            result.path, result.displayName, directory);
         item.typeName = result.typeName;
         item.sysIconIndex = result.sysIconIndex;
         item.modifiedTime = result.attributes.ftLastWriteTime;
@@ -149,7 +151,8 @@ inline Changes Apply(const ShellRenameResult& result, const std::wstring& newLay
                 continue;
             entry.fullPath = result.path;
             entry.name = fileName;
-            entry.displayName = result.displayName;
+            entry.displayName = shell_item_display_name::ForPath(
+                result.path, result.displayName, directory);
             entry.typeName = result.typeName;
             entry.sysIconIndex = result.sysIconIndex;
             entry.isDirectory = directory;

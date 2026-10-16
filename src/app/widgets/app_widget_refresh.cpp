@@ -52,7 +52,7 @@ snowdesktop::shell_refresh::FolderSnapshot snowdesktop::shell_refresh::ReadFolde
                 // No icon/image-list query and no Shell work on the UI thread.
                 return SHGetFileInfoW(itemPath.c_str(), 0, &info, sizeof(info),
                     SHGFI_DISPLAYNAME) != 0;
-            });
+            }, entry.isDirectory);
         entry.lastWriteTime = fd.ftLastWriteTime;
         if (!entry.isDirectory)
         {

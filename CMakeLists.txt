@@ -288,6 +288,7 @@ set(SNOWDESKTOP_SOURCES
     src/shell/shell_menu_registry_watch.h
     src/shell/shell_extension_service.cpp
     src/shell/shell_file_operation_worker.cpp
+    src/shell/shell_item_display_name.h
     src/app/render/app_navigation_render.cpp
     src/app/drag_drop/app_ole_drop_routing.cpp
     src/app/drag_drop/app_ole_drop_session.cpp

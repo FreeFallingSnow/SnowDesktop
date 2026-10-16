@@ -3,6 +3,7 @@
 #include "layout/logical_slot_picker_rules.h"
 #include "navigation/name_pinyin.h"
 #include "navigation/search_match.h"
+#include "shell/shell_item_display_name.h"
 
 // Lua widget data conversion and application-service bridge.
 
@@ -64,7 +65,9 @@ std::vector<LuaDesktopItemInfo> DesktopApp::BuildLuaDesktopSnapshot(bool selecte
                 if (selectedOnly && !entry.selected) continue;
                 LuaDesktopItemInfo info;
                 info.id = LuaWidgetWideToUtf8(entry.fullPath);
-                info.title = LuaWidgetWideToUtf8(entry.name);
+                info.title = LuaWidgetWideToUtf8(
+                    snowdesktop::shell_item_display_name::ForPath(
+                        entry.fullPath, entry.name, entry.isDirectory));
                 info.path = LuaWidgetWideToUtf8(entry.fullPath);
                 info.source = LuaWidgetWideToUtf8(widget.title.empty() ? L"folderMapping" : widget.title);
                 info.type = entry.isDirectory ? "folder" : "file";

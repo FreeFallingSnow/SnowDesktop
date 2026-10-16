@@ -77,6 +77,7 @@ void Check(bool condition, const std::string& message)
 #include "background_work_cases.h"
 #include "shell_icon_request_cases.h"
 #include "startup_icon_cases.h"
+#include "shell/item_display_name_cases.h"
 #include "rename_click_cases.h"
 #include "app/rename_selection_cases.h"
 
@@ -3690,6 +3691,7 @@ int wmain(int argc, wchar_t** argv)
     TestStartupShellReadDoesNotGateReadyIcons();
     TestStartupReadWakesConsumer();
     TestStartupDesktopMetadataDeferral();
+    TestShortcutDisplayNames();
     TestStartupIconSurvivesMetadataArrival();
     TestFirstIconsDoNotWaitForDetails();
     TestShortcutClassificationDoesNotGateIcons();
@@ -3712,6 +3714,7 @@ int wmain(int argc, wchar_t** argv)
     TestLayoutReloadReplacesLargeIconState();
     TestRenameNotificationsPreserveUnrelatedChanges();
     TestRenameUpdatesOnlyMatchingModels();
+    TestShortcutRenameDisplayNames();
     TestDirectoryRenameMigratesMappedRoots();
     TestSelectedGridMoveCapacity();
     TestPopupDwellControllerHandlesCandidateChanges();

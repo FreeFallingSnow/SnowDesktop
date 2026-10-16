@@ -1966,6 +1966,8 @@ value 通过 `session` 返回当前会话，`media.timeline` value 通过 `timel
 三个桌面 topic 受 `desktop.read` 保护且由宿主变更事件驱动，不启动轮询线程。
 `desktop.items` 返回最多 2048 项，`desktop.selection` 返回最多 512 项；每项只有
 稳定宿主引用 `id` 和 `title/source/type/selected` 展示字段，不向 v2 返回绝对路径。
+`title` 为显示标题，快捷方式隐藏末尾的 `.lnk`（包括映射文件夹中的项目）；
+隐藏后缀不改变宿主引用或实际文件名，组件应使用 `id` 识别项目。
 `desktop.changes` 返回单调 `revision` 与最长 64 字节的宿主 `reason`，用于判断何时
 重新读取列表。预览使用固定项目；取消最后订阅时没有后台 worker 或系统句柄残留。
 
