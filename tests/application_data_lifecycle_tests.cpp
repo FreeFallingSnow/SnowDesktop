@@ -1419,7 +1419,7 @@ int main()
         Expect(snowdesktop::layout_storage::ParseDocument(document, roundTrip, &layoutError) &&
             roundTrip.items[0].largeIcon == large && roundTrip.items[0].width == 2,
             "large icon settings preserve desired span independently of adapted layout and without entitlement data");
-        for (const auto invalid : {R"({"version":3})", R"({"version":1,"columns":0})",
+        for (const auto invalid : {R"({"version":4})", R"({"version":1,"columns":0})",
                  R"({"version":1,"radius":-1})", R"({"version":1,"image":"../secret.png"})",
                  R"({"version":1,"columns":1.5})", R"({"version":1,"opacity":2})",
                  R"({"version":1,"radiusPercent":101})", R"({"version":1,"radiusPercent":-0.5})",

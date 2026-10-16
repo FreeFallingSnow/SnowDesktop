@@ -13,6 +13,16 @@ set(WEBP_BUILD_FUZZTEST OFF CACHE BOOL "" FORCE)
 set(WEBP_BUILD_WEBP_JS OFF CACHE BOOL "" FORCE)
 set(WEBP_LINK_STATIC ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/libwebp EXCLUDE_FROM_ALL)
+if(MSVC)
+    # The host and native tests use the static CRT. Apply it to the upstream
+    # object libraries too; changing only webpdecoder/webp leaves mixed CRTs.
+    get_property(SNOWDESKTOP_WEBP_TARGETS DIRECTORY
+        "${CMAKE_CURRENT_SOURCE_DIR}/third_party/libwebp" PROPERTY BUILDSYSTEM_TARGETS)
+    foreach(SNOWDESKTOP_WEBP_TARGET IN LISTS SNOWDESKTOP_WEBP_TARGETS)
+        set_property(TARGET ${SNOWDESKTOP_WEBP_TARGET} PROPERTY
+            MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    endforeach()
+endif()
 # Decoder-only upstream target exports its root; expose the public API directory.
 target_include_directories(webpdecoder INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/libwebp/src>")
 
