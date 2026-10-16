@@ -68,6 +68,9 @@ public:
         const PersonalizationSettings* tooltipAppearance = nullptr,
         DrawBackground drawTooltipBackground = {});
     void Close();
+    // Host startup gate: reserve and prepare geometry while the desktop's
+    // first frame is hidden. Merged strips still follow Dock presentation.
+    void SetPresentationEnabled(bool enabled);
     // Release a lost device without unregistering the AppBar or sampling demands.
     void ReleaseGraphicsResources();
     bool IsFullscreen(HMONITOR monitor) const;

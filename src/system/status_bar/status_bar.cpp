@@ -383,7 +383,7 @@ struct StatusBar::Impl
             const bool topmost = (GetWindowLongPtrW(hwnd,GWL_EXSTYLE)&WS_EX_TOPMOST) != 0;
             // Shell/Dock restacks can reveal a popup without a new fullscreen
             // transition. Reconcile physical visibility as well as state.
-            if (fullscreen) { if (changed || shown || topmost) Hide(); }
+            if (fullscreen || !owner.presentationEnabled) { if (changed || shown || topmost) Hide(); }
             else if (appbar.Registered() && !failed && (changed || !shown || !topmost)) Show();
         }
         bool OwnsPointer(POINT clientPoint) const
@@ -401,7 +401,7 @@ struct StatusBar::Impl
         }
         bool InputAvailable() const
         {
-            return !closing && !fullscreen && !failed && IsWindowVisible(hwnd) &&
+            return owner.presentationEnabled && !closing && !fullscreen && !failed && IsWindowVisible(hwnd) &&
                 (!mergedDockHeight || mergedPresentation.inputEnabled);
         }
         void ApplyDockPose(const StatusBarDockPresentation& frame)
@@ -448,7 +448,7 @@ struct StatusBar::Impl
             }
             mergedPresentation = frame;
             fullscreen = !frame.visible;
-            if (!frame.visible || failed || !positioned)
+            if (!owner.presentationEnabled || !frame.visible || failed || !positioned)
             {
                 if (IsWindowVisible(hwnd)) Hide(false);
                 return;
@@ -462,7 +462,7 @@ struct StatusBar::Impl
         }
         void Show()
         {
-            if (fullscreen || failed || !positioned) return;
+            if (!owner.presentationEnabled || fullscreen || failed || !positioned) return;
             // Fill retained content and the full strip before any native show.
             // This also covers startup or a device reset with animations off.
             Paint(true);
@@ -556,7 +556,7 @@ struct StatusBar::Impl
             else
             {
                 backdrop.SetPopupTopmost(!fullscreen);
-                backdrop.SetVisible(!fullscreen && appearance.glassEnabled && !HighContrast());
+                backdrop.SetVisible(owner.presentationEnabled && !fullscreen && appearance.glassEnabled && !HighContrast());
                 if (!fullscreen) Show();
             }
             // Explorer can approve the same bounds after losing all AppBars.
@@ -1021,7 +1021,7 @@ struct StatusBar::Impl
                 if (lp)
                 {
                     auto& position = *reinterpret_cast<WINDOWPOS*>(lp);
-                    ConstrainHiddenStatusBarPosition(self->fullscreen, position);
+                    ConstrainHiddenStatusBarPosition(!self->owner.presentationEnabled || self->fullscreen, position);
                     // Shell can raise a registered AppBar when another window
                     // gains focus without activating the bar itself. Its opaque
                     // surface must remain behind the merged Dock icon HWND.
@@ -1278,6 +1278,7 @@ struct StatusBar::Impl
     ComPtr<IDWriteFactory> text;
     std::map<std::wstring, std::unique_ptr<Window>> windows;
     bool removingWindows = false;
+    bool presentationEnabled = true;
     std::vector<HWINEVENTHOOK> hooks;
     UINT taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     struct DropTarget { Window* window; bool pinned; std::string before; RECT indicator; };
@@ -1786,7 +1787,12 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
         window->appearanceDirty = window->appearanceDirty || changed || mergedChanged;
         window->paintDirty = window->paintDirty || changed || mergedChanged;
         if (mergedChanged && self.dockChanged) self.dockChanged(true);
-        window->QueuePlace(changed || mergedChanged);
+        // The first desktop/Dock layout immediately consumes this geometry.
+        // Do not defer the first registration until Run enters its message
+        // loop: that would expose a frame using the pre-AppBar work area.
+        // Keep runtime changes coalesced through the existing placement queue.
+        if (!self.presentationEnabled && !window->positioned) window->Place();
+        else window->QueuePlace(changed || mergedChanged);
     }
     if (self.hooks.empty())
         for (const auto range : {std::pair{EVENT_SYSTEM_FOREGROUND, EVENT_SYSTEM_FOREGROUND},
@@ -1797,5 +1803,19 @@ void StatusBar::Configure(StatusBarSettings settings, const PersonalizationSetti
             if (auto hook = SetWinEventHook(range.first, range.second, nullptr, WindowEvent, 0, 0,
                     WINEVENT_OUTOFCONTEXT | (range.first == EVENT_SYSTEM_FOREGROUND ? 0 : WINEVENT_SKIPOWNPROCESS)))
                 self.hooks.push_back(hook);
+}
+
+void StatusBar::SetPresentationEnabled(bool enabled)
+{
+    auto& self = *impl_;
+    if (self.presentationEnabled == enabled) return;
+    self.presentationEnabled = enabled;
+    for (const auto& [id, window] : self.windows)
+    {
+        (void)id;
+        if (!window) continue;
+        if (!enabled) window->Hide(false);
+        else window->CheckFullscreen();
+    }
 }
 }

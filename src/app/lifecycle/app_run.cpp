@@ -703,6 +703,21 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     StartDemoIconLoader();
     logStartupStage(L"graphics ready");
 
+    // Register the complete strip before Shell items/widgets are placed. The
+    // bar stays hidden until the same handoff as the desktop and Dock, but its
+    // approved work area and merged geometry must already be authoritative.
+    systemDataProvider_ = std::make_shared<
+        snowdesktop::widget_runtime::WidgetSystemDataProvider>();
+    SyncStatusBar();
+    if (!UpdateLayoutWorkArea())
+    {
+        WriteDiagnosticLogEntry(L"Startup AppBar work area unavailable",
+            DiagnosticLogLevel::Error);
+        return static_cast<int>(ERROR_GEN_FAILURE);
+    }
+    displayTopologySignature_ = CaptureDisplayTopologySignature();
+    logStartupStage(L"bar work area ready");
+
     // Use the same placement pipeline as runtime refreshes so a desktop that
     // already contains more items than the visible grids can create virtual
     // overflow pages during the initial load.
@@ -1253,11 +1268,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     StartSteamEntitlementRegistration(true);
 
-    systemDataProvider_ = std::make_shared<
-        snowdesktop::widget_runtime::WidgetSystemDataProvider>();
     widgetEngine_ = std::make_unique<WidgetEngine>();
     widgetEngine_->SetSystemDataProvider(systemDataProvider_);
-    SyncStatusBar();
     if (widgetEngine_->Init(d2dContext_.Get(), dwriteFactory_.Get()))
     {
         widgetEngine_->SetDesktopSnapshotProvider([this]() {
@@ -1659,6 +1671,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         LogDesktopWidgetBackdropState(L"prepared");
     }
     desktopStartupPresentationPending_ = false;
+    if (statusBar_) statusBar_->SetPresentationEnabled(true);
     AddTrayIcon();
     SetSoftwareDesktopEnabled(customDesktopVisible_, false);
     if (customDesktopVisible_)

@@ -1051,6 +1051,7 @@ void DesktopApp::SyncStatusBar()
             snowdesktop::ReserveStatusBarSpace(mergedHeight != 0, dockSettings_.showOnlyWhenSummoned)});
         }
     }
+    statusBar_->SetPresentationEnabled(!desktopStartupPresentationPending_);
     statusBar_->Configure(generalSettings_.statusBar, personalizationSettings_, monitors,
         dcompDevice_.Get(), dwriteFactory_.Get(), &collectionPopupAppearance_,
         [this](ID2D1DeviceContext* context, RECT frame, const PersonalizationSettings& appearance, float scale) {
