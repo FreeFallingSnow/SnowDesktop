@@ -19371,6 +19371,7 @@ static void DrawWidgetViewTooltip(D2DState* state,
 static void DrawWidgetSelectOverlays(D2DState* state,
     const snowdesktop::widget_runtime::ViewNode& node,
     const snowdesktop::widget_runtime::WidgetInteractionRegions& regions,
+    std::string_view focusedKey,
     float viewportHeight)
 {
     using snowdesktop::widget_runtime::ViewNodeType;
@@ -19393,36 +19394,80 @@ static void DrawWidgetSelectOverlays(D2DState* state,
         IDWriteTextFormat* format = GetCachedTextFormat(state,
             node.fontSize, state->itemFontWeight, false,
             DWRITE_WORD_WRAPPING_NO_WRAP, false, true);
+        const auto palette = BuildWidgetViewThemePalette(state);
         for (std::size_t index = 0; index < node.options.size(); ++index)
         {
             const auto& option = node.options[index];
             const auto frame = snowdesktop::widget_runtime::
                 ViewSelectOptionFrame(node, index, viewportHeight);
             const std::string key = node.key + "/" + option.key;
-            const bool hovered = regions.IsHovered(key);
+            const bool enabled = option.enabled && node.enabled;
+            const bool hovered = enabled && regions.IsHovered(key);
+            const bool focused = enabled && key == focusedKey;
             const bool selected = option.value == node.selectedValue;
+            const auto backgroundColor = focused ? palette.systemAccent
+                : (selected ? MixWidgetRgb(palette.surface,
+                        palette.systemAccent, 0.18f)
+                    : (hovered ? palette.surfaceVariant : palette.surface));
+            const auto foregroundColor = !enabled ? palette.textDisabled
+                : (focused ? palette.accentText : palette.textPrimary);
             const D2D1_RECT_F rect = D2D1::RectF(
                 state->widgetRect.left + frame.x,
                 state->widgetRect.top + frame.y,
                 state->widgetRect.left + frame.x + frame.width,
                 state->widgetRect.top + frame.y + frame.height);
             if (ID2D1SolidColorBrush* background = GetCachedBrush(state,
-                    selected ? 0x3478D4 : (hovered ? 0x334155 : 0x172033),
-                    option.enabled && node.enabled ? 0.98f : 0.72f))
+                    static_cast<int>(backgroundColor), 1.0f))
                 state->ctx->FillRectangle(rect, background);
             if (ID2D1SolidColorBrush* border = GetCachedBrush(state,
-                    0xFFFFFF, 0.16f))
+                    static_cast<int>(palette.border), 0.45f))
                 state->ctx->DrawRectangle(rect, border, 1.0f);
+            // Options are painted above the declarative tree, so they need
+            // their own keyboard cue. Keep it distinct from the saved value.
+            if (focused && frame.width > 6.0f && frame.height > 6.0f)
+            {
+                const auto focusRect = D2D1::RectF(rect.left + 2.0f,
+                    rect.top + 2.0f, rect.right - 2.0f, rect.bottom - 2.0f);
+                if (ID2D1SolidColorBrush* outer = GetCachedBrush(state,
+                        0x000000, 1.0f))
+                    state->ctx->DrawRectangle(focusRect, outer, 3.0f);
+                if (ID2D1SolidColorBrush* inner = GetCachedBrush(state,
+                        0xFFFFFF, 1.0f))
+                    state->ctx->DrawRectangle(focusRect, inner, 1.0f);
+            }
+            const std::wstring text = Utf8ToWideLocal(option.label);
+            const bool rightToLeft = ResolveViewTextDirection(node, text) ==
+                DWRITE_READING_DIRECTION_RIGHT_TO_LEFT;
+            if (selected)
+            {
+                const float size = std::min({ 14.0f, frame.height * 0.5f,
+                    std::max(0.0f, frame.width - 16.0f) });
+                const float left = rightToLeft
+                    ? rect.right - 10.0f - size : rect.left + 10.0f;
+                const float top = (rect.top + rect.bottom - size) * 0.5f;
+                if (size > 0.0f)
+                {
+                    if (ID2D1SolidColorBrush* mark = GetCachedBrush(state,
+                            static_cast<int>(foregroundColor), 1.0f))
+                    {
+                        state->ctx->DrawLine(D2D1::Point2F(left,
+                                top + size * 0.5f),
+                            D2D1::Point2F(left + size * 0.35f, top + size),
+                            mark, 2.0f);
+                        state->ctx->DrawLine(D2D1::Point2F(
+                                left + size * 0.35f, top + size),
+                            D2D1::Point2F(left + size, top), mark, 2.0f);
+                    }
+                }
+            }
             if (format)
             {
-                const std::wstring text = Utf8ToWideLocal(option.label);
                 if (ID2D1SolidColorBrush* brush = GetCachedBrush(state,
-                        0xFFFFFF, option.enabled && node.enabled
-                            ? 1.0f : 0.42f))
+                        static_cast<int>(foregroundColor), 1.0f))
                 {
                     ComPtr<IDWriteTextLayout> layout;
                     const float width = std::max(
-                        0.0f, frame.width - 20.0f);
+                        0.0f, frame.width - 40.0f);
                     if (width > 0.0f && SUCCEEDED(
                             state->dwrite->CreateTextLayout(text.data(),
                                 static_cast<UINT32>(text.size()), format,
@@ -19435,7 +19480,8 @@ static void DrawWidgetSelectOverlays(D2DState* state,
                         layout->SetParagraphAlignment(
                             DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
                         state->ctx->DrawTextLayout(D2D1::Point2F(
-                            rect.left + 10.0f, rect.top), layout.Get(),
+                            rect.left + (rightToLeft ? 10.0f : 30.0f),
+                            rect.top), layout.Get(),
                             brush, D2D1_DRAW_TEXT_OPTIONS_CLIP);
                     }
                 }
@@ -19466,7 +19512,8 @@ static void DrawWidgetSelectOverlays(D2DState* state,
     }
     for (const auto* child : snowdesktop::widget_runtime::
             ViewChildrenInPaintOrder(node))
-        DrawWidgetSelectOverlays(state, *child, regions, viewportHeight);
+        DrawWidgetSelectOverlays(state, *child, regions, focusedKey,
+            viewportHeight);
 }
 
 static std::vector<LuaWidget::HostControl> BuildViewHostControls(
@@ -20179,7 +20226,9 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             found->preview || !widgetTimerRequestCallback_ ||
                 HostManagedAnimationsSuppressed());
         DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
-            found->interactionRegions, found->viewTree->frame.height);
+            found->interactionRegions,
+            VisualViewFocusForSurface(*found, "desktop"),
+            found->viewTree->frame.height);
         DrawHostViewInteractionOverlays(*found,
             found->interactionRegions,
             found->viewKeyboardFocusKey, true);
@@ -20615,6 +20664,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
                     HostManagedAnimationsSuppressed());
             DrawWidgetSelectOverlays(d2dState_, *found->viewTree,
                 found->interactionRegions,
+                VisualViewFocusForSurface(*found, "desktop"),
                 found->viewTree->frame.height);
             if (!RuntimeIsWidgetSelected(found->widgetId) ||
                 (!found->viewKeyboardFocusKey.empty() &&
@@ -20876,6 +20926,7 @@ bool WidgetEngine::RenderWidgetPanel(
                 HostManagedAnimationsSuppressed());
         DrawWidgetSelectOverlays(d2dState_, *widget.panelViewTree,
             widget.panelInteractionRegions,
+            VisualViewFocusForSurface(widget, normalizedSurface),
             widget.panelViewTree->frame.height);
         DrawWidgetViewTooltip(
             d2dState_, widget.panelInteractionRegions);
@@ -21216,6 +21267,7 @@ bool WidgetEngine::RenderWidgetPanel(
                     DrawWidgetSelectOverlays(d2dState_,
                         *current.panelViewTree,
                         current.panelInteractionRegions,
+                        VisualViewFocusForSurface(current, normalizedSurface),
                         current.panelViewTree->frame.height);
                     DrawWidgetViewTooltip(d2dState_,
                         current.panelInteractionRegions);
@@ -21260,6 +21312,7 @@ bool WidgetEngine::RenderWidgetPanel(
                 DrawWidgetSelectOverlays(d2dState_,
                     *current.panelViewTree,
                     current.panelInteractionRegions,
+                    VisualViewFocusForSurface(current, normalizedSurface),
                     current.panelViewTree->frame.height);
                 DrawWidgetViewTooltip(d2dState_,
                     current.panelInteractionRegions);
