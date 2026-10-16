@@ -187,8 +187,8 @@ void DesktopApp::UpdateQuickNavigationBackdrop()
     const float cornerRadius = static_cast<float>(QuickNavScale(navigationSettings_.layout.cornerRadius));
     quickNavBackdropCompositor_.BeginFrame(true);
     quickNavBackdropCompositor_.AddPanel(clientRect, cornerRadius,
-        quickNavBlurRadius_);
-    quickNavBackdropCompositor_.EndFrame();
+        quickNavBlurRadius_, kQuickNavigationBackdropPanelOwner);
+    quickNavBackdropCompositor_.EndFrame(false);
     const auto visual = quickNavigationAnimation_.GetVisual();
     const float anchorX = static_cast<float>(
         quickNavigationAnimationAnchorPoint_.x -
@@ -200,6 +200,8 @@ void DesktopApp::UpdateQuickNavigationBackdrop()
         visual.scale, visual.opacity,
         anchorX, anchorY);
     quickNavBackdropCompositor_.SetVisible(visual.visible);
+    if (!quickNavCompositionPaintInProgress_)
+        quickNavBackdropCompositor_.CommitVisualChanges();
 }
 
 /**
@@ -633,6 +635,7 @@ void DesktopApp::PositionQuickNavigationWindow()
     if (!quickNavigationHwnd_ || !IsWindow(quickNavigationHwnd_))
         return;
 
+    const RECT previousHost = quickNavigationHostRect_;
     RECT nextRect = GetQuickNavigationRect();
     auto& resize = quickNavigationAnimation_.Resize();
     if (resize.IsAnimating())
@@ -694,6 +697,9 @@ void DesktopApp::PositionQuickNavigationWindow()
     }
     InflateRect(
         &quickNavigationHostRect_, 2, 2);
+    quickNavigationHostRect_ = QuickNavigationRetainedAllocation(
+        previousHost, quickNavigationHostRect_);
+    const bool hostChanged = !EqualRect(&previousHost, &quickNavigationHostRect_);
     const int width = std::max<LONG>(
         1,
         quickNavigationHostRect_.right -
@@ -703,37 +709,28 @@ void DesktopApp::PositionQuickNavigationWindow()
         quickNavigationHostRect_.bottom -
             quickNavigationHostRect_.top);
 
-    // Reserve the complete animation path once. ApplyQuickNavigationAnimationFrame
-    // shrinks the region to the final panel once the transform reaches rest.
-    UpdateQuickNavigationWindowRegion(true);
-    const DWM_WINDOW_CORNER_PREFERENCE
-        cornerPreference =
-            DWMWCP_DONOTROUND;
-    DwmSetWindowAttribute(
-        quickNavigationHwnd_,
-        DWMWA_WINDOW_CORNER_PREFERENCE,
-        &cornerPreference,
-        sizeof(cornerPreference));
-
-    SetWindowPos(
-        quickNavigationHwnd_,
-        quickNavigationTopmost_
-            ? HWND_TOPMOST
-            : HWND_NOTOPMOST,
-        quickNavigationHostRect_.left + virtualLeft_,
-        quickNavigationHostRect_.top + virtualTop_,
-        width, height,
-        SWP_SHOWWINDOW | SWP_NOACTIVATE);
-    UpdateQuickNavigationBackdrop();
+    if (hostChanged || !IsWindowVisible(quickNavigationHwnd_))
+    {
+        UpdateQuickNavigationWindowRegion(true);
+        const DWM_WINDOW_CORNER_PREFERENCE cornerPreference = DWMWCP_DONOTROUND;
+        DwmSetWindowAttribute(quickNavigationHwnd_, DWMWA_WINDOW_CORNER_PREFERENCE,
+            &cornerPreference, sizeof(cornerPreference));
+        // Layer policy and SetQuickNavigationTopmost own Z order. Do not
+        // reinsert an unchanged popup/backdrop pair on every resize frame.
+        SetWindowPos(quickNavigationHwnd_, nullptr,
+            quickNavigationHostRect_.left + virtualLeft_,
+            quickNavigationHostRect_.top + virtualTop_, width, height,
+            SWP_SHOWWINDOW | SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOOWNERZORDER);
+    }
     EnsureQuickNavigationSearchEdit();
     UpdateQuickNavigationSearchEditRect();
-    ApplyQuickNavigationAnimationFrame();
-    if (geometryChanged)
+    if (geometryChanged || hostChanged)
     {
-        // WM_PAINT can be starved by rapid input. Resize and draw the shared
-        // surface in this update so the old height cannot remain on screen.
+        // Paint the pixels before publishing the new pose and backdrop.
         InvalidateQuickNavigationWindow(true);
     }
+    else
+        ApplyQuickNavigationAnimationFrame();
     if (quickNavigationAnimation_.IsAnimating() || resize.IsAnimating())
         EnsureUiAnimationFrame();
 }
@@ -743,7 +740,7 @@ void DesktopApp::UpdateQuickNavigationWindowRegion(
 {
     if (!quickNavigationHwnd_ ||
         !IsWindow(quickNavigationHwnd_) ||
-        quickNavigationWindowRegionExpanded_ == expanded)
+        (expanded && quickNavigationWindowRegionExpanded_))
         return;
     if (expanded)
     {
@@ -768,6 +765,17 @@ void DesktopApp::UpdateQuickNavigationWindowRegion(
             panelRegionRect.right + 1,
             panelRegionRect.bottom + 1))
     {
+        HRGN previousRegion = CreateRectRgn(0, 0, 0, 0);
+        const bool unchanged = previousRegion &&
+            GetWindowRgn(quickNavigationHwnd_, previousRegion) != ERROR &&
+            EqualRgn(panelRegion, previousRegion);
+        if (previousRegion) DeleteObject(previousRegion);
+        if (unchanged)
+        {
+            DeleteObject(panelRegion);
+            quickNavigationWindowRegionExpanded_ = false;
+            return;
+        }
         if (!SetWindowRgn(
                 quickNavigationHwnd_,
                 panelRegion, FALSE))
@@ -1422,8 +1430,10 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         }
     }
 
-    // Both layers now contain this frame's geometry and pose.
-    quickNavBackdropCompositor_.CommitVisualChanges();
+    // Paint publishes content first, then the matching backdrop in one place.
+    // Visibility-only frames have no pending pixel update.
+    if (!quickNavCompositionPaintInProgress_)
+        quickNavBackdropCompositor_.CommitVisualChanges();
 
     if (quickNavigationSearchEdit_ && IsWindow(quickNavigationSearchEdit_))
     {

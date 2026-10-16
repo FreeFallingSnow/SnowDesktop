@@ -371,6 +371,9 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         const auto bounds = quickNavigationAnimation_.Resize().Envelope();
         surfaceRect = {bounds.left, bounds.top, bounds.right, bounds.bottom};
     }
+    surfaceRect = QuickNavigationRetainedAllocation(
+        MakeRect(0, 0, static_cast<LONG>(quickNavCompWidth_), static_cast<LONG>(quickNavCompHeight_)),
+        MakeRect(0, 0, surfaceRect.right - surfaceRect.left, surfaceRect.bottom - surfaceRect.top));
     const UINT width = static_cast<UINT>(
         std::max<LONG>(
             1,
@@ -468,22 +471,8 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         WriteDiagnosticLogEntry(buf);
         return hr;
     }
-    hr = quickNavDcompVisual_->SetContent(surface.Get());
-    if (FAILED(hr))
-    {
-        wchar_t buf[128];
-        wsprintfW(buf, L"QuickNav SetContent FAILED hr=0x%08X", static_cast<unsigned>(hr));
-        WriteDiagnosticLogEntry(buf);
-        return hr;
-    }
-    if (!CommitQuickNavigationCompositionFrame())
-    {
-        wchar_t buf[128];
-        wsprintfW(buf, L"QuickNav CreateSurface queue commit FAILED");
-        WriteDiagnosticLogEntry(buf);
-        return E_FAIL;
-    }
-
+    // Keep the previously painted content attached until the replacement has
+    // completed EndDraw. An allocation is not a presentable frame yet.
     quickNavDcompSurface_ = surface;
     quickNavCompWidth_ = width;
     quickNavCompHeight_ = height;
@@ -527,6 +516,7 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
     };
 
 
+    IDCompositionSurface* previousSurface = quickNavDcompSurface_.Get();
     HRESULT hr = CreateOrResizeQuickNavCompositionSurface();
     if (FAILED(hr))
     {
@@ -534,8 +524,6 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
-    ApplyQuickNavigationAnimationFrame();
-
     ID2D1DeviceContext* rawContext = nullptr;
     POINT updateOffset{};
     hr = quickNavDcompSurface_->BeginDraw(nullptr, __uuidof(ID2D1DeviceContext),
@@ -579,6 +567,22 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
+    if (previousSurface != quickNavDcompSurface_.Get())
+    {
+        hr = quickNavDcompVisual_->SetContent(quickNavDcompSurface_.Get());
+        if (FAILED(hr))
+        {
+            RecoverQuickNavCompositionFailure(L"Publish painted surface", hr);
+            EndPaint(hwnd, &ps);
+            return;
+        }
+    }
+    // A caret/hover repaint must not replace the backdrop's running native
+    // opening/closing transform with the logical timeline's static pose.
+    // Positioning stops that timeline first whenever the geometry changes.
+    if (!quickNavigationAnimationCompositorDriven_)
+        UpdateQuickNavigationBackdrop();
+    ApplyQuickNavigationAnimationFrame();
     if (!CommitQuickNavigationCompositionFrame())
     {
         RecoverQuickNavCompositionFailure(
@@ -586,6 +590,12 @@ void DesktopApp::PaintQuickNavigationWindow(HWND hwnd)
         EndPaint(hwnd, &ps);
         return;
     }
+    if (!FlushPendingQuickNavigationCompositionCommit())
+    {
+        EndPaint(hwnd, &ps);
+        return;
+    }
+    quickNavBackdropCompositor_.CommitVisualChanges();
     quickNavCompositionRenderRecoveryPending_ = false;
 
     EndPaint(hwnd, &ps);

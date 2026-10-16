@@ -5,6 +5,8 @@
 #include "navigation/quick_navigation_attraction_rules.h"
 #include "navigation/quick_navigation_rules.h"
 #include "../src/app/navigation/quick_navigation_theme.h"
+#include "../src/app/navigation/quick_navigation_helpers.h"
+#include "../src/app/render/desktop_backdrop_update_rules.h"
 
 #include <cmath>
 #include <fstream>
@@ -708,6 +710,54 @@ void TestResizeAnimation()
         "destroying the panel clears resize state before the next opening");
 }
 
+void TestResizePresentationLifetime()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    const ResizeRect expanded{100, 80, 740, 650};
+    const ResizeRect collapsed{200, 80, 640, 280};
+    ResizeState resize;
+    resize.Start(expanded, collapsed, 1000, true, 1.0);
+    RECT allocation{98, 78, 742, 652};
+    const RECT initialAllocation = allocation;
+    RECT surface{0, 0, 640, 570};
+    int hostChanges = 0;
+    int surfaceChanges = 0;
+    int glassReplacements = 0;
+    RECT previousPanel{expanded.left, expanded.top, expanded.right, expanded.bottom};
+    for (std::uint64_t now = 1000; now <= 1200; ++now)
+    {
+        const auto frame = resize.Advance(now, true);
+        const RECT panel{frame.left, frame.top, frame.right, frame.bottom};
+        const RECT requiredHost{panel.left - 2, panel.top - 2, panel.right + 2, panel.bottom + 2};
+        const RECT nextHost = QuickNavigationRetainedAllocation(allocation, requiredHost);
+        const RECT requiredSurface{0, 0, panel.right - panel.left, panel.bottom - panel.top};
+        const RECT nextSurface = QuickNavigationRetainedAllocation(surface, requiredSurface);
+        if (!EqualRect(&allocation, &nextHost)) ++hostChanges;
+        if (!EqualRect(&surface, &nextSurface)) ++surfaceChanges;
+        if (!snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+                kQuickNavigationBackdropPanelOwner, previousPanel,
+                kQuickNavigationBackdropPanelOwner, panel)) ++glassReplacements;
+        allocation = nextHost;
+        surface = nextSurface;
+        previousPanel = panel;
+    }
+    Check(!resize.IsAnimating() && hostChanges == 0 && surfaceChanges == 0 && glassReplacements == 0,
+        "collapse, settling and idle frames retain the host allocation, surface capacity and glass identity");
+    Check(EqualRect(&allocation, &initialAllocation),
+        "the settling frame cannot resize either native popup target");
+    const RECT larger{-200, -100, 900, 800};
+    const RECT grown = QuickNavigationRetainedAllocation(allocation, larger);
+    const RECT retained = QuickNavigationRetainedAllocation(grown, allocation);
+    Check(EqualRect(&grown, &larger) && EqualRect(&retained, &larger),
+        "a larger or retargeted panel grows capacity once without shrinking it again");
+    const RECT newSession = QuickNavigationRetainedAllocation(RECT{}, previousPanel);
+    Check(EqualRect(&newSession, &previousPanel),
+        "a destroyed window's empty allocation starts the next session at its own size");
+    Check(!snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
+            0, RECT{expanded.left, expanded.top, expanded.right, expanded.bottom}, 0, previousPanel),
+        "the old rectangle-only backdrop identity detects a replacement at the settling frame");
+}
+
 void TestAnimationEffects()
 {
     using namespace snowdesktop::quick_navigation_animation_rules;
@@ -1391,6 +1441,7 @@ int main()
     TestTabDragWhileScrolling();
     TestAnimationRules();
     TestResizeAnimation();
+    TestResizePresentationLifetime();
     TestAnimationEffects();
     TestAttractionAnimationAndSurface();
     TestGenieTranslucentContentCoverage();

@@ -7,9 +7,23 @@
 
 #include <string>
 #include <algorithm>
+#include <cstdint>
 
 inline constexpr size_t kQuickNavigationAppResultLimit = 80;
 inline constexpr size_t kQuickNavigationAppCollapsedResultCount = 5;
+inline constexpr std::uintptr_t kQuickNavigationBackdropPanelOwner = 1;
+
+// Allocation belongs to the open window, not to an individual animation frame.
+// Retain it through the settling frame; DestroyQuickNavigationWindow releases it.
+inline RECT QuickNavigationRetainedAllocation(const RECT& previous, const RECT& required)
+{
+    if (previous.right <= previous.left || previous.bottom <= previous.top)
+        return required;
+    if (required.right <= required.left || required.bottom <= required.top)
+        return previous;
+    return {std::min(previous.left, required.left), std::min(previous.top, required.top),
+        std::max(previous.right, required.right), std::max(previous.bottom, required.bottom)};
+}
 
 inline RECT QuickNavigationSearchInputRect(RECT search, int inset)
 {
