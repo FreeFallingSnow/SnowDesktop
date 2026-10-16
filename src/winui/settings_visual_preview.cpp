@@ -556,7 +556,29 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 });
                 return count == 6 && complete;
             };
-            PumpUntil(loadedImages);
+            const auto waitForLibraryImages=[&](std::string_view stage) {
+                try { PumpUntil(loadedImages); }
+                catch (...) {
+                    std::ofstream trace(output/L"icon-library-failure.tsv");
+                    trace<<"stage\t"<<stage<<'\n';
+                    Walk(grid,[&](const x::DependencyObject& node) {
+                        trace<<winrt::to_string(winrt::get_class_name(node));
+                        if(const auto element=node.try_as<x::FrameworkElement>())trace<<'\t'<<element.ActualWidth()<<'\t'<<element.ActualHeight()<<'\t'<<winrt::to_string(x::Automation::AutomationProperties::GetAutomationId(element));
+                        if(const auto image=node.try_as<c::Image>())
+                            if(const auto source=image.Source().try_as<x::Media::Imaging::BitmapImage>())trace<<"\timage="<<source.PixelWidth()<<'x'<<source.PixelHeight();
+                        trace<<'\n';
+                    });
+                    try {
+                        x::Media::Imaging::RenderTargetBitmap bitmap;Await(bitmap.RenderAsync(shell.as<x::UIElement>()));
+                        const auto buffer=Await(bitmap.GetPixelsAsync());BYTE* bytes=nullptr;
+                        winrt::check_hresult(buffer.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
+                        std::string error;preview_png::Save(output/L"icon-library-failure.png",bitmap.PixelWidth(),bitmap.PixelHeight(),
+                            {reinterpret_cast<const std::uint32_t*>(bytes),buffer.Length()/4},error);
+                    }catch(...){}
+                    throw std::runtime_error("icon library images timed out: "+std::string(stage));
+                }
+            };
+            waitForLibraryImages("initial page");
             grid.SelectedIndex(0); groups.SelectedIndex(2); Settle(shell.as<x::FrameworkElement>());
             if (grid.Items().Size() != 4 || grid.SelectedItems().Size() != 1)
                 throw std::runtime_error("group filter lost a visible selected resource identity");
@@ -565,7 +587,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             if(grid.SelectedItems().Size()!=4)throw std::runtime_error("select filtered icons omitted resources in the current group");
             query.Text(L"no-matching-icon"); Settle(shell.as<x::FrameworkElement>());
             if (grid.Items().Size()) throw std::runtime_error("library search failed to filter resources");
-            query.Text(L""); groups.SelectedIndex(0); Settle(shell.as<x::FrameworkElement>()); PumpUntil(loadedImages);
+            query.Text(L""); groups.SelectedIndex(0); Settle(shell.as<x::FrameworkElement>()); waitForLibraryImages("restore filter");
             const auto entries = libraryFixture->entries; libraryFixture->entries.clear(); ++libraryFixture->revision;
             PumpUntil([&] { return grid.Items().Size() == 0; });
             bool oldHint = false;
