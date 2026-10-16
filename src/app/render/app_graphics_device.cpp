@@ -1,6 +1,7 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
+#include "platform/foreground_fullscreen.h"
 
 // Graphics-device and composition-surface lifecycle.
 
@@ -323,6 +324,105 @@ void DesktopApp::InitializeDockWindowTransition()
         dockWindowTransition_.reset();
     if (dockWindowTransition_)
     {
+        dockWindowTransition_->SetMinimizeCompletionCallbacks(
+            [this](HWND window, std::optional<RECT> requestedAnchor)
+                -> std::optional<DockWindowTransition::MinimizeTarget> {
+                if (!generalSettings_.dockEnabled || reloading_) return std::nullopt;
+                RECT anchor = requestedAnchor.value_or(RECT{});
+                if (!requestedAnchor)
+                {
+                    const HMONITOR sourceMonitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
+                    bool foundOnMonitor = false;
+                    const auto tracks = [window](const auto& state) {
+                        return state.window == window || std::find(state.trackedWindows.begin(),
+                            state.trackedWindows.end(), window) != state.trackedWindows.end();
+                    };
+                    for (const auto& container : containers_)
+                    {
+                        auto* dock = dynamic_cast<DockContainer*>(container.get());
+                        if (!dock) continue;
+                        const auto* host = FindPersistentDockHost(dock);
+                        if ((!host || !host->active) && (!customDesktopVisible_ || desktopIconsHidden_)) continue;
+                        for (const auto& slot : dock->GetSlots())
+                        {
+                            if (!slot || !slot->GetItem()) continue;
+                            const Item* item = slot->GetItem();
+                            bool matches = false;
+                            if (const auto* running = dynamic_cast<const DockRunningItem*>(item))
+                            {
+                                const size_t index = running->GetRunningIndex();
+                                if (index < dockUnpinnedRunningApps_.size())
+                                {
+                                    const auto& state = dockUnpinnedRunningApps_[index];
+                                    matches = state.presence.Interactive() && tracks(state);
+                                }
+                            }
+                            else
+                            {
+                                size_t index = items_.size();
+                                if (const auto* entry = dynamic_cast<const DockEntryItem*>(item))
+                                {
+                                    if (entry->GetEntryType() == DockEntryType::DesktopItem)
+                                        index = FindItemIndexByKey(entry->GetReference());
+                                }
+                                else if (const auto* frequent = dynamic_cast<const DockFrequentItem*>(item))
+                                    index = frequent->GetItemIndex();
+                                if (index < items_.size())
+                                {
+                                    const auto state = dockRunningWindows_.find(DockItemWindowKey(items_[index]));
+                                    matches = state != dockRunningWindows_.end() && state->second.running && tracks(state->second);
+                                }
+                            }
+                            if (!matches) continue;
+                            RECT candidate = dock->GetElementVisualRect(item->GetBounds(), lastMousePoint_);
+                            RECT intersection{};
+                            const RECT viewport = dock->GetInteractiveBounds();
+                            if (!IntersectRect(&intersection, &candidate, &viewport)) continue;
+                            MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&candidate), 2);
+                            const bool sameMonitor = MonitorFromRect(&candidate, MONITOR_DEFAULTTONEAREST) == sourceMonitor;
+                            if (IsRectEmpty(&anchor) || (sameMonitor && !foundOnMonitor))
+                            {
+                                anchor = candidate;
+                                foundOnMonitor = sameMonitor;
+                            }
+                        }
+                    }
+                }
+                if (IsRectEmpty(&anchor)) return std::nullopt;
+                const HMONITOR monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
+                HWND dockWindow = nullptr;
+                for (const auto& host : persistentDockHosts_)
+                    if (host && host->active && host->container && host->monitor == monitor)
+                    { dockWindow = host->hwnd; break; }
+                return DockWindowTransition::MinimizeTarget{dockWindow, monitor, anchor};
+            },
+            [this](const DockWindowTransition::MinimizeTarget& target) {
+                PersistentDockHost* matching = nullptr;
+                snowdesktop::dock_minimize_completion::DismissForFullscreen(target,
+                    [this, &matching](const auto& candidate) {
+                        for (const auto& host : persistentDockHosts_)
+                            if (host && host->active && host->container && host->hwnd == candidate.dock &&
+                                host->monitor == candidate.monitor && IsWindow(host->hwnd))
+                            { matching = host.get(); return true; }
+                        return false;
+                    },
+                    [](HMONITOR monitor) { return snowdesktop::fullscreen::ObserveMonitor(monitor).has_value(); },
+                    [this, &matching](const auto&) {
+                        auto& host = *matching;
+                        if (host.promoted)
+                            CloseFloatingDock(host, FloatingDockCloseFocusPolicy::PreserveCurrent);
+                        else if (host.passivelyRevealed)
+                        {
+                            host.passivelyRevealed = false;
+                            host.passiveRevealTick = host.passiveLeaveStartTick = 0;
+                            host.windowRegionPending = true;
+                            RefreshFloatingDockVisibilityState();
+                            if (statusBar_) statusBar_->RefreshDockState(host.monitor);
+                            UpdatePersistentDockHostVisibility(host);
+                            InvalidateFloatingDockWindow(host, true);
+                        }
+                    });
+            });
         dockWindowTransition_->SetOcclusionRectsProvider([this] {
             return GetDockWindowTransitionOcclusionRects();
         });

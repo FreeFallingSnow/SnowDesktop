@@ -1,5 +1,7 @@
 #pragma once
 
+#include "dock_minimize_completion.h"
+
 #include <d2d1.h>
 #include <d2d1_1.h>
 #include <dcomp.h>
@@ -134,6 +136,13 @@ public:
     bool StartExternalMinimize(HWND sourceWindow, RECT dockRect, DWORD deadline,
         HWND keepBelowWindow = nullptr);
     void CancelExternalMinimize(HWND sourceWindow, DWORD deadline);
+    using MinimizeTarget = snowdesktop::dock_minimize_completion::Target;
+    using MinimizeTargetProvider = std::function<std::optional<MinimizeTarget>(HWND, std::optional<RECT>)>;
+    void SetMinimizeCompletionCallbacks(MinimizeTargetProvider target,
+        std::function<void(const MinimizeTarget&)> completed);
+    std::optional<MinimizeTarget> ResolveMinimizeTarget(HWND source, std::optional<RECT> anchor = {}) const;
+    void ObserveNativeMinimize(HWND source);
+    void ForgetNativeMinimize(HWND source);
     void SetPresentationCallback(std::function<void(HWND)> callback)
     {
         presentationCallback_ = std::move(callback);
@@ -226,6 +235,9 @@ private:
     void CompleteRestoreAfterRenderFailure();
     void ActivateRestoredWindowForHandoff();
     void ReleaseSourceCloak();
+    void ObserveMinimize(HWND source, std::optional<RECT> anchor, bool explicitAction);
+    void ScheduleMinimizeObservation();
+    void PollMinimizeObservation();
 
     HINSTANCE instance_ = nullptr;
     snowdesktop::UiAnimationScheduler* animationScheduler_ = nullptr;
@@ -233,6 +245,11 @@ private:
     HWND hwnd_ = nullptr;
     bool presenting_ = false;
     std::function<void(HWND)> presentationCallback_;
+    MinimizeTargetProvider minimizeTargetProvider_;
+    std::function<void(const MinimizeTarget&)> minimizeCompletedCallback_;
+    snowdesktop::dock_minimize_completion::Pending pendingMinimizes_;
+    snowdesktop::UiScheduleToken minimizeObservationToken_ = 0;
+    bool pollingMinimizeObservation_ = false;
     std::function<std::vector<RECT>()> occlusionRectsProvider_;
     std::function<void(const wchar_t*)> diagnosticCallback_;
     RECT occlusionHostBounds_{};

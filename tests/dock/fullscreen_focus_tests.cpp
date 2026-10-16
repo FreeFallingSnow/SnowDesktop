@@ -1,6 +1,8 @@
 #include "dock/dock_fullscreen_policy.h"
 #include "dock/dock_fullscreen_storage.h"
 #include "dock/dock_running_animation.h"
+#include "dock/dock_minimize_completion.h"
+#include "dock/dock_window_transition.h"
 #include "platform/foreground_fullscreen.h"
 #include "system/status_bar/status_bar_appbar.h"
 
@@ -10,6 +12,118 @@
 
 namespace
 {
+void CheckMinimizeCompletion(const auto& check)
+{
+    namespace completion = snowdesktop::dock_minimize_completion;
+    const auto window = [](UINT_PTR id) { return reinterpret_cast<HWND>(id); };
+    const auto monitor = [](UINT_PTR id) { return reinterpret_cast<HMONITOR>(id); };
+    const HWND source = window(1), dockB = window(3);
+    const HMONITOR monitorA = monitor(10), monitorB = monitor(11);
+    const completion::Target target{dockB, monitorB, {-900, 1000, -850, 1050}};
+    completion::Pending pending;
+    completion::WindowState state{42};
+    std::vector<completion::Target> completed;
+    const auto poll = [&](ULONGLONG now) {
+        pending.Poll(now, [&](HWND observed) { check(observed == source, "completion observes its original source"); return state; },
+            [&](const auto& result) { completed.push_back(result); });
+    };
+    pending.Track(source, 42, target, 100);
+    poll(101);
+    check(completed.empty() && pending.Waiting(), "an accepted minimize request is not yet a successful minimize");
+    state = {42, true, true, false}; poll(200);
+    check(completed.empty(), "native minimization waits for the custom minimize image to retire");
+    state.minimizing = false; poll(220);
+    check(completed.size() == 1 && completed.front().dock == dockB && completed.front().monitor == monitorB,
+        "completion retains the associated Dock monitor even when the source or current foreground is on another screen");
+    poll(240);
+    check(completed.size() == 1 && !pending.Waiting(), "successful minimization delivers one completion, without another polling timer");
+
+    bool promotedA = true, promotedB = true, passiveB = true;
+    HMONITOR fullscreenMonitor = monitorA;
+    bool liveDock = true;
+    const auto dismiss = [&] {
+        return completion::DismissForFullscreen(target,
+            [&](const auto& current) { return liveDock && current.dock == dockB && current.monitor == monitorB; },
+            [&](HMONITOR observed) { return observed == fullscreenMonitor; },
+            [&](const auto&) { promotedB = passiveB = false; });
+    };
+    check(!dismiss() && promotedA && promotedB && passiveB,
+        "fullscreen on the source/other screen cannot cancel the associated Dock's summon");
+    fullscreenMonitor = monitorB;
+    check(dismiss() && promotedA && !promotedB && !passiveB,
+        "fullscreen on the associated Dock screen clears manual and passive summons while preserving another screen");
+    promotedB = true; poll(260);
+    check(promotedB && completed.size() == 1, "a later deliberate summon survives the already-consumed minimize completion");
+    liveDock = false;
+    check(!dismiss() && promotedB, "a replaced or moved Dock cannot inherit an earlier minimize action");
+
+    const auto reset = [&] { pending.Clear(); completed.clear(); state = {42}; pending.Track(source, 42, target, 100); };
+    reset(); poll(3100);
+    check(completed.empty() && !pending.Waiting(), "vetoed or failed native minimize expires without canceling a Dock summon");
+    reset(); state = {}; poll(120);
+    check(completed.empty() && !pending.Waiting(), "a destroyed source is not a successful minimize");
+    reset(); state.process = 43; poll(120);
+    check(completed.empty() && !pending.Waiting(), "reusing a native HWND in another process cannot complete an old minimize");
+    reset(); state = {42, true, true, false}; poll(120); state = {42}; poll(140);
+    check(completed.empty() && !pending.Waiting(), "restoring the source during its minimize image cancels the old action");
+    reset(); state = {42, true, false, true}; poll(120);
+    check(completed.empty() && !pending.Waiting(), "a reversal into restore cannot cancel a Dock summon as a completed minimize");
+    reset(); state.minimized = true; poll(120);
+    check(completed.size() == 1, "native minimization without a custom animation still completes");
+    pending.Clear(); pending.Track(source, 42, {nullptr, monitorB, {}}, 100);
+    check(!pending.Waiting(), "an action without an associated live Dock never starts an observation");
+}
+
+void CheckNativeMinimizeCompletion(HWND source, HINSTANCE instance, RECT screen, const auto& check)
+{
+    snowdesktop::UiAnimationScheduler scheduler;
+    check(scheduler.Initialize(), "initialize isolated native-minimize observation scheduler");
+    DockWindowTransition transition;
+    check(transition.Initialize(instance, &scheduler, nullptr, nullptr), "initialize observer without custom composition support");
+    HWND dock = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"SnowFullscreenFixture", L"Dock target",
+        WS_POPUP, screen.left, screen.bottom - 32, 32, 32, nullptr, nullptr, instance, nullptr);
+    check(dock != nullptr, "create isolated associated Dock identity");
+    const RECT anchor{screen.left, screen.bottom - 32, screen.left + 32, screen.bottom};
+    const HMONITOR monitor = MonitorFromRect(&anchor, MONITOR_DEFAULTTONEAREST);
+    unsigned completed = 0;
+    transition.SetMinimizeCompletionCallbacks([&](HWND observed, std::optional<RECT> requested) {
+        check(observed == source, "native completion provider receives the minimized window");
+        return std::optional{DockWindowTransition::MinimizeTarget{dock, monitor, requested.value_or(anchor)}};
+    }, [&](const auto& target) {
+        ++completed;
+        check(IsIconic(source) && !transition.IsActive(), "native completion requires the real minimized state after animation retirement");
+        check(target.dock == dock && target.monitor == monitor && EqualRect(&target.anchor, &anchor),
+            "native completion preserves the associated Dock and its actual screen anchor");
+    });
+    const auto pump = [&](const auto& predicate, ULONGLONG duration) {
+        const ULONGLONG deadline = GetTickCount64() + duration;
+        do
+        {
+            scheduler.DispatchDue();
+            MSG message{};
+            while (PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE)) DispatchMessageW(&message);
+            if (predicate()) return true;
+            WaitForSingleObject(scheduler.WaitHandle(), 10);
+        } while (GetTickCount64() < deadline);
+        return predicate();
+    };
+    ShowWindow(source, SW_SHOWNOACTIVATE);
+    check(!transition.StartMinimize(source, anchor, dock), "missing composition falls back to the native action");
+    ShowWindow(source, SW_MINIMIZE);
+    check(pump([&] { return completed == 1; }, 500), "Dock-click native fallback delivers its successful minimize completion");
+    transition.ObserveNativeMinimize(source);
+    check(!transition.StartMinimize(source, anchor, dock), "an already minimized source cannot start another minimize animation");
+    pump([] { return false; }, 40);
+    check(completed == 1, "duplicate native events and already-minimized requests cannot repeat a Dock-click completion");
+    transition.ForgetNativeMinimize(source);
+    ShowWindow(source, SW_SHOWNOACTIVATE);
+    transition.ObserveNativeMinimize(source);
+    ShowWindow(source, SW_MINIMIZE);
+    check(pump([&] { return completed == 2; }, 500), "application-triggered native minimization uses the same completion observer");
+    transition.SetMinimizeCompletionCallbacks({}, {});
+    DestroyWindow(dock);
+}
+
 // The production picker collector consumes Dock caches; replace only the OS
 // window/path reader so fixed entries need no live desktop or installed game.
 void CheckApplicationPicker(const auto& check)
@@ -82,6 +196,7 @@ int RunFullscreenFocusTests()
         if (!value) { ++failures; std::cerr << "FAILED: " << description << '\n'; }
     };
     CheckApplicationPicker(check);
+    CheckMinimizeCompletion(check);
     using P = DockFullscreenPolicy;
     using S = DockRevealSource;
     check(policy::LoadPolicy({}, {}) == P::FullProtection,
@@ -178,6 +293,21 @@ int RunFullscreenFocusTests()
             ShowWindow(window, SW_SHOWNOACTIVATE);
             check(fullscreen::ObserveWindow(window, 0).has_value(), "native borderless client is detected without a D3D-exclusive hint");
             check(!fullscreen::ObserveWindow(window).has_value(), "own-process desktop surfaces do not trigger external fullscreen protection");
+            check(fullscreen::ObserveMonitor(handle, 0).has_value(), "monitor observation detects a visible borderless client without foreground ownership");
+            check(!fullscreen::ObserveMonitor(handle), "monitor observation ignores our own presentation surfaces");
+            const LONG centerX = rect.left + (rect.right - rect.left) / 2;
+            const LONG centerY = rect.top + (rect.bottom - rect.top) / 2;
+            HWND covering = CreateWindowExW(0, cls.lpszClassName, L"Temporary application", WS_POPUP,
+                centerX - 120, centerY - 80, 240, 160, nullptr, nullptr, instance, nullptr);
+            check(covering != nullptr, "create temporary application over the fullscreen client");
+            if (covering)
+            {
+                SetWindowPos(covering, HWND_TOP, centerX - 120, centerY - 80, 240, 160, SWP_SHOWWINDOW | SWP_NOACTIVATE);
+                check(!fullscreen::ObserveMonitor(handle, 0), "a foreground-layer ordinary application obscures background fullscreen on this monitor");
+                ShowWindow(covering, SW_MINIMIZE);
+                check(fullscreen::ObserveMonitor(handle, 0).has_value(), "minimizing the covering app reveals the same monitor's fullscreen client");
+                DestroyWindow(covering);
+            }
             int nativeActivationCalls = 0;
             check(!fullscreen::GuardFocusRequest(false, [&]() { return fullscreen::ObserveWindow(window, 0); },
                 [&]() { ++nativeActivationCalls; SetFocus(window); }) && nativeActivationCalls == 0,
@@ -258,6 +388,7 @@ int RunFullscreenFocusTests()
             check(!fullscreen::ObserveWindow(window, 0), "windowed or taskbar-sized clients are not fullscreen");
             ShowWindow(window, SW_HIDE);
             check(!fullscreen::ObserveWindow(window, 0), "hidden background fullscreen clients cannot block invocation");
+            CheckNativeMinimizeCompletion(window, instance, rect, check);
             DestroyWindow(window);
         }
         UnregisterClassW(cls.lpszClassName, instance);

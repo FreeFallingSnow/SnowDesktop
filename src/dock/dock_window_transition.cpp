@@ -544,6 +544,9 @@ std::optional<RECT> ResolveDockWindowNonFullscreenHostRect(RECT host, std::span<
 
 DockWindowTransition::~DockWindowTransition()
 {
+    if (animationScheduler_ && minimizeObservationToken_)
+        animationScheduler_->Cancel(minimizeObservationToken_);
+    pendingMinimizes_.Clear();
     Cancel();
     if (compositionTarget_)
         compositionTarget_->SetRoot(nullptr);
@@ -647,10 +650,88 @@ bool DockWindowTransition::StartMinimize(
     HWND sourceWindow, RECT dockRect,
     HWND keepBelowWindow)
 {
+    ObserveMinimize(sourceWindow, dockRect, true);
     return Start(
         sourceWindow, dockRect,
         DockWindowTransitionDirection::Minimize,
         {}, keepBelowWindow);
+}
+
+void DockWindowTransition::SetMinimizeCompletionCallbacks(MinimizeTargetProvider target,
+    std::function<void(const MinimizeTarget&)> completed)
+{
+    if (animationScheduler_ && minimizeObservationToken_)
+        animationScheduler_->Cancel(minimizeObservationToken_);
+    minimizeObservationToken_ = 0;
+    pendingMinimizes_.Clear();
+    minimizeTargetProvider_ = std::move(target);
+    minimizeCompletedCallback_ = std::move(completed);
+}
+
+std::optional<DockWindowTransition::MinimizeTarget> DockWindowTransition::ResolveMinimizeTarget(
+    HWND source, std::optional<RECT> anchor) const
+{
+    return minimizeTargetProvider_ ? minimizeTargetProvider_(source, anchor) : std::nullopt;
+}
+
+void DockWindowTransition::ObserveMinimize(HWND source, std::optional<RECT> anchor, bool explicitAction)
+{
+    if (!animationScheduler_ || !minimizeCompletedCallback_ || !source || !IsWindow(source)) return;
+    if (const HWND root = GetAncestor(source, GA_ROOT)) source = root;
+    if (explicitAction && IsIconic(source) &&
+        !(IsActiveFor(source) && direction_ == DockWindowTransitionDirection::Restore)) return;
+    DWORD process = 0;
+    GetWindowThreadProcessId(source, &process);
+    if (!explicitAction)
+    {
+        if (!pendingMinimizes_.Contains(source, process)) pendingMinimizes_.Forget(source);
+        if (pendingMinimizes_.Completed(source) && !IsIconic(source)) pendingMinimizes_.Forget(source);
+        if (pendingMinimizes_.Contains(source, process)) return; // Retain the Dock clicked on another screen.
+    }
+    if (const auto target = ResolveMinimizeTarget(source, anchor))
+    {
+        pendingMinimizes_.Track(source, process, *target, GetTickCount64());
+        ScheduleMinimizeObservation();
+    }
+}
+
+void DockWindowTransition::ObserveNativeMinimize(HWND source)
+{
+    ObserveMinimize(source, {}, false);
+}
+
+void DockWindowTransition::ForgetNativeMinimize(HWND source)
+{
+    pendingMinimizes_.Forget(source);
+}
+
+void DockWindowTransition::ScheduleMinimizeObservation()
+{
+    if (!animationScheduler_ || minimizeObservationToken_ || pollingMinimizeObservation_ ||
+        !pendingMinimizes_.Waiting()) return;
+    minimizeObservationToken_ = animationScheduler_->ScheduleOnce(20, [this](double) {
+        minimizeObservationToken_ = 0;
+        PollMinimizeObservation();
+    });
+}
+
+void DockWindowTransition::PollMinimizeObservation()
+{
+    pollingMinimizeObservation_ = true;
+    pendingMinimizes_.Poll(GetTickCount64(), [this](HWND source) {
+        snowdesktop::dock_minimize_completion::WindowState state;
+        if (!IsWindow(source)) return state;
+        GetWindowThreadProcessId(source, &state.process);
+        state.minimized = IsIconic(source) != FALSE;
+        const bool active = IsActiveFor(source);
+        state.minimizing = active && direction_ == DockWindowTransitionDirection::Minimize;
+        state.restoring = active && direction_ == DockWindowTransitionDirection::Restore;
+        return state;
+    }, [this](const MinimizeTarget& target) {
+        if (minimizeCompletedCallback_) minimizeCompletedCallback_(target);
+    });
+    pollingMinimizeObservation_ = false;
+    ScheduleMinimizeObservation();
 }
 
 bool DockWindowTransition::StartExternalMinimize(HWND sourceWindow, RECT dockRect,

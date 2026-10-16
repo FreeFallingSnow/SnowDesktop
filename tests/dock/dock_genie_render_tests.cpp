@@ -2007,6 +2007,17 @@ void CheckRetainedWindowImage()
                 }
                 snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                     2, 0, 60, false, false, 3);
+                unsigned minimizeCompletions = 0;
+                transition.SetMinimizeCompletionCallbacks([&](HWND window, std::optional<RECT> anchor) {
+                    Check(window == source && anchor.has_value(), "animated minimization records its actual Dock anchor");
+                    return std::optional{DockWindowTransition::MinimizeTarget{destination,
+                        MonitorFromWindow(destination, MONITOR_DEFAULTTONEAREST), anchor.value_or(dock)}};
+                }, [&](const auto& target) {
+                    ++minimizeCompletions;
+                    Check(target.dock == destination && EqualRect(&target.anchor, &dock) &&
+                        IsIconic(source) && !transition.IsActive() && !transition.GetPresentationWindow(),
+                        "animated minimize completes only after native success and presentation retirement");
+                });
                 const DWORD preparationStart = GetTickCount();
                 const bool minimizing = transition.StartExternalMinimize(source, dock,
                     preparationStart + snowdesktop::dock_minimize::kRequestTimeoutMs, destination);
@@ -2015,16 +2026,20 @@ void CheckRetainedWindowImage()
                 std::cout << "Shared Genie preparation: " << GetTickCount() - preparationStart << " ms\n";
                 if (minimizing)
                 {
+                    Check(minimizeCompletions == 0, "preparing an external minimize cannot cancel a Dock summon");
                     Check(appCloaked(source), "native minimize keeps the real source out of the composition scene");
                     ShowWindow(source, SW_MINIMIZE);
                     drain();
                     Check(IsIconic(source) && !appCloaked(source), "minimize remains committed after scene retirement and source release");
+                    Check(pumpUntil([&] { return minimizeCompletions == 1; }, 500),
+                        "application-triggered animated minimize reports its completion once");
                 }
                 // Model a toolkit UI thread which dispatches the native state
                 // change after the visual timeline. The source must remain
                 // cloaked then, otherwise a second native animation can flash.
                 for (const int effect : {1, 2, 3, 4})
                 {
+                    const unsigned beforeCompletion = minimizeCompletions;
                     snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
                         2, 0, 60, false, false, effect);
                     ShowWindow(source, SW_SHOWNOACTIVATE);
@@ -2051,14 +2066,21 @@ void CheckRetainedWindowImage()
                         Check(late.retained && IsIconic(source),
                             "minimize timeline retains native suppression until the delayed application commits its minimized state");
                         Check(!appCloaked(source), "delayed minimize releases its temporary source cloak after handoff");
+                        Check(pumpUntil([&] { return minimizeCompletions == beforeCompletion + 1; }, 500),
+                            "Dock-click minimization reports successful completion for every animation effect");
                         KillTimer(source, 1);
                     }
                     SetWindowLongPtrW(source, GWLP_USERDATA, 0);
                 }
                 ShowWindow(source, SW_SHOWNOACTIVATE);
+                const unsigned beforeCanceledMinimize = minimizeCompletions;
                 Check(transition.StartMinimize(source, dock), "owned cancel fixture starts its transition");
                 transition.Cancel();
                 Check(!appCloaked(source) && !IsIconic(source), "cancelling an animation immediately reveals its unminimized source");
+                pumpUntil([] { return false; }, 40);
+                Check(minimizeCompletions == beforeCanceledMinimize,
+                    "animation cancellation without native minimization never reports successful completion");
+                transition.SetMinimizeCompletionCallbacks({}, {});
                 const BOOL cloaked = TRUE;
                 DwmSetWindowAttribute(source, DWMWA_CLOAK, &cloaked, sizeof(cloaked));
                 Check(transition.StartMinimize(source, dock), "a precloaked source retains a DWM composition image");

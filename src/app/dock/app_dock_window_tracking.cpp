@@ -477,6 +477,13 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
+    if (dockWindowTransition_)
+    {
+        if (event == EVENT_SYSTEM_MINIMIZESTART)
+            dockWindowTransition_->ObserveNativeMinimize(window);
+        else if (event == EVENT_SYSTEM_MINIMIZEEND || event == EVENT_OBJECT_DESTROY)
+            dockWindowTransition_->ForgetNativeMinimize(window);
+    }
     if (event == EVENT_OBJECT_DESTROY && dockWindowAttention_.Remove(window))
         InvalidateDockRects();
     const auto tracks = [window](const auto& state) {

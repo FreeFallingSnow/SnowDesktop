@@ -3,14 +3,6 @@
 #include "platform/deployment_context.h"
 #include "settings/animation_settings.h"
 
-namespace
-{
-bool TracksWindow(HWND target, HWND primary, const std::vector<HWND>& tracked)
-{
-    return target == primary || std::find(tracked.begin(), tracked.end(), target) != tracked.end();
-}
-}
-
 void DesktopApp::UpdateDockExternalMinimizeTargets()
 {
     if (!generalSettings_.dockEnabled || !dockWindowTransition_ ||
@@ -79,65 +71,10 @@ bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
         snowdesktop::animation::RuntimeWindowEffect() == snowdesktop::animation::NoEffect)
         return false;
 
-    const HMONITOR sourceMonitor = MonitorFromWindow(window, MONITOR_DEFAULTTONEAREST);
-    RECT anchor{};
-    HWND keepBelow = nullptr;
-    bool foundOnMonitor = false;
-    for (const auto& container : containers_)
-    {
-        auto* dock = dynamic_cast<DockContainer*>(container.get());
-        if (!dock) continue;
-        const auto* host = FindPersistentDockHost(dock);
-        if ((!host || !host->active) && (!customDesktopVisible_ || desktopIconsHidden_)) continue;
-        for (const auto& slot : dock->GetSlots())
-        {
-            if (!slot || !slot->GetItem()) continue;
-            const Item* item = slot->GetItem();
-            bool matches = false;
-            if (const auto* running = dynamic_cast<const DockRunningItem*>(item))
-            {
-                const size_t index = running->GetRunningIndex();
-                if (index < dockUnpinnedRunningApps_.size())
-                {
-                    const auto& state = dockUnpinnedRunningApps_[index];
-                    matches = state.presence.Interactive() &&
-                        TracksWindow(window, state.window, state.trackedWindows);
-                }
-            }
-            else
-            {
-                size_t index = items_.size();
-                if (const auto* entry = dynamic_cast<const DockEntryItem*>(item))
-                {
-                    if (entry->GetEntryType() == DockEntryType::DesktopItem)
-                        index = FindItemIndexByKey(entry->GetReference());
-                }
-                else if (const auto* frequent = dynamic_cast<const DockFrequentItem*>(item))
-                    index = frequent->GetItemIndex();
-                if (index < items_.size())
-                {
-                    const auto state = dockRunningWindows_.find(DockItemWindowKey(items_[index]));
-                    matches = state != dockRunningWindows_.end() && state->second.running &&
-                        TracksWindow(window, state->second.window, state->second.trackedWindows);
-                }
-            }
-            if (!matches) continue;
-            RECT candidate = dock->GetElementVisualRect(item->GetBounds(), lastMousePoint_);
-            RECT intersection{};
-            const RECT viewport = dock->GetInteractiveBounds();
-            if (!IntersectRect(&intersection, &candidate, &viewport)) continue;
-            MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&candidate), 2);
-            const bool sameMonitor = MonitorFromRect(&candidate, MONITOR_DEFAULTTONEAREST) == sourceMonitor;
-            if (IsRectEmpty(&anchor) || (sameMonitor && !foundOnMonitor))
-            {
-                anchor = candidate;
-                foundOnMonitor = sameMonitor;
-                keepBelow = host && IsWindowVisible(host->hwnd) ? host->hwnd : nullptr;
-            }
-        }
-    }
-    if (IsRectEmpty(&anchor) ||
-        !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount())) return false;
+    const auto target = dockWindowTransition_->ResolveMinimizeTarget(window);
+    if (!target || !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount())) return false;
+    const RECT anchor = target->anchor;
+    HWND keepBelow = target->dock && IsWindowVisible(target->dock) ? target->dock : nullptr;
     PrepareDockWindowMinimize(window, L"application-minimize");
     if (const HWND promotedDock = KeepDockTopmostForAction(anchor))
         keepBelow = promotedDock;

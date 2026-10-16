@@ -75,6 +75,65 @@ inline std::optional<WindowSnapshot> ObserveForeground() noexcept
     return ObserveWindow(GetForegroundWindow());
 }
 
+// A Dock can live on another monitor than the minimized or foreground window.
+// Observe that monitor's visible application layer, ignoring our own surfaces.
+inline std::optional<WindowSnapshot> ObserveMonitor(
+    HMONITOR monitor, DWORD ignoredProcess = GetCurrentProcessId()) noexcept
+{
+    MONITORINFO info{sizeof(info)};
+    if (!monitor || !GetMonitorInfoW(monitor, &info)) return std::nullopt;
+    struct Context
+    {
+        HMONITOR monitor;
+        RECT bounds;
+        DWORD ignoredProcess;
+        std::optional<WindowSnapshot> result;
+    } context{monitor, info.rcMonitor, ignoredProcess, {}};
+    EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
+        auto& state = *reinterpret_cast<Context*>(parameter);
+        DWORD process = 0;
+        GetWindowThreadProcessId(window, &process);
+        if (!process || process == state.ignoredProcess || !IsWindowVisible(window) || IsIconic(window))
+            return TRUE;
+        const auto extended = GetWindowLongPtrW(window, GWL_EXSTYLE);
+        if ((extended & (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT)) || GetPropW(window, L"NonRudeHWND"))
+            return TRUE;
+        DWORD cloaked = 0;
+        if (SUCCEEDED(DwmGetWindowAttribute(window, DWMWA_CLOAKED, &cloaked, sizeof(cloaked))) && cloaked)
+            return TRUE;
+        wchar_t name[128]{};
+        GetClassNameW(window, name, static_cast<int>(std::size(name)));
+        if (_wcsicmp(name, L"Progman") == 0 || _wcsicmp(name, L"WorkerW") == 0 ||
+            _wcsicmp(name, L"Shell_TrayWnd") == 0 || _wcsicmp(name, L"Shell_SecondaryTrayWnd") == 0)
+            return TRUE;
+        if (auto observed = ObserveWindow(window, state.ignoredProcess);
+            observed && ClientCoversMonitor(observed->client, state.bounds))
+        {
+            observed->monitor = state.monitor;
+            observed->bounds = state.bounds;
+            state.result = observed;
+            return FALSE;
+        }
+        // A normal application covering this monitor's center obscures a
+        // background fullscreen client. Tool windows do not end that client.
+        RECT client{};
+        POINT origin{}, end{};
+        if (!(extended & WS_EX_TOOLWINDOW) && GetClientRect(window, &client))
+        {
+            origin = {client.left, client.top}; end = {client.right, client.bottom};
+            if (ClientToScreen(window, &origin) && ClientToScreen(window, &end))
+            {
+                client = {origin.x, origin.y, end.x, end.y};
+                const POINT center{state.bounds.left + (state.bounds.right - state.bounds.left) / 2,
+                    state.bounds.top + (state.bounds.bottom - state.bounds.top) / 2};
+                if (PtInRect(&client, center)) return FALSE;
+            }
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&context));
+    return context.result;
+}
+
 // Keep the check at the side-effect boundary, including any attached-input
 // retry. Tests can substitute the observation and activation without touching
 // the user's input desktop or activating the production desktop host.
