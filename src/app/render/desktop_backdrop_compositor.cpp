@@ -16,6 +16,7 @@
 #include "app/popup/popup_window_pair_z_order.h"
 #include "dock/dock_genie_rules.h"
 #include "navigation/quick_navigation_genie_rules.h"
+#include "navigation/quick_navigation_attraction_rules.h"
 #include "layout/popup_round_geometry.h"
 #include "ui/render/smooth_corner_geometry.h"
 #include "icons/large_icon_shape_geometry.h"
@@ -240,7 +241,7 @@ struct GenieOutlinePoint
 };
 
 std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
-    float width, float height, float cornerRadius, bool vertical)
+    float width, float height, float cornerRadius, bool vertical, bool attraction = false)
 {
     namespace genie = snowdesktop::dock_genie;
     const float axisLength = vertical ? height : width;
@@ -288,7 +289,26 @@ std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
             point.source.y = crossLength - point.source.y;
         outline.push_back(point);
     }
-    return outline;
+    if (!attraction) return outline;
+    // Attraction also curves the horizontal caps. Sample them at mesh joins;
+    // a single straight segment would leave glass outside the content warp.
+    std::vector<GenieOutlinePoint> perimeter;
+    for (std::size_t i = 0; i < outline.size(); ++i)
+    {
+        const auto point = outline[i];
+        const auto next = outline[(i + 1) % outline.size()];
+        perimeter.push_back(point);
+        if (point.source.y != next.source.y ||
+            (point.source.y != 0 && point.source.y != height)) continue;
+        for (std::size_t column = 1; column < genie::StripCount; ++column)
+        {
+            const auto step = point.source.x < next.source.x ? column : genie::StripCount - column;
+            const float x = width * static_cast<float>(step) / static_cast<float>(genie::StripCount);
+            if (x > std::min(point.source.x, next.source.x) && x < std::max(point.source.x, next.source.x))
+                perimeter.push_back({{x, point.source.y}, 0});
+        }
+    }
+    return perimeter;
 }
 
 using CreateDispatcherQueueControllerFn = HRESULT(WINAPI*)(DispatcherQueueOptions,
@@ -376,6 +396,7 @@ struct DesktopBackdropCompositor::Impl
     SIZE genieHostSize{};
     float genieCornerRadius = 0;
     bool genieVertical = true;
+    bool genieAttraction = false;
     float genieSourceOpacity = 1.0f;
     float genieOpacity = 1.0f;
     std::wstring lastError;
@@ -1362,6 +1383,19 @@ bool DesktopBackdropCompositor::SetGenieTransform(
     const RECT& panelFrame, const RECT& dockFrame,
     int edge, float collapsed, float opacity)
 {
+    return SetDeformationTransform(panelFrame, dockFrame, edge, collapsed, opacity, false);
+}
+
+bool DesktopBackdropCompositor::SetAttractionTransform(
+    const RECT& panelFrame, const RECT& dockFrame, float collapsed, float opacity)
+{
+    return SetDeformationTransform(panelFrame, dockFrame, 0, collapsed, opacity, true);
+}
+
+bool DesktopBackdropCompositor::SetDeformationTransform(
+    const RECT& panelFrame, const RECT& dockFrame,
+    int edge, float collapsed, float opacity, bool attraction)
+{
     if (!impl_ || !impl_->available || !impl_->root || !impl_->compositor ||
         !impl_->contentWindow || !IsWindow(impl_->contentWindow) ||
         panelFrame.right <= panelFrame.left || panelFrame.bottom <= panelFrame.top ||
@@ -1397,6 +1431,7 @@ bool DesktopBackdropCompositor::SetGenieTransform(
         }
         if (!impl_->genieRoot || impl_->genieSource != panel->visual ||
             impl_->genieVertical != vertical ||
+            impl_->genieAttraction != attraction ||
             impl_->genieCornerRadius != panel->cornerRadius ||
             impl_->genieHostSize.cx != hostFrame.right ||
             impl_->genieHostSize.cy != hostFrame.bottom ||
@@ -1419,7 +1454,7 @@ bool DesktopBackdropCompositor::SetGenieTransform(
             auto geometry = impl_->compositor.CreatePathGeometry();
             glass.Clip(impl_->compositor.CreateGeometricClip(geometry));
             auto outline = BuildGenieSourceOutline(width, height,
-                static_cast<float>(panel->cornerRadius), vertical);
+                static_cast<float>(panel->cornerRadius), vertical, attraction);
             impl_->root.StopAnimation(L"Scale");
             impl_->root.StopAnimation(L"Opacity");
             impl_->root.Scale(wfn::float3{1.0f, 1.0f, 1.0f});
@@ -1434,6 +1469,7 @@ bool DesktopBackdropCompositor::SetGenieTransform(
             impl_->genieHostSize = {hostFrame.right, hostFrame.bottom};
             impl_->genieCornerRadius = panel->cornerRadius;
             impl_->genieVertical = vertical;
+            impl_->genieAttraction = attraction;
             impl_->root.Children().InsertAtTop(glass);
             panel->visual.Opacity(0.0f);
         }
@@ -1445,13 +1481,22 @@ bool DesktopBackdropCompositor::SetGenieTransform(
             static_cast<double>(dockFrame.top), static_cast<double>(dockFrame.right),
             static_cast<double>(dockFrame.bottom)};
         namespace navigation = snowdesktop::quick_navigation_animation_rules;
-        std::array<navigation::GenieStripProjection, genie::StripCount> matrices;
-        for (std::size_t index = 0; index < matrices.size(); ++index)
+        std::array<navigation::GenieStripProjection, genie::StripCount> matrices{};
+        if (!attraction)
         {
-            matrices[index] = navigation::GenieProjection(source, target, direction,
-                std::clamp(collapsed, 0.0f, 1.0f), width, height, index);
+            for (std::size_t index = 0; index < matrices.size(); ++index)
+                matrices[index] = navigation::GenieProjection(source, target, direction,
+                    std::clamp(collapsed, 0.0f, 1.0f), width, height, index);
         }
-        const auto transformPoint = [&matrices](const GenieOutlinePoint& point) {
+        const auto mesh = attraction ? snowdesktop::dock_attraction::MeshFrame(source, target,
+            std::clamp(collapsed, 0.0f, 1.0f)) : snowdesktop::dock_attraction::Frame{};
+        const auto transformPoint = [&](const GenieOutlinePoint& point) {
+            if (attraction)
+            {
+                const auto mapped = navigation::AttractionMeshPoint(mesh,
+                    point.source.x / width, point.source.y / height);
+                return D2D1_POINT_2F{static_cast<float>(mapped.x), static_cast<float>(mapped.y)};
+            }
             const auto mapped = matrices[point.strip].Map(point.source.x, point.source.y);
             return D2D1_POINT_2F{static_cast<float>(mapped.x), static_cast<float>(mapped.y)};
         };
@@ -1484,7 +1529,7 @@ bool DesktopBackdropCompositor::SetGenieTransform(
     }
     catch (...)
     {
-        impl_->lastError = FormatHresult(L"backdrop.genie_transform", winrt::to_hresult());
+        impl_->lastError = FormatHresult(L"backdrop.deformation_transform", winrt::to_hresult());
         ClearGenieTransform();
         return false;
     }

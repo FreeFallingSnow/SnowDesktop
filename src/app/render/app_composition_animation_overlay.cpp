@@ -425,8 +425,8 @@ bool DesktopApp::StartQuickNavigationCompositionAnimation()
     // rapid open/close reversal and hides the native search edit until rest.
     ApplyQuickNavigationAnimationFrame();
     ApplyFloatingDockLayerPolicy();
-    if (quickNavigationAnimation_.GetEffect() ==
-        snowdesktop::quick_navigation_animation_rules::Effect::Genie)
+    if (snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
+            quickNavigationAnimation_.GetEffect()))
     {
         // Content and native glass share the scheduler's progress and warp;
         // a separate uniform compositor timeline would separate the layers.

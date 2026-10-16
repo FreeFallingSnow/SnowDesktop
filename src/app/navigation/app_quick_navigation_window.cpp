@@ -27,7 +27,7 @@ void DesktopApp::ConfigureQuickNavigationAnimation()
         !IsRectEmpty(&quickNavigationAnimationDockRect_);
     auto effect = rules::ResolveEffect(motion::RuntimeAnimationsEnabled(), dockSource,
         motion::RuntimeWindowEffect(), motion::RuntimePopupEffect());
-    if (effect == rules::Effect::Genie && quickNavigationGenieFailed_)
+    if (rules::IsDeformationEffect(effect) && quickNavigationDeformationFailed_)
         effect = rules::Effect::Scale;
     quickNavigationAnimation_.Configure(effect, motion::RuntimeDurationScale(),
         dockSource && motion::RuntimeWindowEffect() != 0);
@@ -657,6 +657,22 @@ void DesktopApp::PositionQuickNavigationWindow()
         &quickNavigationHostRect_,
         &quickNavigationRect_,
         &anchorRect);
+    if (quickNavigationAnimation_.GetEffect() ==
+        snowdesktop::quick_navigation_animation_rules::Effect::Attraction)
+    {
+        // Attraction can bend outside the panel/Dock union. Reserve its full
+        // trajectory once so opening, closing and reversals share the envelope.
+        const auto rect = [](const RECT& r) {
+            return snowdesktop::dock_attraction::Rect{static_cast<double>(r.left),
+                static_cast<double>(r.top), static_cast<double>(r.right), static_cast<double>(r.bottom)};
+        };
+        const auto bounds = snowdesktop::dock_attraction::Bounds(
+            rect(quickNavigationRect_), rect(quickNavigationAnimationDockRect_));
+        const RECT envelope{static_cast<LONG>(std::floor(bounds.left)),
+            static_cast<LONG>(std::floor(bounds.top)), static_cast<LONG>(std::ceil(bounds.right)),
+            static_cast<LONG>(std::ceil(bounds.bottom))};
+        UnionRect(&quickNavigationHostRect_, &quickNavigationHostRect_, &envelope);
+    }
     InflateRect(
         &quickNavigationHostRect_, 2, 2);
     const int width = std::max<LONG>(
@@ -1006,7 +1022,7 @@ void DesktopApp::OpenQuickNavigation(
     quickNavigationAnimationDockRect_ = requestedDockRect;
     quickNavigationAnimationDockEdge_ = static_cast<int>(dockSettings_.position);
     if (!reversingClose)
-        quickNavigationGenieFailed_ = false;
+        quickNavigationDeformationFailed_ = false;
     ConfigureQuickNavigationAnimation();
     quickNavDpiScale_ = requestedDpiScale;
     if (quickNavigationSearchEdit_ &&
@@ -1321,22 +1337,24 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         quickNavigationAnimationAnchorPoint_.y -
         quickNavigationHostRect_.top);
 
-    bool genieFrame = quickNavigationAnimation_.IsAnimating() &&
-        quickNavigationAnimation_.GetEffect() ==
-            snowdesktop::quick_navigation_animation_rules::Effect::Genie;
-    if (genieFrame && !ApplyQuickNavigationGenieFrame(
-            1.0f - snowdesktop::quick_navigation_animation_rules::EaseInOutSmooth(
-                visual.progress), visual.opacity))
+    namespace rules = snowdesktop::quick_navigation_animation_rules;
+    const auto effect = quickNavigationAnimation_.GetEffect();
+    bool deformationFrame = quickNavigationAnimation_.IsAnimating() &&
+        rules::IsDeformationEffect(effect);
+    const float collapsed = 1.0f - rules::EaseInOutSmooth(visual.progress);
+    if (deformationFrame && !(effect == rules::Effect::Attraction
+            ? ApplyQuickNavigationAttractionFrame(collapsed, visual.opacity)
+            : ApplyQuickNavigationGenieFrame(collapsed, visual.opacity)))
     {
-        quickNavigationGenieFailed_ = true;
+        quickNavigationDeformationFailed_ = true;
         ConfigureQuickNavigationAnimation();
         visual = quickNavigationAnimation_.GetVisual();
-        genieFrame = false;
-        WriteDiagnosticLogEntry(L"QuickNav Genie unavailable; using scale for this session");
+        deformationFrame = false;
+        WriteDiagnosticLogEntry(L"QuickNav deformation unavailable; using scale for this session");
     }
-    if (!genieFrame)
+    if (!deformationFrame)
     {
-        ClearQuickNavigationGenie();
+        ClearQuickNavigationDeformation();
         quickNavBackdropCompositor_.SetVisualTransform(
             visual.scale, visual.opacity, anchorX, anchorY);
     }
@@ -1346,7 +1364,7 @@ void DesktopApp::ApplyQuickNavigationAnimationFrame()
         quickNavigationAnimation_.IsAnimating() ||
             !visual.visible);
 
-    if (quickNavDcompVisual_ && !genieFrame)
+    if (quickNavDcompVisual_ && !deformationFrame)
     {
         if (quickNavigationHwnd_ &&
             IsWindow(quickNavigationHwnd_))

@@ -90,6 +90,10 @@ public:
     [[nodiscard]] bool SetGenieTransform(
         const RECT& panelFrame, const RECT& dockFrame,
         int edge, float collapsed, float opacity);
+    /** @brief 使用与快捷导航内容相同的吸引网格变形玻璃面板。 */
+    [[nodiscard]] bool SetAttractionTransform(
+        const RECT& panelFrame, const RECT& dockFrame,
+        float collapsed, float opacity);
     /** @brief 恢复普通面板及根视觉；与后续正常属性更新一起提交。 */
     void ClearGenieTransform();
     /** @brief 开始收集一帧的玻璃区域。完整帧会在 EndFrame 清理未再次出现的视觉。 */
@@ -161,6 +165,8 @@ public:
     const std::wstring& LastError() const;
 
 private:
+    bool SetDeformationTransform(const RECT& panelFrame, const RECT& dockFrame,
+        int edge, float collapsed, float opacity, bool attraction);
     bool InitializeInternal(
         HWND contentWindow, bool popupMode,
         bool popupTopmost = false,

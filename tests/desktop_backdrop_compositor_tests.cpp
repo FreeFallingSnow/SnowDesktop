@@ -881,6 +881,43 @@ int RunDesktopBackdropCompositorTests()
     check(otherGlass.AddPanel({0, 0, 320, 240}, 18, 24, 2),
         "the second popup has its own backdrop panel");
     otherGlass.EndFrame();
+    {
+        // Exercise the production glass path on owned hidden windows; this
+        // verifies lifecycle and commit behavior, not desktop visual quality.
+        constexpr RECT panel{50, 60, 250, 180};
+        const RECT docks[] = {{140, 200, 170, 225}, {140, 10, 170, 35},
+            {5, 90, 35, 120}, {275, 90, 305, 120}};
+        glass.BeginFrame(true);
+        check(glass.AddPanel(panel, 18, 24, 301), "Attraction registers its rounded glass source");
+        glass.EndFrame();
+        const HWND helper = FindOwnedBackdrop(glass);
+        HRGN region = CreateRectRgn(0, 0, 0, 0);
+        WPARAM completion = 200;
+        for (const RECT dock : docks)
+        {
+            for (const float collapsed : {0.0f, 0.33f, 0.81f, 1.0f, 0.81f, 0.33f, 0.0f})
+            {
+                check(glass.SetAttractionTransform(panel, dock, collapsed, collapsed == 1 ? 0.0f : 1.0f),
+                    "Attraction glass accepts all Dock sides, endpoints and reversals");
+                check(glass.CommitVisualChangesAndNotify(content.handle, kCommitCompleted, ++completion) &&
+                        WaitForCommit(content.handle, completion),
+                    "Attraction geometry and opacity commit on the real shared compositor");
+            }
+            glass.ClearGenieTransform();
+            glass.CommitVisualChanges();
+            check(glass.PanelCount() == 1 && helper && region && GetWindowRgn(helper, region) != ERROR &&
+                    PtInRegion(region, 100, 100) && !PtInRegion(region, 10, 10),
+                "clearing Attraction restores the ordinary glass panel and native region");
+        }
+        check(glass.SetGenieTransform(panel, docks[0], 0, 0.4f, 1.0f) &&
+                glass.SetAttractionTransform(panel, docks[0], 0.4f, 1.0f),
+            "changing the Dock deformation effect rebuilds the glass outline");
+        check(!glass.SetAttractionTransform(panel, RECT{}, 0.4f, 1.0f) && glass.IsAvailable(),
+            "an invalid Attraction anchor restores ordinary glass without losing the compositor");
+        if (region) DeleteObject(region);
+        glass.BeginFrame(true);
+        glass.EndFrame();
+    }
     check(otherGlass.CommitVisualChangesAndNotify(
             otherContent.handle, kCommitCompleted, 1) &&
             WaitForCommit(otherContent.handle, 1),

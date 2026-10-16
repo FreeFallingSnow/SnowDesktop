@@ -5,14 +5,15 @@
 #include "quick_navigation_theme.h"
 #include "dock/dock_genie_rules.h"
 #include "navigation/quick_navigation_genie_rules.h"
+#include "navigation/quick_navigation_attraction_rules.h"
 #include "ui/render/smooth_corner_geometry.h"
 
 // Quick-navigation DirectWrite and DirectComposition rendering resources.
 
-void DesktopApp::ClearQuickNavigationGenie()
+void DesktopApp::ClearQuickNavigationDeformation()
 {
     quickNavBackdropCompositor_.ClearGenieTransform();
-    if (quickNavGenieStrips_.empty())
+    if (quickNavGenieStrips_.empty() && quickNavAttractionTriangles_.empty())
         return;
     if (quickNavDcompVisual_)
     {
@@ -21,6 +22,7 @@ void DesktopApp::ClearQuickNavigationGenie()
         quickNavDcompVisual_->SetTransform(quickNavDcompScaleTransform_.Get());
     }
     quickNavGenieStrips_.clear();
+    quickNavAttractionTriangles_.clear();
     quickNavGenieStripEdge_ = -1;
 }
 
@@ -32,8 +34,9 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
         !quickNavDcompSurface_ || !quickNavDcompEffect_)
         return false;
 
-    if (quickNavGenieStripEdge_ != quickNavigationAnimationDockEdge_)
-        ClearQuickNavigationGenie();
+    if (quickNavGenieStripEdge_ != quickNavigationAnimationDockEdge_ ||
+        !quickNavAttractionTriangles_.empty())
+        ClearQuickNavigationDeformation();
     const auto edge = static_cast<genie::Edge>(quickNavigationAnimationDockEdge_);
     const float width = static_cast<float>(quickNavCompWidth_);
     const float height = static_cast<float>(quickNavCompHeight_);
@@ -93,7 +96,7 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
         if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetOffsetY(0.0f);
         if (FAILED(hr))
         {
-            ClearQuickNavigationGenie();
+            ClearQuickNavigationDeformation();
             return false;
         }
         quickNavGenieStripEdge_ = quickNavigationAnimationDockEdge_;
@@ -130,6 +133,82 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
         OffsetRect(&dock, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
         if (!quickNavBackdropCompositor_.SetGenieTransform(panel, dock,
                 quickNavigationAnimationDockEdge_, collapsed, opacity))
+            return false;
+    }
+    return CommitQuickNavigationCompositionFrame();
+}
+
+bool DesktopApp::ApplyQuickNavigationAttractionFrame(float collapsed, float opacity)
+{
+    namespace attraction = snowdesktop::dock_attraction;
+    namespace navigation = snowdesktop::quick_navigation_animation_rules;
+    if (!quickNavDcompDevice_ || !quickNavDcompVisual_ || !quickNavDcompSurface_ ||
+        !quickNavDcompEffect_ || !quickNavCompWidth_ || !quickNavCompHeight_)
+        return false;
+    if (!quickNavGenieStrips_.empty()) ClearQuickNavigationDeformation();
+    HRESULT hr = S_OK;
+    if (quickNavAttractionTriangles_.empty())
+    {
+        quickNavAttractionTriangles_.reserve(attraction::TriangleCount);
+        for (std::size_t i = 0; i < attraction::TriangleCount && SUCCEEDED(hr); ++i)
+        {
+            const auto source = navigation::AttractionSource(quickNavCompWidth_, quickNavCompHeight_, i);
+            const auto& m = source.transform;
+            ComPtr<IDCompositionVisual2> triangle, content;
+            hr = quickNavDcompDevice_->CreateVisual(&triangle);
+            if (SUCCEEDED(hr)) quickNavAttractionTriangles_.push_back(triangle);
+            if (SUCCEEDED(hr)) hr = quickNavDcompDevice_->CreateVisual(&content);
+            if (SUCCEEDED(hr)) hr = content->SetContent(quickNavDcompSurface_.Get());
+            if (SUCCEEDED(hr)) hr = content->SetClip(D2D1::RectF(
+                static_cast<float>(source.clip.left), static_cast<float>(source.clip.top),
+                static_cast<float>(source.clip.right), static_cast<float>(source.clip.bottom)));
+            if (SUCCEEDED(hr)) hr = content->SetTransform(D2D1_MATRIX_3X2_F{
+                static_cast<float>(m.m11), static_cast<float>(m.m12),
+                static_cast<float>(m.m21), static_cast<float>(m.m22),
+                static_cast<float>(m.dx), static_cast<float>(m.dy)});
+            if (SUCCEEDED(hr)) hr = content->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+            if (SUCCEEDED(hr)) hr = content->SetBitmapInterpolationMode(
+                DCOMPOSITION_BITMAP_INTERPOLATION_MODE_LINEAR);
+            // No overlap guard: the shared surface contains translucent pixels.
+            if (SUCCEEDED(hr)) hr = triangle->SetClip(D2D1::RectF(-16, -16, 1, 16));
+            if (SUCCEEDED(hr)) hr = triangle->SetBorderMode(DCOMPOSITION_BORDER_MODE_HARD);
+            if (SUCCEEDED(hr)) hr = triangle->SetBackFaceVisibility(DCOMPOSITION_BACKFACE_VISIBILITY_VISIBLE);
+            if (SUCCEEDED(hr)) hr = triangle->AddVisual(content.Get(), TRUE, nullptr);
+            if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->AddVisual(triangle.Get(), TRUE, nullptr);
+        }
+        if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetContent(nullptr);
+        if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetTransform(D2D1::Matrix3x2F::Identity());
+        if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetOffsetX(0.0f);
+        if (SUCCEEDED(hr)) hr = quickNavDcompVisual_->SetOffsetY(0.0f);
+        if (FAILED(hr))
+        {
+            ClearQuickNavigationDeformation();
+            return false;
+        }
+    }
+    const auto rect = [](const RECT& value) {
+        return attraction::Rect{static_cast<double>(value.left), static_cast<double>(value.top),
+            static_cast<double>(value.right), static_cast<double>(value.bottom)};
+    };
+    const auto frame = attraction::MeshFrame(rect(quickNavigationRect_),
+        rect(quickNavigationAnimationDockRect_), collapsed);
+    for (std::size_t i = 0; i < quickNavAttractionTriangles_.size() && SUCCEEDED(hr); ++i)
+    {
+        const auto m = attraction::TriangleValues(frame, i,
+            quickNavigationHostRect_.left, quickNavigationHostRect_.top);
+        hr = quickNavAttractionTriangles_[i]->SetTransform(D2D1_MATRIX_3X2_F{
+            static_cast<float>(m[0]), static_cast<float>(m[1]),
+            static_cast<float>(m[2]), static_cast<float>(m[3]),
+            static_cast<float>(m[4]), static_cast<float>(m[5])});
+    }
+    if (SUCCEEDED(hr)) hr = quickNavDcompEffect_->SetOpacity(opacity);
+    if (FAILED(hr)) return false;
+    if (quickNavGlassTheme_ && quickNavBackdropCompositor_.IsAvailable())
+    {
+        RECT panel = quickNavigationRect_, dock = quickNavigationAnimationDockRect_;
+        OffsetRect(&panel, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
+        OffsetRect(&dock, -quickNavigationHostRect_.left, -quickNavigationHostRect_.top);
+        if (!quickNavBackdropCompositor_.SetAttractionTransform(panel, dock, collapsed, opacity))
             return false;
     }
     return CommitQuickNavigationCompositionFrame();
@@ -212,7 +291,7 @@ void DesktopApp::EnsureQuickNavTextFormats()
  */
 void DesktopApp::ResetQuickNavCompositionResources()
 {
-    ClearQuickNavigationGenie();
+    ClearQuickNavigationDeformation();
     StopQuickNavigationAnimationTimeline();
     brushCache_.clear();
     brushCacheContext_ = nullptr;
@@ -364,7 +443,7 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
     if (quickNavDcompSurface_ && quickNavCompWidth_ == width && quickNavCompHeight_ == height)
         return S_OK;
 
-    ClearQuickNavigationGenie();
+    ClearQuickNavigationDeformation();
     ComPtr<IDCompositionSurface> surface;
     HRESULT hr = quickNavDcompDevice_->CreateSurface(width, height,
         DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_ALPHA_MODE_PREMULTIPLIED, &surface);

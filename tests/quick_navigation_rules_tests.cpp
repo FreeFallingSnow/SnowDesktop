@@ -2,6 +2,7 @@
 #include "navigation/quick_navigation_query.h"
 #include "navigation/quick_navigation_animation_rules.h"
 #include "navigation/quick_navigation_genie_rules.h"
+#include "navigation/quick_navigation_attraction_rules.h"
 #include "navigation/quick_navigation_rules.h"
 #include "../src/app/navigation/quick_navigation_theme.h"
 
@@ -10,6 +11,7 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace rules =
@@ -646,12 +648,18 @@ void TestAnimationEffects()
         {true, 1, 0, Effect::Scale},
         {true, 2, 2, Effect::Fade},
         {true, 3, 1, Effect::Genie},
+        {true, 4, 0, Effect::Attraction},
+        {true, 4, 1, Effect::Attraction},
+        {true, 4, 2, Effect::Attraction},
         {true, 0, 0, Effect::None},
         {true, 0, 1, Effect::Fade},
         {true, 0, 2, Effect::Scale},
         {false, 3, 0, Effect::None},
         {false, 3, 1, Effect::Fade},
         {false, 3, 2, Effect::Scale},
+        {false, 4, 0, Effect::None},
+        {false, 4, 1, Effect::Fade},
+        {false, 4, 2, Effect::Scale},
     };
     for (const auto& item : cases)
     {
@@ -664,6 +672,11 @@ void TestAnimationEffects()
     }
 
     State genie;
+    genie.Configure(Effect::Attraction, 0.7, true);
+    Check(IsDeformationEffect(genie.GetEffect()) &&
+            NearlyEqual(static_cast<float>(genie.DurationMilliseconds(true)), 294.0f) &&
+            NearlyEqual(static_cast<float>(genie.DurationMilliseconds(false)), 294.0f),
+        "Dock Attraction uses the window transition's 420ms duration with the selected speed in both directions");
     genie.Configure(Effect::Genie, 0.7, true);
     Check(genie.GetEffect() == Effect::Genie &&
             NearlyEqual(static_cast<float>(genie.DurationMilliseconds(true)), 252.0f) &&
@@ -725,6 +738,91 @@ void TestAnimationEffects()
     genie.Open(3200);
     Check(genie.GetVisual().opacity == 1.0f && !genie.IsAnimating(),
         "None must open immediately at full opacity");
+}
+
+void TestAttractionAnimationAndSurface()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    namespace attraction = snowdesktop::dock_attraction;
+    State state;
+    state.Configure(Effect::Attraction, 1.0, true);
+    Check(state.GetVisual().opacity == 0 && state.HiddenScale() == 1,
+        "hidden Attraction is transparent without adding a uniform scale");
+    state.Open(1000);
+    state.Advance(1105);
+    const auto opening = state.GetVisual();
+    Check(state.IsOpening() && opening.progress == 0.25f && opening.opacity == 1 && opening.scale == 1,
+        "Attraction opening exposes the curved surface before its final size");
+    state.Close(1105);
+    Check(state.IsClosing() && state.GetVisual().opacity == opening.opacity &&
+            state.GetVisual().progress == opening.progress,
+        "interrupting Attraction preserves the exact deformation and opacity");
+    state.Advance(1175);
+    const auto closing = state.GetVisual();
+    Check(closing.opacity > 0 && closing.opacity < 1,
+        "Attraction fades at its collapsed endpoint");
+    state.Open(1175);
+    Check(state.IsOpening() && state.GetVisual().progress == closing.progress &&
+            state.GetVisual().opacity == closing.opacity,
+        "reopening Attraction preserves both geometry and opacity");
+    state.Advance(1600);
+    Check(!state.IsAnimating() && state.GetVisual().opacity == 1,
+        "reversed Attraction settles at full visibility");
+    state.Close(2000);
+    state.Advance(2420);
+    Check(state.IsHidden() && !state.IsAnimating() && state.GetVisual().opacity == 0,
+        "completed Attraction close releases the visible frame");
+    state.Open(3000);
+    state.Advance(3105);
+    state.Configure(Effect::None, 1.0);
+    Check(!state.IsAnimating() && state.GetVisual().opacity == 1,
+        "disabling Attraction settles the requested visible state");
+
+    // Production uses these source clips and canonical transforms for its live
+    // DComp surface. Check against independently evaluated patch corners, on
+    // all four Dock sides, negative monitor coordinates and fractional DPI.
+    for (const auto size : {std::pair{481.375, 613.625}, std::pair{1281.2, 721.6}})
+    {
+        const attraction::Rect panel{-1840.25, -900.75, -1840.25 + size.first, -900.75 + size.second};
+        const attraction::Rect docks[] = {
+            {panel.left + 140, panel.bottom + 24, panel.left + 188, panel.bottom + 72},
+            {panel.right - 188, panel.top - 72, panel.right - 140, panel.top - 24},
+            {panel.left - 72, panel.top + 140, panel.left - 24, panel.top + 188},
+            {panel.right + 24, panel.bottom - 188, panel.right + 72, panel.bottom - 140}};
+        for (const auto dock : docks)
+        for (const double collapsed : {0.0, 0.12, 0.33, 0.55, 0.81, 0.94, 1.0})
+        {
+            const auto frame = attraction::MeshFrame(panel, dock, collapsed);
+            const auto patch = attraction::ControlPoints(panel, dock, collapsed);
+            for (std::size_t i = 0; i < attraction::TriangleCount; ++i)
+            {
+                const auto source = AttractionSource(size.first, size.second, i);
+                const auto matrix = attraction::TriangleValues(frame, i, -2000, -1000);
+                const auto cell = attraction::SourceCell(i / 2);
+                const double us[] = {cell.left, cell.right, cell.left, cell.right};
+                const double vs[] = {cell.top, cell.top, cell.bottom, cell.bottom};
+                const int corners[2][3] = {{0, 1, 2}, {3, 2, 1}};
+                for (const auto corner : corners[i % 2])
+                {
+                    const double x = us[corner] * size.first, y = vs[corner] * size.second;
+                    const auto& m = source.transform;
+                    const double s = x * m.m11 + y * m.m21 + m.dx;
+                    const double t = x * m.m12 + y * m.m22 + m.dy;
+                    const auto expected = attraction::Surface(patch, us[corner], vs[corner]);
+                    Check(std::abs(s * matrix[0] + t * matrix[2] + matrix[4] - (expected.x + 2000)) < 0.002 &&
+                            std::abs(s * matrix[1] + t * matrix[3] + matrix[5] - (expected.y + 1000)) < 0.002,
+                        "live Attraction surface triangles map to the shared curved patch without a coordinate offset");
+                }
+                const double u = (cell.left + cell.right) * 0.5, v = (cell.top + cell.bottom) * 0.5;
+                const auto glass = AttractionMeshPoint(frame, u, v);
+                const auto first = attraction::Surface(patch, cell.right, cell.top);
+                const auto last = attraction::Surface(patch, cell.left, cell.bottom);
+                Check(std::abs(glass.x - (first.x + last.x) * 0.5) < 1e-8 &&
+                        std::abs(glass.y - (first.y + last.y) * 0.5) < 1e-8,
+                    "glass follows the content's diagonal interpolation rather than a different curved sample");
+            }
+        }
+    }
 }
 
 void TestGenieTranslucentContentCoverage()
@@ -1219,6 +1317,7 @@ int main()
     TestTabDragWhileScrolling();
     TestAnimationRules();
     TestAnimationEffects();
+    TestAttractionAnimationAndSurface();
     TestGenieTranslucentContentCoverage();
     TestGenieDestinationPixelCoverage();
     TestDeactivateRules();

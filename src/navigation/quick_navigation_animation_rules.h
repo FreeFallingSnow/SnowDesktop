@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dock/dock_genie_rules.h"
+#include "dock/dock_attraction_rules.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -11,7 +12,12 @@ constexpr std::uint64_t kOpenDurationMs = 140;
 constexpr std::uint64_t kCloseDurationMs = 110;
 constexpr float kMinimumScale = 0.08f;
 
-enum class Effect { None, Fade, Scale, Genie };
+enum class Effect { None, Fade, Scale, Genie, Attraction };
+
+constexpr bool IsDeformationEffect(Effect effect)
+{
+    return effect == Effect::Genie || effect == Effect::Attraction;
+}
 
 constexpr Effect ResolveEffect(bool animationsEnabled,
     bool dockSourceAndAnchorValid, int windowEffect, int popupEffect)
@@ -25,6 +31,7 @@ constexpr Effect ResolveEffect(bool animationsEnabled,
         case 1: return Effect::Scale;
         case 2: return Effect::Fade;
         case 3: return Effect::Genie;
+        case 4: return Effect::Attraction;
         default: break;
         }
     }
@@ -104,7 +111,8 @@ public:
         if (dockTiming_)
         {
             // Match DockWindowTransition's full minimize/restore durations.
-            return (effect_ == Effect::Genie ? 360.0 :
+            return (effect_ == Effect::Attraction ? 420.0 :
+                effect_ == Effect::Genie ? 360.0 :
                 effect_ == Effect::Fade ? 180.0 : 240.0) * durationScale_;
         }
         return (opening ? kOpenDurationMs : kCloseDurationMs) * durationScale_;
@@ -188,7 +196,9 @@ public:
         const float eased = EaseInOutSmooth(progress_);
         return {
             progress_,
-            effect_ == Effect::Genie
+            effect_ == Effect::Attraction
+                ? static_cast<float>(dock_attraction::Opacity(1.0 - eased))
+                : effect_ == Effect::Genie
                 ? static_cast<float>(dock_genie::Opacity(1.0 - eased)) : eased,
             effect_ == Effect::Scale
                 ? kMinimumScale + (1.0f - kMinimumScale) * eased : 1.0f,

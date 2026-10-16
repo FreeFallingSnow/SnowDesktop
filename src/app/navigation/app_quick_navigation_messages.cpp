@@ -142,8 +142,8 @@ LRESULT DesktopApp::HandleQuickNavigationMessage(HWND hwnd, UINT msg, WPARAM wp,
         // During the warp, controls are not at their final hit rectangles.
         // Keep keyboard focus in the hidden edit, but let Dock clicks through.
         if (quickNavigationAnimation_.IsAnimating() &&
-            quickNavigationAnimation_.GetEffect() ==
-                snowdesktop::quick_navigation_animation_rules::Effect::Genie)
+            snowdesktop::quick_navigation_animation_rules::IsDeformationEffect(
+                quickNavigationAnimation_.GetEffect()))
             return HTTRANSPARENT;
         {
             POINT point{
