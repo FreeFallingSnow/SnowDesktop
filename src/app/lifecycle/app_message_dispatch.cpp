@@ -317,7 +317,7 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             // The render child does not activate on clicks. Match the normal
             // press path so shell flyouts lose focus even while icons are hidden.
-            RestoreInteractionInputFocus();
+            RestoreInteractionInputFocus(true);
             ShowHiddenHint();
             return 0;
         }

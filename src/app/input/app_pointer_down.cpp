@@ -68,7 +68,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         }
         else
         {
-            RestoreInteractionInputFocus();
+            RestoreInteractionInputFocus(true);
             const RECT closeRect =
                 GetLuaWidgetPanelCloseRect();
             if (PtInRect(&closeRect, pt))
@@ -199,7 +199,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     // deciding whether this click should minimize or restore it. The decision
     // itself is captured from the indicator state during hit testing below.
     if (!pointInDock)
-        RestoreInteractionInputFocus();
+        RestoreInteractionInputFocus(true);
     if (widgetEngine_ && widgetEngine_->HasFocusedHostInput())
     {
         bool keepFocusedInput = false;

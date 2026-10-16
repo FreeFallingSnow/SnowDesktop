@@ -1279,7 +1279,7 @@ private:
     void RefocusFloatingDockKeyboardSession(bool deliberateFullscreenExit = false);
     void EndFloatingDockKeyboardSession(
         FloatingDockCloseFocusPolicy focusPolicy);
-    void RestoreInteractionInputFocus();
+    void RestoreInteractionInputFocus(bool pointerPress = false);
     HWND ResolveDockSemanticForegroundWindow();
     void ToggleFloatingDock();
     void ApplyFloatingDockHotkey();

@@ -1441,6 +1441,37 @@ int wmain(int argc, wchar_t** argv)
             "missing input proxy must never fall back to the Explorer-owned child");
         Expect(ResolveMenuOwner(render, render, owner, nullptr, true) == owner,
             "missing floating proxy falls back to the desktop input proxy");
+        // The panel may stay visible during its fade-out. A desktop press must
+        // cancel it before focusing the input proxy; passive refresh must not.
+        {
+            using snowdesktop::desktop_input_activation::RestoreInteractionFocus;
+            SetActiveWindow(owner);
+            SetFocus(owner);
+            bool closeRequested = false;
+            int restoreCount = 0;
+            const auto dismissPanel = [&] { closeRequested = true; };
+            const auto restoreHost = [&] {
+                Expect(closeRequested,
+                    "outside press must cancel the panel before transferring focus");
+                ++restoreCount;
+                SetActiveWindow(floatingInput);
+                SetFocus(floatingInput);
+            };
+            RestoreInteractionFocus(true, false, dismissPanel, restoreHost);
+            Expect(!closeRequested && restoreCount == 0 && GetFocus() == owner,
+                "passive refresh must preserve the open panel and its keyboard focus");
+            RestoreInteractionFocus(true, true, dismissPanel, restoreHost);
+            Expect(closeRequested && restoreCount == 1 && GetFocus() == floatingInput &&
+                    IsWindowVisible(owner),
+                "desktop press must restore input even while the panel is fading out");
+            closeRequested = false;
+            RestoreInteractionFocus(false, true, dismissPanel, [&] { ++restoreCount; });
+            Expect(!closeRequested && restoreCount == 2,
+                "desktop press with no panel must retain normal host focus routing");
+            RestoreInteractionFocus(false, false, dismissPanel, [&] { ++restoreCount; });
+            Expect(!closeRequested && restoreCount == 3,
+                "passive refresh with no panel must retain normal host focus routing");
+        }
         for (const bool floatingSession : { false, true })
         {
             for (const bool outsideClick : { false, true })

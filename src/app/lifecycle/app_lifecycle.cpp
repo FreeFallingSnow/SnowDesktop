@@ -3,6 +3,7 @@
 #include "app/popup/categorized_popup_scope.h"
 #include "app/dock/dock_platform_helpers.h"
 #include "desktop/desktop_keyboard_rules.h"
+#include "desktop/desktop_input_activation.h"
 #include "widget/settings/widget_engine_settings_backend.h"
 #include "widget/settings/widget_settings_service.h"
 #include "platform/http_runtime.h"
@@ -687,16 +688,18 @@ void DesktopApp::EndFloatingDockKeyboardSession(
     }
 }
 
-void DesktopApp::RestoreInteractionInputFocus()
+void DesktopApp::RestoreInteractionInputFocus(bool pointerPress)
 {
-    if (systemPanel_ && systemPanel_->IsOpen()) return;
-    if (floatingDockKeyboardSessionActive_ &&
-        floatingDockVisible_)
-    {
-        RefocusFloatingDockKeyboardSession();
-        return;
-    }
-    FocusDesktopInputWindow();
+    snowdesktop::desktop_input_activation::RestoreInteractionFocus(
+        systemPanel_ && systemPanel_->IsOpen(), pointerPress,
+        [this] { systemPanel_->Hide(); },
+        [this] {
+            if (floatingDockKeyboardSessionActive_ &&
+                floatingDockVisible_)
+                RefocusFloatingDockKeyboardSession();
+            else
+                FocusDesktopInputWindow();
+        });
 }
 
 HWND DesktopApp::ResolveDockSemanticForegroundWindow()
