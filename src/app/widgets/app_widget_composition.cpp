@@ -342,6 +342,8 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         context->Clear(D2D1::ColorF(0, 0, 0, 0));
 
         desktopWidgetCompositionDrawInProgress_ = true;
+        item.iconBackdrops.BeginDraw();
+        desktopWidgetIconBackdropsDrawing_ = &item.iconBackdrops;
         desktopWidgetBackdropRequestedDuringDraw_ = false;
         desktopWidgetBackdropCornerRadiusDuringDraw_ = 0.0f;
         desktopWidgetBackdropBlurRadiusDuringDraw_ = 0.0f;
@@ -370,6 +372,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 widgetData->selected ? 2 : 0);
         }
         lastMousePoint_ = interactionPoint;
+        desktopWidgetIconBackdropsDrawing_ = nullptr;
         desktopWidgetCompositionDrawInProgress_ = false;
         const bool backdropRequested =
             desktopWidgetBackdropRequestedDuringDraw_;
@@ -388,6 +391,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
         brushCacheContext_ = nullptr;
         if (FAILED(endDrawHr))
         {
+            item.iconBackdrops.DiscardDraw();
             surfaceFailures.push_back({
                 widgetId, L"EndDraw", endDrawHr, true });
             continue;
@@ -436,9 +440,12 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                 item.visible ? static_cast<float>(height) : 0.0f);
         if (FAILED(hr))
         {
+            item.iconBackdrops.DiscardDraw();
             surfaceFailures.push_back({
                 widgetId, L"Update visual", hr, true });
         }
+        else
+            item.iconBackdrops.Publish(desktopBackdropCompositor_);
     }
 
     if (!SyncDesktopWidgetCompositionZOrder())
@@ -536,6 +543,8 @@ void DesktopApp::SetDesktopWidgetCompositionVisible(
         (void)desktopBackdropCompositor_.RemovePanel(item.bounds);
         item.backdropRegistered = false;
     }
+    if (!visible)
+        item.iconBackdrops.Hide(desktopBackdropCompositor_);
     if (item.clip)
     {
         (void)item.clip->SetRight(
@@ -570,6 +579,10 @@ void DesktopApp::KeepDesktopWidgetBackdropPanels()
     {
         item.backdropRegistered = snowdesktop::desktop_backdrop_update_rules::
             KeepOrRestoreWidgetPanel(desktopBackdropCompositor_, item);
+        if (item.visible)
+            item.iconBackdrops.Restore(desktopBackdropCompositor_);
+        else
+            item.iconBackdrops.Hide(desktopBackdropCompositor_);
     }
 }
 
@@ -733,6 +746,7 @@ void DesktopApp::RemoveDesktopWidgetComposition(
     if (position == desktopWidgetCompositionItems_.end())
         return;
     const RECT bounds = position->second.bounds;
+    position->second.iconBackdrops.Hide(desktopBackdropCompositor_);
     if (position->second.backdropRegistered)
         (void)desktopBackdropCompositor_.RemovePanel(bounds);
     if (desktopWidgetCompositionLayer_ && position->second.visual)
@@ -825,6 +839,8 @@ void DesktopApp::ResetDesktopWidgetComposition()
     ResetWidgetMarqueeComposition();
     presentedWidgetDragFeedback_ = {};
     pendingDesktopWidgetCompositions_.clear();
+    for (const auto& [_, item] : desktopWidgetCompositionItems_)
+        item.iconBackdrops.Hide(desktopBackdropCompositor_);
     desktopWidgetCompositionItems_.clear();
     desktopWidgetCompositionZOrder_.clear();
     if (dcompVisual_ && desktopWidgetCompositionLayer_)
@@ -834,6 +850,7 @@ void DesktopApp::ResetDesktopWidgetComposition()
     }
     desktopWidgetCompositionLayer_.Reset();
     desktopWidgetCompositionDrawInProgress_ = false;
+    desktopWidgetIconBackdropsDrawing_ = nullptr;
     hiddenWidgetSurfaceMaintenancePending_ = false;
     desktopWidgetBackdropRequestedDuringDraw_ = false;
     desktopWidgetCompositionFailurePending_ = false;

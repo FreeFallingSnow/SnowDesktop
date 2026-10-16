@@ -1,4 +1,5 @@
 #include "icons/icon_hbitmap_pixels.h"
+#include "icons/icon_bitmap_renderer.h"
 #include "app/app.h"
 #include "desktop_backdrop_update_rules.h"
 
@@ -569,53 +570,29 @@ ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(
 
 void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
     ID2D1Bitmap* bitmap, RECT destination, float opacity,
-    std::uintptr_t ownerKey, bool fitWithoutUpscaling)
+    std::uintptr_t ownerKey, bool preserveAspectRatio)
 {
     if (!target || !bitmap || IsRectEmptyRect(destination))
         return;
 
     const D2D1_SIZE_U source = bitmap->GetPixelSize();
-    auto fitted = snowdesktop::icon_render_rules::FitWithoutUpscaling(
+    const auto plan = snowdesktop::icon_bitmap_renderer::Prepare(
         static_cast<int>(source.width), static_cast<int>(source.height),
-        destination.right - destination.left,
-        destination.bottom - destination.top);
-    if (!fitWithoutUpscaling)
-    {
-        fitted.width = destination.right - destination.left;
-        fitted.height = destination.bottom - destination.top;
-    }
-    if (fitted.width <= 0 || fitted.height <= 0)
+        destination, preserveAspectRatio);
+    if (IsRectEmpty(&plan.bounds))
         return;
-
-    const int left = destination.left +
-        (destination.right - destination.left - fitted.width) / 2;
-    const int top = destination.top +
-        (destination.bottom - destination.top - fitted.height) / 2;
-    const D2D1_RECT_F dst = D2D1::RectF(
-        static_cast<float>(left), static_cast<float>(top),
-        static_cast<float>(left + fitted.width),
-        static_cast<float>(top + fitted.height));
 
     const auto glass = iconGlassBackdrop_.find(bitmap);
     if (glass != iconGlassBackdrop_.end() && glass->second && iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
     {
-        RegisterIconBackdrop({left, top, left + fitted.width, top + fitted.height}, opacity, ownerKey);
+        RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey);
     }
 
-    ComPtr<ID2D1DeviceContext> deviceContext;
-    if (SUCCEEDED(target->QueryInterface(IID_PPV_ARGS(&deviceContext))) &&
-        deviceContext)
-    {
-        deviceContext->DrawBitmap(bitmap, &dst, opacity,
-            fitWithoutUpscaling ? D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC : D2D1_INTERPOLATION_MODE_LINEAR,
-            nullptr, nullptr);
-        return;
-    }
-    target->DrawBitmap(bitmap, dst, opacity,
-        D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity);
 }
 
-void DesktopApp::RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t ownerKey)
+void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
+    float opacity, std::uintptr_t ownerKey)
 {
     // Popup/quick-navigation backdrops are collected by their own animation
     // transaction. Icons inherit that panel rather than adding a second blur.
@@ -623,6 +600,17 @@ void DesktopApp::RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t 
     DesktopBackdropCompositor* compositor = &desktopBackdropCompositor_;
     bool parentSuppliesGlass = desktopWidgetCompositionDrawInProgress_ &&
         desktopWidgetBackdropRequestedDuringDraw_;
+    auto contentClip = snowdesktop::ScopedIconBackdropClip::Current(target);
+    if (desktopWidgetIconBackdropsDrawing_)
+    {
+        // A successful child redraw will retire omitted icons, including every
+        // old independent layer when the component supplies its own material.
+        if (!parentSuppliesGlass && opacity > 0.0f)
+            desktopWidgetIconBackdropsDrawing_->Collect({frame,
+                iconBeautifySettings_.shape, iconBeautifySettings_.glassBlurRadius,
+                opacity, false, std::move(contentClip)});
+        return;
+    }
     if (renderingPersistentDockHost_)
     {
         // Merged Dock chrome is painted by the status bar's separate target.
@@ -638,9 +626,16 @@ void DesktopApp::RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t 
         compositor = &renderingPersistentDockHost_->backdrop;
         frame = snowdesktop::floating_dock_rules::DesktopRectToWindowRect(
             frame, renderingPersistentDockHost_->sourceRect);
+        if (contentClip)
+        {
+            contentClip->bounds = snowdesktop::floating_dock_rules::DesktopRectToWindowRect(
+                contentClip->bounds, renderingPersistentDockHost_->sourceRect);
+            contentClip->geometryOffset.x -= renderingPersistentDockHost_->sourceRect.left;
+            contentClip->geometryOffset.y -= renderingPersistentDockHost_->sourceRect.top;
+        }
     }
     const auto key = ownerKey ? ownerKey | 1u : 0;
     snowdesktop::desktop_backdrop_update_rules::ReconcileIconPanel(*compositor,
         frame, iconBeautifySettings_.shape, iconBeautifySettings_.glassBlurRadius,
-        opacity, key, parentSuppliesGlass);
+        opacity, key, parentSuppliesGlass, contentClip ? &*contentClip : nullptr);
 }

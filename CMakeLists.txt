@@ -2459,6 +2459,12 @@ if (BUILD_TESTING)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopIconRenderRulesTests>"
         TIMEOUT 60 LABELS "integration;icon;ui;rendering")
 
+    add_test(NAME icon_bitmap_rendering
+        COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)
+    set_tests_properties(icon_bitmap_rendering PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopIconRenderRulesTests>"
+        TIMEOUT 60 LABELS "integration;icon;ui;rendering")
+
     snowdesktop_add_test(
         SnowDesktopIconBeautifyTests
         icon_beautify
@@ -2739,6 +2745,7 @@ if (BUILD_TESTING)
             tests/widget/widget_image_sampling_tests.cpp
             tests/widget_text_layout_cache_tests.cpp
             tests/scroll_content_clip_tests.cpp
+            src/icons/icon_beautify.cpp
             src/widget/view/widget_background_cache.cpp
             src/widget/view/widget_image_sampling.cpp
             src/ui/preview/component_preview.cpp

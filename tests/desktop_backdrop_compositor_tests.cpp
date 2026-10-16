@@ -1,5 +1,7 @@
 #include "../src/app/render/desktop_backdrop_compositor.h"
 #include "../src/app/render/desktop_backdrop_update_rules.h"
+#include "app/render/widget_icon_backdrops.h"
+#include "icons/icon_backdrop_geometry.h"
 #include "layout/popup_round_geometry.h"
 #include "icons/large_icon_shape_geometry.h"
 #include "dock/dock_window_transition.h"
@@ -1083,6 +1085,116 @@ int RunDesktopBackdropCompositorTests()
     glass.BeginFrame(true); glass.EndFrame();
     check(glass.PanelCount() == 0 && glass.BlurFactoryCount() == 0,
         "hiding icons and panels retires their native blur resources");
+
+    {
+        // Native glass lives outside the D2D surface, so inspect its actual
+        // HWND fence as well as the production geometry used by Composition.
+        PopupWindow scrollingContent;
+        DesktopBackdropCompositor scrollingGlass;
+        if (!check(scrollingGlass.InitializePopup(scrollingContent.handle, false, false),
+                "create isolated scrolling-icon native backdrop"))
+            return failures;
+        const HWND helper = FindOwnedBackdrop(scrollingGlass);
+        const auto fenced = [&](int x, int y) {
+            HRGN region = CreateRectRgn(0, 0, 0, 0);
+            const bool inside = region && GetWindowRgn(helper, region) != ERROR &&
+                PtInRegion(region, x, y);
+            if (region) DeleteObject(region);
+            return inside;
+        };
+        constexpr RECT viewport{20, 20, 100, 100};
+        constexpr RECT topIcon{24, 0, 88, 64};
+        constexpr auto circle = snowdesktop::IconBeautifyShape::Circle;
+        scrollingGlass.BeginFrame(true);
+        check(scrollingGlass.AddIconPanel(topIcon, circle, 16, 301),
+            "negative control creates an icon without the missing viewport clip");
+        scrollingGlass.EndFrame();
+        check(fenced(48, 10),
+            "negative control reproduces native blur escaping above the scrolling viewport");
+        scrollingGlass.BeginFrame(true); scrollingGlass.EndFrame();
+
+        snowdesktop::WidgetIconBackdrops widget, sibling;
+        snowdesktop::IconBackdropClip clip{viewport, {}};
+        widget.BeginDraw();
+        widget.Collect({topIcon, circle, 16, 1, false, clip});
+        sibling.BeginDraw();
+        sibling.Collect({{150, 30, 214, 94}, circle, 16, 1, false, {}});
+        scrollingGlass.BeginFrame(false);
+        widget.Publish(scrollingGlass);
+        sibling.Publish(scrollingGlass);
+        scrollingGlass.EndFrame();
+        check(!fenced(48, 10) && fenced(48, 30) && fenced(180, 50),
+            "clipped native glass retains its visible part and unrelated sibling glass");
+
+        // A failed content draw must not publish or retire a candidate glass.
+        widget.BeginDraw();
+        widget.Collect({{24, 80, 88, 144}, circle, 16, 1, false, clip});
+        widget.DiscardDraw();
+        scrollingGlass.BeginFrame(true);
+        widget.Restore(scrollingGlass); sibling.Restore(scrollingGlass);
+        scrollingGlass.EndFrame();
+        check(fenced(48, 30) && !fenced(48, 90) && fenced(180, 50),
+            "retained or failed child content keeps the previously completed native icon glass");
+
+        widget.BeginDraw();
+        widget.Collect({{24, 80, 88, 144}, circle, 16, 1, false, clip});
+        scrollingGlass.BeginFrame(false);
+        widget.Publish(scrollingGlass);
+        scrollingGlass.EndFrame();
+        check(!fenced(48, 30) && fenced(48, 90) && !fenced(48, 110) &&
+                fenced(180, 50) && scrollingGlass.PanelCount() == 2,
+            "partial widget scrolling replaces old blur and clips the bottom without accumulating panels");
+
+        widget.BeginDraw(); // Every icon scrolled out; no DrawIcon call remains.
+        scrollingGlass.BeginFrame(false);
+        widget.Publish(scrollingGlass);
+        scrollingGlass.EndFrame();
+        check(!fenced(48, 90) && fenced(180, 50) && scrollingGlass.PanelCount() == 1,
+            "an empty partial widget redraw retires its old glass without touching a sibling");
+        sibling.Hide(scrollingGlass); // Deletion need not wait for another paint.
+        check(!fenced(180, 50) && scrollingGlass.PanelCount() == 0 &&
+                scrollingGlass.BlurFactoryCount() == 0,
+            "hiding or removing a widget immediately retires its native icon resources outside a paint");
+        scrollingGlass.BeginFrame(true); sibling.Restore(scrollingGlass); scrollingGlass.EndFrame();
+        check(fenced(180, 50) && scrollingGlass.PanelCount() == 1,
+            "a retained visible widget restores glass without rerasterizing its surface");
+
+        Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+        if (!check(SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                factory.GetAddressOf())), "create production icon-geometry factory"))
+            return failures;
+        Microsoft::WRL::ComPtr<ID2D1Geometry> geometry;
+        const auto geometryContains = [&](float x, float y) {
+            BOOL inside = FALSE;
+            return geometry && SUCCEEDED(geometry->FillContainsPoint(
+                D2D1::Point2F(x, y), nullptr, &inside)) && inside;
+        };
+        check(SUCCEEDED(snowdesktop::CreateIconBackdropGeometry(factory.Get(), circle,
+                topIcon, nullptr, geometry)) && geometryContains(32, 10),
+            "negative control proves an unclipped icon silhouette covers the escaped pixels");
+        check(SUCCEEDED(snowdesktop::CreateIconBackdropGeometry(factory.Get(), circle,
+                topIcon, &clip, geometry)) && !geometryContains(32, 10) &&
+                geometryContains(32, 30) && !geometryContains(1, 21),
+            "native icon geometry intersects the viewport while preserving the original circular contour");
+
+        Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> rounded;
+        check(SUCCEEDED(factory->CreateRoundedRectangleGeometry(
+                D2D1::RoundedRect(D2D1::RectF(20, 20, 100, 100), 28, 28), &rounded)),
+            "create the same outer rounded frame mask as widget content");
+        auto mask = std::make_shared<snowdesktop::IconBackdropGeometryClip>();
+        mask->geometry = rounded;
+        clip.geometry = mask;
+        const RECT cornerIcon{0, 0, 64, 64};
+        check(SUCCEEDED(snowdesktop::CreateIconBackdropGeometry(factory.Get(), circle,
+                cornerIcon, &clip, geometry)) && !geometryContains(21, 21) &&
+                geometryContains(40, 40),
+            "native icon glass also honors the component's rounded outer clipping geometry");
+
+        scrollingGlass.BeginStagedFrame();
+        check(scrollingGlass.AddIconPanel(topIcon, circle, 16, 302, &clip) &&
+                scrollingGlass.ApplyStagedFrame() && !fenced(48, 10) && fenced(48, 30),
+            "staged native icon publication retains its viewport clip");
+    }
 
     // Reproduce the merged-Dock ownership gap with two real native targets.
     // The strip is external, so the Dock's own panel list cannot find it.

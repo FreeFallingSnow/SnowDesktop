@@ -2345,7 +2345,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
             app_->ShouldBeautifyIconBitmap(iconIsMediaThumbnail)))
     {
         app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
-            reinterpret_cast<std::uintptr_t>(iconBitmap), false);
+            reinterpret_cast<std::uintptr_t>(iconBitmap));
     }
     else
     {
@@ -2731,6 +2731,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     {
         auto* factory = app_->GetD2DFactory();
         ID2D1Geometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
+        const snowdesktop::ScopedIconBackdropClip nativeIconClip(context, frame, clipGeo);
         if (clipGeo)
             context->PushLayer(D2D1::LayerParameters(
                 D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "icon_backdrop_clip.h"
+
 #include <d2d1_1.h>
 #include <d2d1_1helper.h>
 #include <wrl/client.h>
@@ -73,7 +75,7 @@ class ScrollContentClip
 public:
     ScrollContentClip(ID2D1DeviceContext* context, ScrollContentFadeCache& cache,
         const RECT& viewport, int scrollOffset, int contentHeight, float fadeLength)
-        : context_(context)
+        : context_(context), backdropClip_(context, viewport)
     {
         if (!context_) return;
         const auto bounds = D2D1::RectF(
@@ -114,6 +116,7 @@ public:
 
 private:
     ID2D1DeviceContext* context_;
+    ScopedIconBackdropClip backdropClip_;
     bool layerPushed_ = false;
 };
 

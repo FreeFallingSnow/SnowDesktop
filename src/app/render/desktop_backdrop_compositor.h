@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <d2d1_1.h>
 #include "icons/icon_beautify.h"
+#include "ui/render/icon_backdrop_clip.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -109,7 +110,8 @@ public:
         std::uintptr_t ownerKey = 0, bool smoothCorners = true);
     // Host-private icon regions share the same native blur backend.
     bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
-        float blurRadius, std::uintptr_t ownerKey);
+        float blurRadius, std::uintptr_t ownerKey,
+        const snowdesktop::IconBackdropClip* contentClip = nullptr);
     // Host-private large-icon silhouettes use the same geometry as the card.
     bool AddLargeIconPanel(const RECT& frame, int shape, float cornerRadius,
         float blurRadius, std::uintptr_t ownerKey, int flagDirection = 0);

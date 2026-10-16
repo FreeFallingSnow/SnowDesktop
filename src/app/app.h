@@ -23,6 +23,7 @@
 #include "navigation/type_to_select.h"
 #include "layout/layout_scroll_save.h"
 #include "ui/render/scroll_content_clip.h"
+#include "app/render/widget_icon_backdrops.h"
 #include "platform/operation_feedback.h"
 #include "ui/render/graphics_device_recovery.h"
 #include "common/background_work.h"
@@ -504,6 +505,7 @@ struct DesktopWidgetCompositionItem
     bool backdropRegistered = false;
     int backdropCornerRadius = 0;
     int backdropBlurRadius = 0;
+    snowdesktop::WidgetIconBackdrops iconBackdrops;
 };
 
 /**
@@ -2982,7 +2984,8 @@ private:
     bool StartLuaWidgetPanelCompositionAnimation();
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state,
         int requestedIconSize = 0);
-    void RegisterIconBackdrop(RECT frame, float opacity, std::uintptr_t ownerKey);
+    void RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
+        float opacity, std::uintptr_t ownerKey);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
@@ -3009,7 +3012,7 @@ private:
     ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm, bool beautify);
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
         RECT destination, float opacity = 1.0f,
-        std::uintptr_t ownerKey = 0, bool fitWithoutUpscaling = true);
+        std::uintptr_t ownerKey = 0, bool preserveAspectRatio = true);
     std::uintptr_t GetD2DIconCacheKey(HBITMAP hbm, bool beautified) const;
     void EraseD2DIconCacheForBitmap(HBITMAP hbm);
     bool ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const
@@ -3578,6 +3581,7 @@ private:
     bool compositionPaintInProgress_ = false;
     bool desktopWidgetCompositionFailurePending_ = false;
     bool desktopWidgetCompositionDrawInProgress_ = false;
+    snowdesktop::WidgetIconBackdrops* desktopWidgetIconBackdropsDrawing_ = nullptr;
     bool desktopWidgetPointerBatchActive_ = false;
     ULONGLONG desktopWidgetLastPointerPresentTick_ = 0;
     snowdesktop::UiScheduleToken desktopWidgetHoverTailToken_ = 0;
