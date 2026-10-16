@@ -148,6 +148,7 @@ void TestCodec()
         companionWire.desktopStyleDockPosition == DockPosition::Right && companionWire.desktopStyleDockAttached,
         "preset position and form survive the settings-process action transport together");
     DockSettings dockSpace;
+    dockSpace.edgeDistanceScale = 5.f;
     dockSpace.reserveScreenSpace = true;
     dockSpace.lastMonitorUseHomeSize = false;
     dockSpace.mergedBarHeight = 64;
@@ -528,12 +529,15 @@ void TestCodec()
     snowdesktop::IconLibrarySnapshot library;
     library.session = UINT64_MAX; library.revision = 27; library.busy = true; library.target = L"集合-雪";
     snowdesktop::IconLibraryEntry asset; asset.id = std::string(64,'a') + ".webp"; asset.name = L"自定义图标";
-    asset.previewPath = L"file:///C:/图片/资源.png"; asset.width = 96; asset.height = 96; asset.uses = {L"集合 · Dock"};
+    asset.previewPath = L"C:\\图片\\资源 # %.png"; asset.width = 96; asset.height = 96; asset.uses = {L"集合 · Dock"};
+    snowdesktop::IconLibraryGroup group; group.id = "group-" + std::string(32, '1'); group.name = L"订阅图标包"; group.source = "android-apk"; group.packageId = std::string(64,'b');
+    asset.groupIds = {group.id}; library.groups.push_back(group); library.importedGroupId = group.id;
     library.entries.push_back(asset); library.failures = {L"无效图片.svg"};
     const auto libraryCopy = Unpack<snowdesktop::IconLibrarySnapshot>(Pack(library));
     Check(libraryCopy.session == library.session && libraryCopy.revision == 27 && libraryCopy.busy &&
         libraryCopy.target == library.target && libraryCopy.entries.size() == 1 && libraryCopy.entries[0].id == asset.id &&
-        libraryCopy.entries[0].previewPath == asset.previewPath && libraryCopy.entries[0].uses == asset.uses && libraryCopy.failures == library.failures,
+        libraryCopy.groups.size() == 1 && libraryCopy.groups[0].name == group.name && libraryCopy.groups[0].packageId == group.packageId &&
+        libraryCopy.importedGroupId == group.id && libraryCopy.entries[0].groupIds == asset.groupIds && libraryCopy.entries[0].previewPath == asset.previewPath && libraryCopy.entries[0].uses == asset.uses && libraryCopy.failures == library.failures,
         "icon library identities, usage guards, session tokens and Unicode paths survive the production IPC codec");
     Check(largeCopy.key == large.key && largeCopy.session == UINT64_MAX && largeCopy.revision == 47 &&
         largeCopy.landscapePath == large.landscapePath && largeCopy.portraitSource == large.portraitSource &&

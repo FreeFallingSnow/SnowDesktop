@@ -14,6 +14,7 @@
 #include <fstream>
 #include <cmath>
 
+int RunIconPackTests(const std::filesystem::path& root);
 namespace
 {
 using Microsoft::WRL::ComPtr;
@@ -55,6 +56,7 @@ int RunIconLibraryTests()
         std::vector<uint8_t> rgba(513 * 17 * 4, 0);
         for (int y = 0; y < 17; ++y) for (int x = 256; x < 513; ++x)
             for (int channel = 0; channel < 4; ++channel) rgba[(y * 513 + x) * 4 + channel] = 255;
+        for (int y = 0; y < 17; ++y) for (int x = 256; x < 289; ++x) rgba[(y * 513 + x) * 4 + 3] = static_cast<uint8_t>(std::min(255, (x - 256) * 8));
         uint8_t* encoded = nullptr;
         const auto bytes = lossless ? WebPEncodeLosslessRGBA(rgba.data(), 513, 17, 513 * 4, &encoded) :
             WebPEncodeRGBA(rgba.data(), 513, 17, 513 * 4, 90, &encoded);
@@ -209,6 +211,7 @@ int RunIconLibraryTests()
     const auto partial = library.Invoke(request);
     check(!partial.succeeded && partial.imported.size() == 1 && partial.failures.size() == 1 && partial.entries.size() == 1,
         "a partial import preserves its valid resource and reports exactly the failed input");
+    failures += RunIconPackTests(directory);
     if (SUCCEEDED(initialized)) CoUninitialize();
     return failures ? 1 : 0;
 }

@@ -1,2 +1,3 @@
-# Keep official vendored sources and license files byte-for-byte.
-third_party/libwebp/** -whitespace
+# Preserve official vendored sources and license files byte-for-byte.
+third_party/libwebp/** -whitespace -text
+third_party/puff/** -whitespace -text

@@ -175,6 +175,12 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         bool notifyHost = false) noexcept;
 
     [[nodiscard]] snowdesktop::SettingsRoute CurrentRoute() const;
+    // Explicit requests may repeat a route after its modal picker has closed.
+    void OpenRequestedIconPicker()
+    {
+        if (sessionActive_ && iconLibraryPage_ && navigation_.Route().page == snowdesktop::SettingsPage::IconLibrary)
+            iconLibraryPage_->Activate(navigation_.Route().itemKey);
+    }
     [[nodiscard]] std::uint64_t CurrentGeneration() const noexcept;
     [[nodiscard]] std::uint64_t CurrentRevision() const noexcept;
 

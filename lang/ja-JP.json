@@ -2784,7 +2784,7 @@
   "iconLibrary.exportFailed": "一部のアイコンをエクスポートできませんでした。保存先フォルダーを確認してください。",
   "iconLibrary.exportIco": "ICO をエクスポート",
   "iconLibrary.exportPng": "PNG をエクスポート",
-  "iconLibrary.import": "画像をインポート",
+  "iconLibrary.import": "インポート…",
   "iconLibrary.inUse": "使用中",
   "iconLibrary.invalid": "画像を読み取れないか、対応していない形式です。",
   "iconLibrary.missing": "リソースが見つからないか読み取れません",
@@ -2806,5 +2806,18 @@
   "iconLibrary.recycleEmpty": "ごみ箱（空）",
   "iconLibrary.recycleFull": "ごみ箱（いっぱい）",
   "iconLibrary.startIcon": "スタートボタンのアイコン",
-  "iconLibrary.searchIcon": "検索ボタンのアイコン"
+  "iconLibrary.searchIcon": "検索ボタンのアイコン",
+  "iconLibrary.personalization": "アイコンのカスタマイズ",
+  "iconLibrary.groups": "グループ",
+  "iconLibrary.allGroups": "すべてのアイコン",
+  "iconLibrary.ungrouped": "未分類",
+  "iconLibrary.newGroup": "グループを作成",
+  "iconLibrary.renameGroup": "グループ名を変更",
+  "iconLibrary.deleteGroup": "グループを削除",
+  "iconLibrary.deleteGroupHint": "グループのみを削除します。アイコンはライブラリに残ります。",
+  "iconLibrary.moveGroup": "グループに移動…",
+  "iconLibrary.packTooLarge": "アイコンパックが上限を超えています（アーカイブ：128 MiB、展開後の画像合計：256 MiB、画像1枚：16 MiB）。",
+  "iconLibrary.packUnsupported": "未対応の Android 描画規則や画像形式を使用する一部のリソースをインポートできませんでした。",
+  "settings.dock.edgeDistance": "画面端からの距離",
+  "settings.dock.edgeDistance.description": "100% はデスクトップコンポーネントの余白と同じ距離です。"
 }

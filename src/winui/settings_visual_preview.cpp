@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "settings_visual_preview.h"
+#include "icon_library_page_presenter.h"
 #include "settings/settings_search_catalog.h"
 #include "SettingsShell.xaml.h"
 #include "winui_runtime.h"
@@ -210,6 +211,7 @@ constexpr SettingsPage pages[] = {
     SettingsPage::DesktopPages, SettingsPage::WidgetBehavior, SettingsPage::DesktopCategories,
     SettingsPage::DesktopStyle, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar,
     SettingsPage::AppearanceTheme, SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceIconBeautification,
+    SettingsPage::IconLibrary,
     SettingsPage::AnimationPerformance, SettingsPage::ContextMenu, SettingsPage::ThemeManager,
     SettingsPage::Widgets, SettingsPage::Calendar, SettingsPage::BackupAndData, SettingsPage::About,
     SettingsPage::DeveloperTools, SettingsPage::Debug, SettingsPage::WidgetSettings, SettingsPage::LargeIcon,
@@ -369,6 +371,42 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         snapshot.session = snapshot.revision = 1;
         snapshot.maxColumns = snapshot.maxRows = 4; return snapshot;
     });
+    auto libraryFixture = std::make_shared<IconLibrarySnapshot>();
+    libraryFixture->succeeded = true; libraryFixture->revision = 1;
+    const auto iconPreview = output / L"图标 # % preview.png";
+    std::vector<std::uint32_t> iconPixels(96 * 96);
+    for (int y = 0; y < 96; ++y) for (int xx = 0; xx < 96; ++xx)
+        if ((xx - 48) * (xx - 48) + (y - 48) * (y - 48) < 40 * 40) iconPixels[y * 96 + xx] = 0xffe88c22;
+    std::string iconError;
+    if (!preview_png::Save(iconPreview, 96, 96, iconPixels, iconError)) throw std::runtime_error(iconError);
+    IconLibraryGroup sampleGroup; sampleGroup.id = "group-" + std::string(32, '1'); sampleGroup.name = L"Sample pack"; // l10n-allow: isolated preview fixture.
+    libraryFixture->groups.push_back(sampleGroup);
+    for (int index = 0; index < 7; ++index)
+    {
+        IconLibraryEntry entry; entry.id = std::string(63, 'a') + std::to_string(index) + ".png";
+        entry.name = L"Preview icon " + std::to_wstring(index + 1); // l10n-allow: isolated preview fixture.
+        entry.width = entry.height = 96; entry.format = "png"; entry.previewPath = iconPreview.wstring();
+        entry.missing = index == 6; if (index % 2 == 0) entry.groupIds.push_back(sampleGroup.id);
+        libraryFixture->entries.push_back(std::move(entry));
+    }
+    // Optional original input exercises the production library, including the
+    // WebP decoder, without touching the desktop host or the user's library.
+    wchar_t previewSource[32768]{};
+    const auto previewSourceLength=GetEnvironmentVariableW(L"SNOWDESKTOP_ICON_LIBRARY_PREVIEW_SOURCE",previewSource,32768);
+    if(previewSourceLength>0&&previewSourceLength<32768)
+    {
+        IconLibrary library(output/L"fixture-library"); IconLibraryRequest request;
+        request.action="import"; request.paths={previewSource};
+        const auto imported=library.Invoke(request);
+        if(!imported.succeeded||imported.entries.size()!=1||imported.entries[0].missing)throw std::runtime_error("original preview import failed");
+        libraryFixture->entries[1]=imported.entries[0];
+    }
+    const auto pickerRequests=std::make_shared<std::vector<IconLibraryRequest>>();
+    shell->SetIconLibraryAction([libraryFixture,pickerRequests](IconLibraryRequest request) {
+        if (request.action != "read" && request.action != "refresh" && request.action!="apply" && request.action!="cancel") throw std::runtime_error("preview library mutations are disabled");
+        if(request.action=="apply"||request.action=="cancel")pickerRequests->push_back(request);
+        auto result=*libraryFixture; result.target=request.target; result.session=1; return result;
+    });
     bool loaded = false;
     const auto token = shell->Loaded([&](const auto&, const auto&) { loaded = true; });
     if (!host.runtime.Attach(host.window, shell.as<x::UIElement>())) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
@@ -497,6 +535,120 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         }
         Settle(shell.as<x::FrameworkElement>());
         const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
+        if (page == SettingsPage::IconLibrary)
+        {
+            const auto grid = PreviewControl<c::GridView>(cards, L"IconLibraryGrid");
+            const auto query = PreviewControl<c::TextBox>(cards, L"IconLibrarySearch");
+            const auto groups = PreviewControl<c::ComboBox>(cards, L"IconLibraryGroups");
+            if (query.Header() || grid.Items().Size() != 7 || groups.Items().Size() != 3)
+                throw std::runtime_error("library tiles, groups or removed search heading are incorrect");
+            const auto loadedImages = [&] {
+                unsigned count = 0; bool complete = true;
+                Walk(grid, [&](const x::DependencyObject& node) {
+                    if (const auto image = node.try_as<c::Image>(); image &&
+                        std::wstring_view(x::Automation::AutomationProperties::GetAutomationId(image)).starts_with(L"IconLibraryPreview-") &&
+                        !winrt::unbox_value_or<bool>(image.Tag(), false))
+                    {
+                        ++count;
+                        const auto source = image.Source().try_as<x::Media::Imaging::BitmapImage>();
+                        complete = complete && source && source.PixelWidth() == 96 && source.PixelHeight() == 96;
+                    }
+                });
+                return count > 0 && complete;
+            };
+            PumpUntil(loadedImages);
+            grid.SelectedIndex(0); groups.SelectedIndex(2); Settle(shell.as<x::FrameworkElement>());
+            if (grid.Items().Size() != 4 || grid.SelectedItems().Size() != 1)
+                throw std::runtime_error("group filter lost a visible selected resource identity");
+            query.Text(L"no-matching-icon"); Settle(shell.as<x::FrameworkElement>());
+            if (grid.Items().Size()) throw std::runtime_error("library search failed to filter resources");
+            query.Text(L""); groups.SelectedIndex(0); Settle(shell.as<x::FrameworkElement>()); PumpUntil(loadedImages);
+            const auto entries = libraryFixture->entries; libraryFixture->entries.clear(); ++libraryFixture->revision;
+            PumpUntil([&] { return grid.Items().Size() == 0; });
+            bool oldHint = false;
+            Walk(cards, [&](const x::DependencyObject& node) {
+                if (const auto text = node.try_as<c::TextBlock>(); text && text.Text() == _LW("iconLibrary.empty")) oldHint = true;
+            });
+            if (oldHint) throw std::runtime_error("removed empty-library hint is still mounted");
+            libraryFixture->entries = entries; ++libraryFixture->revision;
+            PumpUntil([&] { return grid.Items().Size() == 7 && loadedImages(); });
+            struct PickerResult { bool completed = false; std::string id; };
+            const auto pickerResult = std::make_shared<PickerResult>();
+            struct PickerCleanup { std::function<void()> cancel; ~PickerCleanup() { if (cancel) cancel(); } } pickerCleanup;
+            pickerCleanup.cancel = IconLibraryPagePresenter::Pick(shell->XamlRoot(),
+                [](std::string_view name) { return std::wstring(_LW(std::string(name).c_str())); },
+                [libraryFixture](IconLibraryRequest request) {
+                    if (request.action != "read") throw std::runtime_error("picker preview mutations are disabled");
+                    return *libraryFixture;
+                }, entries.front().id, [pickerResult](std::string id) { pickerResult->id = std::move(id); pickerResult->completed = true; });
+            c::ContentDialog pickerDialog{nullptr};
+            PumpUntil([&] {
+                for (const auto& popup : x::Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(shell->XamlRoot()))
+                    if (popup.Child()) Walk(popup.Child(), [&](const x::DependencyObject& node) {
+                        if (const auto dialog = node.try_as<c::ContentDialog>()) pickerDialog = dialog;
+                    });
+                return pickerDialog && pickerDialog.ActualWidth() > 0;
+            });
+            const auto pickerGrid = PreviewControl<c::GridView>(pickerDialog, L"IconLibraryGrid");
+            const auto pickerQuery = PreviewControl<c::TextBox>(pickerDialog, L"IconLibrarySearch");
+            pickerQuery.Text(L"Preview icon 3"); // l10n-allow: query matches the isolated preview fixture above.
+            Settle(pickerDialog);
+            if (pickerGrid.Items().Size() != 1) throw std::runtime_error("picker search lost its fixture resource");
+            pickerGrid.SelectedIndex(0);
+            PumpUntil([&] {
+                bool pickerImageLoaded = false;
+                Walk(pickerGrid, [&](const x::DependencyObject& node) {
+                    if (const auto image = node.try_as<c::Image>(); image)
+                        if (const auto bitmap = image.Source().try_as<x::Media::Imaging::BitmapImage>(); bitmap && bitmap.PixelWidth() == 96) pickerImageLoaded = true;
+                });
+                return pickerImageLoaded && pickerDialog.IsPrimaryButtonEnabled();
+            });
+            if (pickerDialog.ActualWidth() > shell->ActualWidth() || pickerDialog.ActualHeight() > shell->ActualHeight() ||
+                pickerDialog.Content().as<x::FrameworkElement>().ActualWidth() > pickerDialog.ActualWidth())
+                throw std::runtime_error("icon picker exceeds its dialog or window bounds");
+            x::Media::Imaging::RenderTargetBitmap pickerBitmap;
+            Await(pickerBitmap.RenderAsync(pickerDialog));
+            const auto pickerPixels = Await(pickerBitmap.GetPixelsAsync()); BYTE* pickerBytes = nullptr;
+            winrt::check_hresult(pickerPixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&pickerBytes));
+            if (!preview_png::Save(output / L"icon-picker.png", pickerBitmap.PixelWidth(), pickerBitmap.PixelHeight(),
+                {reinterpret_cast<const std::uint32_t*>(pickerBytes), pickerPixels.Length() / 4}, iconError)) throw std::runtime_error(iconError);
+            c::Button useButton{nullptr};
+            Walk(pickerDialog, [&](const x::DependencyObject& node) {
+                if (const auto button = node.try_as<c::Button>(); button && button.Name() == L"PrimaryButton") useButton = button;
+            });
+            if (!useButton) throw std::runtime_error("icon picker use button is missing");
+            InvokePreview(useButton);
+            PumpUntil([&] { return pickerResult->completed; });
+            if (pickerResult->id != entries[2].id) throw std::runtime_error("picker returned a display index instead of the selected resource identity");
+            // The page remains active after dismissal. Repeat the same target
+            // through the explicit host request used when route equality skips
+            // page reconstruction, then select the actual imported WebP tile.
+            auto targetRoute=SettingsRoute::ForPage(SettingsPage::IconLibrary);targetRoute.itemKey=L"item:preview";
+            if(!shell->Navigate(targetRoute))throw std::runtime_error("icon target route rejected");
+            const auto openDialog=[&]() {
+                c::ContentDialog opened{nullptr};
+                PumpUntil([&] {
+                    for(const auto& popup:x::Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(shell->XamlRoot()))
+                        if(popup.Child())Walk(popup.Child(),[&](const x::DependencyObject& node){if(const auto dialog=node.try_as<c::ContentDialog>())opened=dialog;});
+                    return opened&&opened.ActualWidth()>0;
+                });return opened;
+            };
+            auto reopened=openDialog();
+            reopened.Hide();PumpUntil([&]{return pickerRequests->size()==1;});
+            shell->OpenRequestedIconPicker();reopened=openDialog();
+            const auto reopenedGrid=PreviewControl<c::GridView>(reopened,L"IconLibraryGrid");reopenedGrid.SelectedIndex(1);
+            PumpUntil([&]{
+                bool originalLoaded=false;Walk(reopenedGrid,[&](const x::DependencyObject& node){
+                    if(const auto image=node.try_as<c::Image>();image&&x::Automation::AutomationProperties::GetAutomationId(image)==L"IconLibraryPreview-"+winrt::to_hstring(entries[1].id))
+                        if(const auto bitmap=image.Source().try_as<x::Media::Imaging::BitmapImage>();bitmap&&bitmap.PixelWidth()==entries[1].width)originalLoaded=true;
+                });return originalLoaded&&reopened.IsPrimaryButtonEnabled();
+            });
+            c::Button reopenedUse{nullptr};Walk(reopened,[&](const x::DependencyObject& node){if(const auto button=node.try_as<c::Button>();button&&button.Name()==L"PrimaryButton")reopenedUse=button;});
+            if(!reopenedUse)throw std::runtime_error("reopened picker use button missing");
+            InvokePreview(reopenedUse);PumpUntil([&]{return pickerRequests->size()==2;});
+            if(pickerRequests->back().action!="apply"||pickerRequests->back().ids!=std::vector<std::string>{entries[1].id})throw std::runtime_error("reopened picker failed to apply original preview asset");
+            std::ofstream(output / L"icon-library.tsv") << "stream-image-load\tgroup-filter\tstable-selection\tsearch\tempty-hint-removed\npassed\tpassed\tpassed\tpassed\tpassed\n";
+        }
         if (page == SettingsPage::WidgetBehavior && expanded)
         {
             unsigned delays = 0;

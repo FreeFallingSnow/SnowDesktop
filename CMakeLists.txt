@@ -23,6 +23,11 @@ if(MSVC)
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     endforeach()
 endif()
+add_library(SnowDesktopPuff STATIC third_party/puff/puff.c)
+target_include_directories(SnowDesktopPuff PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/third_party/puff")
+if(MSVC)
+    set_property(TARGET SnowDesktopPuff PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+endif()
 # Decoder-only upstream target exports its root; expose the public API directory.
 target_include_directories(webpdecoder INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/libwebp/src>")
 
@@ -291,6 +296,10 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_large_icon_interaction.cpp
     src/icons/large_icon_assets.cpp
     src/icons/icon_image_codec.cpp
+    src/icons/icon_pack_archive.cpp
+    src/icons/icon_pack_archive.h
+    src/icons/android_icon_pack.cpp
+    src/icons/android_icon_pack.h
     src/icons/icon_image_codec.h
     src/icons/icon_override_rules.h
     src/icons/icon_library.cpp
@@ -1088,7 +1097,7 @@ else()
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
-    webpdecoder
+    webpdecoder SnowDesktopPuff
     ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES}
     SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     SnowDesktopSearchVisibility
@@ -1114,7 +1123,9 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/third_party/libwebp/COPYING" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/libwebp-LICENSE.txt"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
-        "${CMAKE_SOURCE_DIR}/third_party/libwebp/PATENTS" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/libwebp-PATENTS.txt")
+        "${CMAKE_SOURCE_DIR}/third_party/libwebp/PATENTS" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/libwebp-PATENTS.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/third_party/puff/puff.h" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/puff-LICENSE.txt")
 
 set(SNOWDESKTOP_WIDGET_SKILL_MANIFEST
     "${CMAKE_SOURCE_DIR}/widgets/snowdesktop-lua-widget/skill.json")
@@ -1334,7 +1345,7 @@ if (BUILD_TESTING)
             src/diagnostics/debug_profile.cpp
             src/steam/steam_runtime_context.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES bcrypt gdi32 ole32 shell32 user32 version
+        LINK_LIBRARIES bcrypt gdi32 ole32 shell32 user32 version windowscodecs
         LABELS core integration data)
 
     snowdesktop_add_test(
@@ -2481,12 +2492,15 @@ if (BUILD_TESTING)
             src/icons/large_icon_assets.cpp
             src/icons/icon_image_codec.cpp
             src/icons/icon_library.cpp
+            src/icons/icon_pack_archive.cpp
+            src/icons/android_icon_pack.cpp
             tests/icons/icon_library_tests.cpp
+            tests/icons/icon_pack_tests.cpp
             src/icons/icon_beautify.cpp
             src/ui/preview/preview_png_writer.cpp
             src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES webp bcrypt ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid xmllite
+        LINK_LIBRARIES webp SnowDesktopPuff bcrypt ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid xmllite
         LABELS rules shell ui)
 
     add_test(NAME large_icon_shell_assets

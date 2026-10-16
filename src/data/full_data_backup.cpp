@@ -15,6 +15,7 @@
 #include <cstdio>
 #include <fstream>
 #include <iomanip>
+#include <iterator>
 #include <limits>
 #include <map>
 #include <set>
@@ -242,6 +243,14 @@ bool IsExcludedDataPath(const std::filesystem::path& relative)
         _wcsicmp(first.c_str(), L"SnowDesktop_crash.log") == 0 ||
         _wcsicmp(first.c_str(), L"SnowDesktop.entitlement.bin") == 0)
         return true;
+    if (_wcsicmp(first.c_str(), L"icon-library") == 0)
+    {
+        const auto next = std::next(part);
+        // Thumbnails are rebuilt from retained originals. Omitting them also
+        // keeps large icon packs within the ZIP32 backup entry budget.
+        if (next != relative.end() && _wcsicmp(next->wstring().c_str(), L"previews") == 0)
+            return true;
+    }
     if (_wcsicmp(first.c_str(), L"widgets") == 0)
     {
         ++part;

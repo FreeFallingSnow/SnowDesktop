@@ -2979,6 +2979,8 @@ struct SettingsWindowHost::Impl
         }
 
         ApplySnapshotNow(snapshot);
+        if (shell && route.page == SettingsPage::IconLibrary && !route.itemKey.empty())
+            shell->OpenRequestedIconPicker();
         if (widgetSnapshot &&
             (!shell || !shell->ApplyWidgetSettingsSnapshot(
                 *widgetSnapshot)))

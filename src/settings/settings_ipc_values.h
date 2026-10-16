@@ -37,7 +37,7 @@ SD_IPC_FIELDS(DockFullscreenException, v.executable, v.policy);
 SD_IPC_FIELDS(DockFullscreenApplication, v.name, v.executable);
 SD_IPC_FIELDS(DockTrayRule, v.executable, v.matchPath, v.enabled, v.doubleClick);
 SD_IPC_FIELDS(DockSettings,
-    v.position, v.edgeAttached, v.floatingShortcutMode, v.floatingHotkeyModifiers,
+    v.position, v.edgeAttached, v.edgeDistanceScale, v.floatingShortcutMode, v.floatingHotkeyModifiers,
     v.floatingHotkeyVirtualKey, v.floatingEdgeSwipeEnabled, v.edgeRevealGesture, v.edgeHoverDelayMs, v.fullscreenPolicy, v.fullscreenExceptions, v.monitorScope, v.showWindowsButton,
     v.showQuickSearchButton, v.showRunningApps, v.showWindowPreviews, v.singleClickLaunchItems, v.showFrequentItems, v.keepWhenDesktopHidden,
     v.allowDesktopContentOverlap, v.showOnlyWhenSummoned, v.reserveScreenSpace, v.lastMonitorUseHomeSize, v.mergedBarHeight, v.frequentItemCount, v.thicknessScale, v.mergedIconScale,
@@ -104,10 +104,11 @@ SD_IPC_FIELDS(DesktopDisplaySettings,
 SD_IPC_FIELDS(SettingsRoute,
     v.page, v.widgetInstanceId, v.focusId, v.itemKey, v.guideTopic);
 SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path, v.fields);
+SD_IPC_FIELDS(IconLibraryGroup, v.id, v.name, v.source, v.packageId, v.packageVersion, v.sourceUri);
 SD_IPC_FIELDS(IconLibraryEntry, v.id, v.format, v.name, v.previewPath, v.width, v.height, v.missing,
-    v.source, v.packageId, v.packageVersion, v.packageEntryId, v.uses);
-SD_IPC_FIELDS(IconLibraryRequest, v.action, v.ids, v.paths, v.name, v.destination, v.target, v.format, v.session, v.revision);
-SD_IPC_FIELDS(IconLibrarySnapshot, v.entries, v.imported, v.failures, v.revision, v.session, v.busy, v.succeeded,
+    v.source, v.packageId, v.packageVersion, v.packageEntryId, v.uses, v.groupIds);
+SD_IPC_FIELDS(IconLibraryRequest, v.action, v.ids, v.paths, v.name, v.destination, v.target, v.format, v.session, v.revision, v.groupId);
+SD_IPC_FIELDS(IconLibrarySnapshot, v.groups, v.entries, v.imported, v.importedGroupId, v.failures, v.revision, v.session, v.busy, v.succeeded,
     v.error, v.target, v.targetName);
 SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, v.revision,
     v.available, v.editable, v.succeeded, v.maxColumns, v.maxRows, v.config, v.error,

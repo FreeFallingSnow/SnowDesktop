@@ -320,7 +320,8 @@ void DesktopApp::ShowItemContextMenu(
     const auto largeIconAccess = snowdesktop::large_icon_edit_rules::ResolveEntryAccess(
         entitlement.bridgeAvailable, entitlement.registered);
     const auto customIconIdentity = items_[itemIndex].layoutKey;
-    if (selectedCount == 1 && !items_[itemIndex].largeIcon) AppendIconOverrideMenu(menu, customIconIdentity);
+    const auto iconPersonalization = selectedCount == 1 && !items_[itemIndex].largeIcon ?
+        AppendIconOverrideMenu(menu, customIconIdentity) : nullptr;
     if (largeIconMenu)
     {
         if (items_[itemIndex].largeIcon && largeIconAccess == EntryAccess::Edit)
@@ -368,7 +369,7 @@ void DesktopApp::ShowItemContextMenu(
             if (items_[itemIndex].largeIcon)
                 AppendMenuW(menu, MF_STRING, kContextLargeIconSettings, _LW("largeIcon.settings"));
             else
-                AppendMenuW(menu, MF_STRING, kContextLargeIconCreate, _LW("largeIcon.create"));
+                AppendMenuW(iconPersonalization ? iconPersonalization : menu, MF_STRING, kContextLargeIconCreate, _LW("largeIcon.create"));
         }
         // Returning to ordinary icons must remain available without the Bridge.
         if (items_[itemIndex].largeIcon)
@@ -529,7 +530,8 @@ void DesktopApp::ShowItemContextMenu(
     if (canConvertFolderMapping)
         SetMenuItemIcon(menu, kContextAddFolderMappingWidget,
             snowdesktop::menu_fluent_glyphs::kFolderMapping, MenuIconFont::FluentRegular);
-    SetMenuItemIcon(menu, kContextLargeIconCreate, L"\uF0B2");
+    SetMenuItemIcon(iconPersonalization ? iconPersonalization : menu,
+        kContextLargeIconCreate, L"\uF0B2");
     SetMenuItemIcon(menu, kContextLargeIconSettings, L"\uF013");
     SetMenuItemIcon(menu, kContextLargeIconRestore,
         snowdesktop::menu_fluent_glyphs::kCompactGrid, MenuIconFont::FluentRegular);
@@ -1157,7 +1159,11 @@ void DesktopApp::ShowShellContextMenu(
     const UINT extendedFlags = (GetKeyState(VK_SHIFT) & 0x8000) ? CMF_EXTENDEDVERBS : 0;
     std::vector<LPCITEMIDLIST> pidls;
     std::vector<std::wstring> invocationPaths;
-    const auto collectPath = [&invocationPaths](const DesktopItem& item) {
+    std::wstring customIconIdentity;
+    bool ordinarySelection = true;
+    const auto collectPath = [&](const DesktopItem& item) {
+        if (invocationPaths.empty()) customIconIdentity = item.layoutKey;
+        ordinarySelection = ordinarySelection && !item.largeIcon;
         PWSTR path = nullptr;
         if (SUCCEEDED(SHGetNameFromIDList(item.absolutePidl.get(),
                 SIGDN_FILESYSPATH, &path)) && path)
@@ -1212,8 +1218,7 @@ void DesktopApp::ShowShellContextMenu(
             }, ctxMenu.GetAddressOf())))
         { DestroyMenu(menu); return; }
 
-    const auto customIconIdentity = items_[itemIndex].layoutKey;
-    if (!items_[itemIndex].largeIcon && std::count_if(items_.begin(), items_.end(), [](const auto& item) { return item.selected; }) == 1) AppendIconOverrideMenu(menu, customIconIdentity);
+    if (ordinarySelection && selectionSnapshot.size() == 1) AppendIconOverrideMenu(menu, customIconIdentity);
     ctxMenu.As(&activeContextMenu2_);
     ctxMenu.As(&activeContextMenu3_);
 

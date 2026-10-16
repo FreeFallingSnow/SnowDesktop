@@ -2784,7 +2784,7 @@
   "iconLibrary.exportFailed": "部分圖示匯出失敗，請檢查目的地資料夾。",
   "iconLibrary.exportIco": "匯出 ICO",
   "iconLibrary.exportPng": "匯出 PNG",
-  "iconLibrary.import": "匯入圖片",
+  "iconLibrary.import": "匯入…",
   "iconLibrary.inUse": "使用中",
   "iconLibrary.invalid": "無法讀取此圖片，或圖片格式不受支援。",
   "iconLibrary.missing": "資源遺失或無法讀取",
@@ -2806,5 +2806,18 @@
   "iconLibrary.recycleEmpty": "資源回收筒（空）",
   "iconLibrary.recycleFull": "資源回收筒（滿）",
   "iconLibrary.startIcon": "開始按鈕圖示",
-  "iconLibrary.searchIcon": "搜尋按鈕圖示"
+  "iconLibrary.searchIcon": "搜尋按鈕圖示",
+  "iconLibrary.personalization": "圖示個人化",
+  "iconLibrary.groups": "群組",
+  "iconLibrary.allGroups": "全部圖示",
+  "iconLibrary.ungrouped": "未分組",
+  "iconLibrary.newGroup": "新增群組",
+  "iconLibrary.renameGroup": "重新命名群組",
+  "iconLibrary.deleteGroup": "刪除群組",
+  "iconLibrary.deleteGroupHint": "僅刪除群組，圖示仍保留在圖示庫中。",
+  "iconLibrary.moveGroup": "移至群組…",
+  "iconLibrary.packTooLarge": "圖示套件超出限制（壓縮檔 128 MiB、展開圖片合計 256 MiB、單張圖片 16 MiB）。",
+  "iconLibrary.packUnsupported": "部分資源無法匯入：包含尚未支援的 Android 繪製規則或圖片格式。",
+  "settings.dock.edgeDistance": "距螢幕邊緣",
+  "settings.dock.edgeDistance.description": "100% 與桌面元件邊距一致。"
 }

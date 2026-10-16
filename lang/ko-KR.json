@@ -2784,7 +2784,7 @@
   "iconLibrary.exportFailed": "일부 아이콘을 내보내지 못했습니다. 대상 폴더를 확인하세요.",
   "iconLibrary.exportIco": "ICO 내보내기",
   "iconLibrary.exportPng": "PNG 내보내기",
-  "iconLibrary.import": "이미지 가져오기",
+  "iconLibrary.import": "가져오기…",
   "iconLibrary.inUse": "사용 중",
   "iconLibrary.invalid": "이미지를 읽을 수 없거나 지원하지 않는 형식입니다.",
   "iconLibrary.missing": "리소스가 없거나 읽을 수 없음",
@@ -2806,5 +2806,18 @@
   "iconLibrary.recycleEmpty": "휴지통(비어 있음)",
   "iconLibrary.recycleFull": "휴지통(가득 참)",
   "iconLibrary.startIcon": "시작 버튼 아이콘",
-  "iconLibrary.searchIcon": "검색 버튼 아이콘"
+  "iconLibrary.searchIcon": "검색 버튼 아이콘",
+  "iconLibrary.personalization": "아이콘 개인 설정",
+  "iconLibrary.groups": "그룹",
+  "iconLibrary.allGroups": "모든 아이콘",
+  "iconLibrary.ungrouped": "그룹 없음",
+  "iconLibrary.newGroup": "새 그룹",
+  "iconLibrary.renameGroup": "그룹 이름 변경",
+  "iconLibrary.deleteGroup": "그룹 삭제",
+  "iconLibrary.deleteGroupHint": "그룹만 삭제합니다. 아이콘은 라이브러리에 남습니다.",
+  "iconLibrary.moveGroup": "그룹으로 이동…",
+  "iconLibrary.packTooLarge": "아이콘 팩이 제한을 초과했습니다(압축 파일: 128 MiB, 압축 해제한 이미지 합계: 256 MiB, 이미지당: 16 MiB).",
+  "iconLibrary.packUnsupported": "지원하지 않는 Android 그리기 규칙이나 이미지 형식을 사용하는 일부 리소스를 가져오지 못했습니다.",
+  "settings.dock.edgeDistance": "화면 가장자리와의 거리",
+  "settings.dock.edgeDistance.description": "100%는 바탕 화면 구성 요소의 여백을 기준으로 합니다."
 }

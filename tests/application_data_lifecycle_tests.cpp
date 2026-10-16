@@ -16,6 +16,8 @@
 
 #include <windows.h>
 #include <objbase.h>
+#include <wincodec.h>
+#include <wrl/client.h>
 
 #include <algorithm>
 #include <atomic>
@@ -56,6 +58,30 @@ std::string Read(const std::filesystem::path& path)
     return std::string(
         std::istreambuf_iterator<char>(file),
         std::istreambuf_iterator<char>());
+}
+
+constexpr wchar_t kLibraryFixtureName[] = L"ac308cdc947fb054538666cfd4a0c92c3fab0d5dd51083c0e8eae204aed8c645.png";
+std::string LibraryFixturePng()
+{
+    constexpr std::string_view hex = "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0d00000048101802c55ceb00000000049454e44ae426082";
+    std::string out; for (size_t i = 0; i < hex.size(); i += 2) out += static_cast<char>(std::stoul(std::string(hex.substr(i, 2)), nullptr, 16)); return out;
+}
+std::string LibraryFixtureIndex()
+{
+    return R"({"version":2,"groups":[{"id":"group-cccccccccccccccccccccccccccccccc","name":"Backup group","source":"zip","packageId":"package-fixture"}],"entries":[{"id":"ac308cdc947fb054538666cfd4a0c92c3fab0d5dd51083c0e8eae204aed8c645.png","name":"Half transparent red","width":1,"height":1,"groupIds":["group-cccccccccccccccccccccccccccccccc"]}]})";
+}
+bool DecodesLibraryFixture(const std::filesystem::path& file)
+{
+    struct Apartment { HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED); ~Apartment() { if (SUCCEEDED(result)) CoUninitialize(); } } apartment;
+    Microsoft::WRL::ComPtr<IWICImagingFactory> factory; Microsoft::WRL::ComPtr<IWICBitmapDecoder> decoder;
+    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame; Microsoft::WRL::ComPtr<IWICFormatConverter> converter;
+    UINT width = 0, height = 0; std::uint32_t pixel = 0;
+    return SUCCEEDED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) &&
+        SUCCEEDED(factory->CreateDecoderFromFilename(file.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &decoder)) &&
+        SUCCEEDED(decoder->GetFrame(0, &frame)) && SUCCEEDED(frame->GetSize(&width, &height)) && width == 1 && height == 1 &&
+        SUCCEEDED(factory->CreateFormatConverter(&converter)) &&
+        SUCCEEDED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom)) &&
+        SUCCEEDED(converter->CopyPixels(nullptr, 4, 4, reinterpret_cast<BYTE*>(&pixel))) && pixel == 0x80800000;
 }
 
 std::wstring fakeExecutable;
@@ -453,6 +479,7 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             DockLayoutSettings saved;
             saved.position = static_cast<DockPosition>(position);
             saved.edgeAttached = attached;
+            saved.edgeDistanceScale = attached ? 0.1f : 5.f;
             saved.monitorScope = DockMonitorScope::All;
             saved.showWindowsButton = false;
             saved.showQuickSearchButton = false;
@@ -514,7 +541,7 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             legacy.dockEnabled == true && !legacy.dockLayout,
         "old layout backups preserve their switch without inventing Dock geometry");
     Expect(layout::ParseDocument(R"({"dockLayout":{"edgeAttached":true}})", legacy) &&
-            legacy.dockLayout && !legacy.dockLayout->reserveScreenSpace &&
+            legacy.dockLayout && legacy.dockLayout->edgeDistanceScale == 1.f && !legacy.dockLayout->reserveScreenSpace &&
             legacy.dockLayout->showQuickSearchButton &&
             legacy.dockLayout->lastMonitorUseHomeSize && legacy.dockLayout->mergedBarHeight == 48,
         "legacy Dock layouts do not opt into screen reservation when the field is absent");
@@ -534,6 +561,9 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
              R"({"dockLayout":{"position":1.5}})",
              R"({"dockLayout":{"monitorScope":-1}})",
              R"({"dockLayout":{"edgeAttached":1}})",
+             R"({"dockLayout":{"edgeDistanceScale":0.09}})",
+             R"({"dockLayout":{"edgeDistanceScale":5.01}})",
+             R"({"dockLayout":{"edgeDistanceScale":"far"}})",
              R"({"dockLayout":{"showQuickSearchButton":1}})",
              R"({"dockLayout":{"reserveScreenSpace":1}})",
              R"({"dockLayout":{"lastMonitorUseHomeSize":1}})",
@@ -1419,7 +1449,8 @@ int main()
         Expect(snowdesktop::layout_storage::ParseDocument(document, roundTrip, &layoutError) &&
             roundTrip.items[0].largeIcon == large && roundTrip.items[0].width == 2,
             "large icon settings preserve desired span independently of adapted layout and without entitlement data");
-        for (const auto invalid : {R"({"version":4})", R"({"version":1,"columns":0})",
+        for (const auto invalid : {R"({"version":4})", R"({"version":3,"imageAssetId":"../outside.png"})",
+                 R"({"version":3,"foregroundImageAssetId":"bad-id"})", R"({"version":1,"columns":0})",
                  R"({"version":1,"radius":-1})", R"({"version":1,"image":"../secret.png"})",
                  R"({"version":1,"columns":1.5})", R"({"version":1,"opacity":2})",
                  R"({"version":1,"radiusPercent":101})", R"({"version":1,"radiusPercent":-0.5})",
@@ -2918,13 +2949,15 @@ int main()
 
     const auto iconMigrationSource = root / L"icon-library-portable-source";
     Write(iconMigrationSource / L"SnowDesktop.layout.json", "{\"widgets\":[]}");
-    Write(iconMigrationSource / L"icon-library" / L"library.json", "{\"version\":1,\"entries\":[]}");
-    Write(iconMigrationSource / L"icon-library" / L"originals" / L"fixture.webp", "original-icon-bytes");
+    Write(iconMigrationSource / L"icon-library" / L"library.json", LibraryFixtureIndex());
+    Write(iconMigrationSource / L"icon-library" / L"originals" / kLibraryFixtureName, LibraryFixturePng());
+    Write(iconMigrationSource / L"icon-library" / L"packs" / L"fixture.zip", "retained package source");
     const auto iconMigrationDestination = root / L"icon-library-portable-destination";
     const auto iconMigration = snowdesktop::migration::CopyDataTree(iconMigrationSource, iconMigrationDestination);
-    Expect(iconMigration.ok && Read(iconMigrationDestination / L"icon-library" / L"originals" / L"fixture.webp") == "original-icon-bytes" &&
-        Read(iconMigrationDestination / L"icon-library" / L"library.json") == "{\"version\":1,\"entries\":[]}",
-        "portable data migration retains the icon index and originals together");
+    Expect(iconMigration.ok && DecodesLibraryFixture(iconMigrationDestination / L"icon-library" / L"originals" / kLibraryFixtureName) &&
+        Read(iconMigrationDestination / L"icon-library" / L"library.json") == LibraryFixtureIndex() &&
+        Read(iconMigrationDestination / L"icon-library" / L"packs" / L"fixture.zip") == "retained package source",
+        "portable data migration retains group metadata, decodable alpha icon originals and original packages together");
 
     std::stop_source cancelledCopySource;
     cancelledCopySource.request_stop();
@@ -3055,8 +3088,10 @@ int main()
         "{ \"longPath\": true }\n");
 
     Write(fullBackupData / L"large-icons" / L"import-user.png", "retained original image bytes");
-    Write(fullBackupData / L"icon-library" / L"library.json", "{\"version\":1,\"entries\":[]}");
-    Write(fullBackupData / L"icon-library" / L"originals" / L"fixture.webp", "retained icon library original");
+    Write(fullBackupData / L"icon-library" / L"library.json", LibraryFixtureIndex());
+    Write(fullBackupData / L"icon-library" / L"originals" / kLibraryFixtureName, LibraryFixturePng());
+    Write(fullBackupData / L"icon-library" / L"packs" / L"fixture.zip", "retained package source");
+    Write(fullBackupData / L"icon-library" / L"previews" / L"rebuildable.png", LibraryFixturePng());
     Write(fullBackupData / L"large-icons" / L"steam-999-portrait-english.png", "retained offline cover bytes");
     const auto upgradeState = root / L"large-icon-upgrade-state";
     const auto upgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0");
@@ -3145,9 +3180,11 @@ int main()
     Expect(Read(createdFullBackup.backup.data / L"large-icons" / L"import-user.png") == "retained original image bytes" &&
         Read(createdFullBackup.backup.data / L"large-icons" / L"steam-999-portrait-english.png") == "retained offline cover bytes",
         "complete backups retain user image sources and the currently needed offline covers");
-    Expect(Read(createdFullBackup.backup.data / L"icon-library" / L"library.json") == "{\"version\":1,\"entries\":[]}" &&
-        Read(createdFullBackup.backup.data / L"icon-library" / L"originals" / L"fixture.webp") == "retained icon library original",
-        "complete backups retain the managed icon library index and original files");
+    Expect(Read(createdFullBackup.backup.data / L"icon-library" / L"library.json") == LibraryFixtureIndex() &&
+        DecodesLibraryFixture(createdFullBackup.backup.data / L"icon-library" / L"originals" / kLibraryFixtureName) &&
+        Read(createdFullBackup.backup.data / L"icon-library" / L"packs" / L"fixture.zip") == "retained package source" &&
+        !std::filesystem::exists(createdFullBackup.backup.data / L"icon-library" / L"previews"),
+        "complete backups retain groups, decodable alpha icons and package sources while omitting rebuildable previews");
     Expect(createdFullBackup.ok &&
         std::filesystem::is_regular_file(
             createdFullBackup.backup.root / L"backup.json"),
@@ -3305,6 +3342,10 @@ int main()
     Expect(Read(appliedRestore.backup /
             L"SnowDesktop.layout.json") == modifiedLayout,
         "pre-restore active data is retained as a rollback backup");
+    Expect(Read(fullBackupData / L"icon-library" / L"library.json") == LibraryFixtureIndex() &&
+        DecodesLibraryFixture(fullBackupData / L"icon-library" / L"originals" / kLibraryFixtureName) &&
+        Read(fullBackupData / L"icon-library" / L"packs" / L"fixture.zip") == "retained package source",
+        "actual full restore preserves icon groups and original alpha pixels without needing thumbnail caches");
 
     const auto backupsAfterRestore = fullBackupManager.List();
     const auto rollbackBackup = std::find_if(

@@ -3028,7 +3028,7 @@ private:
     bool IsIconOverrideTarget(const std::wstring& target) const;
     std::wstring IconOverrideTargetName(const std::wstring& target) const;
     bool SetIconOverride(const std::wstring& target, const std::string& assetId);
-    void AppendIconOverrideMenu(HMENU menu, const std::wstring& identity);
+    HMENU AppendIconOverrideMenu(HMENU menu, const std::wstring& identity);
     bool ExecuteIconOverrideMenu(UINT command, const std::wstring& identity);
     ID2D1Bitmap* GetSmallCustomIcon(ID2D1RenderTarget* context, std::wstring_view identity, int pixels);
     std::unordered_map<std::wstring, std::string> iconOverrides_;

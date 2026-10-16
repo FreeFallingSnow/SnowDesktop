@@ -2784,7 +2784,7 @@
   "iconLibrary.exportFailed": "Certaines icônes n’ont pas pu être exportées. Vérifiez le dossier de destination.",
   "iconLibrary.exportIco": "Exporter en ICO",
   "iconLibrary.exportPng": "Exporter en PNG",
-  "iconLibrary.import": "Importer des images",
+  "iconLibrary.import": "Importer…",
   "iconLibrary.inUse": "Utilisée",
   "iconLibrary.invalid": "L’image est illisible ou son format n’est pas pris en charge.",
   "iconLibrary.missing": "Ressource absente ou illisible",
@@ -2806,5 +2806,18 @@
   "iconLibrary.recycleEmpty": "Corbeille (vide)",
   "iconLibrary.recycleFull": "Corbeille (pleine)",
   "iconLibrary.startIcon": "Icône du bouton Démarrer",
-  "iconLibrary.searchIcon": "Icône du bouton Rechercher"
+  "iconLibrary.searchIcon": "Icône du bouton Rechercher",
+  "iconLibrary.personalization": "Personnaliser l’icône",
+  "iconLibrary.groups": "Groupes",
+  "iconLibrary.allGroups": "Toutes les icônes",
+  "iconLibrary.ungrouped": "Sans groupe",
+  "iconLibrary.newGroup": "Nouveau groupe",
+  "iconLibrary.renameGroup": "Renommer le groupe",
+  "iconLibrary.deleteGroup": "Supprimer le groupe",
+  "iconLibrary.deleteGroupHint": "Seul le groupe est supprimé. Ses icônes restent dans la bibliothèque.",
+  "iconLibrary.moveGroup": "Déplacer vers un groupe…",
+  "iconLibrary.packTooLarge": "Le pack d’icônes dépasse les limites (archive : 128 Mio, images décompressées au total : 256 Mio, chaque image : 16 Mio).",
+  "iconLibrary.packUnsupported": "Certaines ressources n’ont pas pu être importées, car elles utilisent des règles de dessin Android ou des formats d’image non pris en charge.",
+  "settings.dock.edgeDistance": "Distance au bord de l’écran",
+  "settings.dock.edgeDistance.description": "100 % correspond à la marge des composants du bureau."
 }

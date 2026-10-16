@@ -80,7 +80,8 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
         if (response.succeeded) { state.target.clear(); ++state.session; }
     }
     else if ((!state.initialized || request.action == "refresh" || request.action == "import" ||
-        request.action == "rename" || request.action == "delete" || request.action == "export") && !state.busy)
+        request.action == "rename" || request.action == "delete" || request.action == "export" ||
+        request.action == "createGroup" || request.action == "renameGroup" || request.action == "deleteGroup" || request.action == "moveGroup") && !state.busy)
     {
         if (request.action == "delete" && std::any_of(request.ids.begin(), request.ids.end(), [&](const auto& id) { return uses.contains(id); }))
         { response.error = "iconLibrary.deleteInUse"; response.succeeded = false; return response; }
@@ -204,7 +205,7 @@ ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std
     const auto weak = std::weak_ptr<IconLibraryHostState>(iconLibraryState_);
     state.images.Submit(Utf8ToWide(key), [path, edge] {
         auto result = std::make_shared<snowdesktop::BackgroundBitmap>(); snowdesktop::icon_image::Image image; std::string error;
-        if (snowdesktop::icon_image::Decode(path, edge, image, error))
+        if (snowdesktop::icon_image::Decode(path, edge, image, error) && snowdesktop::icon_image::PadSquare(image))
         { result->bitmap = snowdesktop::icon_image::CreateBitmap(image); result->size = {image.width, image.height}; }
         return result;
     }, [this, weak, key](auto bitmap) {
@@ -309,7 +310,7 @@ ID2D1Bitmap* DesktopApp::GetSmallCustomIcon(ID2D1RenderTarget* context, std::wst
     const auto found = iconOverrides_.find(target);
     return found == iconOverrides_.end() ? nullptr : GetDockCustomIcon(context, found->second, pixels);
 }
-void DesktopApp::AppendIconOverrideMenu(HMENU menu, const std::wstring& identity)
+HMENU DesktopApp::AppendIconOverrideMenu(HMENU menu, const std::wstring& identity)
 {
     using namespace snowdesktop::icon_override;
     const auto key = ToUpperInvariant(identity);
@@ -323,16 +324,19 @@ void DesktopApp::AppendIconOverrideMenu(HMENU menu, const std::wstring& identity
             SetMenuItemIcon(parent, command + 1, L"\uF19A", MenuIconFont::FluentRegular);
         }
     };
-    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    if (!recycle) add(menu, change, Target(key));
+    const auto personal = CreatePopupMenu(); if (!personal) return nullptr;
+    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(personal), _LW("iconLibrary.personalization"));
+    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(personal), L"\uF489", MenuIconFont::FluentRegular);
+    if (!recycle) add(personal, change, Target(key));
     else for (int state = 0; state < 2; ++state)
     {
         const auto child = CreatePopupMenu(); if (!child) continue;
-        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(child),
+        AppendMenuW(personal, MF_POPUP, reinterpret_cast<UINT_PTR>(child),
             _LW(state ? "iconLibrary.recycleFull" : "iconLibrary.recycleEmpty"));
-        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(child), L"\uF489", MenuIconFont::FluentRegular);
+        SetMenuItemIcon(personal, reinterpret_cast<UINT_PTR>(child), L"\uF489", MenuIconFont::FluentRegular);
         add(child, state ? fullChange : emptyChange, Target(key, state));
     }
+    return personal;
 }
 bool DesktopApp::ExecuteIconOverrideMenu(UINT command, const std::wstring& identity)
 {

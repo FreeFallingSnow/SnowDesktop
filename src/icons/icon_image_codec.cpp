@@ -94,11 +94,12 @@ bool Svg(std::string_view bytes, int edge, Image& image, std::string& error)
         FAILED(reader->SetProperty(XmlReaderProperty_DtdProcessing, DtdProcessing_Prohibit)) ||
         FAILED(reader->SetInput(stream.Get()))) return Fail(error, "iconLibrary.invalid");
     const std::set<std::wstring> elements{L"svg", L"g", L"defs", L"desc", L"title", L"metadata", L"path", L"rect", L"circle",
-        L"ellipse", L"line", L"polygon", L"polyline", L"linearGradient", L"radialGradient", L"stop", L"clipPath", L"use"};
+        L"ellipse", L"image", L"line", L"polygon", L"polyline", L"linearGradient", L"radialGradient", L"stop", L"clipPath", L"use"};
     const std::set<std::wstring> properties{L"clip-path",L"clip-rule",L"color",L"display",L"fill",L"fill-opacity",L"fill-rule",
         L"opacity",L"overflow",L"stop-color",L"stop-opacity",L"stroke",L"stroke-dasharray",L"stroke-dashoffset",
         L"stroke-linecap",L"stroke-linejoin",L"stroke-miterlimit",L"stroke-opacity",L"stroke-width",L"visibility"};
     XmlNodeType node{}; HRESULT read = S_OK; unsigned count = 0; bool root = false;
+    std::uint64_t embeddedPixels = 0; unsigned embeddedCount = 0;
     double sourceWidth = 0, sourceHeight = 0, intrinsicWidth = 0, intrinsicHeight = 0;
     while ((read = reader->Read(&node)) == S_OK)
     {
@@ -109,6 +110,7 @@ bool Svg(std::string_view bytes, int edge, Image& image, std::string& error)
         if (!name || !elements.contains(name) || ++count > 100000 || depth > 128 || (!root && std::wstring_view(name) != L"svg"))
             return Fail(error, "iconLibrary.svgUnsupported");
         const bool first = !root; root = true;
+        const std::wstring elementName(name);
         if (reader->MoveToFirstAttribute() == S_OK) do
         {
             const wchar_t *attribute = nullptr, *value = nullptr;
@@ -117,7 +119,30 @@ bool Svg(std::string_view bytes, int edge, Image& image, std::string& error)
             const auto key = std::wstring_view(attribute); const auto text = Trim(value); const auto lower = Lower(text);
             if (key == L"filter" || key == L"mask" || key == L"class" || key.starts_with(L"on"))
                 return Fail(error, "iconLibrary.svgUnsupported");
-            if (key == L"href" && !text.starts_with(L"#")) return Fail(error, "iconLibrary.svgUnsupported");
+            if (key == L"href" && !text.starts_with(L"#"))
+            {
+                constexpr std::wstring_view prefix = L"data:image/png;base64,";
+                if (elementName != L"image" || !text.starts_with(prefix) || ++embeddedCount > 64) return Fail(error, "iconLibrary.svgUnsupported");
+                const auto encoded = std::wstring_view(text).substr(prefix.size());
+                if (encoded.empty() || encoded.size() % 4 || encoded.size() > kMaxFileBytes * 4 / 3 + 4) return Fail(error, "iconLibrary.tooLarge");
+                std::string png; png.reserve(encoded.size() / 4 * 3);
+                constexpr std::wstring_view alphabet = L"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+                for (size_t i = 0; i < encoded.size(); i += 4)
+                {
+                    unsigned encodedWord = 0; int padding = 0;
+                    for (size_t j = 0; j < 4; ++j)
+                    {
+                        if (encoded[i+j] == L'=' && j >= 2 && i+4 == encoded.size()) { ++padding; encodedWord <<= 6; }
+                        else { const auto digit = alphabet.find(encoded[i+j]); if (padding || digit == alphabet.npos) return Fail(error, "iconLibrary.invalid"); encodedWord = (encodedWord << 6) | static_cast<unsigned>(digit); }
+                    }
+                    png.push_back(static_cast<char>(encodedWord >> 16)); if (padding < 2) png.push_back(static_cast<char>(encodedWord >> 8)); if (!padding) png.push_back(static_cast<char>(encodedWord));
+                }
+                if (png.size() < 8 || png.compare(0, 8, "\x89PNG\r\n\x1a\n", 8)) return Fail(error, "iconLibrary.svgUnsupported");
+                Image embedded;
+                if (!DecodeBytes(png, 1, embedded, error) || embedded.format != "png") return false;
+                embeddedPixels += static_cast<std::uint64_t>(embedded.sourceWidth) * embedded.sourceHeight;
+                if (embeddedPixels > kMaxPixels) return Fail(error, "iconLibrary.tooLarge");
+            }
             for (size_t p = 0; (p = lower.find(L"url(", p)) != lower.npos; ++p)
             {
                 const auto end = lower.find(L')', p + 4);
@@ -165,14 +190,26 @@ bool Svg(std::string_view bytes, int edge, Image& image, std::string& error)
     const UINT width = std::max(1u, static_cast<UINT>(std::lround(sourceWidth * scale)));
     const UINT height = std::max(1u, static_cast<UINT>(std::lround(sourceHeight * scale)));
     if (!Dimensions(width, height)) return Fail(error, "iconLibrary.tooLarge");
-    ComPtr<ID3D11Device> graphics; ComPtr<IDXGIDevice> dxgi;
-    ComPtr<ID2D1Factory1> factory; ComPtr<ID2D1Device> device;
-    ComPtr<ID2D1DeviceContext> context; ComPtr<ID2D1DeviceContext5> svgContext;
-    if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
-            nullptr, 0, D3D11_SDK_VERSION, &graphics, nullptr, nullptr)) || FAILED(graphics.As(&dxgi)) ||
-        FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())) ||
-        FAILED(factory->CreateDevice(dxgi.Get(), &device)) || FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context)) ||
-        FAILED(context.As(&svgContext)) || FAILED(stream->Seek({}, STREAM_SEEK_SET, nullptr))) return Fail(error, "iconLibrary.invalid");
+    struct Graphics
+    {
+        ComPtr<ID3D11Device> graphics; ComPtr<IDXGIDevice> dxgi;
+        ComPtr<ID2D1Factory1> factory; ComPtr<ID2D1Device> device;
+        ComPtr<ID2D1DeviceContext> context; ComPtr<ID2D1DeviceContext5> svgContext;
+    };
+    // Pack imports rasterize many vectors on one resource worker. Reuse its
+    // WARP device rather than creating thousands of independent devices.
+    thread_local Graphics cache;
+    if (!cache.svgContext)
+    {
+        cache = {};
+        if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            nullptr, 0, D3D11_SDK_VERSION, &cache.graphics, nullptr, nullptr)) || FAILED(cache.graphics.As(&cache.dxgi)) ||
+            FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, cache.factory.GetAddressOf())) ||
+            FAILED(cache.factory->CreateDevice(cache.dxgi.Get(), &cache.device)) || FAILED(cache.device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &cache.context)) ||
+            FAILED(cache.context.As(&cache.svgContext))) return Fail(error, "iconLibrary.invalid");
+    }
+    const auto& context = cache.context; const auto& svgContext = cache.svgContext;
+    if (FAILED(stream->Seek({}, STREAM_SEEK_SET, nullptr))) return Fail(error, "iconLibrary.invalid");
     ComPtr<ID2D1SvgDocument> svg; ComPtr<ID2D1Bitmap1> target, readback;
     const auto format = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
     if (FAILED(svgContext->CreateSvgDocument(stream.Get(), D2D1::SizeF(static_cast<float>(width), static_cast<float>(height)), &svg)) ||
@@ -191,6 +228,7 @@ bool Svg(std::string_view bytes, int edge, Image& image, std::string& error)
         const D2D1_SVG_VIEWBOX box{0, 0, static_cast<float>(sourceWidth), static_cast<float>(sourceHeight)};
         if (FAILED(svgRoot->SetAttributeValue(L"viewBox", D2D1_SVG_ATTRIBUTE_POD_TYPE_VIEWBOX, &box, sizeof(box)))) return Fail(error, "iconLibrary.invalid");
     }
+    struct ResetTarget { ID2D1DeviceContext* context; ~ResetTarget() { context->SetTarget(nullptr); } } reset{context.Get()};
     context->SetTarget(target.Get()); context->BeginDraw(); context->Clear(D2D1::ColorF(0, 0.f));
     svgContext->DrawSvgDocument(svg.Get());
     if (FAILED(context->EndDraw()) || FAILED(readback->CopyFromBitmap(nullptr, target.Get(), nullptr)))
@@ -198,7 +236,8 @@ bool Svg(std::string_view bytes, int edge, Image& image, std::string& error)
     D2D1_MAPPED_RECT mapped{};
     if (FAILED(readback->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return Fail(error, "iconLibrary.invalid");
     image.width = static_cast<int>(width); image.height = static_cast<int>(height);
-    image.sourceWidth = std::max(1, static_cast<int>(std::lround(sourceWidth))); image.sourceHeight = std::max(1, static_cast<int>(std::lround(sourceHeight)));
+    image.sourceWidth = std::max(1, static_cast<int>(std::lround(intrinsicWidth > 0 && intrinsicWidth <= 16000000 && std::isfinite(intrinsicWidth) ? intrinsicWidth : sourceWidth)));
+    image.sourceHeight = std::max(1, static_cast<int>(std::lround(intrinsicHeight > 0 && intrinsicHeight <= 16000000 && std::isfinite(intrinsicHeight) ? intrinsicHeight : sourceHeight)));
     image.vector = true; image.format = "svg"; image.pixels.resize(static_cast<size_t>(width) * height);
     for (UINT y = 0; y < height; ++y) std::memcpy(image.pixels.data() + static_cast<size_t>(y) * width,
         mapped.bits + static_cast<size_t>(y) * mapped.pitch, static_cast<size_t>(width) * 4);
@@ -208,11 +247,19 @@ bool Svg(std::string_view bytes, int edge, Image& image, std::string& error)
 
 bool Decode(const std::filesystem::path& path, int edge, Image& image, std::string& error)
 {
-    image = {}; error.clear();
-    std::string bytes;
+    image = {}; error.clear(); std::string bytes;
     if (!Read(path, bytes, error)) return false;
+    if (Lower(path.extension().wstring()) == L".svg") return Svg(bytes, edge, image, error);
+    return DecodeBytes(bytes, edge, image, error);
+}
+bool DecodeBytes(std::string_view bytes, int edge, Image& image, std::string& error)
+{
+    image = {}; error.clear();
+    if (bytes.empty() || bytes.size() > kMaxFileBytes) return Fail(error, "iconLibrary.tooLarge");
     const auto xmlStart = bytes.find_first_not_of(" \t\r\n\xef\xbb\xbf");
-    if (Lower(path.extension().wstring()) == L".svg" || (xmlStart != bytes.npos && bytes[xmlStart] == '<'))
+    if ((xmlStart != bytes.npos && bytes[xmlStart] == '<') ||
+        (bytes.size() >= 2 && ((static_cast<unsigned char>(bytes[0]) == 0xff && static_cast<unsigned char>(bytes[1]) == 0xfe) ||
+        (static_cast<unsigned char>(bytes[0]) == 0xfe && static_cast<unsigned char>(bytes[1]) == 0xff))))
         return Svg(bytes, edge, image, error);
     ComPtr<IWICImagingFactory> factory;
     if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))))
@@ -247,7 +294,7 @@ bool Decode(const std::filesystem::path& path, int edge, Image& image, std::stri
         return CopyWic(factory.Get(), bitmap.Get(), edge, image, error);
     }
     ComPtr<IWICStream> stream; ComPtr<IWICBitmapDecoder> decoder;
-    if (FAILED(factory->CreateStream(&stream)) || FAILED(stream->InitializeFromMemory(reinterpret_cast<BYTE*>(bytes.data()), static_cast<DWORD>(bytes.size()))) ||
+    if (FAILED(factory->CreateStream(&stream)) || FAILED(stream->InitializeFromMemory(reinterpret_cast<BYTE*>(const_cast<char*>(bytes.data())), static_cast<DWORD>(bytes.size()))) ||
         FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr, WICDecodeMetadataCacheOnDemand, &decoder))) return Fail(error, "iconLibrary.invalid");
     GUID container{};
     if (FAILED(decoder->GetContainerFormat(&container))) return Fail(error, "iconLibrary.invalid");
@@ -269,6 +316,38 @@ bool Decode(const std::filesystem::path& path, int edge, Image& image, std::stri
         }
     }
     return CopyWic(factory.Get(), frame.Get(), edge, image, error);
+}
+
+bool PadSquare(Image& image)
+{
+    if (image.width <= 0 || image.height <= 0 || image.pixels.size() != static_cast<size_t>(image.width) * image.height) return false;
+    if (image.width == image.height) return true;
+    const int edge = std::max(image.width, image.height);
+    if (static_cast<std::uint64_t>(edge) * edge > kMaxPixels) return false;
+    std::vector<std::uint32_t> square(static_cast<size_t>(edge) * edge, 0);
+    const int left = (edge - image.width) / 2, top = (edge - image.height) / 2;
+    for (int y = 0; y < image.height; ++y) std::copy_n(image.pixels.data() + static_cast<size_t>(y) * image.width,
+        image.width, square.data() + static_cast<size_t>(y + top) * edge + left);
+    image.width = image.height = edge; image.pixels = std::move(square); return true;
+}
+bool EncodePng(const Image& image, std::string& bytes, std::string& error)
+{
+    bytes.clear();
+    if (image.width <= 0 || image.height <= 0 || !Dimensions(image.width, image.height) ||
+        image.pixels.size() != static_cast<size_t>(image.width) * image.height) return Fail(error, "iconLibrary.invalid");
+    ComPtr<IWICImagingFactory> factory; ComPtr<IStream> stream; ComPtr<IWICBitmapEncoder> encoder;
+    ComPtr<IWICBitmapFrameEncode> frame; ComPtr<IPropertyBag2> options; ComPtr<IWICBitmap> bitmap;
+    WICPixelFormatGUID format = GUID_WICPixelFormat32bppBGRA;
+    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory))) ||
+        FAILED(CreateStreamOnHGlobal(nullptr, TRUE, &stream)) || FAILED(factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, &encoder)) ||
+        FAILED(encoder->Initialize(stream.Get(), WICBitmapEncoderNoCache)) || FAILED(encoder->CreateNewFrame(&frame, &options)) ||
+        FAILED(frame->Initialize(options.Get())) || FAILED(frame->SetSize(image.width, image.height)) || FAILED(frame->SetPixelFormat(&format)) ||
+        FAILED(factory->CreateBitmapFromMemory(image.width, image.height, GUID_WICPixelFormat32bppPBGRA, image.width * 4,
+            static_cast<UINT>(image.pixels.size() * 4), reinterpret_cast<BYTE*>(const_cast<std::uint32_t*>(image.pixels.data())), &bitmap)) ||
+        FAILED(frame->WriteSource(bitmap.Get(), nullptr)) || FAILED(frame->Commit()) || FAILED(encoder->Commit())) return Fail(error, "iconLibrary.exportFailed");
+    STATSTG info{}; if (FAILED(stream->Stat(&info, STATFLAG_NONAME)) || info.cbSize.QuadPart > kMaxFileBytes) return Fail(error, "iconLibrary.tooLarge");
+    bytes.resize(static_cast<size_t>(info.cbSize.QuadPart)); ULONG read = 0;
+    return (SUCCEEDED(stream->Seek({}, STREAM_SEEK_SET, nullptr)) && SUCCEEDED(stream->Read(bytes.data(), static_cast<ULONG>(bytes.size()), &read)) && read == bytes.size()) || Fail(error, "iconLibrary.exportFailed");
 }
 
 HBITMAP CreateBitmap(const Image& image)

@@ -2784,7 +2784,7 @@
   "iconLibrary.exportFailed": "部分图标导出失败，请检查目标文件夹。",
   "iconLibrary.exportIco": "导出 ICO",
   "iconLibrary.exportPng": "导出 PNG",
-  "iconLibrary.import": "导入图片",
+  "iconLibrary.import": "导入…",
   "iconLibrary.inUse": "使用中",
   "iconLibrary.invalid": "无法读取该图片，或图片格式不受支持。",
   "iconLibrary.missing": "资源缺失或无法读取",
@@ -2806,5 +2806,18 @@
   "iconLibrary.recycleEmpty": "回收站（空）",
   "iconLibrary.recycleFull": "回收站（满）",
   "iconLibrary.startIcon": "开始按钮图标",
-  "iconLibrary.searchIcon": "搜索按钮图标"
+  "iconLibrary.searchIcon": "搜索按钮图标",
+  "iconLibrary.personalization": "图标个性化",
+  "iconLibrary.groups": "分组",
+  "iconLibrary.allGroups": "全部图标",
+  "iconLibrary.ungrouped": "未分组",
+  "iconLibrary.newGroup": "新建分组",
+  "iconLibrary.renameGroup": "重命名分组",
+  "iconLibrary.deleteGroup": "删除分组",
+  "iconLibrary.deleteGroupHint": "只删除分组，图标仍保留在图标库中。",
+  "iconLibrary.moveGroup": "移至分组…",
+  "iconLibrary.packTooLarge": "图标包超出限制（压缩包 128 MiB、展开图片总计 256 MiB、单张图片 16 MiB）。",
+  "iconLibrary.packUnsupported": "部分资源无法导入：包含暂不支持的 Android 绘制规则或图片格式。",
+  "settings.dock.edgeDistance": "距屏幕边缘",
+  "settings.dock.edgeDistance.description": "100% 与桌面组件边距一致。"
 }

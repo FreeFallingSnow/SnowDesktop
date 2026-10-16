@@ -2784,7 +2784,7 @@
   "iconLibrary.exportFailed": "Não foi possível exportar alguns ícones. Verifique a pasta de destino.",
   "iconLibrary.exportIco": "Exportar ICO",
   "iconLibrary.exportPng": "Exportar PNG",
-  "iconLibrary.import": "Importar imagens",
+  "iconLibrary.import": "Importar…",
   "iconLibrary.inUse": "Em uso",
   "iconLibrary.invalid": "Não foi possível ler a imagem ou o formato não é compatível.",
   "iconLibrary.missing": "Recurso ausente ou ilegível",
@@ -2806,5 +2806,18 @@
   "iconLibrary.recycleEmpty": "Lixeira (vazia)",
   "iconLibrary.recycleFull": "Lixeira (cheia)",
   "iconLibrary.startIcon": "Ícone do botão Iniciar",
-  "iconLibrary.searchIcon": "Ícone do botão Pesquisar"
+  "iconLibrary.searchIcon": "Ícone do botão Pesquisar",
+  "iconLibrary.personalization": "Personalizar ícone",
+  "iconLibrary.groups": "Grupos",
+  "iconLibrary.allGroups": "Todos os ícones",
+  "iconLibrary.ungrouped": "Sem grupo",
+  "iconLibrary.newGroup": "Novo grupo",
+  "iconLibrary.renameGroup": "Renomear grupo",
+  "iconLibrary.deleteGroup": "Excluir grupo",
+  "iconLibrary.deleteGroupHint": "Somente o grupo será excluído. Seus ícones permanecerão na biblioteca.",
+  "iconLibrary.moveGroup": "Mover para grupo…",
+  "iconLibrary.packTooLarge": "O pacote de ícones excede os limites (arquivo: 128 MiB, imagens descompactadas no total: 256 MiB, cada imagem: 16 MiB).",
+  "iconLibrary.packUnsupported": "Alguns recursos não puderam ser importados porque usam regras de desenho do Android ou formatos de imagem incompatíveis.",
+  "settings.dock.edgeDistance": "Distância da borda da tela",
+  "settings.dock.edgeDistance.description": "100% usa a margem dos componentes da área de trabalho."
 }

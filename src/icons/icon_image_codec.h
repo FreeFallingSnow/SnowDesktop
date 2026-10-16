@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace snowdesktop::icon_image
@@ -24,6 +25,9 @@ struct Image
 
 // edge == 0 retains raster dimensions (SVG defaults to 1024 pixels).
 bool Decode(const std::filesystem::path& path, int edge, Image& image, std::string& error);
+bool DecodeBytes(std::string_view bytes, int edge, Image& image, std::string& error);
+bool EncodePng(const Image& image, std::string& bytes, std::string& error);
+bool PadSquare(Image& image);
 HBITMAP CreateBitmap(const Image& image);
 bool ExportPng(const std::filesystem::path& source, const std::filesystem::path& output,
     std::string& error);

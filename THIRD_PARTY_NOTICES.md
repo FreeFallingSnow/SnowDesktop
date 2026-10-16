@@ -389,3 +389,5 @@ Source and regeneration details: `third_party/microsoft-ui-xaml/README.md`.
     LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
     OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
     SOFTWARE
+
+- puff (zlib v1.3.1): Mark Adler, zlib license, retained in third_party/puff/puff.h and distributed as licenses/puff-LICENSE.txt. https://github.com/madler/zlib/tree/v1.3.1/contrib/puff

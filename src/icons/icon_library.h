@@ -9,6 +9,12 @@
 
 namespace snowdesktop
 {
+struct IconLibraryGroup
+{
+    std::string id;
+    std::wstring name;
+    std::string source = "local", packageId, packageVersion, sourceUri;
+};
 struct IconLibraryEntry
 {
     std::string id, format;
@@ -17,6 +23,7 @@ struct IconLibraryEntry
     bool missing = false;
     std::string source = "local", packageId, packageVersion, packageEntryId;
     std::vector<std::wstring> uses;
+    std::vector<std::string> groupIds;
 };
 struct IconLibraryRequest
 {
@@ -24,13 +31,15 @@ struct IconLibraryRequest
     std::vector<std::string> ids;
     std::vector<std::wstring> paths;
     std::wstring name, destination, target;
-    std::string format = "png";
+    std::string format = "png", groupId;
     std::uint64_t session = 0, revision = 0;
 };
 struct IconLibrarySnapshot
 {
     std::vector<IconLibraryEntry> entries;
+    std::vector<IconLibraryGroup> groups;
     std::vector<std::string> imported;
+    std::string importedGroupId;
     std::vector<std::wstring> failures;
     std::uint64_t revision = 0, session = 0;
     bool busy = false, succeeded = false;
@@ -61,9 +70,11 @@ public:
 private:
     bool Load();
     bool Save();
-    std::string Import(const std::filesystem::path& path, std::string& error);
+    std::string Import(const std::filesystem::path& path, std::string& error,
+        const std::string& groupId = {}, std::wstring name = {});
     std::filesystem::path directory_;
     std::vector<IconLibraryEntry> entries_;
+    std::vector<IconLibraryGroup> groups_;
     bool loaded_ = false, valid_ = true;
     std::uint64_t revision_ = 0;
 };

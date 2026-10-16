@@ -2784,7 +2784,7 @@
   "iconLibrary.exportFailed": "Einige Symbole konnten nicht exportiert werden. Prüfen Sie den Zielordner.",
   "iconLibrary.exportIco": "ICO exportieren",
   "iconLibrary.exportPng": "PNG exportieren",
-  "iconLibrary.import": "Bilder importieren",
+  "iconLibrary.import": "Importieren…",
   "iconLibrary.inUse": "In Verwendung",
   "iconLibrary.invalid": "Das Bild konnte nicht gelesen werden oder das Format wird nicht unterstützt.",
   "iconLibrary.missing": "Ressource fehlt oder ist nicht lesbar",
@@ -2806,5 +2806,18 @@
   "iconLibrary.recycleEmpty": "Papierkorb (leer)",
   "iconLibrary.recycleFull": "Papierkorb (voll)",
   "iconLibrary.startIcon": "Symbol der Startschaltfläche",
-  "iconLibrary.searchIcon": "Symbol der Suchschaltfläche"
+  "iconLibrary.searchIcon": "Symbol der Suchschaltfläche",
+  "iconLibrary.personalization": "Symbol anpassen",
+  "iconLibrary.groups": "Gruppen",
+  "iconLibrary.allGroups": "Alle Symbole",
+  "iconLibrary.ungrouped": "Ohne Gruppe",
+  "iconLibrary.newGroup": "Neue Gruppe",
+  "iconLibrary.renameGroup": "Gruppe umbenennen",
+  "iconLibrary.deleteGroup": "Gruppe löschen",
+  "iconLibrary.deleteGroupHint": "Nur die Gruppe wird gelöscht. Ihre Symbole bleiben in der Bibliothek.",
+  "iconLibrary.moveGroup": "In Gruppe verschieben…",
+  "iconLibrary.packTooLarge": "Das Symbolpaket überschreitet die Grenzen (Archiv: 128 MiB, entpackte Bilder insgesamt: 256 MiB, je Bild: 16 MiB).",
+  "iconLibrary.packUnsupported": "Einige Ressourcen konnten wegen nicht unterstützter Android-Zeichenregeln oder Bildformate nicht importiert werden.",
+  "settings.dock.edgeDistance": "Abstand zum Bildschirmrand",
+  "settings.dock.edgeDistance.description": "100 % entspricht dem Randabstand der Desktop-Komponenten."
 }

@@ -2784,7 +2784,7 @@
   "iconLibrary.exportFailed": "Some icons could not be exported. Check the destination folder.",
   "iconLibrary.exportIco": "Export ICO",
   "iconLibrary.exportPng": "Export PNG",
-  "iconLibrary.import": "Import images",
+  "iconLibrary.import": "Import…",
   "iconLibrary.inUse": "In use",
   "iconLibrary.invalid": "The image could not be read, or its format is unsupported.",
   "iconLibrary.missing": "Resource missing or unreadable",
@@ -2806,5 +2806,18 @@
   "iconLibrary.recycleEmpty": "Recycle Bin (empty)",
   "iconLibrary.recycleFull": "Recycle Bin (full)",
   "iconLibrary.startIcon": "Start button icon",
-  "iconLibrary.searchIcon": "Search button icon"
+  "iconLibrary.searchIcon": "Search button icon",
+  "iconLibrary.personalization": "Icon personalization",
+  "iconLibrary.groups": "Groups",
+  "iconLibrary.allGroups": "All icons",
+  "iconLibrary.ungrouped": "Ungrouped",
+  "iconLibrary.newGroup": "New group",
+  "iconLibrary.renameGroup": "Rename group",
+  "iconLibrary.deleteGroup": "Delete group",
+  "iconLibrary.deleteGroupHint": "Only the group is deleted. Its icons remain in the library.",
+  "iconLibrary.moveGroup": "Move to group…",
+  "iconLibrary.packTooLarge": "Icon pack exceeds the limits (128 MiB archive, 256 MiB total expanded images, 16 MiB per image).",
+  "iconLibrary.packUnsupported": "Some resources could not be imported because they use unsupported Android drawing rules or image formats.",
+  "settings.dock.edgeDistance": "Distance from screen edge",
+  "settings.dock.edgeDistance.description": "100% uses the desktop component margin."
 }
