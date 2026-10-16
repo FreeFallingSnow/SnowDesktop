@@ -2818,5 +2818,9 @@
   "iconLibrary.packTooLarge": "Le pack d’icônes dépasse les limites (archive : 128 Mio, images décompressées au total : 256 Mio, chaque image : 16 Mio).",
   "iconLibrary.packUnsupported": "Certaines ressources n’ont pas pu être importées, car elles utilisent des règles de dessin Android ou des formats d’image non pris en charge.",
   "settings.dock.edgeDistance": "Distance au bord de l’écran",
-  "settings.dock.edgeDistance.description": "100 % correspond à la marge des composants du bureau."
+  "settings.dock.edgeDistance.description": "Par rapport à la marge des composants du bureau.",
+  "iconLibrary.selectFiltered": "Sélectionner toutes les icônes filtrées",
+  "iconLibrary.deleteRestoreUses": "Ces emplacements retrouveront leurs icônes par défaut :",
+  "iconLibrary.deleteGroupIcons": "Supprimer aussi les icônes de ce groupe",
+  "iconLibrary.deleteGroupIconsHint": "Les mêmes icônes seront aussi retirées des autres groupes et leurs utilisations retrouveront les icônes par défaut."
 }

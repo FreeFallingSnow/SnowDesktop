@@ -2818,5 +2818,9 @@
   "iconLibrary.packTooLarge": "アイコンパックが上限を超えています（アーカイブ：128 MiB、展開後の画像合計：256 MiB、画像1枚：16 MiB）。",
   "iconLibrary.packUnsupported": "未対応の Android 描画規則や画像形式を使用する一部のリソースをインポートできませんでした。",
   "settings.dock.edgeDistance": "画面端からの距離",
-  "settings.dock.edgeDistance.description": "100% はデスクトップコンポーネントの余白と同じ距離です。"
+  "settings.dock.edgeDistance.description": "デスクトップコンポーネントの余白を基準にします。",
+  "iconLibrary.selectFiltered": "絞り込み結果をすべて選択",
+  "iconLibrary.deleteRestoreUses": "次の使用箇所は既定のアイコンに戻ります：",
+  "iconLibrary.deleteGroupIcons": "グループ内のアイコンも削除する",
+  "iconLibrary.deleteGroupIconsHint": "同じアイコンは他のグループからも削除され、使用箇所は既定のアイコンに戻ります。"
 }

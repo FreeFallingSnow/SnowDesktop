@@ -2818,5 +2818,9 @@
   "iconLibrary.packTooLarge": "Das Symbolpaket überschreitet die Grenzen (Archiv: 128 MiB, entpackte Bilder insgesamt: 256 MiB, je Bild: 16 MiB).",
   "iconLibrary.packUnsupported": "Einige Ressourcen konnten wegen nicht unterstützter Android-Zeichenregeln oder Bildformate nicht importiert werden.",
   "settings.dock.edgeDistance": "Abstand zum Bildschirmrand",
-  "settings.dock.edgeDistance.description": "100 % entspricht dem Randabstand der Desktop-Komponenten."
+  "settings.dock.edgeDistance.description": "Bezogen auf den Randabstand der Desktop-Komponenten.",
+  "iconLibrary.selectFiltered": "Alle gefilterten Symbole auswählen",
+  "iconLibrary.deleteRestoreUses": "Diese Verwendungen werden auf die Standardsymbole zurückgesetzt:",
+  "iconLibrary.deleteGroupIcons": "Auch die Symbole in dieser Gruppe löschen",
+  "iconLibrary.deleteGroupIconsHint": "Dieselben Symbole werden auch aus anderen Gruppen entfernt. Ihre Verwendungen werden auf Standardsymbole zurückgesetzt."
 }

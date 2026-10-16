@@ -2818,5 +2818,9 @@
   "iconLibrary.packTooLarge": "圖示套件超出限制（壓縮檔 128 MiB、展開圖片合計 256 MiB、單張圖片 16 MiB）。",
   "iconLibrary.packUnsupported": "部分資源無法匯入：包含尚未支援的 Android 繪製規則或圖片格式。",
   "settings.dock.edgeDistance": "距螢幕邊緣",
-  "settings.dock.edgeDistance.description": "100% 與桌面元件邊距一致。"
+  "settings.dock.edgeDistance.description": "以桌面元件邊距為基準。",
+  "iconLibrary.selectFiltered": "全選目前篩選結果",
+  "iconLibrary.deleteRestoreUses": "使用這些圖示的位置將還原預設圖示：",
+  "iconLibrary.deleteGroupIcons": "同時刪除群組內的圖示",
+  "iconLibrary.deleteGroupIconsHint": "相同圖示也會從其他群組移除，使用位置將還原預設圖示。"
 }

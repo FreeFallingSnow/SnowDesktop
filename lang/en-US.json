@@ -2818,5 +2818,9 @@
   "iconLibrary.packTooLarge": "Icon pack exceeds the limits (128 MiB archive, 256 MiB total expanded images, 16 MiB per image).",
   "iconLibrary.packUnsupported": "Some resources could not be imported because they use unsupported Android drawing rules or image formats.",
   "settings.dock.edgeDistance": "Distance from screen edge",
-  "settings.dock.edgeDistance.description": "100% uses the desktop component margin."
+  "settings.dock.edgeDistance.description": "Relative to the desktop component margin.",
+  "iconLibrary.selectFiltered": "Select all filtered icons",
+  "iconLibrary.deleteRestoreUses": "These locations will return to their default icons:",
+  "iconLibrary.deleteGroupIcons": "Also delete the icons in this group",
+  "iconLibrary.deleteGroupIconsHint": "The same icons will also be removed from other groups, and their uses will return to default icons."
 }

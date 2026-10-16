@@ -2818,5 +2818,9 @@
   "iconLibrary.packTooLarge": "아이콘 팩이 제한을 초과했습니다(압축 파일: 128 MiB, 압축 해제한 이미지 합계: 256 MiB, 이미지당: 16 MiB).",
   "iconLibrary.packUnsupported": "지원하지 않는 Android 그리기 규칙이나 이미지 형식을 사용하는 일부 리소스를 가져오지 못했습니다.",
   "settings.dock.edgeDistance": "화면 가장자리와의 거리",
-  "settings.dock.edgeDistance.description": "100%는 바탕 화면 구성 요소의 여백을 기준으로 합니다."
+  "settings.dock.edgeDistance.description": "바탕 화면 구성 요소의 여백을 기준으로 합니다.",
+  "iconLibrary.selectFiltered": "필터링된 아이콘 모두 선택",
+  "iconLibrary.deleteRestoreUses": "다음 사용 위치는 기본 아이콘으로 복원됩니다:",
+  "iconLibrary.deleteGroupIcons": "이 그룹의 아이콘도 삭제",
+  "iconLibrary.deleteGroupIconsHint": "같은 아이콘이 다른 그룹에서도 제거되며, 사용 위치는 기본 아이콘으로 복원됩니다."
 }
