@@ -136,40 +136,28 @@ void DesktopApp::HideExplorerIcons()
     // Never remove the usable native desktop before our first frame is ready.
     if (desktopStartupPresentationPending_)
         return;
-    if (!desktopWindows_.listView || !IsWindow(desktopWindows_.listView))
-        return;
-
-    const bool hiddenBySnowDesktop = GetPropW(desktopWindows_.listView,
-        kHiddenBySnowDesktopProp) != nullptr;
-    const bool shouldHide = IsWindowVisible(desktopWindows_.listView) != FALSE ||
-        hiddenBySnowDesktop;
-    desktopWindows_.listViewWasVisible = shouldHide;
-    if (!shouldHide)
-        return;
-
-    SetPropW(desktopWindows_.listView, kHiddenBySnowDesktopProp,
-        reinterpret_cast<HANDLE>(1));
-    ShowWindow(desktopWindows_.listView, SW_HIDE);
+    explorerIconVisibility_.Hide(FindDesktopWindows().listView);
 }
 
 /**
  * @brief 恢复显示资源管理器桌面图标
  *
- * 若之前由 SnowDesktop 隐藏且记录为可见状态，
- * 则调用 ShowWindow(SW_SHOW) 恢复 ListView 显示，
- * 并清除隐藏标记属性。
+ * 重新查找 Explorer 当前的图标层；切回原生桌面时明确请求显示图标。
+ * 确认图标层可见后才清除恢复请求，窗口重建期间由宿主监视器继续处理。
  */
-void DesktopApp::RestoreExplorerIcons()
+void DesktopApp::RestoreExplorerIcons(bool force)
 {
-    if (!desktopWindows_.listView || !IsWindow(desktopWindows_.listView))
-        return;
+    explorerIconVisibility_.RequestRestore(force);
+    explorerIconVisibility_.TryRestore(FindDesktopWindows().listView);
+}
 
-    const bool hiddenBySnowDesktop = GetPropW(desktopWindows_.listView,
-        kHiddenBySnowDesktopProp) != nullptr;
-    if (desktopWindows_.listViewWasVisible || hiddenBySnowDesktop)
-        ShowWindow(desktopWindows_.listView, SW_SHOW);
-    RemovePropW(desktopWindows_.listView, kHiddenBySnowDesktopProp);
-    desktopWindows_.listViewWasVisible = false;
+void DesktopApp::RestoreExplorerIconsOnExit()
+{
+    if (!explorerIconVisibility_.RestoreWhenReady(
+            [] { return FindDesktopWindows().listView; }))
+        WriteDiagnosticLogEntry(
+            L"Explorer icon restoration incomplete at exit: current desktop layer is not visible",
+            DiagnosticLogLevel::Warning);
 }
 
 /**
@@ -962,7 +950,11 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
     // Do not accidentally show SnowDesktop again when the user selected the
     // native desktop before Explorer restarted.
     if (!customDesktopVisible_)
+    {
+        if (explorerIconVisibility_.RestorePending())
+            RestoreExplorerIcons();
         return;
+    }
 
     // Only an actual Explorer process replacement is allowed to request a new
     // WorkerW. Ordinary host polling and same-process shell changes stay read-only.
@@ -1027,7 +1019,11 @@ void DesktopApp::WatchDesktopHost()
     PollDisplayTopology();
 
     if (!customDesktopVisible_)
+    {
+        if (explorerIconVisibility_.RestorePending())
+            RestoreExplorerIcons();
         return;
+    }
 
     // A pending Explorer restart must rebuild the DComp target even if Windows
     // automatically reparented the old HWND and it still reports as visible.
@@ -1122,7 +1118,7 @@ void DesktopApp::CompleteExitRequest()
     StopQuickNavigationAppIndexing();
     StopDemoIconLoader();
     StopIconLoader();
-    RestoreExplorerIcons();
+    RestoreExplorerIconsOnExit();
     if (hwnd_ && IsWindow(hwnd_))
     {
         DestroyWindow(hwnd_);

@@ -659,7 +659,6 @@ struct DesktopWindows
     HWND defView = nullptr;
     HWND listView = nullptr;
     HWND host = nullptr;
-    bool listViewWasVisible = false;
 };
 
 /**

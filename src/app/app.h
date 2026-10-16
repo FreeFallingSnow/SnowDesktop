@@ -72,6 +72,7 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "app/input/desktop_passthrough_indicator.h"
 #include "shell/shell_extension_menu.h"
 #include "desktop/display_topology_refresh.h"
+#include "desktop/explorer_icon_visibility.h"
 #include "dock/dock_settings.h"
 #include "theme/taskbar_appearance.h"
 #include "dock/dock_drop_rules.h"
@@ -918,7 +919,8 @@ private:
     /** @brief 隐藏 Explorer 原生桌面图标。 */
     void HideExplorerIcons();
     /** @brief 恢复 Explorer 原生桌面图标。 */
-    void RestoreExplorerIcons();
+    void RestoreExplorerIcons(bool force = false);
+    void RestoreExplorerIconsOnExit();
     /** @brief 向 OLE 注册窗口为拖放目标。 */
     void RegisterOleDropTarget();
     /**
@@ -3787,6 +3789,7 @@ private:
     Pidl desktopPidl_;
     Pidl recycleBinPidl_;
     DesktopWindows desktopWindows_{};
+    snowdesktop::ExplorerIconVisibility explorerIconVisibility_;
     ULONG shellChangeRegId_ = 0;
     snowdesktop::shell_refresh::FolderNotifications folderNotifications_;
     bool reloading_ = false;

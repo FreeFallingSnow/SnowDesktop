@@ -702,23 +702,24 @@ void DesktopApp::SetSoftwareDesktopPresentation(bool enabled)
     if (!enabled) EndDesktopPassthrough(false);
     customDesktopVisible_ = enabled;
 
-    if (!hwnd_ || !IsWindow(hwnd_))
-    {
-        ApplyDesktopPassthroughHotkey();
-        return;
-    }
-
     if (!enabled)
     {
         if (widgetEngine_)
             widgetEngine_->SetAllWidgetDesktopVisible(false);
         HideDragHintWindow();
         desktopBackdropCompositor_.SetVisible(false);
-        ShowWindow(hwnd_, SW_HIDE);
+        if (hwnd_ && IsWindow(hwnd_))
+            ShowWindow(hwnd_, SW_HIDE);
         if (inputHwnd_ && IsWindow(inputHwnd_))
             ShowWindow(inputHwnd_, SW_HIDE);
-        RestoreExplorerIcons();
+        RestoreExplorerIcons(true);
         UpdatePersistentDockHostVisibility();
+        ApplyDesktopPassthroughHotkey();
+        return;
+    }
+
+    if (!hwnd_ || !IsWindow(hwnd_))
+    {
         ApplyDesktopPassthroughHotkey();
         return;
     }

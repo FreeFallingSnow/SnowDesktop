@@ -97,8 +97,7 @@ DesktopWindows FindDesktopWindows();
 
 /**
  * @brief 恢复桌面图标层
- * @details 立即恢复被隐藏的桌面图标层（DefView 中的 ListView），
- *          确保原生桌面图标在组件模式下能正确显示。
+ * @details 重新查找并显示 DefView 中的 ListView，在有限时间内等待 Explorer 就绪。
  */
 void RestoreExplorerIconLayerNow();
 

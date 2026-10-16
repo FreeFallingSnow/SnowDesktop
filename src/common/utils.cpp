@@ -13,6 +13,7 @@
 #include "resources/resource.h"
 #include "data/data_paths.h"
 #include "desktop/desktop_window_discovery_rules.h"
+#include "desktop/explorer_icon_visibility.h"
 #include "icons/icon_render_rules.h"
 #include "shell/shortcut_application_rules.h"
 #include "icons/shortcut_icon_resource.h"
@@ -450,12 +451,9 @@ DesktopWindows FindDesktopWindows()
  */
 void RestoreExplorerIconLayerNow()
 {
-    DesktopWindows windows = FindDesktopWindows();
-    if (windows.listView != nullptr && IsWindow(windows.listView))
-    {
-        ShowWindow(windows.listView, SW_SHOW);
-        RemovePropW(windows.listView, kHiddenBySnowDesktopProp);
-    }
+    snowdesktop::ExplorerIconVisibility visibility;
+    visibility.RequestRestore(true);
+    visibility.RestoreWhenReady([] { return FindDesktopWindows().listView; });
 }
 
 // ============================================================================

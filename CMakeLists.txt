@@ -2619,6 +2619,7 @@ if (BUILD_TESTING)
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES
             tests/dock_and_window_rules_tests.cpp
+            tests/desktop/explorer_icon_visibility_tests.cpp
             tests/dock/dock_window_pin_tests.cpp
             tests/dock/fullscreen_focus_tests.cpp
             tests/taskbar_native_tests.cpp
