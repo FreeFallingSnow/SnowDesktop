@@ -155,6 +155,7 @@ inline void SelectDockAppearance(DockSettings& settings, bool followGlobal,
 
 inline void NormalizeDockSettings(DockSettings& settings)
 {
+    settings.edgeDistanceScale = ClampDockEdgeDistanceScale(settings.edgeDistanceScale);
     settings.cornerRadius = std::isfinite(settings.cornerRadius)
         ? std::clamp(settings.cornerRadius, 0.0f, 28.0f) : DockSettings{}.cornerRadius;
     switch (settings.appearancePreset)

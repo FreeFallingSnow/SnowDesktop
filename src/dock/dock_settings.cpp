@@ -1227,6 +1227,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.frequentItemCount = std::clamp(static_cast<int>(value), 1, 8);
     if (ReadDoubleField(text, "thicknessScale", value))
         settings.thicknessScale = ClampDockScale(static_cast<float>(value));
+    if (ReadDoubleField(text, "edgeDistanceScale", value))
+        settings.edgeDistanceScale = ClampDockEdgeDistanceScale(static_cast<float>(value));
     // Preserve the previous shared scale when opening an older settings file.
     settings.mergedIconScale = ClampMergedDockIconScale(settings.thicknessScale);
     if (ReadDoubleField(text, "mergedIconScale", value))
@@ -1376,6 +1378,7 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"summonOnlyLinkedPreferencesAreBase\": true,\n";
     file << "  \"frequentItemCount\": " << settings.frequentItemCount << ",\n";
     file << "  \"thicknessScale\": " << settings.thicknessScale << ",\n";
+    file << "  \"edgeDistanceScale\": " << ClampDockEdgeDistanceScale(settings.edgeDistanceScale) << ",\n";
     file << "  \"mergedIconScale\": " << settings.mergedIconScale << ",\n";
     file << "  \"lastMonitorUseHomeSize\": " << (settings.lastMonitorUseHomeSize ? "true" : "false") << ",\n";
     file << "  \"mergedBarHeight\": " << settings.mergedBarHeight << ",\n";

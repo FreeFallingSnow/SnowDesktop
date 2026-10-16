@@ -596,7 +596,8 @@ int DockContainer::EdgeMargin() const
         if (page)
             return app_->GetDockPageEdgeMargin(*page, IsVertical());
     }
-    return IsVertical() ? kGridMarginX : kGridMarginY;
+    return ScaleDockEdgeDistance(IsVertical() ? kGridMarginX : kGridMarginY,
+        app_ ? app_->dockSettings_.edgeDistanceScale : 1.0f);
 }
 
 BarStyle DockContainer::GetInsertionStyle() const

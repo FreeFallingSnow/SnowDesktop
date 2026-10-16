@@ -71,6 +71,7 @@ struct SettingsCard
 enum class ContinuousField
 {
     ThicknessScale,
+    EdgeDistanceScale,
     MergedIconScale,
     FrequentItemCount,
     EdgeHoverDelayMs,
@@ -452,6 +453,7 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch allowDesktopContentOverlapToggle{nullptr};
     muxc::ToggleSwitch showOnlyWhenSummonedToggle{nullptr};
     ContinuousControl thicknessScale;
+    ContinuousControl edgeDistanceScale;
     ContinuousControl mergedIconScale;
     ContinuousControl frequentItemCount;
     ContinuousControl edgeHoverDelayMs;
@@ -504,8 +506,9 @@ struct DockPagePresenter::Impl
     DynamicRuleControl shellUiRule;
     std::array<DynamicRuleControl*, 3> dynamicRules = {
         &shellUiRule, &maximizedWindowRule, &visibleWindowRule};
-    std::array<ContinuousControl*, 7> continuousControls = {
+    std::array<ContinuousControl*, 8> continuousControls = {
         &thicknessScale,
+        &edgeDistanceScale,
         &mergedIconScale,
         &frequentItemCount,
         &edgeHoverDelayMs,
@@ -649,6 +652,11 @@ struct DockPagePresenter::Impl
         layoutCard.content.Children().Append(positionRow.root);
         layoutCard.content.Children().Append(monitorScopeRow.root);
         layoutCard.content.Children().Append(layoutRow.root);
+        InitializeContinuousControl(edgeDistanceScale,
+            ContinuousField::EdgeDistanceScale,
+            kDockMinimumEdgeDistanceScale * 100.0f,
+            kDockMaximumEdgeDistanceScale * 100.0, 1.0, nullptr, 100.0);
+        layoutCard.content.Children().Append(edgeDistanceScale.root);
         layoutCard.content.Children().Append(thicknessScale.root);
         mergedHeight = std::make_unique<MergedBarHeightEditor>(localize);
         mergedCard.content.Children().Append(mergedHeight->Content());
@@ -1042,6 +1050,7 @@ struct DockPagePresenter::Impl
         switch (field)
         {
         case ContinuousField::ThicknessScale:
+        case ContinuousField::EdgeDistanceScale:
         case ContinuousField::MergedIconScale:
         case ContinuousField::TaskbarBackgroundAlpha:
         case ContinuousField::TaskbarBorderAlpha:
@@ -1749,6 +1758,8 @@ struct DockPagePresenter::Impl
         {
         case ContinuousField::ThicknessScale:
             return ClampDockScale(settings.thicknessScale) * 100.0;
+        case ContinuousField::EdgeDistanceScale:
+            return ClampDockEdgeDistanceScale(settings.edgeDistanceScale) * 100.0;
         case ContinuousField::MergedIconScale:
             return ClampMergedDockIconScale(settings.mergedIconScale) * 100.0;
         case ContinuousField::FrequentItemCount:
@@ -1788,6 +1799,10 @@ struct DockPagePresenter::Impl
         {
         case ContinuousField::ThicknessScale:
             settings.thicknessScale = ClampDockScale(
+                static_cast<float>(uiValue / 100.0));
+            break;
+        case ContinuousField::EdgeDistanceScale:
+            settings.edgeDistanceScale = ClampDockEdgeDistanceScale(
                 static_cast<float>(uiValue / 100.0));
             break;
         case ContinuousField::MergedIconScale:
@@ -2114,6 +2129,9 @@ struct DockPagePresenter::Impl
         monitorScopeRow.SetEnabled(dockEnabled);
         layoutRow.SetEnabled(dockEnabled);
         thicknessScale.row.SetEnabled(dockEnabled);
+        edgeDistanceScale.root.Visibility(layoutCombo.SelectedIndex() == 0
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        edgeDistanceScale.row.SetEnabled(dockEnabled && layoutCombo.SelectedIndex() == 0);
         mergedIconScale.row.SetEnabled(dockEnabled && barAvailability.anyMerged);
         suppressTaskbarRow.SetEnabled(dockEnabled);
         taskbarSuppressRow.SetEnabled(true);
@@ -2832,6 +2850,10 @@ struct DockPagePresenter::Impl
                 L"Adjust dock bar and icon size together."));
         SetContinuousText(mergedIconScale,
             "settings.bars.iconSize", L"Icon size", L"");
+        SetContinuousText(edgeDistanceScale,
+            "settings.dock.edgeDistance", L"Distance from screen edge",
+            L("settings.dock.edgeDistance.description",
+                L"100% uses the desktop component margin."));
 
         floatingEdgeSwipeRow.SetText(
             L("app.dock.floating_edge_swipe", L"Edge Swipe"));
@@ -3153,6 +3175,10 @@ struct DockPagePresenter::Impl
         if (id == "dock.position") return dockTarget(positionCombo);
         if (id == "dock.layout" || id == "dock.edgeAttached")
             return dockTarget(layoutCombo);
+        if (id == "dock.edgeDistanceScale")
+            return dockTarget(layoutCombo.SelectedIndex() == 0
+                ? edgeDistanceScale.slider.as<mux::FrameworkElement>()
+                : prerequisiteTarget(layoutCombo, "choice", layoutRow.label.Text().c_str()));
         if (id == "dock.monitor" || id == "dock.monitorScope")
             return dockTarget(monitorScopeCombo);
         if (id == "dock.mergedBarHeight")

@@ -490,6 +490,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.dock.monitor.description"},
     {SettingsPage::Dock, "dock.thickness",
         "settings.dock.thickness", "settings.dock.thickness.description"},
+    {SettingsPage::Dock, "dock.edgeDistanceScale",
+        "settings.dock.edgeDistance", "settings.dock.edgeDistance.description"},
     {SettingsPage::Dock, "dock.allowDesktopContentOverlap",
         "settings.dock.allowDesktopContentOverlap",
         "settings.dock.allowDesktopContentOverlap.description"},

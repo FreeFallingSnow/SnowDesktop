@@ -15,8 +15,8 @@ namespace
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr UINT_PTR AsyncTimerId = 1;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
-// Independent scrolling-grid axes and list-row spacing extend desktop values.
-constexpr std::uint32_t Version = 39;
+// Independent island Dock edge distance extends Dock layout values.
+constexpr std::uint32_t Version = 40;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;

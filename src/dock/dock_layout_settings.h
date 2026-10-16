@@ -1,10 +1,27 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 
 inline constexpr bool kDefaultDockEnabled = false;
 inline constexpr float kDockMinimumScale = 0.50f;
 inline constexpr float kDockMaximumScale = 2.00f;
+inline constexpr float kDockMinimumEdgeDistanceScale = 0.10f;
+inline constexpr float kDockMaximumEdgeDistanceScale = 5.00f;
+
+inline float ClampDockEdgeDistanceScale(float scale)
+{
+    return std::isfinite(scale)
+        ? std::clamp(scale, kDockMinimumEdgeDistanceScale, kDockMaximumEdgeDistanceScale)
+        : 1.0f;
+}
+
+inline int ScaleDockEdgeDistance(int baseMargin, float scale)
+{
+    if (baseMargin <= 0) return 0;
+    return std::max(1, static_cast<int>(std::lround(
+        baseMargin * ClampDockEdgeDistanceScale(scale))));
+}
 
 inline float ClampMergedDockIconScale(float scale)
 {
@@ -39,6 +56,8 @@ struct DockLayoutSettings
 
     DockPosition position = DockPosition::Bottom;
     bool edgeAttached = false;
+    // Island-only multiplier; 100% preserves the desktop component margin.
+    float edgeDistanceScale = 1.0f;
     DockMonitorScope monitorScope = DockMonitorScope::First;
     bool showWindowsButton = true;
     bool showQuickSearchButton = true;

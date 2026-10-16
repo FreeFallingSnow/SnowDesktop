@@ -137,6 +137,7 @@ public:
     DockSettings committedDock;
     DesktopDisplaySettings committedDesktop;
     float previewedAlpha = 0.0f;
+    float previewedDockEdgeDistanceScale = 1.0f;
     SettingsRoute route;
     SettingsActionStatus nextPreviewStatus =
         SettingsActionStatus::Succeeded;
@@ -153,6 +154,7 @@ public:
         ++previewCount;
         previewDomains |= domains;
         previewedAlpha = snapshot.values.personalization.widgetAlpha;
+        previewedDockEdgeDistanceScale = snapshot.values.dock.edgeDistanceScale;
         if (nextPreviewStatus == SettingsActionStatus::Busy)
             return SettingsActionResult::Busy(L"preview busy");
         if (nextPreviewStatus == SettingsActionStatus::Failed)
@@ -1007,6 +1009,46 @@ void TestCategoryCreationAcknowledgesPersistedSnapshot()
     controller.SetSnapshotChangedCallback({});
 }
 
+void TestDockEdgeDistancePreviewAndCommit()
+{
+    auto store = std::make_shared<FakeStore>();
+    FakeHostActions host;
+    SettingsController controller(store, &host);
+    (void)controller.Initialize();
+    for (const float scale : {0.1f, 1.0f, 5.0f})
+    {
+        auto settings = controller.Snapshot()->values.dock;
+        settings.edgeAttached = false;
+        settings.edgeDistanceScale = scale;
+        controller.UpdateDock(settings, SettingsUpdateMode::PreviewAndCommit);
+        Check(controller.FlushPending().Succeeded() &&
+                host.previewedDockEdgeDistanceScale == scale &&
+                store->lastSavedDock.edgeDistanceScale == scale,
+            "island distance previews and persists the entire 10%-500% range");
+        settings.edgeAttached = true;
+        controller.UpdateDock(settings, SettingsUpdateMode::Commit);
+        Check(controller.FlushPending().Succeeded() &&
+                store->lastSavedDock.edgeDistanceScale == scale,
+            "switching to an edge-attached Dock retains the island distance");
+    }
+    auto invalid = controller.Snapshot()->values.dock;
+    invalid.edgeDistanceScale = 0.0f;
+    controller.UpdateDock(invalid, SettingsUpdateMode::Commit);
+    Check(controller.FlushPending().Succeeded() &&
+            store->lastSavedDock.edgeDistanceScale == 0.1f,
+        "external distances below the minimum are normalized before persistence");
+    invalid.edgeDistanceScale = 9.0f;
+    controller.UpdateDock(invalid, SettingsUpdateMode::Commit);
+    Check(controller.FlushPending().Succeeded() &&
+            store->lastSavedDock.edgeDistanceScale == 5.0f,
+        "external distances above the maximum are normalized before persistence");
+    Check(ScaleDockEdgeDistance(20, 0.1f) == 2 &&
+            ScaleDockEdgeDistance(20, 1.0f) == 20 &&
+            ScaleDockEdgeDistance(20, 5.0f) == 100 &&
+            ScaleDockEdgeDistance(0, 5.0f) == 0,
+        "edge gaps scale relative to the original margin without inventing a zero-margin gap");
+}
+
 void TestReloadAndExternalSynchronization()
 {
     auto store = std::make_shared<FakeStore>();
@@ -1621,6 +1663,7 @@ int main()
     TestFailureRetryAndExplicitApply();
     TestCategoryCreationAcknowledgesPersistedSnapshot();
     TestReloadAndExternalSynchronization();
+    TestDockEdgeDistancePreviewAndCommit();
     TestSummonOnlyLinkedPreferencesRemainBaseValues();
     TestSystemTaskbarFieldSynchronization();
     TestLoadFailureAndOpenRetry();

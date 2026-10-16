@@ -108,7 +108,9 @@ int DesktopApp::GetDockPageItemIconSize(const GridPage& page) const
 
 int DesktopApp::GetDockPageEdgeMargin(const GridPage& page, bool vertical) const
 {
-    return GetComponentEdgeMargin(ResolveDockSizingPage(page), vertical);
+    return ScaleDockEdgeDistance(
+        GetComponentEdgeMargin(ResolveDockSizingPage(page), vertical),
+        dockSettings_.edgeDistanceScale);
 }
 
 void DesktopApp::ApplyDockWorkAreaReservation()
