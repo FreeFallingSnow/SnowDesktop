@@ -5,6 +5,7 @@
 #include <thread>
 #include <stdexcept>
 #include "shell_extension_diagnostics.h"
+#include "diagnostics/performance_trace.h"
 #include "ui/menu/menu_label.h"
 #include <algorithm>
 #include <cwctype>
@@ -703,6 +704,7 @@ std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
         std::atomic_size_t next = 0;
         const bool completed = detail::RunCatalogueWorkers(
             std::clamp(std::thread::hardware_concurrency() / 2u, 2u, 8u), foreground, [&] {
+                snowdesktop::performance::Scope scope("shell.catalogue", "associations.worker");
                 while (true)
                 {
                     const auto index = next.fetch_add(1, std::memory_order_relaxed);
@@ -727,6 +729,7 @@ std::map<std::wstring, std::vector<std::wstring>> ReadTypeAssociations(
 void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
                    CatalogueForegroundDemand *foreground)
 {
+    snowdesktop::performance::Scope scope("shell.catalogue", "file.roots");
     const auto files = ContextBit(Context::File);
     auto serial = [&] { for (const auto &root : roots) scanner.Root(root.path, files, root.types); };
     // Small/private inventories avoid thread setup. One to eight workers bound
@@ -736,6 +739,7 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
     std::atomic_size_t next = 0;
     const unsigned workerCount = std::clamp(std::thread::hardware_concurrency() / 2u, 2u, 8u);
     const bool completed = detail::RunCatalogueWorkers(workerCount, foreground, [&] {
+        snowdesktop::performance::Scope workerScope("shell.catalogue", "file.worker");
         const auto initialized = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
         if (FAILED(initialized)) throw std::runtime_error("metadata COM initialization");
         struct Cleanup { ~Cleanup() { CoUninitialize(); } } cleanup;
@@ -759,6 +763,7 @@ void ReadFileRoots(Scanner &scanner, const std::vector<FileRoot> &roots,
 }
 static Catalogue ReadCatalogueImpl(HKEY classes, bool packages, CatalogueForegroundDemand *foreground)
 {
+    snowdesktop::performance::Scope scope("shell.catalogue", "scan");
     MenuTiming timing("catalogue");
     if (foreground) foreground->WaitUntilAllowed();
     Scanner scanner{classes}; scanner.control = foreground;

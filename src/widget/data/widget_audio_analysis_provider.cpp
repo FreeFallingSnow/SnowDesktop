@@ -1,4 +1,5 @@
 #include "widget_audio_analysis_provider.h"
+#include "diagnostics/performance_trace.h"
 
 #include <windows.h>
 #include <audioclient.h>
@@ -340,7 +341,7 @@ WidgetAudioAnalysisDataSnapshot Analyze(
             total / static_cast<double>(end - begin), -1.0, 1.0);
     }
 
-    if (configuration.spectrum)
+    if (configuration.spectrum && snapshot.peak != 0.0)
         snapshot.spectrum = ComputeWidgetAudioSpectrum(samples,
             sampleRate, configuration.spectrumBins);
     return snapshot;
@@ -448,6 +449,38 @@ std::vector<double> ComputeWidgetAudioSpectrum(
     return result;
 }
 
+bool IsRepeatedSilentWidgetAudioSnapshot(
+    const WidgetAudioAnalysisDataSnapshot& previous,
+    const WidgetAudioAnalysisDataSnapshot& next) noexcept
+{
+    return previous.available && next.available && !previous.warmingUp && !next.warmingUp &&
+        previous.silent && next.silent && !previous.deviceChanged && !next.deviceChanged &&
+        previous.error.empty() && next.error.empty() && previous.endpointId == next.endpointId &&
+        previous.sampleRate == next.sampleRate && previous.channels == next.channels &&
+        previous.hasWaveform == next.hasWaveform && previous.hasSpectrum == next.hasSpectrum &&
+        previous.hasRms == next.hasRms && previous.hasPeak == next.hasPeak &&
+        previous.rms == next.rms && previous.peak == next.peak &&
+        previous.waveform == next.waveform && previous.spectrum == next.spectrum;
+}
+
+bool WidgetAudioAnalysisPublication::Publish(WidgetAudioAnalysisDataSnapshot snapshot)
+{
+    snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), snapshot_, semanticDebouncer_);
+    const bool repeatedSilence = snapshot_ && IsRepeatedSilentWidgetAudioSnapshot(*snapshot_, snapshot);
+    snapshot.revision = snapshot_ ? snapshot_->revision + 1 : 1;
+    snapshot_ = std::move(snapshot);
+    const bool wake = !repeatedSilence && !changed_;
+    changed_ |= !repeatedSilence;
+    return wake;
+}
+
+void WidgetAudioAnalysisPublication::Reset() noexcept
+{
+    snapshot_.reset();
+    semanticDebouncer_.Reset();
+    changed_ = false;
+}
+
 WidgetAudioAnalysisDataSnapshot ProjectWidgetAudioAnalysisSnapshot(
     const WidgetAudioAnalysisDataSnapshot& snapshot,
     const WidgetAudioAnalysisConfiguration& configuration)
@@ -520,22 +553,20 @@ void WidgetAudioAnalysisProvider::Stop()
     }
     resourcesActive_.store(false);
     std::scoped_lock lock(mutex_);
-    snapshot_.reset();
-    semanticDebouncer_.Reset();
-    changed_ = false;
+    publication_.Reset();
 }
 
 std::optional<WidgetAudioAnalysisDataSnapshot>
 WidgetAudioAnalysisProvider::Snapshot() const
 {
     std::scoped_lock lock(mutex_);
-    return snapshot_;
+    return publication_.Latest();
 }
 
 bool WidgetAudioAnalysisProvider::DrainChanged()
 {
     std::scoped_lock lock(mutex_);
-    return std::exchange(changed_, false);
+    return publication_.DrainChanged();
 }
 
 bool WidgetAudioAnalysisProvider::Running() const noexcept
@@ -561,13 +592,8 @@ void WidgetAudioAnalysisProvider::Publish(
     ChangedCallback changedCallback;
     {
         std::scoped_lock lock(mutex_);
-        snapshot = StabilizeWidgetDataEnvelope(std::move(snapshot), snapshot_,
-            semanticDebouncer_);
-        snapshot.revision = snapshot_ ? snapshot_->revision + 1 : 1;
-        snapshot_ = std::move(snapshot);
-        if (!changed_)
+        if (publication_.Publish(std::move(snapshot)))
             changedCallback = changedCallback_;
-        changed_ = true;
     }
     if (changedCallback)
         changedCallback();
@@ -694,9 +720,20 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
 
         std::vector<double> samples;
         auto lastPublish = Clock::now();
+        auto lastPacket = lastPublish;
+        std::optional<WidgetAudioAnalysisDataSnapshot> analyzed;
+        WidgetAudioAnalysisConfiguration analyzedConfiguration;
+        bool samplesChanged = true;
         bool reconnect = false;
         while (!stopToken.stop_requested() && !reconnect)
         {
+            DWORD timeout = 100;
+            if (samplesChanged || (analyzed && !analyzed->silent))
+            {
+                const auto untilPublish = std::chrono::milliseconds(intervalMs_.load()) -
+                    std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - lastPublish);
+                timeout = static_cast<DWORD>(std::clamp<std::int64_t>(untilPublish.count(), 1, 100));
+            }
             const HANDLE events[] = {
                 eventHandle,
                 static_cast<HANDLE>(stopEvent_),
@@ -704,7 +741,7 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
             };
             const DWORD waitResult = WaitForMultipleObjects(
                 static_cast<DWORD>(std::size(events)),
-                events, FALSE, 100);
+                events, FALSE, timeout);
             if (waitResult == WAIT_OBJECT_0 + 1)
                 break;
             if (waitResult == WAIT_OBJECT_0 + 2)
@@ -729,6 +766,8 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
                     &data, &frames, &flags, nullptr, nullptr);
                 if (FAILED(packetStatus)) break;
                 AppendMonoSamples(samples, data, frames, flags, format, kind);
+                samplesChanged = true;
+                lastPacket = Clock::now();
                 captureClient->ReleaseBuffer(frames);
                 packetStatus = captureClient->GetNextPacketSize(
                     &packetFrames);
@@ -739,14 +778,32 @@ void WidgetAudioAnalysisProvider::WorkerMain(std::stop_token stopToken)
                 break;
             }
             const auto now = Clock::now();
+            // Loopback can stop issuing packets at silence. Do not re-analyze
+            // the last audible window forever after playback stops.
+            if (!samples.empty() && now - lastPacket >= std::chrono::milliseconds(100))
+            {
+                samples.clear();
+                samplesChanged = true;
+            }
             const auto interval = std::chrono::milliseconds(
                 std::clamp<std::int64_t>(intervalMs_.load(),
                     MinimumInterval.count(), MaximumInterval.count()));
             if (now - lastPublish >= interval)
             {
-                Publish(Analyze(samples, endpointId,
-                    format->nSamplesPerSec, format->nChannels,
-                    deviceChangedPending, Configuration()));
+                const auto configuration = Configuration();
+                if (samplesChanged || !analyzed || configuration != analyzedConfiguration)
+                {
+                    snowdesktop::performance::Scope scope("shared.audio", "analyze");
+                    analyzed = Analyze(samples, endpointId,
+                        format->nSamplesPerSec, format->nChannels,
+                        deviceChangedPending, configuration);
+                    analyzedConfiguration = configuration;
+                    samplesChanged = false;
+                }
+                auto snapshot = *analyzed;
+                snapshot.timestampMs = TimestampMilliseconds();
+                snapshot.deviceChanged = deviceChangedPending;
+                Publish(std::move(snapshot));
                 deviceChangedPending = false;
                 lastPublish = now;
             }

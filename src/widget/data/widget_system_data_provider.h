@@ -411,6 +411,7 @@ private:
     WidgetProcessSummaryDataSnapshot SampleProcessSummary();
     WidgetPowerDataSnapshot SamplePower();
     WidgetNetworkStatusDataSnapshot SampleNetworkStatus();
+    WidgetNetworkStatusDataSnapshot QueryNetworkStatus();
     WidgetNetworkTrafficDataSnapshot SampleNetworkTraffic();
     WidgetGpuDataSnapshot SampleGpu();
     WidgetStorageVolumesDataSnapshot SampleStorageVolumes();
@@ -454,6 +455,9 @@ private:
     std::optional<WidgetPowerDataSnapshot> power_;
     std::optional<WidgetNetworkStatusDataSnapshot> networkStatus_;
     WidgetNetworkStatusDebouncer networkStatusDebouncer_;
+    struct NetworkStatusCache;
+    std::shared_ptr<NetworkStatusCache> networkStatusCache_;
+    std::atomic<bool> closeNetworkStatusRequested_{ false };
     std::optional<WidgetNetworkTrafficDataSnapshot> networkTraffic_;
     std::optional<WidgetGpuDataSnapshot> gpu_;
     std::optional<WidgetGpuDataSnapshot> gpuDetails_;

@@ -1,6 +1,7 @@
 #include "widget_system_data_provider.h"
 #include "system/controls/system_control_windows.h"
 #include "widget_gpu_usage.h"
+#include "widget_network_status_refresh.h"
 #include "system/controls/system_power_status.h"
 #include "widget/storage/widget_storage_usage.h"
 #include "diagnostics/performance_trace.h"
@@ -698,6 +699,37 @@ void WidgetNetworkStatusDebouncer::Reset() noexcept
     pendingConfirmations_ = 0;
 }
 
+struct WidgetSystemDataProvider::NetworkStatusCache
+{
+    std::shared_ptr<std::atomic<std::uint64_t>> generation =
+        std::make_shared<std::atomic<std::uint64_t>>(0);
+    winrt::event_token token{};
+    bool notificationsAvailable = false;
+    WidgetNetworkStatusRefresh refresh;
+    std::optional<WidgetNetworkStatusDataSnapshot> snapshot;
+
+    NetworkStatusCache()
+    {
+        try
+        {
+            std::weak_ptr<std::atomic<std::uint64_t>> weak = generation;
+            token = winrt::Windows::Networking::Connectivity::NetworkInformation::NetworkStatusChanged(
+                [weak](const winrt::Windows::Foundation::IInspectable&) {
+                    if (const auto state = weak.lock())
+                        state->fetch_add(1, std::memory_order_release);
+                });
+            notificationsAvailable = true;
+        }
+        catch (...) { /* Keep the original requested-period query fallback. */ }
+    }
+    ~NetworkStatusCache()
+    {
+        if (notificationsAvailable)
+            try { winrt::Windows::Networking::Connectivity::NetworkInformation::NetworkStatusChanged(token); }
+            catch (...) { /* A late callback owns only the weak generation. */ }
+    }
+};
+
 WidgetSystemDataProvider::~WidgetSystemDataProvider()
 {
     StopAll();
@@ -831,7 +863,10 @@ bool WidgetSystemDataProvider::StopTopic(
         if (topic == NetworkTrafficTopic)
             resetNetworkBaseline_.store(true);
         if (topic == NetworkStatusTopic)
+        {
             networkStatusDebouncer_.Reset();
+            closeNetworkStatusRequested_.store(true);
+        }
         if (topic == GpuTopic)
         {
             gpuDetails_.reset();
@@ -1097,6 +1132,8 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
             CloseGpuResources();
         if (closeStorageIoRequested_.exchange(false))
             CloseStorageIoQuery();
+        if (closeNetworkStatusRequested_.exchange(false))
+            networkStatusCache_.reset();
         std::vector<std::string> dueTopics;
         {
             std::unique_lock lock(mutex_);
@@ -1187,6 +1224,7 @@ void WidgetSystemDataProvider::WorkerMain(std::stop_token stopToken)
     }
     CloseGpuResources();
     CloseStorageIoQuery();
+    networkStatusCache_.reset();
     if (apartmentInitialized)
         winrt::uninit_apartment();
 }
@@ -1428,6 +1466,29 @@ WidgetNetworkStatusDataSnapshot
 WidgetSystemDataProvider::SampleNetworkStatus()
 {
     performance::Scope performanceScope("shared.system", "SampleNetworkStatus");
+    if (!networkStatusCache_)
+        networkStatusCache_ = std::make_shared<NetworkStatusCache>();
+    auto& cache = *networkStatusCache_;
+    const auto generation = cache.generation->load(std::memory_order_acquire);
+    if (!cache.snapshot || cache.refresh.Due(Clock::now(), generation, cache.notificationsAvailable))
+    {
+        cache.snapshot = QueryNetworkStatus();
+        cache.refresh.Complete(Clock::now(), generation,
+            cache.snapshot->available && cache.snapshot->error.empty());
+        performance::Value("shared.system", "network.status.query", {}, 1);
+    }
+    else
+        performance::Value("shared.system", "network.status.cached", {}, 1);
+    // Sampling/delivery cadence, timestamps and the two-sample state debounce
+    // remain unchanged. Only the expensive OS query uses the event cache.
+    auto snapshot = *cache.snapshot;
+    snapshot.timestampMs = TimestampMilliseconds();
+    return snapshot;
+}
+
+WidgetNetworkStatusDataSnapshot WidgetSystemDataProvider::QueryNetworkStatus()
+{
+    performance::Scope performanceScope("shared.system", "network.status.query");
     using namespace winrt::Windows::Networking::Connectivity;
     WidgetNetworkStatusDataSnapshot snapshot;
     snapshot.timestampMs = TimestampMilliseconds();

@@ -211,6 +211,46 @@ void TestInitializationFailures()
 
 int main(int argc, char** argv)
 {
+    {
+        using snowdesktop::widget_runtime::IsRepeatedSilentWidgetAudioSnapshot;
+        WidgetAudioAnalysisDataSnapshot quiet;
+        quiet.available = true; quiet.warmingUp = false;
+        quiet.endpointId = "device-a"; quiet.sampleRate = 48000; quiet.channels = 2;
+        quiet.waveform.assign(16, 0.0); quiet.spectrum.assign(16, 0.0);
+        auto next = quiet;
+        next.timestampMs = 2000; next.revision = 42;
+        snowdesktop::widget_runtime::WidgetAudioAnalysisPublication publication;
+        Check(publication.Publish(quiet), "first silent state wakes the actual publication path");
+        Check(!publication.Publish(next) && publication.DrainChanged(),
+            "duplicate silence retains an already queued delivery without posting another wake");
+        Check(!publication.Publish(next) && !publication.DrainChanged() &&
+            publication.Latest()->timestampMs == 2000 && publication.Latest()->revision == 3,
+            "quiet publication keeps fresh readable snapshots without idle redraws");
+        auto audible = quiet; audible.silent = false;
+        Check(publication.Publish(audible) && publication.DrainChanged(), "resume wakes a quiet subscriber");
+        Check(publication.Publish(audible) && publication.DrainChanged(), "audible duplicate samples keep animation delivery");
+        Check(publication.Publish(quiet) && publication.DrainChanged(), "first quiet frame clears the last audible frame");
+        publication.Reset();
+        Check(!publication.Latest() && !publication.DrainChanged(), "stop releases publication and pending state");
+        Check(IsRepeatedSilentWidgetAudioSnapshot(quiet, next),
+            "fresh timestamps and revisions alone do not redraw identical silence");
+        next.silent = false;
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "playback resumption must redraw immediately");
+        next = quiet; next.deviceChanged = true;
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "device changes must be delivered even in silence");
+        next = quiet; next.endpointId = "device-b";
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "new endpoints must not reuse a silent presentation");
+        next = quiet; next.warmingUp = true;
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "reconnection warming state remains observable");
+        next = quiet; next.error = "unavailable";
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "errors cannot be hidden by silent deduplication");
+        next = quiet; next.hasWaveform = false; next.waveform.clear();
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "subscription feature changes must be delivered");
+        next = quiet; next.spectrum[0] = 0.0001;
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "sub-threshold audio values still remain observable");
+        next = quiet; quiet.silent = false; next.silent = false;
+        Check(!IsRepeatedSilentWidgetAudioSnapshot(quiet, next), "audible repeated windows retain animation deliveries");
+    }
     SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX);
     TestInitializationFailures();
     TestLogarithmicSpectrumDistribution();

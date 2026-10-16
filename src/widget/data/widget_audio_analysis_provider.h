@@ -12,6 +12,7 @@
 #include <stop_token>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 struct IMMDeviceEnumerator;
@@ -48,6 +49,27 @@ struct WidgetAudioAnalysisConfiguration
     bool peak = true;
     std::size_t waveformPoints = 128;
     std::size_t spectrumBins = 64;
+    bool operator==(const WidgetAudioAnalysisConfiguration&) const = default;
+};
+
+bool IsRepeatedSilentWidgetAudioSnapshot(
+    const WidgetAudioAnalysisDataSnapshot& previous,
+    const WidgetAudioAnalysisDataSnapshot& next) noexcept;
+
+// The capture worker and deterministic regression fixture use the same
+// publication state. The provider serializes it with its snapshot mutex.
+class WidgetAudioAnalysisPublication
+{
+public:
+    bool Publish(WidgetAudioAnalysisDataSnapshot snapshot);
+    bool DrainChanged() noexcept { return std::exchange(changed_, false); }
+    const std::optional<WidgetAudioAnalysisDataSnapshot>& Latest() const noexcept { return snapshot_; }
+    void Reset() noexcept;
+
+private:
+    std::optional<WidgetAudioAnalysisDataSnapshot> snapshot_;
+    WidgetDataSemanticDebouncer semanticDebouncer_;
+    bool changed_ = false;
 };
 
 WidgetAudioAnalysisDataSnapshot ProjectWidgetAudioAnalysisSnapshot(
@@ -98,11 +120,9 @@ private:
     WidgetAudioAnalysisConfiguration Configuration() const;
 
     mutable std::mutex mutex_;
-    std::optional<WidgetAudioAnalysisDataSnapshot> snapshot_;
-    WidgetDataSemanticDebouncer semanticDebouncer_;
+    WidgetAudioAnalysisPublication publication_;
     WidgetAudioAnalysisConfiguration configuration_;
     ChangedCallback changedCallback_;
-    bool changed_ = false;
     std::jthread worker_;
     std::atomic<std::int64_t> intervalMs_{ 33 };
     std::atomic<bool> resourcesActive_{ false };

@@ -285,6 +285,7 @@ set(SNOWDESKTOP_SOURCES
     src/shell/shell_extension_menu_query.h
     src/shell/shell_extension_menu_cache.cpp
     src/shell/shell_extension_catalogue.cpp
+    src/shell/shell_menu_registry_watch.h
     src/shell/shell_extension_service.cpp
     src/shell/shell_file_operation_worker.cpp
     src/app/render/app_navigation_render.cpp
@@ -543,6 +544,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/tasks/widget_app_task_executor.cpp
     src/widget/settings/widget_system_settings.cpp
     src/widget/data/widget_system_data_provider.cpp
+    src/widget/data/widget_network_status_refresh.h
     src/widget/data/widget_gpu_sampler.cpp
     src/widget/data/widget_audio_analysis_provider.cpp
     src/widget/view/widget_draw_geometry.cpp

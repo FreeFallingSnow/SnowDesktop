@@ -2,6 +2,7 @@
 #include "shell_extension_menu_query.h"
 #include "shell_extension_source.h"
 #include "shell_extension_diagnostics.h"
+#include "shell_menu_registry_watch.h"
 #include "shell_extension_menu_items.h"
 #include "shell_extension_menu_cache.h"
 #include "shell_extension_nvidia_compat.h"
@@ -33,50 +34,7 @@ constexpr std::uint64_t kMenuSignatureSeed = 14695981039346656037ull;
 std::atomic<unsigned> sessions{0};
 std::atomic<unsigned> startPinSessions{0};
 constexpr ULONGLONG kWorkerLifetimeMs = 300000;
-// Event probes are constant-time. No registry tree scan occurs on each click.
-// Watch the nearest existing ancestor too, so creating a Blocked key invalidates
-// a worker even when that key did not exist when it was first acquired.
-struct RegistryWatch
-{
-    HKEY root = nullptr, key = nullptr;
-    // Waiting must not consume the notification before Changed() rearms it.
-    HANDLE event = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-    std::wstring path;
-    unsigned traceId = 0;
-    bool armed = false;
-    RegistryWatch(HKEY hive, const wchar_t *subkey, unsigned id) : root(hive), path(subkey), traceId(id) { Arm(); }
-    ~RegistryWatch()
-    {
-        if (key) RegCloseKey(key);
-        if (event) CloseHandle(event);
-    }
-    void Arm()
-    {
-        armed = false;
-        if (key) { RegCloseKey(key); key = nullptr; }
-        if (!event) return;
-        auto existing = path;
-        while (RegOpenKeyExW(root, existing.c_str(), 0, KEY_NOTIFY, &key) != ERROR_SUCCESS)
-        {
-            const auto slash = existing.rfind(L'\\');
-            if (slash == std::wstring::npos) return;
-            existing.resize(slash);
-        }
-        ResetEvent(event);
-        armed = RegNotifyChangeKeyValue(key, TRUE, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET |
-            REG_NOTIFY_THREAD_AGNOSTIC, event, TRUE) == ERROR_SUCCESS;
-        MenuTrace("registry.watch", !armed ? "failed" : existing == path ? "target" : "ancestor", 0, traceId);
-    }
-    bool Changed()
-    {
-        if (!armed) { Arm(); return false; }
-        const auto wait = WaitForSingleObject(event, 0);
-        if (wait == WAIT_TIMEOUT) return false;
-        MenuTrace("registry.change", wait == WAIT_OBJECT_0 ? "signal" : "wait_failure", 0, traceId);
-        Arm();
-        return true; // Failure is conservative: do not reuse stale state.
-    }
-};
+using RegistryWatch = detail::MenuRegistryWatch;
 struct CacheState
 {
     std::uint64_t generation = 1;

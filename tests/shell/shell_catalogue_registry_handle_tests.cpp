@@ -15,6 +15,7 @@
 #include <vector>
 #include "shell/shell_extension_catalogue.h"
 #include "shell/shell_catalogue_workers.h"
+#include "shell/shell_menu_registry_watch.h"
 #include "platform/foreground_fullscreen.h"
 
 namespace
@@ -330,6 +331,34 @@ void CheckPausedRegistryCatalogue(const ext::Catalogue& expected)
 
 void TestCatalogueRegistryHandles()
 {
+    // The production watch previously invalidated the complete catalogue for
+    // any value under the parent of a missing optional registration.
+    {
+        PrivateRegistry fixture;
+        {
+            OwnedKey parent(fixture.value, L"AppPaths");
+            ext::detail::MenuRegistryWatch watch(fixture.value, L"AppPaths\\Optional\\Provider", 0);
+            Check(watch.armed, "watch the nearest existing optional-registration ancestor");
+            Put(fixture.value, L"AppPaths\\Unrelated", nullptr, L"other.exe");
+            Check(!watch.Changed(), "an unrelated child must not invalidate the menu inventory");
+            Put(fixture.value, L"AppPaths", L"cache", L"one");
+            Check(!watch.Changed(), "an ancestor cache value must not invalidate an absent target");
+            {
+                OwnedKey intermediate(fixture.value, L"AppPaths\\Optional");
+                Check(!watch.Changed() && watch.armed, "follow intermediate creation without declaring a target change");
+            }
+            Put(fixture.value, L"AppPaths\\Optional\\Provider", nullptr, L"provider.exe");
+            Check(watch.Changed(), "new target registration invalidates the inventory");
+            Put(fixture.value, L"AppPaths\\Optional\\Provider", nullptr, L"replacement.exe");
+            Check(watch.Changed(), "an existing target value change remains observable");
+            Check(RegDeleteTreeW(fixture.value, L"AppPaths\\Optional") == ERROR_SUCCESS,
+                "remove only the optional subtree in the private fixture");
+            Check(watch.Changed() && watch.armed, "target deletion invalidates and rearms on its ancestor");
+            Put(fixture.value, L"AppPaths\\Unrelated", nullptr, L"again.exe");
+            Check(!watch.Changed(), "deletion does not restore broad unrelated ancestor invalidations");
+        }
+        fixture.Cleanup();
+    }
     CheckCatalogueWorkerBudget(false, false, 1);
     CheckCatalogueWorkerBudget(false, true, 8);
     CheckCatalogueWorkerBudget(true, false, 8);

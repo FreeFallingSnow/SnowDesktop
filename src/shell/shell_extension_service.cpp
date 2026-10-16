@@ -6,6 +6,7 @@
 #include "shell_extension_nvidia_compat.h"
 #include "shell_context_menu_invoke.h"
 #include "shell_catalogue_workers.h"
+#include "diagnostics/performance_trace.h"
 #include "platform/foreground_fullscreen.h"
 #include <condition_variable>
 #include <fstream>
@@ -1023,6 +1024,10 @@ struct MenuService::Impl
             if (!stop && !scan.valid() && scanRequested)
             {
                 scanRegistryRevision = registryRevision;
+                snowdesktop::performance::Value("shell.catalogue", "request.registry_revision", {},
+                    static_cast<double>(scanRegistryRevision));
+                snowdesktop::performance::Value("shell.catalogue", "request.foreground", {},
+                    foregroundScanRequested ? 1 : 0);
                 scanStarted = GetTickCount64();
                 failedRegistryRevision = 0;
                 foregroundScanDemand.Reset(foregroundScanRequested);

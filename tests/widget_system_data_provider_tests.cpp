@@ -1,4 +1,5 @@
 #include "widget/data/widget_system_data_provider.h"
+#include "widget/data/widget_network_status_refresh.h"
 #include "widget/data/widget_gpu_usage.h"
 #include "widget/data/widget_gpu_presentation.h"
 #include "widget/data/widget_gpu_counter_buffer.h"
@@ -1011,6 +1012,24 @@ void TestSystemControls();
 
 int main()
 {
+    {
+        using snowdesktop::widget_runtime::WidgetNetworkStatusRefresh;
+        WidgetNetworkStatusRefresh refresh;
+        const auto start = WidgetNetworkStatusRefresh::Clock::time_point{};
+        Check(refresh.Due(start, 0, true), "network event cache starts with a real OS query");
+        refresh.Complete(start, 0, true);
+        Check(!refresh.Due(start + 2s, 0, true) && !refresh.Due(start + 29s, 0, true),
+            "unchanged network status avoids heavyweight queries at each delivery");
+        Check(refresh.Due(start + 2s, 1, true), "an OS network event invalidates the cache at the next sample");
+        Check(refresh.Due(start + 30s, 0, true), "periodic audit repairs a missed network event");
+        Check(refresh.Due(start + 2s, 0, false), "event-registration failure preserves requested-period polling");
+        refresh.Complete(start + 2s, 0, true);
+        Check(refresh.Due(start + 3s, 1, true), "an event during an OS query is not acknowledged by its older generation");
+        refresh.Complete(start + 3s, 1, false);
+        Check(refresh.Due(start + 4s, 1, true), "failed samples are retried rather than cached as stable state");
+        refresh.Complete(start + 5s, 1, true);
+        Check(refresh.Due(start, 1, true), "clock reset cannot indefinitely retain network state");
+    }
     TestSystemControls();
     TestNetworkInterfaceTrafficDeltas();
     TestPhysicalDiskBusyTime();
