@@ -27,7 +27,6 @@ inline constexpr DWORD kWindowExStyle =
 inline constexpr int kEdgeSwipeBandDip = 4;
 inline constexpr int kEdgeSwipeTravelDip = 72;
 inline constexpr DWORD kEdgeSwipeMaximumDurationMs = 480;
-inline constexpr DWORD kEdgeHoverDelayMs = 250;
 inline constexpr int kPassiveDragRevealEdgeBandDip = 6;
 inline constexpr ULONGLONG kPassiveDragLeaveDelayMs = 360;
 inline constexpr ULONGLONG kDesktopLayerRestoreRetryMs = 250;
@@ -606,7 +605,8 @@ public:
         int edgeBand, int requiredTravel,
         DWORD maximumDurationMs =
             kEdgeSwipeMaximumDurationMs,
-        bool hover = false)
+        bool hover = false,
+        DWORD hoverDelayMs = dock_settings_rules::kDefaultEdgeHoverDelayMs)
     {
         if (!IsPointOnDockScreenEdge(
                 point, monitorRect, position, edgeBand))
@@ -640,7 +640,7 @@ public:
                 position == DockPosition::Bottom
             ? point.x - startPoint_.x
             : point.y - startPoint_.y;
-        if (hover ? elapsed < kEdgeHoverDelayMs : std::abs(alongEdge) < requiredTravel)
+        if (hover ? elapsed < hoverDelayMs : std::abs(alongEdge) < requiredTravel)
             return false;
 
         tracking_ = false;

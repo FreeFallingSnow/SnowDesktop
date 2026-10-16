@@ -345,6 +345,7 @@ void TestCodec()
     settings.values.dock.fullscreenExceptions = {{L"C:\\Apps\\播放器\\Player.exe", DockFullscreenPolicy::Allow},
         {L"D:\\Browser\\browser.exe", DockFullscreenPolicy::BlockGestures}};
     settings.values.dock.edgeRevealGesture = 1;
+    settings.values.dock.edgeHoverDelayMs = 850;
     settings.values.dock.trayApplications = {{L"QQ.exe", false, true, false},
         {L"D:\\应用\\Weixin.exe", true, false, true}};
     settings.values.dock.showWindowPreviews = false;
@@ -437,8 +438,9 @@ void TestCodec()
             received.values.desktop.iconBeautify.glassBlurRadius == 28.f,
             "new glass preset IDs and editable values survive settings IPC unchanged");
     }
-    Check(restored.values.dock.edgeRevealGesture == 1 && !restored.values.dock.showWindowPreviews,
-        "hover reveal and disabled task thumbnails survive settings IPC");
+    Check(restored.values.dock.edgeRevealGesture == 1 && restored.values.dock.edgeHoverDelayMs == 850 &&
+            !restored.values.dock.showWindowPreviews,
+        "hover reveal, custom dwell delay and disabled task thumbnails survive settings IPC");
     Check(restored.values.dock.trayApplications == settings.values.dock.trayApplications,
         "tray matching mode, Unicode path, opt-out and click gesture survive IPC");
     auto noTray = settings.values.dock;

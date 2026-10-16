@@ -1,9 +1,23 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <optional>
 
 namespace snowdesktop::dock_settings_rules
 {
+
+inline constexpr int kDefaultEdgeHoverDelayMs = 250;
+inline constexpr int kMinimumEdgeHoverDelayMs = 100;
+inline constexpr int kMaximumEdgeHoverDelayMs = 3000;
+
+inline int NormalizeEdgeHoverDelayMs(double delay) noexcept
+{
+    if (!std::isfinite(delay)) return kDefaultEdgeHoverDelayMs;
+    return static_cast<int>(std::round(std::clamp(delay,
+        static_cast<double>(kMinimumEdgeHoverDelayMs),
+        static_cast<double>(kMaximumEdgeHoverDelayMs))));
+}
 
 inline std::optional<bool> ResolveClassicTaskbarSystemLightTheme(
     int preference, bool appearanceEnabled, int contentTheme) noexcept

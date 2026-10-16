@@ -2766,5 +2766,6 @@
   "iconStyle.duotone": "Duotone",
   "iconStyle.strategy": "Icon processing",
   "iconStyle.smart": "Smart beautification",
-  "iconStyle.shrinkAll": "Shrink all with theme background"
+  "iconStyle.shrinkAll": "Shrink all with theme background",
+  "settings.dock.edgeHoverDelay": "Hover delay"
 }

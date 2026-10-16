@@ -2766,5 +2766,6 @@
   "iconStyle.duotone": "Bichromie",
   "iconStyle.strategy": "Traitement des icônes",
   "iconStyle.smart": "Embellissement intelligent",
-  "iconStyle.shrinkAll": "Tout réduire et ajouter le fond du thème"
+  "iconStyle.shrinkAll": "Tout réduire et ajouter le fond du thème",
+  "settings.dock.edgeHoverDelay": "Délai de survol"
 }

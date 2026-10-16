@@ -2766,5 +2766,6 @@
   "iconStyle.duotone": "듀오톤",
   "iconStyle.strategy": "아이콘 처리 방식",
   "iconStyle.smart": "스마트 꾸미기",
-  "iconStyle.shrinkAll": "모두 축소하고 테마 배경 추가"
+  "iconStyle.shrinkAll": "모두 축소하고 테마 배경 추가",
+  "settings.dock.edgeHoverDelay": "마우스 오버 지연"
 }

@@ -1169,6 +1169,8 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.floatingEdgeSwipeEnabled);
     if (ReadDoubleField(text, "edgeRevealGesture", value))
         settings.edgeRevealGesture = value == 1 ? 1 : 0;
+    if (ReadDoubleField(text, "edgeHoverDelayMs", value))
+        settings.edgeHoverDelayMs = snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(value);
     if (ReadDoubleField(text, "monitorScope", value))
     {
         settings.monitorScope = static_cast<DockMonitorScope>(
@@ -1332,6 +1334,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
          << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
          << ",\n";
     file << "  \"edgeRevealGesture\": " << settings.edgeRevealGesture << ",\n";
+    file << "  \"edgeHoverDelayMs\": "
+         << snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(settings.edgeHoverDelayMs) << ",\n";
     file << "  \"fullscreenPolicy\": " << static_cast<int>(settings.fullscreenPolicy) << ",\n";
     file << "  \"fullscreenExceptions\": [";
     for (size_t i = 0; i < settings.fullscreenExceptions.size(); ++i)

@@ -2766,5 +2766,6 @@
   "iconStyle.duotone": "双色调",
   "iconStyle.strategy": "图标处理方式",
   "iconStyle.smart": "智能美化",
-  "iconStyle.shrinkAll": "全部缩小并添加主题背景"
+  "iconStyle.shrinkAll": "全部缩小并添加主题背景",
+  "settings.dock.edgeHoverDelay": "悬停延时"
 }

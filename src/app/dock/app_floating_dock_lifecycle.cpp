@@ -784,7 +784,8 @@ void DesktopApp::UpdateFloatingDockEdgeSwipe()
             GetTickCount(), edgeBand,
             requiredTravel,
             snowdesktop::floating_dock_rules::kEdgeSwipeMaximumDurationMs,
-            dockSettings_.edgeRevealGesture == 1);
+            dockSettings_.edgeRevealGesture == 1,
+            static_cast<DWORD>(dockSettings_.edgeHoverDelayMs));
     PersistentDockHost* targetHost =
         FindPersistentDockHost(dock);
     if (triggered &&

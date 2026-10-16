@@ -2766,5 +2766,6 @@
   "iconStyle.duotone": "Zweifarbige Tonung",
   "iconStyle.strategy": "Symbolverarbeitung",
   "iconStyle.smart": "Intelligente Verschönerung",
-  "iconStyle.shrinkAll": "Alle verkleinern und Designhintergrund hinzufügen"
+  "iconStyle.shrinkAll": "Alle verkleinern und Designhintergrund hinzufügen",
+  "settings.dock.edgeHoverDelay": "Verzögerung beim Verweilen"
 }

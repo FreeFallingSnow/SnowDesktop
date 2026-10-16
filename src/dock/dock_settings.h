@@ -82,6 +82,7 @@ struct DockSettings : DockLayoutSettings
     UINT floatingHotkeyVirtualKey = 'D';
     bool floatingEdgeSwipeEnabled = true;
     int edgeRevealGesture = 0; // 0=swipe, 1=hover; preserve existing swipe preferences.
+    int edgeHoverDelayMs = snowdesktop::dock_settings_rules::kDefaultEdgeHoverDelayMs;
     DockFullscreenPolicy fullscreenPolicy = DockFullscreenPolicy::FullProtection;
     std::vector<DockFullscreenException> fullscreenExceptions;
     std::vector<DockTrayRule> trayApplications = snowdesktop::dock_tray::Defaults();
@@ -170,6 +171,7 @@ inline void NormalizeDockSettings(DockSettings& settings)
     settings.launchEffect = snowdesktop::animation::NormalizeLaunchEffect(settings.launchEffect);
     settings.windowEffect = snowdesktop::animation::NormalizeWindowEffect(settings.windowEffect);
     settings.edgeRevealGesture = settings.edgeRevealGesture == 1 ? 1 : 0;
+    settings.edgeHoverDelayMs = snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(settings.edgeHoverDelayMs);
     settings.fullscreenPolicy = snowdesktop::dock_fullscreen::Normalize(static_cast<int>(settings.fullscreenPolicy));
     snowdesktop::dock_fullscreen::NormalizeExceptions(settings.fullscreenExceptions);
     snowdesktop::dock_tray::NormalizeRules(settings.trayApplications);

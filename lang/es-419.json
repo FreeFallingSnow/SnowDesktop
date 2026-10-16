@@ -2766,5 +2766,6 @@
   "iconStyle.duotone": "Duotono",
   "iconStyle.strategy": "Procesamiento de íconos",
   "iconStyle.smart": "Mejora inteligente",
-  "iconStyle.shrinkAll": "Reducir todos y agregar el fondo del tema"
+  "iconStyle.shrinkAll": "Reducir todos y agregar el fondo del tema",
+  "settings.dock.edgeHoverDelay": "Retraso al mantener el puntero"
 }

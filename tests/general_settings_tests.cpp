@@ -1166,6 +1166,21 @@ int main(int argc, char** argv)
             ResolveSurfaceTheme(following, transparentGlass, 0, false).backgroundPreset == kAppearancePresetAcrylicDark,
             "popup and quick navigation follow transparent global glass with dark acrylic");
         DockSettings dock;
+        Check(dock.edgeHoverDelayMs == 250,
+            "profiles without an edge hover delay keep the existing 250 ms dwell");
+        for (const auto& [requested, expected] : {
+                std::pair{-1, 100}, std::pair{100, 100}, std::pair{850, 850},
+                std::pair{3000, 3000}, std::pair{50000, 3000}})
+        {
+            dock.edgeHoverDelayMs = requested;
+            NormalizeDockSettings(dock);
+            Check(dock.edgeHoverDelayMs == expected,
+                "invalid edge hover settings are bounded before reaching the timer");
+        }
+        for (double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                std::numeric_limits<double>::infinity()})
+            Check(snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(invalid) == 250,
+                "non-finite edge hover input preserves the default instead of overflowing");
         Check(dock.followComponentCornerRadius, "existing Dock settings continue following component radius by default");
         dock.followComponentAppearance = false;
         for (int preset : {0, 1, 6, 7, 10, 11, kAppearancePresetGlassTransparent})

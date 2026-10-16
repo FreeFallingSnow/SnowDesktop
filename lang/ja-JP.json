@@ -2766,5 +2766,6 @@
   "iconStyle.duotone": "ダブルトーン",
   "iconStyle.strategy": "アイコンの処理方法",
   "iconStyle.smart": "スマート美化",
-  "iconStyle.shrinkAll": "すべて縮小してテーマの背景を追加"
+  "iconStyle.shrinkAll": "すべて縮小してテーマの背景を追加",
+  "settings.dock.edgeHoverDelay": "ホバー待機時間"
 }

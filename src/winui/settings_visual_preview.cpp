@@ -396,6 +396,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         snapshot.values.personalization.groupTabHoverSwitch = expanded;
         snapshot.values.personalization.categoryTabHoverSwitch = expanded;
         snapshot.values.personalization.popupHoverOpen = expanded;
+        snapshot.values.dock.edgeRevealGesture = expanded ? 1 : 0;
         if (expanded && !custom)
         {
             snapshot.values.general.statusBar.position = snapshot.values.dock.position;

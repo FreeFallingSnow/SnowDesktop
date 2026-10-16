@@ -72,6 +72,7 @@ enum class ContinuousField
     ThicknessScale,
     MergedIconScale,
     FrequentItemCount,
+    EdgeHoverDelayMs,
     TaskbarBackgroundAlpha,
     TaskbarBorderAlpha,
     TaskbarBlurRadius,
@@ -421,6 +422,7 @@ struct DockPagePresenter::Impl
     ContinuousControl thicknessScale;
     ContinuousControl mergedIconScale;
     ContinuousControl frequentItemCount;
+    ContinuousControl edgeHoverDelayMs;
 
     muxc::Button taskbarSettingsLink{nullptr};
     muxc::Button restartExplorerButton{nullptr};
@@ -470,10 +472,11 @@ struct DockPagePresenter::Impl
     DynamicRuleControl shellUiRule;
     std::array<DynamicRuleControl*, 3> dynamicRules = {
         &shellUiRule, &maximizedWindowRule, &visibleWindowRule};
-    std::array<ContinuousControl*, 6> continuousControls = {
+    std::array<ContinuousControl*, 7> continuousControls = {
         &thicknessScale,
         &mergedIconScale,
         &frequentItemCount,
+        &edgeHoverDelayMs,
         &taskbarBackgroundAlpha,
         &taskbarBorderAlpha,
         &taskbarBlurRadius,
@@ -732,6 +735,12 @@ struct DockPagePresenter::Impl
         edgeSwipeCard.content.Children().Append(shortcutsHost);
         edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
         edgeSwipeCard.content.Children().Append(edgeRevealGestureRow.root);
+        InitializeContinuousControl(edgeHoverDelayMs,
+            ContinuousField::EdgeHoverDelayMs,
+            snowdesktop::dock_settings_rules::kMinimumEdgeHoverDelayMs,
+            snowdesktop::dock_settings_rules::kMaximumEdgeHoverDelayMs,
+            50.0, nullptr, snowdesktop::dock_settings_rules::kDefaultEdgeHoverDelayMs);
+        edgeSwipeCard.content.Children().Append(edgeHoverDelayMs.root);
         reserveScreenSpaceRow.Initialize(reserveScreenSpaceToggle);
         reserveScreenSpaceRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         behaviorCard.content.Children().Append(allowDesktopContentOverlapRow.root);
@@ -993,6 +1002,9 @@ struct DockPagePresenter::Impl
             break;
         case ContinuousField::TaskbarBlurRadius:
             SetUnit(control, L"px");
+            break;
+        case ContinuousField::EdgeHoverDelayMs:
+            SetUnit(control, L"ms");
             break;
         case ContinuousField::FrequentItemCount:
             break;
@@ -1303,6 +1315,7 @@ struct DockPagePresenter::Impl
                     });
             });
         edgeRevealGestureToken = edgeRevealGesture.SelectionChanged([this](const auto&, const auto&) {
+            UpdateDependentStates();
             const int value = edgeRevealGesture.SelectedIndex();
             if (value >= 0) EmitDock(SettingsUpdateMode::PreviewAndCommit,
                 [value](DockSettings& settings) { settings.edgeRevealGesture = value; });
@@ -1693,6 +1706,8 @@ struct DockPagePresenter::Impl
             return ClampMergedDockIconScale(settings.mergedIconScale) * 100.0;
         case ContinuousField::FrequentItemCount:
             return std::clamp(settings.frequentItemCount, 1, 8);
+        case ContinuousField::EdgeHoverDelayMs:
+            return settings.edgeHoverDelayMs;
         case ContinuousField::TaskbarBackgroundAlpha:
             return std::clamp(
                 appearance->widgetAlpha,
@@ -1735,6 +1750,9 @@ struct DockPagePresenter::Impl
         case ContinuousField::FrequentItemCount:
             settings.frequentItemCount = std::clamp(
                 static_cast<int>(std::lround(uiValue)), 1, 8);
+            break;
+        case ContinuousField::EdgeHoverDelayMs:
+            settings.edgeHoverDelayMs = snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(uiValue);
             break;
         case ContinuousField::TaskbarBackgroundAlpha:
             if (!ruleMember)
@@ -2063,6 +2081,9 @@ struct DockPagePresenter::Impl
         allowDesktopContentOverlapRow.SetEnabled(dockEnabled && !spaceReservedByStatusBar && !showOnlyWhenSummonedToggle.IsOn());
         floatingEdgeSwipeRow.SetEnabled(dockEnabled && !showOnlyWhenSummonedToggle.IsOn());
         edgeRevealGestureRow.SetEnabled(dockEnabled && floatingEdgeSwipeToggle.IsOn());
+        edgeHoverDelayMs.root.Visibility(edgeRevealGesture.SelectedIndex() == 1
+            ? mux::Visibility::Visible : mux::Visibility::Collapsed);
+        edgeHoverDelayMs.row.SetEnabled(dockEnabled && floatingEdgeSwipeToggle.IsOn());
         windowPreviewsRow.SetEnabled(dockEnabled);
         singleClickLaunchItemsRow.SetEnabled(dockEnabled);
         frequentItemCount.root.Visibility(showFrequentItemsToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
@@ -2154,6 +2175,8 @@ struct DockPagePresenter::Impl
         }
         taskbarGradient.sections.UpdateRows();
         presenter_controls::UpdateSettingsSubrows(itemsCard.content, 0);
+        presenter_controls::UpdateSettingsSubrows(edgeSwipeCard.content, 0);
+        presenter_controls::StyleSettingsSubrow(edgeHoverDelayMs.root, false, 16.0);
     }
 
     void RefreshTaskbarRuntimeStatus()
@@ -2769,6 +2792,8 @@ struct DockPagePresenter::Impl
             L("settings.dock.edgeRevealGesture.description", L"Dragging an item to the edge reveals the bar immediately."));
         ReplaceComboItems(edgeRevealGesture, {
             {"settings.dock.gestureSwipe", L"Swipe"}, {"settings.dock.gestureHover", L"Hover"}});
+        SetContinuousText(edgeHoverDelayMs,
+            "settings.dock.edgeHoverDelay", L"Hover delay");
         windowPreviewsRow.SetText(L("settings.dock.windowPreviews", L"Task thumbnails"),
             L("settings.dock.windowPreviews.description", L"Show open windows when hovering over an app."));
         muxa::AutomationProperties::SetName(edgeRevealGesture, edgeRevealGestureRow.label.Text());
@@ -3099,12 +3124,19 @@ struct DockPagePresenter::Impl
             if (!dockEnabledToggle.IsOn()) return dockTarget(dockEnabledToggle);
             return nullptr; // General owns the mounted shortcut editor.
         }
-        if (id == "dock.edgeRevealGesture")
+        if (id == "dock.edgeRevealGesture" || id == "dock.edgeHoverDelayMs")
         {
             if (!floatingEdgeSwipeToggle.IsOn())
             {
                 auto target = prerequisiteTarget(floatingEdgeSwipeToggle, "enable", floatingEdgeSwipeRow.label.Text().c_str());
                 return showOnlyWhenSummonedToggle.IsOn() ? edgeRevealTarget() : dockTarget(target);
+            }
+            if (id == "dock.edgeHoverDelayMs")
+            {
+                if (edgeRevealGesture.SelectedIndex() != 1)
+                    return dockTarget(prerequisiteTarget(edgeRevealGesture,
+                        "choice", edgeRevealGestureRow.label.Text().c_str()));
+                return dockTarget(edgeHoverDelayMs.slider);
             }
             return dockTarget(edgeRevealGesture);
         }

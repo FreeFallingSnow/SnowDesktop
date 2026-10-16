@@ -6051,6 +6051,38 @@ int main(int argc, char** argv)
     hoverReveal.Update({-1400,1079},negativeBottomMonitor,DockPosition::Bottom,2200,4,72);
     Check(!hoverAt({-1400,1079},2500) && hoverAt({-1400,1079},2750),
         "switching gesture mode cannot reuse elapsed time from the previous mode");
+    // Exercise the production detector with a controlled clock: a hard-coded
+    // 250 ms threshold would open long delays early and short delays too late.
+    for (const DWORD delay : {100UL, 850UL, 3000UL})
+    {
+        for (const DockPosition position : {DockPosition::Bottom, DockPosition::Top,
+                DockPosition::Left, DockPosition::Right})
+        {
+            const POINT edge = position == DockPosition::Bottom ? POINT{-1500, 1079} :
+                position == DockPosition::Top ? POINT{-1500, 0} :
+                position == DockPosition::Left ? POINT{-1920, 500} : POINT{-1, 500};
+            floatingDock::EdgeSwipeDetector detector;
+            const DWORD start = 0xffffffc0;
+            const auto update = [&](POINT point, DWORD tick) {
+                return detector.Update(point, negativeBottomMonitor, position,
+                    tick, 4, 72, floatingDock::kEdgeSwipeMaximumDurationMs, true, delay);
+            };
+            Check(!update(edge, start) && !update(edge, start + delay - 1) &&
+                    update(edge, start + delay),
+                "custom edge dwell fires at its threshold on all sides across tick wrap");
+            Check(!update(edge, start + delay + 100),
+                "a custom edge dwell still fires only once until the pointer leaves");
+            Check(!update({-960, 540}, 5000) && !update(edge, 5010) &&
+                    !update(edge, 5010 + delay - 1) && update(edge, 5010 + delay),
+                "leaving the edge restarts the complete configured dwell");
+        }
+    }
+    floatingDock::EdgeSwipeDetector swipeWithHoverDelay;
+    Check(!swipeWithHoverDelay.Update({-1500, 1079}, negativeBottomMonitor,
+            DockPosition::Bottom, 100, 4, 72, 480, false, 3000) &&
+            swipeWithHoverDelay.Update({-1428, 1079}, negativeBottomMonitor,
+                DockPosition::Bottom, 200, 4, 72, 480, false, 3000),
+        "the hover delay cannot slow down swipe invocation");
     for (const LONG origin : {0L,-1920L}) for (const float scale : {1.f,1.5f})
     {
         const RECT work{origin,40,origin+1920,1040};

@@ -269,6 +269,8 @@ void TestShippedTaskVocabulary(const std::filesystem::path& projectRoot)
     struct Task { const char* language; const wchar_t* query; const char* focus; SettingsPage page; };
     const Task tasks[]{
         {"zh-CN", L"Dock自动隐藏", "dock.showOnlyWhenSummoned", SettingsPage::Dock},
+        {"zh-CN", L"屏幕边缘悬停延时", "dock.edgeHoverDelayMs", SettingsPage::Dock},
+        {"en-US", L"Screen edge hover delay", "dock.edgeHoverDelayMs", SettingsPage::Dock},
         {"zh-CN", L"多显示器布局", "pages.order", SettingsPage::DesktopPages},
         {"zh-CN", L"搜索框颜色", "personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
         {"zh-CN", L"组件缩放指针", "personalization.widgetTransformCursors", SettingsPage::WidgetBehavior},
