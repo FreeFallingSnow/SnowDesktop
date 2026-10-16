@@ -38,8 +38,12 @@ bool DesktopApp::ApplyQuickNavigationGenieFrame(float collapsed, float opacity)
         !quickNavAttractionTriangles_.empty())
         ClearQuickNavigationDeformation();
     const auto edge = static_cast<genie::Edge>(quickNavigationAnimationDockEdge_);
-    const float width = static_cast<float>(quickNavCompWidth_);
-    const float height = static_cast<float>(quickNavCompHeight_);
+    // A resize can retain a larger backing surface. Warp only the painted panel,
+    // including when dismissal interrupts the transition before its final frame.
+    const float width = static_cast<float>(std::max<LONG>(1,
+        quickNavigationRect_.right - quickNavigationRect_.left));
+    const float height = static_cast<float>(std::max<LONG>(1,
+        quickNavigationRect_.bottom - quickNavigationRect_.top));
     const auto rect = [](const RECT& value) {
         return genie::Rect{static_cast<double>(value.left), static_cast<double>(value.top),
             static_cast<double>(value.right), static_cast<double>(value.bottom)};
@@ -149,10 +153,14 @@ bool DesktopApp::ApplyQuickNavigationAttractionFrame(float collapsed, float opac
     HRESULT hr = S_OK;
     if (quickNavAttractionTriangles_.empty())
     {
+        const double width = std::max<LONG>(1,
+            quickNavigationRect_.right - quickNavigationRect_.left);
+        const double height = std::max<LONG>(1,
+            quickNavigationRect_.bottom - quickNavigationRect_.top);
         quickNavAttractionTriangles_.reserve(attraction::TriangleCount);
         for (std::size_t i = 0; i < attraction::TriangleCount && SUCCEEDED(hr); ++i)
         {
-            const auto source = navigation::AttractionSource(quickNavCompWidth_, quickNavCompHeight_, i);
+            const auto source = navigation::AttractionSource(width, height, i);
             const auto& m = source.transform;
             ComPtr<IDCompositionVisual2> triangle, content;
             hr = quickNavDcompDevice_->CreateVisual(&triangle);
@@ -355,16 +363,22 @@ HRESULT DesktopApp::CreateOrResizeQuickNavCompositionSurface()
         }
     }
 
+    RECT surfaceRect = quickNavigationRect_;
+    if (quickNavigationAnimation_.Resize().IsAnimating())
+    {
+        // Reuse one surface for the complete transition instead of reallocating
+        // a GPU surface on every frame. Transparent pixels are cleared on paint.
+        const auto bounds = quickNavigationAnimation_.Resize().Envelope();
+        surfaceRect = {bounds.left, bounds.top, bounds.right, bounds.bottom};
+    }
     const UINT width = static_cast<UINT>(
         std::max<LONG>(
             1,
-            quickNavigationRect_.right -
-                quickNavigationRect_.left));
+            surfaceRect.right - surfaceRect.left));
     const UINT height = static_cast<UINT>(
         std::max<LONG>(
             1,
-            quickNavigationRect_.bottom -
-                quickNavigationRect_.top));
+            surfaceRect.bottom - surfaceRect.top));
 
     if (!quickNavDcompTarget_)
     {

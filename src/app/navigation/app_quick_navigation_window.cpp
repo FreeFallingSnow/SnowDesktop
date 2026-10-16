@@ -633,7 +633,16 @@ void DesktopApp::PositionQuickNavigationWindow()
     if (!quickNavigationHwnd_ || !IsWindow(quickNavigationHwnd_))
         return;
 
-    const RECT nextRect = GetQuickNavigationRect();
+    RECT nextRect = GetQuickNavigationRect();
+    auto& resize = quickNavigationAnimation_.Resize();
+    if (resize.IsAnimating())
+    {
+        const auto now = static_cast<std::uint64_t>(
+            snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+        resize.Retarget({nextRect.left, nextRect.top, nextRect.right, nextRect.bottom}, now);
+        const auto frame = resize.Advance(now, snowdesktop::animation::RuntimeAnimationsEnabled());
+        nextRect = {frame.left, frame.top, frame.right, frame.bottom};
+    }
     const bool geometryChanged = !EqualRect(&quickNavigationRect_, &nextRect);
     if (geometryChanged && quickNavigationAnimationCompositorDriven_)
     {
@@ -644,7 +653,10 @@ void DesktopApp::PositionQuickNavigationWindow()
         StopQuickNavigationAnimationTimeline();
     }
     quickNavigationRect_ = nextRect;
-    quickNavigationAnchorTop_ = quickNavigationRect_.top;
+    // The destination header anchors result-height updates during a transition;
+    // feeding an intermediate top back into layout would keep moving its target.
+    if (!resize.IsAnimating())
+        quickNavigationAnchorTop_ = quickNavigationRect_.top;
     quickNavigationFixedTop_ = true;
     RECT anchorRect = MakeRect(
         quickNavigationAnimationAnchorPoint_.x - 1,
@@ -657,6 +669,13 @@ void DesktopApp::PositionQuickNavigationWindow()
         &quickNavigationHostRect_,
         &quickNavigationRect_,
         &anchorRect);
+    if (resize.IsAnimating())
+    {
+        // Keep the native host stable while the panel, input and backdrop resize.
+        const auto bounds = resize.Envelope();
+        const RECT envelope{bounds.left, bounds.top, bounds.right, bounds.bottom};
+        UnionRect(&quickNavigationHostRect_, &quickNavigationHostRect_, &envelope);
+    }
     if (quickNavigationAnimation_.GetEffect() ==
         snowdesktop::quick_navigation_animation_rules::Effect::Attraction)
     {
@@ -714,8 +733,9 @@ void DesktopApp::PositionQuickNavigationWindow()
         // WM_PAINT can be starved by rapid input. Resize and draw the shared
         // surface in this update so the old height cannot remain on screen.
         InvalidateQuickNavigationWindow(true);
-        if (quickNavigationAnimation_.IsAnimating()) EnsureUiAnimationFrame();
     }
+    if (quickNavigationAnimation_.IsAnimating() || resize.IsAnimating())
+        EnsureUiAnimationFrame();
 }
 
 void DesktopApp::UpdateQuickNavigationWindowRegion(

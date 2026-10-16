@@ -237,8 +237,9 @@ void DesktopApp::EnsureUiAnimationFrame()
     }
 
     if (!quickNavigationAnimationFrameToken_ &&
-        quickNavigationAnimation_.IsAnimating() &&
-        !quickNavigationAnimationCompositorDriven_)
+        ((quickNavigationAnimation_.IsAnimating() &&
+            !quickNavigationAnimationCompositorDriven_) ||
+            quickNavigationAnimation_.Resize().IsAnimating()))
     {
         quickNavigationAnimationFrameToken_ =
             uiAnimationScheduler_.StartAnimation(
@@ -246,14 +247,27 @@ void DesktopApp::EnsureUiAnimationFrame()
                 [this](double nowMilliseconds) {
                     quickNavigationAnimation_.Advance(
                         AnimationTick(nowMilliseconds));
-                    ApplyQuickNavigationAnimationFrame();
+                    if (quickNavigationAnimation_.Resize().IsAnimating())
+                    {
+                        PositionQuickNavigationWindow();
+                        if (!quickNavigationAnimation_.Resize().IsAnimating() &&
+                            UseQuickNavigationList() && quickNavigationListSelection_ >= 0)
+                        {
+                            EnsureQuickNavigationKeyboardTargetVisible(GetQuickNavigationListRowRect(
+                                static_cast<size_t>(quickNavigationListSelection_)));
+                            InvalidateQuickNavigationWindow();
+                        }
+                    }
+                    else
+                        ApplyQuickNavigationAnimationFrame();
                     if (!quickNavigationAnimation_.IsAnimating() &&
                         quickNavigationAnimation_.IsHidden())
                     {
                         FinalizeCloseQuickNavigation();
                     }
                     const bool keep =
-                        quickNavigationAnimation_.IsAnimating();
+                        quickNavigationAnimation_.IsAnimating() ||
+                        quickNavigationAnimation_.Resize().IsAnimating();
                     if (!keep)
                     {
                         quickNavigationAnimationFrameToken_ = 0;

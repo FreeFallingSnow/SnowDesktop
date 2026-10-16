@@ -634,6 +634,80 @@ void TestAnimationRules()
         "reset returns to hidden");
 }
 
+void TestResizeAnimation()
+{
+    using namespace snowdesktop::quick_navigation_animation_rules;
+    const ResizeRect expanded{100, 80, 740, 650};
+    const ResizeRect collapsed{200, 80, 640, 280};
+    ResizeState resize;
+    resize.Start(expanded, collapsed, 1000, true, 1.0);
+    Check(resize.IsAnimating() && resize.Advance(1000, true) == expanded,
+        "collapse begins at the currently displayed bounds");
+    const auto halfway = resize.Advance(1090, true);
+    Check(halfway.left == 150 && halfway.right == 690 && halfway.bottom == 465,
+        "collapse smoothly interpolates width and height");
+    Check(halfway.top == expanded.top && halfway.left + halfway.right == expanded.left + expanded.right,
+        "resize preserves the search header anchor and horizontal center");
+    Check(resize.Envelope() == expanded,
+        "resize reserves both endpoints for the native host and render surface");
+
+    resize.Start(halfway, expanded, 1090, true, 1.0);
+    Check(resize.Advance(1090, true) == halfway,
+        "rapid reverse switching starts from the displayed frame without jumping");
+    const auto reversing = resize.Advance(1135, true);
+    Check(reversing.left < halfway.left && reversing.bottom > halfway.bottom,
+        "reversing a collapse grows back toward the expanded bounds");
+    Check(resize.Advance(1270, true) == expanded && !resize.IsAnimating(),
+        "reverse transition reaches exact final bounds and stops requesting frames");
+
+    resize.Start(collapsed, expanded, 2000, true, 2.0);
+    Check(resize.Advance(2180, true) == halfway && resize.IsAnimating(),
+        "resize follows the global duration scale");
+    Check(resize.Advance(2360, true) == expanded && !resize.IsAnimating(),
+        "scaled expansion completes at the requested size");
+
+    resize.Start(expanded, collapsed, 3000, true, 1.0);
+    const auto beforeResults = resize.Advance(3045, true);
+    const ResizeRect newResults{200, 80, 640, 400};
+    resize.Retarget(newResults, 3045);
+    Check(resize.Advance(3045, true) == beforeResults,
+        "new search results retarget an active resize without a discontinuity");
+    Check(resize.Advance(3225, true) == newResults && !resize.IsAnimating(),
+        "resize settles at the updated search result height");
+
+    resize.Start(expanded, collapsed, 4000, false, 1.0);
+    Check(!resize.IsAnimating() && resize.Advance(4000, false) == collapsed,
+        "disabled animations apply the target geometry immediately");
+    resize.Start(collapsed, expanded, 5000, true, 1.0);
+    resize.Advance(5045, true);
+    Check(resize.Advance(5045, false) == expanded && !resize.IsAnimating(),
+        "disabling animations during a resize completes it immediately");
+    resize.Start(expanded, expanded, 6000, true, 1.0);
+    Check(!resize.IsAnimating(), "identical panel sizes do not schedule an animation");
+
+    const ResizeRect centeredCollapsed{-320, -200, 120, 0};
+    const ResizeRect centeredExpanded{-420, -400, 220, 200};
+    resize.Start(centeredCollapsed, centeredExpanded, 6500, true, 1.0);
+    const auto centered = resize.Advance(6590, true);
+    Check(centered.left == -370 && centered.top == -300 &&
+        centered.right == 170 && centered.bottom == 100,
+        "centered transitions interpolate position as well as size on negative-coordinate monitors");
+    Check(resize.Envelope() == centeredExpanded &&
+        resize.Advance(6680, true) == centeredExpanded,
+        "the final centered placement is preserved without clipping the transition");
+
+    State state;
+    state.ShowImmediately();
+    state.Resize().Start(expanded, collapsed, 7000, true, 1.0);
+    state.Close(7045);
+    Check(!state.Resize().IsAnimating() && state.IsClosing(),
+        "closing cancels resizing and preserves the normal dismissal animation");
+    state.Resize().Start(expanded, collapsed, 8000, true, 1.0);
+    state.ResetHidden();
+    Check(!state.Resize().IsAnimating() && state.IsHidden(),
+        "destroying the panel clears resize state before the next opening");
+}
+
 void TestAnimationEffects()
 {
     using namespace snowdesktop::quick_navigation_animation_rules;
@@ -1316,6 +1390,7 @@ int main()
     TestSectionLayout();
     TestTabDragWhileScrolling();
     TestAnimationRules();
+    TestResizeAnimation();
     TestAnimationEffects();
     TestAttractionAnimationAndSurface();
     TestGenieTranslucentContentCoverage();

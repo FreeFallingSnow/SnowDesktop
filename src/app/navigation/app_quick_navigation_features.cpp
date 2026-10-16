@@ -116,8 +116,26 @@ void DesktopApp::ToggleQuickNavigationCollapsed()
             row.kind == QuickNavigationListRow::Kind::App ? QuickNavigationKeyboardTargetKind::App :
             row.kind == QuickNavigationListRow::Kind::Everything ? QuickNavigationKeyboardTargetKind::Everything : QuickNavigationKeyboardTargetKind::None;
     }
+    const auto now = static_cast<std::uint64_t>(
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+    quickNavigationAnimation_.Advance(now);
+    StopQuickNavigationAnimationTimeline();
+    // A Dock warp's source crops belong to its opening geometry. Finish that
+    // opening before beginning an independently interactive size transition.
+    if (quickNavigationAnimation_.IsOpening())
+        quickNavigationAnimation_.ShowImmediately();
     quickNavigationFixedTop_ = false;
+    const RECT target = GetQuickNavigationRect();
+    quickNavigationAnchorTop_ = target.top;
+    quickNavigationFixedTop_ = true;
+    quickNavigationAnimation_.Resize().Start(
+        {quickNavigationRect_.left, quickNavigationRect_.top,
+            quickNavigationRect_.right, quickNavigationRect_.bottom},
+        {target.left, target.top, target.right, target.bottom}, now,
+        snowdesktop::animation::RuntimeAnimationsEnabled(),
+        snowdesktop::animation::RuntimeDurationScale());
     PositionQuickNavigationWindow();
+    EnsureUiAnimationFrame();
     if (UseQuickNavigationList() && quickNavigationListSelection_ >= 0)
         EnsureQuickNavigationKeyboardTargetVisible(GetQuickNavigationListRowRect(static_cast<size_t>(quickNavigationListSelection_)));
     InvalidateQuickNavigationWindow();
