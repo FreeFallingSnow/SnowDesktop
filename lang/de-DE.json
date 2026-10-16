@@ -481,7 +481,7 @@
   "app.settings.context_menu_win10_light": "Win10 Hell",
   "app.settings.context_menu_win10_dark": "Win10 Dunkel",
   "app.settings.layout_spacing": "Layoutabstand",
-  "app.settings.layout_spacing_hint": "Passe die Abstände zwischen Desktop-Symbolen, Widgets und Symbolen in Widgets an.",
+  "app.settings.layout_spacing_hint": "Abstände im Desktop-Raster, zwischen Widget-Rahmen und in der Vorschau großer Ordner anpassen.",
   "app.settings.icon_size": "Symbolgröße",
   "app.settings.icon_size_hint": "Gilt für normale Symbole auf dem Desktop und in Widgets.",
   "app.settings.title_font_size": "Schriftgröße der Symboltitel",
@@ -1396,7 +1396,7 @@
   "settings.desktop.categories": "Kategorien",
   "settings.desktop.categories.description": "Kategorieregisterkarten, Layout und Zuordnungsregeln verwalten.",
   "settings.desktop.spacing": "Layoutabstand",
-  "settings.desktop.spacing.description": "Abstände zwischen Desktop-Elementen, Widget-Rahmen und Elementen in Widgets anpassen.",
+  "settings.desktop.spacing.description": "Abstände im Desktop-Raster, zwischen Widget-Rahmen und in der Vorschau großer Ordner anpassen.",
   "settings.desktop.iconSize": "Symbolgröße",
   "settings.desktop.iconSize.description": "Die Größe der Desktopsymbole anpassen.",
   "settings.desktop.typography": "Symboltext",
@@ -2769,5 +2769,8 @@
   "iconStyle.shrinkAll": "Alle verkleinern und Designhintergrund hinzufügen",
   "settings.dock.edgeHoverDelay": "Verzögerung beim Verweilen am Bildschirmrand",
   "app.interact.auto_collect_all": "Alle Kategorien sammeln",
-  "app.interact.auto_collect_off": "Automatisches Sammeln ausschalten"
+  "app.interact.auto_collect_off": "Automatisches Sammeln ausschalten",
+  "app.settings.scrolling_icon_spacing_x": "Horizontaler Symbolabstand im Scrollbereich",
+  "app.settings.scrolling_icon_spacing_y": "Vertikaler Symbolabstand im Scrollbereich",
+  "app.settings.list_row_spacing": "Zeilenabstand in Listen"
 }

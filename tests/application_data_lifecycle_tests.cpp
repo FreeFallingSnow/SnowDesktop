@@ -1257,6 +1257,12 @@ int main()
             "fanTitleFontSizeCu" },
         { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
             "componentSpacing" },
+        { "scrollingIconSpacingX type", "{\"scrollingIconSpacingX\":\"1.5\"}",
+            "scrollingIconSpacingX" },
+        { "scrollingIconSpacingY type", "{\"scrollingIconSpacingY\":\"1.5\"}",
+            "scrollingIconSpacingY" },
+        { "listRowSpacing type", "{\"listRowSpacing\":\"1.5\"}",
+            "listRowSpacing" },
         { "icon size scale type", "{\"iconSizeScale\":\"1.1\"}",
             "iconSizeScale" },
         { "collection titleless mode type",
@@ -1590,6 +1596,18 @@ int main()
             spacingLayout.iconSizeScale.value_or(0.0f) == 1.1f &&
             spacingLayout.collectionLargeFolderTitleless.value_or(false),
         "component spacing, icon size, and the legacy global Collection titleless mode decode as optional migration settings");
+    const std::string contentSpacingText =
+        R"({"iconSpacing":1.5,"scrollingIconSpacingX":0.3,"scrollingIconSpacingY":1.7,"listRowSpacing":0.9})";
+    const auto contentSpacingPath = root / L"content-spacing-layout.json";
+    snowdesktop::layout_storage::Document contentSpacingLayout;
+    Expect(snowdesktop::layout_storage::SaveDocument(contentSpacingPath, contentSpacingText, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(contentSpacingPath, contentSpacingLayout).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            contentSpacingLayout.iconSpacing == 1.5f &&
+            contentSpacingLayout.scrollingIconSpacingX == 0.3f &&
+            contentSpacingLayout.scrollingIconSpacingY == 1.7f &&
+            contentSpacingLayout.listRowSpacing == 0.9f,
+        "layout storage retains independent grid axes and list row spacing alongside the original global spacing");
     snowdesktop::layout_storage::Document legacyFontLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"itemFontSize\":18,\"listItemFontSize\":16,\"itemFontWeight\":600}",

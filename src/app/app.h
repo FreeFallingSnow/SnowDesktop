@@ -2355,6 +2355,12 @@ private:
     /** @brief 轻量预览图标间距，不保存布局或重新求解 Dock。 */
     void PreviewIconSpacing(float value);
     float GetLayoutSpacingScale() const { return iconSpacingScale_; }
+    void PreviewContentSpacing(float horizontal, float vertical, float listRows);
+    void SetContentSpacing(float horizontal, float vertical, float listRows);
+    snowdesktop::layout_spacing_rules::ContentSpacing GetScrollingIconSpacing() const
+    { return {scrollingIconSpacingXScale_, scrollingIconSpacingYScale_}; }
+    snowdesktop::layout_spacing_rules::ContentSpacing GetListSpacing() const
+    { return {iconSpacingScale_, listRowSpacingScale_}; }
     /** @brief 设置页面级图标大小倍率。 */
     void SetItemIconSize(float value);
     /** @brief 轻量预览页面级图标大小，不保存布局。 */
@@ -3953,6 +3959,10 @@ private:
     RECT layoutWorkArea_{};
     float iconSpacingScale_ = 1.0f;
     bool iconSpacingPreviewActive_ = false;
+    float scrollingIconSpacingXScale_ = 1.0f;
+    float scrollingIconSpacingYScale_ = 1.0f;
+    float listRowSpacingScale_ = 1.0f;
+    bool contentSpacingPreviewActive_ = false;
     float itemIconSizeScale_ = kDefaultItemIconSizeScale;
     bool itemIconSizePreviewActive_ = false;
     float itemFontSizeCu_ = kDefaultItemFontSizeCu;

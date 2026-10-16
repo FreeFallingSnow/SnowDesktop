@@ -481,7 +481,7 @@
   "app.settings.context_menu_win10_light": "Win10 claro",
   "app.settings.context_menu_win10_dark": "Win10 oscuro",
   "app.settings.layout_spacing": "Espaciado del diseño",
-  "app.settings.layout_spacing_hint": "Ajusta el espacio entre los iconos del escritorio, los widgets y los iconos dentro de los widgets.",
+  "app.settings.layout_spacing_hint": "Ajusta el espaciado de la cuadrícula del escritorio, entre los marcos de los widgets y en las vistas previas de carpetas grandes.",
   "app.settings.icon_size": "Tamaño de los iconos",
   "app.settings.icon_size_hint": "Se aplica a los iconos normales del escritorio y de los componentes.",
   "app.settings.title_font_size": "Tamaño de fuente de los títulos de iconos",
@@ -1396,7 +1396,7 @@
   "settings.desktop.categories": "Categorías",
   "settings.desktop.categories.description": "Administra las pestañas de categoría, su diseño y las reglas de coincidencia.",
   "settings.desktop.spacing": "Espaciado del diseño",
-  "settings.desktop.spacing.description": "Ajusta la separación entre elementos del escritorio, marcos de componentes y elementos internos.",
+  "settings.desktop.spacing.description": "Ajusta el espaciado de la cuadrícula del escritorio, entre los marcos de los widgets y en las vistas previas de carpetas grandes.",
   "settings.desktop.iconSize": "Tamaño de los iconos",
   "settings.desktop.iconSize.description": "Ajusta el tamaño de los iconos del escritorio.",
   "settings.desktop.typography": "Texto de los iconos",
@@ -2769,5 +2769,8 @@
   "iconStyle.shrinkAll": "Reducir todos y añadir el fondo del tema",
   "settings.dock.edgeHoverDelay": "Retraso al mantener el puntero en el borde de la pantalla",
   "app.interact.auto_collect_all": "Recopilar todas las categorías",
-  "app.interact.auto_collect_off": "Desactivar la recopilación automática"
+  "app.interact.auto_collect_off": "Desactivar la recopilación automática",
+  "app.settings.scrolling_icon_spacing_x": "Espaciado horizontal de iconos desplazables",
+  "app.settings.scrolling_icon_spacing_y": "Espaciado vertical de iconos desplazables",
+  "app.settings.list_row_spacing": "Espaciado entre filas de listas"
 }

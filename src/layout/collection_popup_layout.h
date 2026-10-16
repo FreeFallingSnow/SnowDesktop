@@ -1,6 +1,7 @@
 #pragma once
 
 #include "common/constants.h"
+#include "layout_spacing_rules.h"
 #include "ui/render/font_cu_rules.h"
 #include "list_detail_rules.h"
 #include "widgets/collection_group_rules.h"
@@ -220,8 +221,7 @@ inline int ResolveGridColumnCount(
     int viewportWidth, int minimumCellWidth, float spacingScale)
 {
     const int cell = std::max(1, minimumCellWidth);
-    const float spacing = std::isfinite(spacingScale)
-        ? std::clamp(spacingScale, 0.5f, 2.0f) : 1.0f;
+    const float spacing = layout_spacing_rules::ClampScale(spacingScale);
     const int gap = std::max(0, static_cast<int>(std::round(cell * kGapPercentX * spacing)));
     return std::clamp(std::max(1, viewportWidth) / (cell + gap), 1, kMaximumColumns);
 }

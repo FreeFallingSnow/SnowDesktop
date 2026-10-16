@@ -916,6 +916,46 @@ void DesktopApp::SetIconSpacing(float value)
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
+void DesktopApp::PreviewContentSpacing(float horizontal, float vertical, float listRows)
+{
+    using snowdesktop::layout_spacing_rules::ClampScale;
+    horizontal = ClampScale(horizontal);
+    vertical = ClampScale(vertical);
+    listRows = ClampScale(listRows);
+    if (horizontal == scrollingIconSpacingXScale_ &&
+        vertical == scrollingIconSpacingYScale_ && listRows == listRowSpacingScale_)
+        return;
+    scrollingIconSpacingXScale_ = horizontal;
+    scrollingIconSpacingYScale_ = vertical;
+    listRowSpacingScale_ = listRows;
+    contentSpacingPreviewActive_ = true;
+    InvalidateAllWidgetSlots();
+    for (const auto& container : containers_)
+    {
+        if (auto* group = dynamic_cast<FileGroup*>(container.get()))
+            group->InvalidateHostedView();
+    }
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->InvalidateSlots();
+    InvalidateCollectionPopupContent();
+    RefreshOpenCollectionPopupGeometry();
+    InvalidateDragStaticScene();
+    if (hwnd_)
+    {
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        PresentDesktopPointerUpdate();
+        FlushPendingCompositionCommit();
+    }
+}
+
+void DesktopApp::SetContentSpacing(float horizontal, float vertical, float listRows)
+{
+    PreviewContentSpacing(horizontal, vertical, listRows);
+    if (!contentSpacingPreviewActive_) return;
+    LayoutItems();
+    SaveLayoutSlots();
+    contentSpacingPreviewActive_ = false;
+}
+
 /**
  * @brief 轻量预览页面级图标大小。
  *

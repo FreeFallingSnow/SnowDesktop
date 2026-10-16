@@ -205,6 +205,18 @@ float Widget::GetLayoutSpacingScale() const
     return app_ ? app_->GetLayoutSpacingScale() : 1.0f;
 }
 
+snowdesktop::layout_spacing_rules::ContentSpacing Widget::GetScrollingIconSpacing() const
+{
+    return app_ ? app_->GetScrollingIconSpacing()
+        : snowdesktop::layout_spacing_rules::ContentSpacing{};
+}
+
+snowdesktop::layout_spacing_rules::ContentSpacing Widget::GetListSpacing() const
+{
+    return app_ ? app_->GetListSpacing()
+        : snowdesktop::layout_spacing_rules::ContentSpacing{};
+}
+
 bool Widget::UsesLightContentTheme() const
 {
     if (!app_) return false;
@@ -440,6 +452,11 @@ std::vector<std::unique_ptr<Slot>> WidgetContainer::BuildSlots()
         slots.push_back(std::move(slot));
     }
     return slots;
+}
+
+int WidgetContainer::GetMemberColumnCount() const
+{
+    return data_ ? std::max(1, data_->gridSpan.columns) : 1;
 }
 
 /**

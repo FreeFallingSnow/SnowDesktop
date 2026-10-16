@@ -481,7 +481,7 @@
   "app.settings.context_menu_win10_light": "Win10 claro",
   "app.settings.context_menu_win10_dark": "Win10 escuro",
   "app.settings.layout_spacing": "Espaçamento do layout",
-  "app.settings.layout_spacing_hint": "Ajuste o espaçamento entre os ícones da área de trabalho, os widgets e os ícones dentro dos widgets.",
+  "app.settings.layout_spacing_hint": "Ajuste o espaçamento na grade da área de trabalho, entre as molduras dos widgets e nas prévias de pastas grandes.",
   "app.settings.icon_size": "Tamanho dos ícones",
   "app.settings.icon_size_hint": "Aplica-se aos ícones comuns da área de trabalho e dos componentes.",
   "app.settings.title_font_size": "Tamanho da fonte dos títulos dos ícones",
@@ -1396,7 +1396,7 @@
   "settings.desktop.categories": "Categorias",
   "settings.desktop.categories.description": "Gerencie guias de categoria, layout e regras de correspondência.",
   "settings.desktop.spacing": "Espaçamento do layout",
-  "settings.desktop.spacing.description": "Ajuste o espaço entre itens da área de trabalho, molduras e itens internos dos widgets.",
+  "settings.desktop.spacing.description": "Ajuste o espaçamento na grade da área de trabalho, entre as molduras dos widgets e nas prévias de pastas grandes.",
   "settings.desktop.iconSize": "Tamanho dos ícones",
   "settings.desktop.iconSize.description": "Ajuste o tamanho dos ícones da área de trabalho.",
   "settings.desktop.typography": "Texto dos ícones",
@@ -2769,5 +2769,8 @@
   "iconStyle.shrinkAll": "Reduzir todos e adicionar o fundo do tema",
   "settings.dock.edgeHoverDelay": "Atraso ao manter o ponteiro na borda da tela",
   "app.interact.auto_collect_all": "Coletar todas as categorias",
-  "app.interact.auto_collect_off": "Desativar a coleta automática"
+  "app.interact.auto_collect_off": "Desativar a coleta automática",
+  "app.settings.scrolling_icon_spacing_x": "Espaçamento horizontal dos ícones na área de rolagem",
+  "app.settings.scrolling_icon_spacing_y": "Espaçamento vertical dos ícones na área de rolagem",
+  "app.settings.list_row_spacing": "Espaçamento entre linhas de listas"
 }

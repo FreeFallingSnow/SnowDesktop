@@ -441,16 +441,16 @@ static snowdesktop::widget_item_layout::Layout FolderMappingLocalLayout(
     DesktopWidget* data = widget->GetWidgetData();
     const RECT content = FolderMappingContentRect(widget);
     const auto metrics = widget->GetItemVisualMetrics();
-    const float spacing = widget->GetLayoutSpacingScale();
+    const auto spacing = widget->GetScrollingIconSpacing();
     if (data->listMode)
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(widget->GetListRowHeight(),
-                metrics.minimumListHeight), spacing);
+                metrics.minimumListHeight), widget->GetListSpacing());
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, widget->IsPopupHosted()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
-                content.right - content.left, metrics.minimumGridWidth, spacing)
+                content.right - content.left, metrics.minimumGridWidth, spacing.horizontal)
             : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
@@ -473,6 +473,7 @@ void FolderMapping::EnsureDateLayout() const
     if (dateLayoutSource_ == visibleEntries &&
         dateLayoutListMode_ == data_->listMode &&
         dateLayoutItemHeight_ == currentItemHeight &&
+        itemLayout.horizontal.count == dateLayoutColumns_ &&
         !dateLayoutCache_.empty())
         return;
 
@@ -480,6 +481,7 @@ void FolderMapping::EnsureDateLayout() const
     dateLayoutSource_ = visibleEntries;
     dateLayoutListMode_ = data_->listMode;
     dateLayoutItemHeight_ = currentItemHeight;
+    dateLayoutColumns_ = itemLayout.horizontal.count;
     if (visibleEntries.empty()) return;
 
     const int headerHeight = data_->listMode ? Cu(28.0f) : Cu(36.0f);
@@ -845,6 +847,12 @@ int FolderMapping::GetItemWidth() const
 {
     return FolderMappingLocalLayout(
         const_cast<FolderMapping*>(this)).horizontal.cell;
+}
+
+int FolderMapping::GetMemberColumnCount() const
+{
+    return FolderMappingLocalLayout(
+        const_cast<FolderMapping*>(this)).horizontal.count;
 }
 
 /**

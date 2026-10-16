@@ -606,6 +606,9 @@ struct DesktopPagePresenter::Impl
     SettingsCard categoryRulesCard;
 
     std::unique_ptr<NumericEditor> iconSpacing;
+    std::unique_ptr<NumericEditor> scrollingIconSpacingX;
+    std::unique_ptr<NumericEditor> scrollingIconSpacingY;
+    std::unique_ptr<NumericEditor> listRowSpacing;
     std::unique_ptr<NumericEditor> iconSize;
     std::unique_ptr<NumericEditor> itemFontSize;
     std::unique_ptr<NumericEditor> listFontSize;
@@ -812,6 +815,27 @@ struct DesktopPagePresenter::Impl
                 settings.iconSpacingScale =
                     static_cast<float>(value / 100.0);
             }, kDefaultIconSpacingScale * 100.0);
+        scrollingIconSpacingX = MakeDesktopNumber(
+            layout_spacing_rules::kMinimumScale * 100.0f,
+            layout_spacing_rules::kMaximumScale * 100.0f, 1.0, 0,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.scrollingIconSpacingXScale = static_cast<float>(value / 100.0);
+            }, 100.0);
+        scrollingIconSpacingX->SetUnit(L"%");
+        scrollingIconSpacingY = MakeDesktopNumber(
+            layout_spacing_rules::kMinimumScale * 100.0f,
+            layout_spacing_rules::kMaximumScale * 100.0f, 1.0, 0,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.scrollingIconSpacingYScale = static_cast<float>(value / 100.0);
+            }, 100.0);
+        scrollingIconSpacingY->SetUnit(L"%");
+        listRowSpacing = MakeDesktopNumber(
+            layout_spacing_rules::kMinimumScale * 100.0f,
+            layout_spacing_rules::kMaximumScale * 100.0f, 1.0, 0,
+            [](DesktopDisplaySettings& settings, double value) {
+                settings.listRowSpacingScale = static_cast<float>(value / 100.0);
+            }, 100.0);
+        listRowSpacing->SetUnit(L"%");
         iconSize = MakeDesktopNumber(
             kMinimumItemIconSizeScale * 100.0,
             kMaximumItemIconSizeScale * 100.0, 1.0, 0,
@@ -1706,6 +1730,9 @@ struct DesktopPagePresenter::Impl
         for (std::size_t i = 0; i < lines.size(); ++i) titleLineCombos[i].SelectedIndex(std::clamp(lines[i], 1, 2) - 1);
         titleOverflow.SelectedIndex(settings.titleEllipsis ? 0 : 1);
         iconSpacing->SetValue(settings.iconSpacingScale * 100.0);
+        scrollingIconSpacingX->SetValue(settings.scrollingIconSpacingXScale * 100.0);
+        scrollingIconSpacingY->SetValue(settings.scrollingIconSpacingYScale * 100.0);
+        listRowSpacing->SetValue(settings.listRowSpacingScale * 100.0);
         iconSize->SetValue(settings.itemIconSizeScale * 100.0);
         itemFontSize->SetValue(settings.itemFontSizeCu);
         listFontSize->SetValue(settings.listItemFontSizeCu);
@@ -1755,7 +1782,9 @@ struct DesktopPagePresenter::Impl
     [[nodiscard]] bool HasActiveDesktopEdit() const noexcept
     {
         for (const NumericEditor* editor : {
-                 iconSpacing.get(), iconSize.get(), itemFontSize.get(),
+                 iconSpacing.get(), scrollingIconSpacingX.get(),
+                 scrollingIconSpacingY.get(), listRowSpacing.get(),
+                 iconSize.get(), itemFontSize.get(),
                  listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get(),
                  backgroundOpacity.get(), glassBlurRadius.get(), reflectionWidth.get(), reflectionStrength.get(), contentScale.get(),
                  highlightStrength.get(), highlightSize.get(),
@@ -1819,7 +1848,9 @@ struct DesktopPagePresenter::Impl
     std::vector<NumericEditor*> ContinuousNumbers() const
     {
         return {
-            iconSpacing.get(), iconSize.get(), itemFontSize.get(),
+            iconSpacing.get(), scrollingIconSpacingX.get(),
+            scrollingIconSpacingY.get(), listRowSpacing.get(),
+            iconSize.get(), itemFontSize.get(),
             listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get(),
             backgroundOpacity.get(), glassBlurRadius.get(), reflectionWidth.get(), reflectionStrength.get(), contentScale.get(),
             highlightStrength.get(), highlightSize.get(),
@@ -1936,6 +1967,11 @@ struct DesktopPagePresenter::Impl
         iconSpacing->SetLabel(L(
             "app.settings.layout_spacing", L"Layout spacing"), L(
             "app.settings.layout_spacing_hint"));
+        scrollingIconSpacingX->SetLabel(L("app.settings.scrolling_icon_spacing_x",
+            L"Scrolling icon horizontal spacing"));
+        scrollingIconSpacingY->SetLabel(L("app.settings.scrolling_icon_spacing_y",
+            L"Scrolling icon vertical spacing"));
+        listRowSpacing->SetLabel(L("app.settings.list_row_spacing", L"List row spacing"));
         iconSize->SetLabel(L("app.settings.icon_size", L"Icon size"), L(
             "app.settings.icon_size_hint"));
         itemFontSize->SetLabel(L(
@@ -1960,7 +1996,8 @@ struct DesktopPagePresenter::Impl
         muxa::AutomationProperties::SetName(titleOverflow, titleOverflowRow.label.Text());
         itemFontWeight->SetLabel(L(
             "app.settings.title_font_weight", L"Title font weight"));
-        for (NumericEditor* editor : {iconSpacing.get(), iconSize.get(),
+        for (NumericEditor* editor : {iconSpacing.get(), scrollingIconSpacingX.get(),
+                 scrollingIconSpacingY.get(), listRowSpacing.get(), iconSize.get(),
                  itemFontSize.get(), listFontSize.get(), fanTitleFontSize.get(),
                  itemFontWeight.get()})
         {
@@ -2122,6 +2159,9 @@ struct DesktopPagePresenter::Impl
         };
         if (id == "desktop.spacing" || id == "desktop.iconSpacing")
             return iconSpacing->slider;
+        if (id == "desktop.scrollingIconSpacingX") return scrollingIconSpacingX->slider;
+        if (id == "desktop.scrollingIconSpacingY") return scrollingIconSpacingY->slider;
+        if (id == "desktop.listRowSpacing") return listRowSpacing->slider;
         if (id == "desktop.iconSize") return iconSize->slider;
         if (id == "desktop.itemFontSize") return itemFontSize->number;
         if (id == "desktop.listFontSize") return listFontSize->number;
@@ -2203,6 +2243,9 @@ struct DesktopPagePresenter::Impl
         if (edgeLightEditor) edgeLightEditor->Close();
         if (gradientEditor) gradientEditor->Close();
         iconSpacing->Close();
+        scrollingIconSpacingX->Close();
+        scrollingIconSpacingY->Close();
+        listRowSpacing->Close();
         iconSize->Close();
         itemFontSize->Close();
         listFontSize->Close();
@@ -2301,10 +2344,12 @@ mux::FrameworkElement DesktopPagePresenter::Content() const noexcept
     return impl_ ? impl_->categoryRoot : nullptr;
 }
 
-mux::FrameworkElement
-DesktopPagePresenter::LayoutSpacingContent() const noexcept
+std::vector<mux::UIElement>
+DesktopPagePresenter::LayoutSpacingContent() const
 {
-    return impl_ ? impl_->iconSpacing->root : nullptr;
+    if (!impl_) return {};
+    return {impl_->iconSpacing->root, impl_->scrollingIconSpacingX->root,
+        impl_->scrollingIconSpacingY->root, impl_->listRowSpacing->root};
 }
 
 mux::FrameworkElement

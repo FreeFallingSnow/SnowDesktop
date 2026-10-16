@@ -434,16 +434,16 @@ snowdesktop::widget_item_layout::Layout FileGroupSearchLocalLayout(
     DesktopWidget* data = group->GetWidgetData();
     const RECT content = group->GetContentViewportRect();
     const auto metrics = group->GetItemVisualMetrics();
-    const float spacing = group->GetLayoutSpacingScale();
+    const auto spacing = group->GetScrollingIconSpacing();
     if (data->listMode)
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(group->GetListRowHeight(),
-                metrics.minimumListHeight), spacing);
+                metrics.minimumListHeight), group->GetListSpacing());
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, group->IsPopupHosted()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
-                content.right - content.left, metrics.minimumGridWidth, spacing)
+                content.right - content.left, metrics.minimumGridWidth, spacing.horizontal)
             : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
@@ -1182,6 +1182,18 @@ int FileGroup::GetItemWidth() const
     HostedFileSourceScope hosted(
         const_cast<FileGroup*>(this), source);
     return hosted ? source->GetItemWidth() : 1;
+}
+
+int FileGroup::GetMemberColumnCount() const
+{
+    if (IsGroupSearchActive())
+        return FileGroupSearchLocalLayout(
+            const_cast<FileGroup*>(this)).horizontal.count;
+    auto* source = GetActiveSourceContainer();
+    if (!source) return 1;
+    HostedFileSourceScope hosted(
+        const_cast<FileGroup*>(this), source);
+    return hosted ? source->GetMemberColumnCount() : 1;
 }
 
 bool FileGroup::SingleColumn() const

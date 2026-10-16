@@ -146,6 +146,9 @@ struct Document
     std::optional<int> scrollingTitleLines;
     std::optional<bool> titleEllipsis;
     std::optional<float> iconSpacing;
+    std::optional<float> scrollingIconSpacingX;
+    std::optional<float> scrollingIconSpacingY;
+    std::optional<float> listRowSpacing;
     std::optional<float> componentSpacing;
     std::optional<float> iconSizeScale;
     // Legacy layout-wide migration input. New layouts persist the widget field.

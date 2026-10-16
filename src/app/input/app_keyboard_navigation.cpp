@@ -468,6 +468,15 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     const size_t navigationWidgetIndex =
         keyboardNavWidgetIndex_;
     auto& widget = widgets_[keyboardNavWidgetIndex_];
+    const auto memberColumns = [&]() {
+        for (const auto& container : containers_)
+        {
+            const auto* view = dynamic_cast<const WidgetContainer*>(container.get());
+            if (view && view->GetWidgetData() == &widget)
+                return view->GetMemberColumnCount();
+        }
+        return std::max(1, widget.gridSpan.columns);
+    };
 
     if (widget.type == DesktopWidgetType::FileGroup)
     {
@@ -725,7 +734,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         const int columns =
             (widget.listMode || widget.dateHeaders)
                 ? 1
-                : std::max(1, widget.gridSpan.columns);
+                : memberColumns();
         if (arrowKey == VK_UP &&
             current < static_cast<size_t>(columns))
         {
@@ -898,8 +907,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
             }
             const int columns = widget.listMode
                 ? 1
-                : std::max(
-                    1, widget.gridSpan.columns);
+                : memberColumns();
             if (current >= 0 && current < columns)
             {
                 focusTab(activeTab, false);
@@ -916,7 +924,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     {
     case DesktopWidgetType::CollectionGroup:
         memberCount = 0;
-        columns = std::max(1, widget.gridSpan.columns);
+        columns = memberColumns();
         if (widget.listMode)
         {
             columns = 1;
@@ -926,7 +934,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     case DesktopWidgetType::Collection:
     case DesktopWidgetType::FileCategories:
         memberCount = widget.itemKeys.size();
-        columns = std::max(1, widget.gridSpan.columns);
+        columns = memberColumns();
         if (widget.listMode || widget.dateHeaders)
         {
             columns = 1;
@@ -935,7 +943,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         break;
     case DesktopWidgetType::FolderMapping:
         memberCount = widget.folderEntries.size();
-        columns = std::max(1, widget.gridSpan.columns);
+        columns = memberColumns();
         if (widget.listMode || widget.dateHeaders)
         {
             columns = 1;

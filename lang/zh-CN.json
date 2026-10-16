@@ -481,7 +481,7 @@
     "app.settings.context_menu_win10_light": "Win10 浅色",
     "app.settings.context_menu_win10_dark": "Win10 深色",
     "app.settings.layout_spacing": "布局间距",
-    "app.settings.layout_spacing_hint": "调整桌面图标、组件以及组件内图标的间距。",
+    "app.settings.layout_spacing_hint": "调整桌面网格、组件外框和大文件夹预览的间距。",
     "app.settings.icon_size": "图标大小",
     "app.settings.icon_size_hint": "适用于桌面和组件内的普通图标。",
     "app.settings.title_font_size": "图标标题字号",
@@ -1396,7 +1396,7 @@
     "settings.desktop.categories": "分类",
     "settings.desktop.categories.description": "管理分类页签、布局和匹配规则。",
     "settings.desktop.spacing": "布局间距",
-    "settings.desktop.spacing.description": "调整桌面项目、组件外框和组件内项目之间的间距。",
+    "settings.desktop.spacing.description": "调整桌面网格、组件外框和大文件夹预览的间距。",
     "settings.desktop.iconSize": "图标大小",
     "settings.desktop.iconSize.description": "调整桌面图标大小。",
     "settings.desktop.typography": "图标文字",
@@ -2769,5 +2769,8 @@
   "iconStyle.shrinkAll": "全部缩小并添加主题背景",
   "settings.dock.edgeHoverDelay": "屏幕边缘悬停延时",
   "app.interact.auto_collect_all": "全部收纳",
-  "app.interact.auto_collect_off": "关闭自动收纳"
+  "app.interact.auto_collect_off": "关闭自动收纳",
+  "app.settings.scrolling_icon_spacing_x": "滚动图标横向间距",
+  "app.settings.scrolling_icon_spacing_y": "滚动图标纵向间距",
+  "app.settings.list_row_spacing": "列表行间距"
 }

@@ -536,6 +536,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         snowdesktop::DesktopDisplaySettings desktopSettings;
         desktopSettings.dockEnabled = generalSettings_.dockEnabled;
         desktopSettings.iconSpacingScale = iconSpacingScale_;
+        desktopSettings.scrollingIconSpacingXScale = scrollingIconSpacingXScale_;
+        desktopSettings.scrollingIconSpacingYScale = scrollingIconSpacingYScale_;
+        desktopSettings.listRowSpacingScale = listRowSpacingScale_;
         desktopSettings.itemIconSizeScale = itemIconSizeScale_;
         desktopSettings.itemFontSizeCu = itemFontSizeCu_;
         desktopSettings.listItemFontSizeCu = listItemFontSizeCu_;
@@ -905,6 +908,9 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         snowdesktop::DesktopDisplaySettings desktop;
         desktop.dockEnabled = generalSettings_.dockEnabled;
         desktop.iconSpacingScale = iconSpacingScale_;
+        desktop.scrollingIconSpacingXScale = scrollingIconSpacingXScale_;
+        desktop.scrollingIconSpacingYScale = scrollingIconSpacingYScale_;
+        desktop.listRowSpacingScale = listRowSpacingScale_;
         desktop.itemIconSizeScale = itemIconSizeScale_;
         desktop.itemFontSizeCu = itemFontSizeCu_;
         desktop.listItemFontSizeCu = listItemFontSizeCu_;

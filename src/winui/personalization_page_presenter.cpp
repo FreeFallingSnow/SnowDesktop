@@ -2297,12 +2297,17 @@ void PersonalizationPagePresenter::SetActions(
 }
 
 void PersonalizationPagePresenter::SetLayoutSpacingContent(
-    const mux::UIElement& content)
+    const std::vector<mux::UIElement>& content)
 {
-    if (!impl_ || !content) return;
-    uint32_t index = 0;
+    if (!impl_) return;
+    uint32_t position = 0;
     const auto children = impl_->layoutCard.content.Children();
-    if (!children.IndexOf(content, index)) children.InsertAt(0, content);
+    for (const auto& row : content)
+    {
+        uint32_t index = 0;
+        if (!children.IndexOf(row, index)) children.InsertAt(position, row);
+        ++position;
+    }
     presenter_controls::UpdateSettingsSubrows(impl_->layoutCard.content, 0.0);
 }
 

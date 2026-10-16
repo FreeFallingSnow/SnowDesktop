@@ -12,6 +12,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace snowdesktop::winui
 {
@@ -89,9 +90,9 @@ public:
         WidgetLayoutContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement
         WidgetBehaviorContent() const noexcept;
-    /** Mount the existing shared spacing row once, using the layout group's surface. */
+    /** Mount spacing rows once, using the existing layout group surface. */
     void SetLayoutSpacingContent(
-        const winrt::Microsoft::UI::Xaml::UIElement& content);
+        const std::vector<winrt::Microsoft::UI::Xaml::UIElement>& content);
     void ApplySnapshot(const SettingsSnapshot& snapshot);
     void RefreshLocalizedText();
 

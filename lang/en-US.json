@@ -481,7 +481,7 @@
     "app.settings.context_menu_win10_light": "Win10 Light",
     "app.settings.context_menu_win10_dark": "Win10 Dark",
     "app.settings.layout_spacing": "Layout Spacing",
-    "app.settings.layout_spacing_hint": "Adjust spacing between desktop icons, widgets and icons inside widgets.",
+    "app.settings.layout_spacing_hint": "Adjust spacing in the desktop grid, between widget frames, and in large-folder previews.",
     "app.settings.icon_size": "Icon Size",
     "app.settings.icon_size_hint": "Applies to standard icons on the desktop and inside widgets.",
     "app.settings.title_font_size": "Icon Title Font Size",
@@ -1396,7 +1396,7 @@
     "settings.desktop.categories": "Categories",
     "settings.desktop.categories.description": "Manage category tabs, layout and matching rules.",
     "settings.desktop.spacing": "Layout spacing",
-    "settings.desktop.spacing.description": "Adjust spacing between desktop items, widget frames and items inside widgets.",
+    "settings.desktop.spacing.description": "Adjust spacing in the desktop grid, between widget frames, and in large-folder previews.",
     "settings.desktop.iconSize": "Icon size",
     "settings.desktop.iconSize.description": "Adjust the size of desktop icons.",
     "settings.desktop.typography": "Icon text",
@@ -2769,5 +2769,8 @@
   "iconStyle.shrinkAll": "Shrink all with theme background",
   "settings.dock.edgeHoverDelay": "Screen edge hover delay",
   "app.interact.auto_collect_all": "Collect All Categories",
-  "app.interact.auto_collect_off": "Turn Off Auto-Collection"
+  "app.interact.auto_collect_off": "Turn Off Auto-Collection",
+  "app.settings.scrolling_icon_spacing_x": "Scrolling icon horizontal spacing",
+  "app.settings.scrolling_icon_spacing_y": "Scrolling icon vertical spacing",
+  "app.settings.list_row_spacing": "List row spacing"
 }

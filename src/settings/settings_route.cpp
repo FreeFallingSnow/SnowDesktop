@@ -48,7 +48,10 @@ bool IsWidgetBehaviorFocus(std::string_view focusId) noexcept
 
 bool IsDesktopIconAppearanceFocus(std::string_view focusId) noexcept
 {
-    return focusId == "desktop.iconSize" ||
+    return focusId == "desktop.scrollingIconSpacingX" ||
+        focusId == "desktop.scrollingIconSpacingY" ||
+        focusId == "desktop.listRowSpacing" ||
+        focusId == "desktop.iconSize" ||
         focusId == "desktop.itemFontSize" ||
         focusId == "desktop.fanTitleFontSize" || focusId == "desktop.titleOverflow" ||
         focusId == "desktop.listFontSize" ||
@@ -248,7 +251,8 @@ SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
             route.page = SettingsPage::AppearanceDesktopIcons;
         else if (focus == "personalization.widgetTransformCursors")
             route.page = SettingsPage::WidgetBehavior;
-        else if (focus == "desktop.spacing" || focus == "desktop.iconSpacing")
+        else if (focus == "desktop.spacing" || focus == "desktop.iconSpacing" ||
+            focus == "desktop.scrollingIconSpacingX" || focus == "desktop.scrollingIconSpacingY" || focus == "desktop.listRowSpacing")
             route.page = SettingsPage::AppearanceDesktopIcons;
         else if (focus == "desktop.categoryLayout" || focus == "desktop.tabHeight" || focus == "personalization.tabHeight")
         {

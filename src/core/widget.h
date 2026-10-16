@@ -24,6 +24,7 @@
 #include "container.h"
 #include "slot.h"
 #include "layout/item_visual_metrics.h"
+#include "layout/layout_spacing_rules.h"
 #include <d2d1_1.h>
 #include <dwrite.h>
 #include <wrl/client.h>
@@ -118,6 +119,8 @@ public:
     DesktopApp* GetApp() const { return app_; }
     virtual float GetCellScale() const;
     float GetLayoutSpacingScale() const;
+    snowdesktop::layout_spacing_rules::ContentSpacing GetScrollingIconSpacing() const;
+    snowdesktop::layout_spacing_rules::ContentSpacing GetListSpacing() const;
     bool UsesLightContentTheme() const;
     virtual snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const;
     int Cu(float value) const;
@@ -188,6 +191,7 @@ public:
     RECT GetCollapseButtonRect() const;
     snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const override;
     RECT GetBodyRect() const;
+    virtual int GetMemberColumnCount() const;
     virtual RECT GetMemberLayoutRect(size_t index) const
     {
         (void)index;
@@ -538,6 +542,7 @@ public:
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
     int  GetItemWidth()  const override;
+    int GetMemberColumnCount() const override;
     Item* GetSlotItem(size_t idx) const override;
 
     int  GetMaxScrollOffset() const override;
@@ -625,6 +630,7 @@ public:
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
     int  GetItemWidth() const override;
+    int GetMemberColumnCount() const override;
     Item* GetSlotItem(size_t idx) const override;
 
     int GetMaxScrollOffset() const override;
@@ -659,6 +665,7 @@ private:
     mutable std::wstring layoutCacheCategory_;
     mutable bool layoutCacheListMode_ = false;
     mutable int layoutCacheItemHeight_ = 0;
+    mutable int layoutCacheColumns_ = 0;
     mutable std::vector<std::wstring> searchResultCache_;
 };
 
@@ -703,6 +710,7 @@ public:
     size_t GetSlotCount() const override;
     int  GetItemHeight() const override;
     int  GetItemWidth()  const override;
+    int GetMemberColumnCount() const override;
     bool IncludeTrailingEmptySlot() const override { return true; }
     Item* GetSlotItem(size_t idx) const override;
 
@@ -754,6 +762,7 @@ private:
     mutable std::vector<size_t> dateLayoutSource_;
     mutable bool dateLayoutListMode_ = false;
     mutable int dateLayoutItemHeight_ = 0;
+    mutable int dateLayoutColumns_ = 0;
 };
 
 /**
@@ -821,6 +830,7 @@ public:
     size_t GetSlotCount() const override;
     int GetItemHeight() const override;
     int GetItemWidth() const override;
+    int GetMemberColumnCount() const override;
     Item* GetSlotItem(size_t idx) const override;
     bool SingleColumn() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }
@@ -920,6 +930,7 @@ public:
     size_t GetSlotCount() const override;
     int GetItemHeight() const override;
     int GetItemWidth() const override;
+    int GetMemberColumnCount() const override;
     Item* GetSlotItem(size_t idx) const override;
     bool SingleColumn() const override;
     bool NeedsShellReloadAfterDrop() const override { return false; }

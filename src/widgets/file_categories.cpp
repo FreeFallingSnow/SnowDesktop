@@ -321,6 +321,7 @@ void FileCategories::EnsureLayout() const
     if (activeId == layoutCacheCategory_ &&
         data_->listMode == layoutCacheListMode_ &&
         currentItemHeight == layoutCacheItemHeight_ &&
+        itemLayout.horizontal.count == layoutCacheColumns_ &&
         !layoutCache_.empty())
         return;
 
@@ -328,6 +329,7 @@ void FileCategories::EnsureLayout() const
     layoutCacheCategory_ = activeId;
     layoutCacheListMode_ = data_->listMode;
     layoutCacheItemHeight_ = currentItemHeight;
+    layoutCacheColumns_ = itemLayout.horizontal.count;
 
     const auto& keys = CachedCategoryKeys(activeId);
     if (keys.empty()) return;
@@ -698,16 +700,16 @@ static snowdesktop::widget_item_layout::Layout FileCategoryLocalLayout(
     DesktopWidget* data = widget->GetWidgetData();
     const RECT content = FileCategoryContentRect(widget);
     const auto metrics = widget->GetItemVisualMetrics();
-    const float spacing = widget->GetLayoutSpacingScale();
+    const auto spacing = widget->GetScrollingIconSpacing();
     if (data->listMode)
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(widget->GetListRowHeight(),
-                metrics.minimumListHeight), spacing);
+                metrics.minimumListHeight), widget->GetListSpacing());
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, widget->IsPopupHosted()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
-                content.right - content.left, metrics.minimumGridWidth, spacing)
+                content.right - content.left, metrics.minimumGridWidth, spacing.horizontal)
             : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
@@ -1059,6 +1061,12 @@ int FileCategories::GetItemWidth() const
 {
     return FileCategoryLocalLayout(
         const_cast<FileCategories*>(this)).horizontal.cell;
+}
+
+int FileCategories::GetMemberColumnCount() const
+{
+    return FileCategoryLocalLayout(
+        const_cast<FileCategories*>(this)).horizontal.count;
 }
 
 /**

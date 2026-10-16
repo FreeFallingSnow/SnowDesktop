@@ -229,16 +229,16 @@ snowdesktop::widget_item_layout::Layout CollectionGroupLocalLayout(
     DesktopWidget* data = widget->GetWidgetData();
     const RECT content = CollectionGroupContentRect(widget);
     const auto metrics = widget->GetItemVisualMetrics();
-    const float spacing = widget->GetLayoutSpacingScale();
+    const auto spacing = widget->GetScrollingIconSpacing();
     if (data->listMode)
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(widget->GetListRowHeight(),
-                metrics.minimumListHeight), spacing);
+                metrics.minimumListHeight), widget->GetListSpacing());
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, widget->IsPopupHosted()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(
-                content.right - content.left, metrics.minimumGridWidth, spacing)
+                content.right - content.left, metrics.minimumGridWidth, spacing.horizontal)
             : std::max(1, data->gridSpan.columns), 0,
         metrics.minimumGridWidth, metrics.minimumGridHeight,
         spacing);
@@ -602,6 +602,12 @@ int CollectionGroup::GetItemWidth() const
 {
     return CollectionGroupLocalLayout(
         const_cast<CollectionGroup*>(this)).horizontal.cell;
+}
+
+int CollectionGroup::GetMemberColumnCount() const
+{
+    return CollectionGroupLocalLayout(
+        const_cast<CollectionGroup*>(this)).horizontal.count;
 }
 
 bool CollectionGroup::SingleColumn() const

@@ -481,7 +481,7 @@
   "app.settings.context_menu_win10_light": "Win10 clair",
   "app.settings.context_menu_win10_dark": "Win10 sombre",
   "app.settings.layout_spacing": "Espacement de la disposition",
-  "app.settings.layout_spacing_hint": "Réglez l'espacement entre les icônes du bureau, les widgets et les icônes dans les widgets.",
+  "app.settings.layout_spacing_hint": "Ajuster l’espacement de la grille du bureau, entre les cadres des widgets et dans les aperçus des grands dossiers.",
   "app.settings.icon_size": "Taille des icônes",
   "app.settings.icon_size_hint": "S’applique aux icônes standard du bureau et des widgets.",
   "app.settings.title_font_size": "Taille de police des titres d’icônes",
@@ -1396,7 +1396,7 @@
   "settings.desktop.categories": "Catégories",
   "settings.desktop.categories.description": "Gérez les onglets de catégorie, leur disposition et les règles de correspondance.",
   "settings.desktop.spacing": "Espacement de la disposition",
-  "settings.desktop.spacing.description": "Réglez l’espace entre les éléments du bureau, les cadres et les éléments internes des composants.",
+  "settings.desktop.spacing.description": "Ajuster l’espacement de la grille du bureau, entre les cadres des widgets et dans les aperçus des grands dossiers.",
   "settings.desktop.iconSize": "Taille des icônes",
   "settings.desktop.iconSize.description": "Réglez la taille des icônes du bureau.",
   "settings.desktop.typography": "Texte des icônes",
@@ -2769,5 +2769,8 @@
   "iconStyle.shrinkAll": "Tout réduire et ajouter le fond du thème",
   "settings.dock.edgeHoverDelay": "Délai de survol du bord de l’écran",
   "app.interact.auto_collect_all": "Collecter toutes les catégories",
-  "app.interact.auto_collect_off": "Désactiver la collecte automatique"
+  "app.interact.auto_collect_off": "Désactiver la collecte automatique",
+  "app.settings.scrolling_icon_spacing_x": "Espacement horizontal des icônes défilantes",
+  "app.settings.scrolling_icon_spacing_y": "Espacement vertical des icônes défilantes",
+  "app.settings.list_row_spacing": "Espacement des lignes de liste"
 }

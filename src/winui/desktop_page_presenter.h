@@ -11,6 +11,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace snowdesktop::winui
 {
@@ -73,9 +74,9 @@ public:
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         Content() const noexcept;
-    /** Shared layout spacing editor, hosted on Pages & displays. */
-    [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
-        LayoutSpacingContent() const noexcept;
+    /** Spacing rows mounted in order in the existing global layout group. */
+    [[nodiscard]] std::vector<winrt::Microsoft::UI::Xaml::UIElement>
+        LayoutSpacingContent() const;
     /** Icon rendering, typography, and shortcut-arrow controls. */
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         DesktopIconsContent() const noexcept;

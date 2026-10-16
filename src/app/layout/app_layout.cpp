@@ -181,6 +181,15 @@ void DesktopApp::LoadLayoutSlots()
     iconSpacingScale_ = snowdesktop::layout_spacing_rules::ResolveStoredScale(
         document.iconSpacing, document.componentSpacing,
         iconSpacingScale_);
+    // Legacy columns kept fixed centers at every global spacing value. Start
+    // older layouts at the neutral X baseline; only their row gaps inherit
+    // the global value. Explicit content preferences remain independent.
+    scrollingIconSpacingXScale_ = snowdesktop::layout_spacing_rules::ClampScale(
+        document.scrollingIconSpacingX.value_or(1.0f));
+    scrollingIconSpacingYScale_ = snowdesktop::layout_spacing_rules::ResolveStoredRowSpacing(
+        document.scrollingIconSpacingY, iconSpacingScale_);
+    listRowSpacingScale_ = snowdesktop::layout_spacing_rules::ResolveStoredRowSpacing(
+        document.listRowSpacing, iconSpacingScale_);
     itemIconSizeScale_ = std::clamp(
         document.iconSizeScale.value_or(kDefaultItemIconSizeScale),
         kMinimumItemIconSizeScale, kMaximumItemIconSizeScale);
@@ -1053,6 +1062,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"scrollingTitleLines\": " << scrollingTitleLines_
          << ",\n  \"titleEllipsis\": " << (titleEllipsis_ ? "true" : "false")
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
+         << ",\n  \"scrollingIconSpacingX\": " << scrollingIconSpacingXScale_
+         << ",\n  \"scrollingIconSpacingY\": " << scrollingIconSpacingYScale_
+         << ",\n  \"listRowSpacing\": " << listRowSpacingScale_
          << ",\n  \"iconSizeScale\": " << itemIconSizeScale_
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
          << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")

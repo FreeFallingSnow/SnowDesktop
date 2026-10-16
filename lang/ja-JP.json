@@ -481,7 +481,7 @@
   "app.settings.context_menu_win10_light": "Win10 ライト",
   "app.settings.context_menu_win10_dark": "Win10 ダーク",
   "app.settings.layout_spacing": "レイアウトの間隔",
-  "app.settings.layout_spacing_hint": "デスクトップのアイコン、ウィジェット、ウィジェット内のアイコンの間隔を調整します。",
+  "app.settings.layout_spacing_hint": "デスクトップのグリッド、ウィジェットの外枠、大きいフォルダーのプレビューの間隔を調整します。",
   "app.settings.icon_size": "アイコンサイズ",
   "app.settings.icon_size_hint": "デスクトップとウィジェット内の通常アイコンに適用します。",
   "app.settings.title_font_size": "アイコンタイトルのフォントサイズ",
@@ -1396,7 +1396,7 @@
   "settings.desktop.categories": "カテゴリ",
   "settings.desktop.categories.description": "カテゴリタブ、配置、照合ルールを管理します。",
   "settings.desktop.spacing": "レイアウトの間隔",
-  "settings.desktop.spacing.description": "デスクトップ項目、コンポーネントの枠、内部の項目の間隔を調整します。",
+  "settings.desktop.spacing.description": "デスクトップのグリッド、ウィジェットの外枠、大きいフォルダーのプレビューの間隔を調整します。",
   "settings.desktop.iconSize": "アイコンのサイズ",
   "settings.desktop.iconSize.description": "デスクトップアイコンのサイズを調整します。",
   "settings.desktop.typography": "アイコンの文字",
@@ -2769,5 +2769,8 @@
   "iconStyle.shrinkAll": "すべて縮小してテーマの背景を追加",
   "settings.dock.edgeHoverDelay": "画面端でのホバー待機時間",
   "app.interact.auto_collect_all": "すべてのカテゴリを収集",
-  "app.interact.auto_collect_off": "自動収集をオフにする"
+  "app.interact.auto_collect_off": "自動収集をオフにする",
+  "app.settings.scrolling_icon_spacing_x": "スクロール領域のアイコンの横間隔",
+  "app.settings.scrolling_icon_spacing_y": "スクロール領域のアイコンの縦間隔",
+  "app.settings.list_row_spacing": "リストの行間隔"
 }

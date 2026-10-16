@@ -135,6 +135,7 @@ public:
     SettingsDomain commitDomains = SettingsDomain::None;
     GeneralSettings committedGeneral;
     DockSettings committedDock;
+    DesktopDisplaySettings committedDesktop;
     float previewedAlpha = 0.0f;
     SettingsRoute route;
     SettingsActionStatus nextPreviewStatus =
@@ -168,6 +169,7 @@ public:
         commitDomains |= domains;
         committedGeneral = snapshot.values.general;
         committedDock = snapshot.values.dock;
+        committedDesktop = snapshot.values.desktop;
         if (duringCommit) duringCommit();
         if (nextCommitStatus == SettingsActionStatus::Busy)
             return SettingsActionResult::Busy(L"commit busy");
@@ -394,6 +396,9 @@ void TestRoutes()
         {"personalization.widgetTransformCursors", SettingsPage::WidgetBehavior},
         {"desktop.spacing", SettingsPage::AppearanceDesktopIcons},
         {"desktop.iconSpacing", SettingsPage::AppearanceDesktopIcons},
+        {"desktop.scrollingIconSpacingX", SettingsPage::AppearanceDesktopIcons},
+        {"desktop.scrollingIconSpacingY", SettingsPage::AppearanceDesktopIcons},
+        {"desktop.listRowSpacing", SettingsPage::AppearanceDesktopIcons},
         {"personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
         {"quickNav.layout.iconSize", SettingsPage::QuickNavigation},
         {"quickNav.color.searchBg", SettingsPage::QuickNavigation},
@@ -1266,6 +1271,9 @@ void TestDesktopHostPersistenceBoundary()
     DesktopDisplaySettings desktop =
         withoutHost.Snapshot()->values.desktop;
     desktop.dockEnabled = true;
+    desktop.scrollingIconSpacingXScale = 0.3f;
+    desktop.scrollingIconSpacingYScale = 1.7f;
+    desktop.listRowSpacingScale = 0.9f;
     withoutHost.UpdateDesktop(desktop, SettingsUpdateMode::Commit);
     Check(!withoutHost.FlushPending().Succeeded() &&
             HasSettingsDomain(
@@ -1285,6 +1293,11 @@ void TestDesktopHostPersistenceBoundary()
                 withHost.Snapshot()->dirtyDomains,
                 SettingsDomain::Desktop),
         "layout-backed desktop values clear only after host persistence");
+    Check(host.committedDesktop.scrollingIconSpacingXScale == 0.3f &&
+            host.committedDesktop.scrollingIconSpacingYScale == 1.7f &&
+            host.committedDesktop.listRowSpacingScale == 0.9f &&
+            host.committedDesktop.iconSpacingScale == desktop.iconSpacingScale,
+        "committing independent content spacing preserves all three values and the separate global spacing");
 }
 
 void TestReentrantCommitKeepsNewerValuePending()

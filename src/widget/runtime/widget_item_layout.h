@@ -93,7 +93,7 @@ inline int DesiredGap(int pitch, float percent, float spacingScale)
 {
     return std::max(0, static_cast<int>(std::round(
         std::max(1, pitch) * percent *
-        std::clamp(spacingScale, 0.5f, 2.0f))));
+        layout_spacing_rules::ClampScale(spacingScale))));
 }
 
 inline Axis ResolveBoundedAxis(int start, int extent, int count,
@@ -125,29 +125,59 @@ inline Axis ResolveScrollingAxis(int start, int minimumCell,
     return result;
 }
 
+// Keep the 100% cell width, then vary the actual pitch. Reflow when a wider
+// gap no longer fits; changing X must move icons, not only narrow their labels.
+inline Axis ResolveScrollingColumns(int start, int extent, int columns,
+    int minimumCell, float spacingScale)
+{
+    const auto baseline = ResolveBoundedAxis(start, extent, columns,
+        minimumCell, kGapPercentX, 1.0f);
+    Axis result;
+    result.start = start;
+    result.extent = std::max(1, extent);
+    result.cell = std::clamp(
+        std::max(minimumCell, baseline.cell), 1, result.extent);
+    const int referencePitch = baseline.cell + baseline.gap;
+    // The baseline gap may already be smaller than the preferred percentage
+    // to preserve minimum cell width. Keep that correction at 100%, while
+    // allowing larger settings to open a gap and reflow even from zero gap.
+    result.gap = std::max(0, baseline.gap +
+        DesiredGap(referencePitch, kGapPercentX, spacingScale) -
+        DesiredGap(referencePitch, kGapPercentX, 1.0f));
+    const int maximumColumns = layout_spacing_rules::ClampScale(spacingScale) < 1.0f
+        ? 50 : std::clamp(columns, 1, 50);
+    result.count = std::clamp((result.extent + result.gap) /
+        (result.cell + result.gap), 1, maximumColumns);
+    result.edge = std::max(0, (result.extent - result.count * result.cell -
+        (result.count - 1) * result.gap) / 2);
+    return result;
+}
+
 inline Layout ResolveGrid(RECT viewport, int columns,
     int fixedRows, int minimumCellWidth, int minimumCellHeight,
-    float spacingScale)
+    layout_spacing_rules::ContentSpacing spacing)
 {
     Layout result;
     result.viewport = viewport;
     result.scrolling = fixedRows <= 0;
-    result.horizontal = ResolveBoundedAxis(
-        viewport.left, viewport.right - viewport.left,
-        columns, minimumCellWidth, kGapPercentX, spacingScale);
+    result.horizontal = result.scrolling
+        ? ResolveScrollingColumns(viewport.left, viewport.right - viewport.left,
+            columns, minimumCellWidth, spacing.horizontal)
+        : ResolveBoundedAxis(viewport.left, viewport.right - viewport.left,
+            columns, minimumCellWidth, kGapPercentX, spacing.horizontal);
     result.vertical = result.scrolling
         ? ResolveScrollingAxis(
             viewport.top, minimumCellHeight,
-            kGapPercentY, spacingScale)
+            kGapPercentY, spacing.vertical)
         : ResolveBoundedAxis(
             viewport.top, viewport.bottom - viewport.top,
             fixedRows, minimumCellHeight,
-            kGapPercentY, spacingScale);
+            kGapPercentY, spacing.vertical);
     return result;
 }
 
 inline Layout ResolveList(RECT viewport, int minimumRowHeight,
-    float spacingScale)
+    layout_spacing_rules::ContentSpacing spacing)
 {
     Layout result;
     result.viewport = viewport;
@@ -158,13 +188,13 @@ inline Layout ResolveList(RECT viewport, int minimumRowHeight,
     result.horizontal.count = 1;
     result.horizontal.edge = std::min(
         std::max(0, (result.horizontal.extent - 1) / 2),
-        DesiredGap(minimumRowHeight, kGapPercentX, spacingScale) / 2);
+        DesiredGap(minimumRowHeight, kGapPercentX, spacing.horizontal) / 2);
     result.horizontal.cell = std::max(
         1, result.horizontal.extent - result.horizontal.edge * 2);
     result.horizontal.gap = 0;
     result.vertical = ResolveScrollingAxis(
         viewport.top, minimumRowHeight,
-        kGapPercentY, spacingScale);
+        kGapPercentY, spacing.vertical);
     return result;
 }
 
@@ -237,8 +267,9 @@ inline RECT ItemRect(const Layout& layout, std::size_t index,
         static_cast<std::size_t>(columns));
     const int row = static_cast<int>(index /
         static_cast<std::size_t>(columns));
-    const int left = BoundedAxisCellStart(
-        layout.horizontal, column);
+    const int left = layout.scrolling
+        ? AxisCellStart(layout.horizontal, column)
+        : BoundedAxisCellStart(layout.horizontal, column);
     const int top = (layout.scrolling
         ? AxisCellStart(layout.vertical, row)
         : BoundedAxisCellStart(layout.vertical, row)) - scrollOffset;

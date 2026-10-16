@@ -481,7 +481,7 @@
   "app.settings.context_menu_win10_light": "Win10 라이트",
   "app.settings.context_menu_win10_dark": "Win10 다크",
   "app.settings.layout_spacing": "레이아웃 간격",
-  "app.settings.layout_spacing_hint": "바탕 화면 아이콘, 위젯, 위젯 내부 아이콘 사이의 간격을 조정합니다.",
+  "app.settings.layout_spacing_hint": "바탕 화면 격자, 위젯 테두리 사이 및 큰 폴더 미리 보기의 간격을 조정합니다.",
   "app.settings.icon_size": "아이콘 크기",
   "app.settings.icon_size_hint": "바탕 화면과 위젯 안의 일반 아이콘에 적용됩니다.",
   "app.settings.title_font_size": "아이콘 제목 글꼴 크기",
@@ -1396,7 +1396,7 @@
   "settings.desktop.categories": "범주",
   "settings.desktop.categories.description": "범주 탭, 레이아웃 및 일치 규칙을 관리합니다.",
   "settings.desktop.spacing": "레이아웃 간격",
-  "settings.desktop.spacing.description": "바탕 화면 항목, 구성 요소 테두리, 내부 항목 사이의 간격을 조정합니다.",
+  "settings.desktop.spacing.description": "바탕 화면 격자, 위젯 테두리 사이 및 큰 폴더 미리 보기의 간격을 조정합니다.",
   "settings.desktop.iconSize": "아이콘 크기",
   "settings.desktop.iconSize.description": "바탕 화면 아이콘의 크기를 조정합니다.",
   "settings.desktop.typography": "아이콘 텍스트",
@@ -2769,5 +2769,8 @@
   "iconStyle.shrinkAll": "모두 축소하고 테마 배경 추가",
   "settings.dock.edgeHoverDelay": "화면 가장자리 마우스 오버 지연",
   "app.interact.auto_collect_all": "모든 범주 수집",
-  "app.interact.auto_collect_off": "자동 수집 끄기"
+  "app.interact.auto_collect_off": "자동 수집 끄기",
+  "app.settings.scrolling_icon_spacing_x": "스크롤 영역 아이콘 가로 간격",
+  "app.settings.scrolling_icon_spacing_y": "스크롤 영역 아이콘 세로 간격",
+  "app.settings.list_row_spacing": "목록 행 간격"
 }

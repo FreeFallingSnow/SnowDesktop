@@ -2893,6 +2893,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 desktopPage_->DesktopIconsContent());
             registerDesktopFocus({
                 "desktop.spacing", "desktop.iconSpacing",
+                "desktop.scrollingIconSpacingX", "desktop.scrollingIconSpacingY", "desktop.listRowSpacing",
                 "desktop.iconSize",
                 "desktop.itemFontSize", "desktop.listFontSize",
                 "desktop.fontWeight", "desktop.shortcutArrow", "desktop.titleLines", "desktop.largeFolderTitleLines", "desktop.scrollingTitleLines", "desktop.titleOverflow"});

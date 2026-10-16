@@ -116,14 +116,16 @@ static snowdesktop::widget_item_layout::Layout CollectionLocalLayout(
     else
         content = widget->GetBodyRect();
     const auto metrics = CollectionVisualMetrics(widget);
-    const float spacing = widget->GetLayoutSpacingScale();
+    const auto spacing = data->scrollContainerMode
+        ? widget->GetScrollingIconSpacing()
+        : snowdesktop::layout_spacing_rules::ContentSpacing(widget->GetLayoutSpacingScale());
     if (data->scrollContainerMode && data->listMode)
     {
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(widget->GetListRowHeight(),
                 metrics.minimumListHeight),
-            spacing);
+            widget->GetListSpacing());
     }
     if (CollectionTitlelessActive(widget))
         return CollectionDenseLayout(widget).geometry;
@@ -1275,6 +1277,14 @@ int Collection::GetItemWidth() const
     if (!data_ || !data_->scrollContainerMode) return Cu(92.0f);
     return CollectionLocalLayout(
         const_cast<Collection*>(this)).horizontal.cell;
+}
+
+int Collection::GetMemberColumnCount() const
+{
+    if (!data_ || !data_->scrollContainerMode)
+        return data_ ? std::max(1, data_->gridSpan.columns) : 1;
+    return CollectionLocalLayout(
+        const_cast<Collection*>(this)).horizontal.count;
 }
 
 int Collection::GetBottomBarButtonCount() const
