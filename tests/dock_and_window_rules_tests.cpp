@@ -4703,6 +4703,68 @@ int main(int argc, char** argv)
         "DirectWrite factory must be available for the collapsed-title layout regression");
     if (dwriteFactory)
     {
+        namespace popupLayout = snowdesktop::collection_popup_layout;
+        for (const float fontSize : {16.0f, 24.0f})
+        {
+            Microsoft::WRL::ComPtr<IDWriteTextFormat> fanFormat;
+            const auto formatResult = dwriteFactory->CreateTextFormat(L"Segoe UI", nullptr,
+                DWRITE_FONT_WEIGHT_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+                DWRITE_FONT_STRETCH_NORMAL, fontSize, L"", &fanFormat);
+            Check(SUCCEEDED(formatResult) && fanFormat,
+                "DirectWrite fan title format must be created");
+            if (!fanFormat) continue;
+            fanFormat->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
+            fanFormat->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+            fanFormat->SetLineSpacing(DWRITE_LINE_SPACING_METHOD_UNIFORM,
+                fontSize * 7.0f / 6.0f, fontSize * 5.0f / 6.0f);
+            Microsoft::WRL::ComPtr<IDWriteInlineObject> sign;
+            Check(SUCCEEDED(dwriteFactory->CreateEllipsisTrimmingSign(fanFormat.Get(), &sign)) && sign,
+                "fan title ellipsis must be available for real overflow");
+            if (!sign) continue;
+            const std::array<std::wstring, 4> titles{
+                L"SnowDesktop", L"中文标题", L"app.txt   ", std::wstring(100, L'W')};
+            for (const float scale : {0.75f, 0.9f, 1.0f, 1.2f, 1.33f, 1.5f, 2.0f})
+            for (const bool mirrored : {false, true})
+            for (std::size_t i = 0; i < titles.size(); ++i)
+            {
+                const auto& title = titles[i];
+                Microsoft::WRL::ComPtr<IDWriteTextLayout> natural;
+                Check(SUCCEEDED(dwriteFactory->CreateTextLayout(title.c_str(),
+                    static_cast<UINT32>(title.size()), fanFormat.Get(), 10000, 1000, &natural)),
+                    "fan title measurement must succeed");
+                if (!natural) continue;
+                DWRITE_TEXT_METRICS measured{};
+                Check(SUCCEEDED(natural->GetMetrics(&measured)), "fan title metrics must be available");
+                popupLayout::Metrics metrics;
+                metrics.scale = scale;
+                const auto pose = popupLayout::ResolveFanItem(metrics, {0, 0, 1000, 1000},
+                    0, false, mirrored);
+                const auto label = popupLayout::FitFanLabelToText(pose.label,
+                    measured.widthIncludingTrailingWhitespace, scale, mirrored);
+                const auto textRect = popupLayout::FanLabelTextRect(label, scale);
+                Check(label.left >= pose.label.left && label.right <= pose.label.right &&
+                        (mirrored ? label.left == pose.label.left : label.right == pose.label.right),
+                    "fitted fan labels retain their icon-side anchor and maximum width");
+                Microsoft::WRL::ComPtr<IDWriteTextLayout> fitted;
+                Check(SUCCEEDED(dwriteFactory->CreateTextLayout(title.c_str(),
+                    static_cast<UINT32>(title.size()), fanFormat.Get(),
+                    static_cast<float>(textRect.right - textRect.left),
+                    static_cast<float>(textRect.bottom - textRect.top), &fitted)),
+                    "fan title drawing layout must be created");
+                if (!fitted) continue;
+                const DWRITE_TRIMMING trim{DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0};
+                Check(SUCCEEDED(fitted->SetTrimming(&trim, sign.Get())),
+                    "fan title overflow policy must apply");
+                DWRITE_LINE_METRICS line{};
+                UINT32 count = 0;
+                Check(SUCCEEDED(fitted->GetLineMetrics(&line, 1, &count)) && count == 1,
+                    "fan titles remain single-line labels");
+                const bool overflow = i == titles.size() - 1;
+                Check((line.isTrimmed != FALSE) == overflow,
+                    "only genuinely oversized fan titles show an ellipsis, including fractional scales");
+            }
+        }
+
         Microsoft::WRL::ComPtr<
             IDWriteTextFormat> format;
         dwriteFactory->CreateTextFormat(

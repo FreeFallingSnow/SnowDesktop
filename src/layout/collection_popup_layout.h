@@ -343,6 +343,29 @@ struct FanItem
     float angle = 0;
 };
 
+inline int FanLabelPadding(float scale)
+{
+    return ScaleDimension(8, scale);
+}
+
+inline RECT FitFanLabelToText(RECT label, float textWidth, float scale, bool mirrored)
+{
+    // Round each inset exactly as drawing does. Rounding the combined padding
+    // can leave a fitting title one pixel too narrow at fractional scales.
+    const int width = std::clamp(static_cast<int>(std::ceil(textWidth)) +
+        2 * FanLabelPadding(scale), ScaleDimension(36, scale),
+        static_cast<int>(label.right - label.left));
+    if (mirrored) label.right = label.left + width;
+    else label.left = label.right - width;
+    return label;
+}
+
+inline RECT FanLabelTextRect(RECT label, float scale)
+{
+    InflateRect(&label, -FanLabelPadding(scale), 0);
+    return label;
+}
+
 inline FanPoint RotateFanPoint(FanPoint point, FanPoint center, float angle)
 {
     const double radians = angle * 3.14159265358979323846 / 180.0;

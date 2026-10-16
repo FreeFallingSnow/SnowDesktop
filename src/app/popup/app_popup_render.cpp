@@ -383,8 +383,7 @@ void DesktopApp::DrawCollectionPopup(
             }
         }
         if (!iconDrawn) drawIcon(ctx, pose.icon);
-        RECT textRect = pose.label;
-        InflateRect(&textRect, -layout::ScaleDimension(8, popupMetrics.scale), 0);
+        const RECT textRect = layout::FanLabelTextRect(pose.label, popupMetrics.scale);
         DrawD2DTextEllipsis(ctx, GetCollectionPopupFanLabel(index), textRect,
             fanTitleTextFormat_.Get(), selected ? D2D1::ColorF(D2D1::ColorF::White) : popupTextColor(1.0f),
             DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);

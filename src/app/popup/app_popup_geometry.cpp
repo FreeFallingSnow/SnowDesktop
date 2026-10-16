@@ -292,12 +292,8 @@ DesktopApp::GetCollectionPopupFanItem(const RECT& popup, size_t index) const
         DWRITE_TEXT_METRICS textMetrics{};
         if (SUCCEEDED(textLayout->GetMetrics(&textMetrics)))
         {
-            const int width = std::clamp(static_cast<int>(std::ceil(textMetrics.width)) +
-                layout::ScaleDimension(16, metrics.scale),
-                layout::ScaleDimension(36, metrics.scale),
-                static_cast<int>(result.label.right - result.label.left));
-            if (mirrored) result.label.right = result.label.left + width;
-            else result.label.left = result.label.right - width;
+            result.label = layout::FitFanLabelToText(result.label,
+                textMetrics.widthIncludingTrailingWhitespace, metrics.scale, mirrored);
         }
     }
     return result;
