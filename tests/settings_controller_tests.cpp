@@ -398,7 +398,6 @@ void TestRoutes()
         {"personalization.widgetTransformCursors", SettingsPage::WidgetBehavior},
         {"desktop.spacing", SettingsPage::AppearanceDesktopIcons},
         {"desktop.iconSpacing", SettingsPage::AppearanceDesktopIcons},
-        {"desktop.scrollingIconSpacingX", SettingsPage::AppearanceDesktopIcons},
         {"desktop.scrollingIconSpacingY", SettingsPage::AppearanceDesktopIcons},
         {"desktop.listRowSpacing", SettingsPage::AppearanceDesktopIcons},
         {"personalization.quickNavigationTheme", SettingsPage::QuickNavigation},
@@ -1313,9 +1312,8 @@ void TestDesktopHostPersistenceBoundary()
     DesktopDisplaySettings desktop =
         withoutHost.Snapshot()->values.desktop;
     desktop.dockEnabled = true;
-    desktop.scrollingIconSpacingXScale = 0.3f;
-    desktop.scrollingIconSpacingYScale = 1.7f;
-    desktop.listRowSpacingScale = 0.9f;
+    desktop.scrollingIconSpacingYScale = 5.0f;
+    desktop.listRowSpacingScale = 4.5f;
     withoutHost.UpdateDesktop(desktop, SettingsUpdateMode::Commit);
     Check(!withoutHost.FlushPending().Succeeded() &&
             HasSettingsDomain(
@@ -1335,11 +1333,10 @@ void TestDesktopHostPersistenceBoundary()
                 withHost.Snapshot()->dirtyDomains,
                 SettingsDomain::Desktop),
         "layout-backed desktop values clear only after host persistence");
-    Check(host.committedDesktop.scrollingIconSpacingXScale == 0.3f &&
-            host.committedDesktop.scrollingIconSpacingYScale == 1.7f &&
-            host.committedDesktop.listRowSpacingScale == 0.9f &&
+    Check(host.committedDesktop.scrollingIconSpacingYScale == 5.0f &&
+            host.committedDesktop.listRowSpacingScale == 4.5f &&
             host.committedDesktop.iconSpacingScale == desktop.iconSpacingScale,
-        "committing independent content spacing preserves all three values and the separate global spacing");
+        "committing vertical content spacing above 200 percent preserves both values and the separate global spacing");
 }
 
 void TestReentrantCommitKeepsNewerValuePending()

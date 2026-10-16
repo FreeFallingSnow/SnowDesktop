@@ -119,37 +119,25 @@ inline Axis ResolveScrollingAxis(int start, int minimumCell,
     result.start = start;
     result.extent = std::max(1, minimumCell);
     result.cell = std::max(1, minimumCell);
-    result.gap = DesiredGap(
-        result.cell, gapPercent, spacingScale);
+    result.gap = std::max(0, static_cast<int>(std::round(
+        result.cell * gapPercent *
+        layout_spacing_rules::ClampRowSpacingScale(spacingScale))));
     result.edge = result.gap / 2;
     return result;
 }
 
-// Keep the column capacity and the 100% outer padding. Only the gaps between
-// title cells change; a gap saturates before consuming the minimum icon width.
+// Scrolling columns always use the baseline horizontal geometry. Row spacing
+// must not change the title widths, column capacity or either outside padding.
 inline Axis ResolveScrollingColumns(int start, int extent, int columns,
-    int minimumCell, float spacingScale)
+    int minimumCell)
 {
     const int count = std::clamp(columns, 1, 50);
-    const auto baseline = ResolveBoundedAxis(start, extent, count,
+    auto result = ResolveBoundedAxis(start, extent, count,
         minimumCell, kGapPercentX, 1.0f);
-    Axis result;
-    result.start = start;
-    result.extent = std::max(1, extent);
-    result.count = count;
-    result.edge = std::max(0, (result.extent - count * baseline.cell -
-        (count - 1) * baseline.gap) / 2);
-    const int innerExtent = std::max(count, result.extent - result.edge * 2);
-    const int fittedMinimum = std::clamp(minimumCell, 1, innerExtent / count);
-    const int maximumGap = count > 1
-        ? std::max(0, (innerExtent - count * fittedMinimum) / (count - 1)) : 0;
-    const int referencePitch = baseline.cell + baseline.gap;
-    result.gap = std::clamp(baseline.gap +
-        DesiredGap(referencePitch, kGapPercentX, spacingScale) -
-        DesiredGap(referencePitch, kGapPercentX, 1.0f), 0, maximumGap);
-    result.cell = std::max(1, (innerExtent - (count - 1) * result.gap) / count);
+    result.edge = std::max(0, (result.extent - count * result.cell -
+        (count - 1) * result.gap) / 2);
     // Distribute integer rounding between cells rather than into the right
-    // padding, so both outside edges stay fixed throughout the slider range.
+    // padding, so both outside edges retain their baseline geometry.
     result.visualItemSize = result.cell;
     result.visualOuterPadding = result.edge;
     return result;
@@ -164,7 +152,7 @@ inline Layout ResolveGrid(RECT viewport, int columns,
     result.scrolling = fixedRows <= 0;
     result.horizontal = result.scrolling
         ? ResolveScrollingColumns(viewport.left, viewport.right - viewport.left,
-            columns, minimumCellWidth, spacing.horizontal)
+            columns, minimumCellWidth)
         : ResolveBoundedAxis(viewport.left, viewport.right - viewport.left,
             columns, minimumCellWidth, kGapPercentX, spacing.horizontal);
     result.vertical = result.scrolling

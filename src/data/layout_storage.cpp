@@ -738,8 +738,6 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         !ReadOptionalRootBoolean(root, "titleEllipsis", decoded.titleEllipsis, error) ||
         !ReadOptionalFloat(root, "iconSpacing", "iconSpacing",
             decoded.iconSpacing, error) ||
-        !ReadOptionalFloat(root, "scrollingIconSpacingX", "scrollingIconSpacingX",
-            decoded.scrollingIconSpacingX, error) ||
         !ReadOptionalFloat(root, "scrollingIconSpacingY", "scrollingIconSpacingY",
             decoded.scrollingIconSpacingY, error) ||
         !ReadOptionalFloat(root, "listRowSpacing", "listRowSpacing",

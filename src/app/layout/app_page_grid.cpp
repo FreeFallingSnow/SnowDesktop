@@ -916,16 +916,13 @@ void DesktopApp::SetIconSpacing(float value)
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void DesktopApp::PreviewContentSpacing(float horizontal, float vertical, float listRows)
+void DesktopApp::PreviewContentSpacing(float vertical, float listRows)
 {
-    using snowdesktop::layout_spacing_rules::ClampScale;
-    horizontal = ClampScale(horizontal);
-    vertical = ClampScale(vertical);
-    listRows = ClampScale(listRows);
-    if (horizontal == scrollingIconSpacingXScale_ &&
-        vertical == scrollingIconSpacingYScale_ && listRows == listRowSpacingScale_)
+    using snowdesktop::layout_spacing_rules::ClampRowSpacingScale;
+    vertical = ClampRowSpacingScale(vertical);
+    listRows = ClampRowSpacingScale(listRows);
+    if (vertical == scrollingIconSpacingYScale_ && listRows == listRowSpacingScale_)
         return;
-    scrollingIconSpacingXScale_ = horizontal;
     scrollingIconSpacingYScale_ = vertical;
     listRowSpacingScale_ = listRows;
     contentSpacingPreviewActive_ = true;
@@ -947,9 +944,9 @@ void DesktopApp::PreviewContentSpacing(float horizontal, float vertical, float l
     }
 }
 
-void DesktopApp::SetContentSpacing(float horizontal, float vertical, float listRows)
+void DesktopApp::SetContentSpacing(float vertical, float listRows)
 {
-    PreviewContentSpacing(horizontal, vertical, listRows);
+    PreviewContentSpacing(vertical, listRows);
     if (!contentSpacingPreviewActive_) return;
     LayoutItems();
     SaveLayoutSlots();

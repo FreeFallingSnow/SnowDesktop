@@ -1307,8 +1307,6 @@ int main()
             "fanTitleFontSizeCu" },
         { "component spacing type", "{\"componentSpacing\":\"1.5\"}",
             "componentSpacing" },
-        { "scrollingIconSpacingX type", "{\"scrollingIconSpacingX\":\"1.5\"}",
-            "scrollingIconSpacingX" },
         { "scrollingIconSpacingY type", "{\"scrollingIconSpacingY\":\"1.5\"}",
             "scrollingIconSpacingY" },
         { "listRowSpacing type", "{\"listRowSpacing\":\"1.5\"}",
@@ -1648,17 +1646,16 @@ int main()
             spacingLayout.collectionLargeFolderTitleless.value_or(false),
         "component spacing, icon size, and the legacy global Collection titleless mode decode as optional migration settings");
     const std::string contentSpacingText =
-        R"({"iconSpacing":1.5,"scrollingIconSpacingX":0.3,"scrollingIconSpacingY":1.7,"listRowSpacing":0.9})";
+        R"({"iconSpacing":1.5,"scrollingIconSpacingX":"ignored legacy preference","scrollingIconSpacingY":5.0,"listRowSpacing":4.5})";
     const auto contentSpacingPath = root / L"content-spacing-layout.json";
     snowdesktop::layout_storage::Document contentSpacingLayout;
     Expect(snowdesktop::layout_storage::SaveDocument(contentSpacingPath, contentSpacingText, &layoutError) &&
             snowdesktop::layout_storage::LoadDocument(contentSpacingPath, contentSpacingLayout).status ==
                 snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
             contentSpacingLayout.iconSpacing == 1.5f &&
-            contentSpacingLayout.scrollingIconSpacingX == 0.3f &&
-            contentSpacingLayout.scrollingIconSpacingY == 1.7f &&
-            contentSpacingLayout.listRowSpacing == 0.9f,
-        "layout storage retains independent grid axes and list row spacing alongside the original global spacing");
+            contentSpacingLayout.scrollingIconSpacingY == 5.0f &&
+            contentSpacingLayout.listRowSpacing == 4.5f,
+        "layout storage retains vertical settings up to 500 percent and ignores obsolete horizontal preferences");
     snowdesktop::layout_storage::Document legacyFontLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"itemFontSize\":18,\"listItemFontSize\":16,\"itemFontWeight\":600}",

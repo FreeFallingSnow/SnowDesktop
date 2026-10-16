@@ -12,7 +12,6 @@ struct DesktopDisplaySettings
 {
     bool dockEnabled = kDefaultDockEnabled;
     float iconSpacingScale = 1.0f;
-    float scrollingIconSpacingXScale = 1.0f;
     float scrollingIconSpacingYScale = 1.0f;
     float listRowSpacingScale = 1.0f;
     float itemIconSizeScale = kDefaultItemIconSizeScale;

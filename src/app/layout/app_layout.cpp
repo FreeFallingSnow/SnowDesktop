@@ -185,11 +185,8 @@ void DesktopApp::LoadLayoutSlots()
     iconSpacingScale_ = snowdesktop::layout_spacing_rules::ResolveStoredScale(
         document.iconSpacing, document.componentSpacing,
         iconSpacingScale_);
-    // Legacy columns kept fixed centers at every global spacing value. Start
-    // older layouts at the neutral X baseline; only their row gaps inherit
-    // the global value. Explicit content preferences remain independent.
-    scrollingIconSpacingXScale_ = snowdesktop::layout_spacing_rules::ClampScale(
-        document.scrollingIconSpacingX.value_or(1.0f));
+    // Only row gaps inherit legacy global spacing; scrolling columns retain
+    // their fixed baseline geometry.
     scrollingIconSpacingYScale_ = snowdesktop::layout_spacing_rules::ResolveStoredRowSpacing(
         document.scrollingIconSpacingY, iconSpacingScale_);
     listRowSpacingScale_ = snowdesktop::layout_spacing_rules::ResolveStoredRowSpacing(
@@ -1079,7 +1076,6 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"scrollingTitleLines\": " << scrollingTitleLines_
          << ",\n  \"titleEllipsis\": " << (titleEllipsis_ ? "true" : "false")
          << ",\n  \"iconSpacing\": " << iconSpacingScale_
-         << ",\n  \"scrollingIconSpacingX\": " << scrollingIconSpacingXScale_
          << ",\n  \"scrollingIconSpacingY\": " << scrollingIconSpacingYScale_
          << ",\n  \"listRowSpacing\": " << listRowSpacingScale_
          << ",\n  \"iconSizeScale\": " << itemIconSizeScale_

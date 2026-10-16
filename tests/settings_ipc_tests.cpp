@@ -403,14 +403,12 @@ void TestCodec()
     settings.values.desktop.largeFolderTitleLines = 2;
     settings.values.desktop.scrollingTitleLines = 1;
     settings.values.desktop.titleEllipsis = false;
-    settings.values.desktop.scrollingIconSpacingXScale = 0.3f;
-    settings.values.desktop.scrollingIconSpacingYScale = 1.7f;
-    settings.values.desktop.listRowSpacingScale = 0.9f;
+    settings.values.desktop.scrollingIconSpacingYScale = 5.0f;
+    settings.values.desktop.listRowSpacingScale = 4.5f;
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
-    Check(restored.values.desktop.scrollingIconSpacingXScale == 0.3f &&
-            restored.values.desktop.scrollingIconSpacingYScale == 1.7f &&
-            restored.values.desktop.listRowSpacingScale == 0.9f,
-        "independent scrolling-grid axes and list row spacing cross the settings-process boundary");
+    Check(restored.values.desktop.scrollingIconSpacingYScale == 5.0f &&
+            restored.values.desktop.listRowSpacingScale == 4.5f,
+        "scrolling and list vertical spacing above 200 percent cross the settings-process boundary");
     Check(restored.values.dock.windowEffect == 4,
           "attraction selection survives the independent settings process boundary");
     Check(!restored.values.personalization.windowPinBorderEnabled &&

@@ -745,7 +745,6 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     snowdesktop::DesktopDisplaySettings desktop;
     desktop.dockEnabled = generalSettings_.dockEnabled;
     desktop.iconSpacingScale = iconSpacingScale_;
-    desktop.scrollingIconSpacingXScale = scrollingIconSpacingXScale_;
     desktop.scrollingIconSpacingYScale = scrollingIconSpacingYScale_;
     desktop.listRowSpacingScale = listRowSpacingScale_;
     desktop.itemIconSizeScale = itemIconSizeScale_;
@@ -1041,7 +1040,6 @@ public:
             app_.titleEllipsis_ = snapshot.values.desktop.titleEllipsis;
             app_.InvalidateAllWidgetSlots();
             app_.PreviewContentSpacing(
-                snapshot.values.desktop.scrollingIconSpacingXScale,
                 snapshot.values.desktop.scrollingIconSpacingYScale,
                 snapshot.values.desktop.listRowSpacingScale);
             app_.PreviewIconSpacing(
@@ -1289,8 +1287,8 @@ public:
             app_.titleEllipsis_ = desktop.titleEllipsis;
             app_.InvalidateAllWidgetSlots();
             app_.SetIconSpacing(desktop.iconSpacingScale);
-            app_.SetContentSpacing(desktop.scrollingIconSpacingXScale,
-                desktop.scrollingIconSpacingYScale, desktop.listRowSpacingScale);
+            app_.SetContentSpacing(desktop.scrollingIconSpacingYScale,
+                desktop.listRowSpacingScale);
             app_.SetItemIconSize(desktop.itemIconSizeScale);
             app_.SetItemFontSize(desktop.itemFontSizeCu);
             app_.SetListItemFontSize(desktop.listItemFontSizeCu);

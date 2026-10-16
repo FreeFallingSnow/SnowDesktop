@@ -4255,45 +4255,31 @@ int main(int argc, char** argv)
             bottomTooltip.bottom <= 176,
         "a titleless tooltip near the lower edge must flip above its icon and remain inside the Collection frame");
 
-    // Horizontal title gaps change within a fixed column capacity and fixed
-    // outer padding; vertical gaps retain their own scroll geometry.
+    // Scrolling columns use fixed horizontal geometry; vertical row gaps have
+    // an independent 10-to-500 percent range.
     const RECT independentViewport{0, 0, 360, 500};
     const auto independentDefault = localLayout::ResolveGrid(
         independentViewport, 3, 0, 40, 80, {1.0f, 1.0f});
-    const auto independentX = localLayout::ResolveGrid(
-        independentViewport, 3, 0, 40, 80, {0.1f, 1.0f});
     const auto independentY = localLayout::ResolveGrid(
-        independentViewport, 3, 0, 40, 80, {1.0f, 2.0f});
-    Check(independentX.horizontal.gap < independentDefault.horizontal.gap &&
-            independentX.horizontal.cell > independentDefault.horizontal.cell &&
-            independentX.horizontal.count == independentDefault.horizontal.count &&
-            independentX.vertical.gap == independentDefault.vertical.gap,
-        "horizontal scrolling-icon spacing changes title gaps and width without changing column capacity or row spacing");
+        independentViewport, 3, 0, 40, 80, {1.0f, 5.0f});
     Check(independentY.horizontal.cell == independentDefault.horizontal.cell &&
             independentY.horizontal.gap == independentDefault.horizontal.gap &&
             localLayout::ItemRect(independentY, 3).top -
-            localLayout::ItemRect(independentY, 0).top == 102 &&
-            localLayout::ContentHeight(independentY, 6) == 204,
-        "vertical scrolling-icon spacing changes row positions and content height without changing columns");
-    const auto independentWide = localLayout::ResolveGrid(
-        independentViewport, 3, 0, 40, 80, {2.0f, 1.0f});
-    Check(independentWide.horizontal.count == 3 &&
-            independentWide.horizontal.gap > independentDefault.horizontal.gap &&
-            localLayout::ItemRect(independentWide, 2).top ==
-                localLayout::ItemRect(independentWide, 0).top &&
-            localLayout::ContentHeight(independentWide, 9) ==
-                localLayout::ContentHeight(independentDefault, 9),
-        "wider title gaps retain columns and the vertical content extent instead of reflowing items");
+            localLayout::ItemRect(independentY, 0).top == 136 &&
+            localLayout::ContentHeight(independentY, 6) == 272,
+        "500-percent vertical scrolling spacing changes row positions and content height without changing columns");
     const auto firstDefaultTitle = localLayout::ItemRect(independentDefault, 0);
     const auto lastDefaultTitle = localLayout::ItemRect(independentDefault, 2);
-    for (int percentage = 10; percentage <= 200; ++percentage)
+    for (int percentage = 10; percentage <= 500; ++percentage)
     {
-        const auto horizontalStep = localLayout::ResolveGrid(
-            independentViewport, 3, 0, 40, 80, {percentage / 100.0f, 1.0f});
-        Check(localLayout::ItemRect(horizontalStep, 0).left == firstDefaultTitle.left &&
-                localLayout::ItemRect(horizontalStep, 2).right == lastDefaultTitle.right &&
-                horizontalStep.horizontal.count == 3 && horizontalStep.horizontal.cell >= 40,
-            "every horizontal spacing step must keep both outer paddings and column capacity fixed");
+        const auto rowStep = localLayout::ResolveGrid(
+            independentViewport, 3, 0, 40, 80, {0.1f, percentage / 100.0f});
+        Check(localLayout::ItemRect(rowStep, 0).left == firstDefaultTitle.left &&
+                localLayout::ItemRect(rowStep, 2).right == lastDefaultTitle.right &&
+                rowStep.horizontal.cell == independentDefault.horizontal.cell &&
+                rowStep.horizontal.gap == independentDefault.horizontal.gap &&
+                rowStep.horizontal.count == 3,
+            "every vertical spacing step must keep title widths, horizontal gaps, outside padding and column capacity fixed");
     }
     const auto narrowDefault = localLayout::ResolveGrid(
         {0, 0, 380, 500}, 4, 0, 90, 80, {1.0f, 1.0f});
@@ -4307,7 +4293,7 @@ int main(int argc, char** argv)
             zeroGapExpanded.horizontal.count == 4 && zeroGapExpanded.horizontal.cell == 90 &&
             localLayout::ItemRect(zeroGapExpanded, 0).left == 0 &&
             localLayout::ItemRect(zeroGapExpanded, 3).right == 360,
-        "horizontal spacing saturates when no title width is available instead of shrinking icons or changing padding");
+        "scrolling columns ignore the old horizontal factor and preserve the fixed icon footprint");
     const auto denseDefault = localLayout::ResolveGrid(
         {0, 0, 100, 500}, 30, 0, 3, 8, {1.0f, 1.0f});
     Check(denseDefault.horizontal.count == 30,
@@ -4315,16 +4301,19 @@ int main(int argc, char** argv)
     const auto independentList = localLayout::ResolveList(
         independentViewport, 38, {1.0f, 0.1f});
     const auto spaciousList = localLayout::ResolveList(
-        independentViewport, 38, {1.0f, 2.0f});
-    Check(independentList.vertical.gap == 1 && spaciousList.vertical.gap == 11 &&
+        independentViewport, 38, {1.0f, 5.0f});
+    Check(independentList.vertical.gap == 1 && spaciousList.vertical.gap == 27 &&
             independentList.horizontal.cell == spaciousList.horizontal.cell &&
             localLayout::ItemRect(spaciousList, 1).top -
-                localLayout::ItemRect(spaciousList, 0).top == 49,
-        "list row spacing has its own full 10-to-200 percent range and preserves list width");
+                localLayout::ItemRect(spaciousList, 0).top == 65,
+        "list row spacing has its own full 10-to-500 percent range and preserves list width");
     Check(layoutSpacing::ResolveStoredRowSpacing(std::nullopt, 0.2f) == 0.5f &&
             layoutSpacing::ResolveStoredRowSpacing(std::nullopt, 1.4f) == 1.4f &&
-            layoutSpacing::ResolveStoredRowSpacing(0.1f, 1.4f) == 0.1f,
-        "legacy row gaps retain their old minimum while explicit independent row settings survive reload");
+            layoutSpacing::ResolveStoredRowSpacing(0.1f, 1.4f) == 0.1f &&
+            layoutSpacing::ResolveStoredRowSpacing(5.0f, 1.4f) == 5.0f &&
+            layoutSpacing::ResolveStoredRowSpacing(9.0f, 1.4f) == 5.0f &&
+            layoutSpacing::ClampScale(5.0f) == 2.0f,
+        "row settings preserve 500 percent on reload and clamp above it without widening the global layout range");
 
     const RECT roomyViewport{
         0, 0,

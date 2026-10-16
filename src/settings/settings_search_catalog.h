@@ -340,8 +340,6 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.desktop.categoryLayout.description"},
     {SettingsPage::AppearanceDesktopIcons, "desktop.spacing",
         "settings.desktop.spacing", "settings.desktop.spacing.description"},
-    {SettingsPage::AppearanceDesktopIcons, "desktop.scrollingIconSpacingX",
-        "app.settings.scrolling_icon_spacing_x", ""},
     {SettingsPage::AppearanceDesktopIcons, "desktop.scrollingIconSpacingY",
         "app.settings.scrolling_icon_spacing_y", ""},
     {SettingsPage::AppearanceDesktopIcons, "desktop.listRowSpacing",

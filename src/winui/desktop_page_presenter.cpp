@@ -606,7 +606,6 @@ struct DesktopPagePresenter::Impl
     SettingsCard categoryRulesCard;
 
     std::unique_ptr<NumericEditor> iconSpacing;
-    std::unique_ptr<NumericEditor> scrollingIconSpacingX;
     std::unique_ptr<NumericEditor> scrollingIconSpacingY;
     std::unique_ptr<NumericEditor> listRowSpacing;
     std::unique_ptr<NumericEditor> iconSize;
@@ -815,23 +814,16 @@ struct DesktopPagePresenter::Impl
                 settings.iconSpacingScale =
                     static_cast<float>(value / 100.0);
             }, kDefaultIconSpacingScale * 100.0);
-        scrollingIconSpacingX = MakeDesktopNumber(
-            layout_spacing_rules::kMinimumScale * 100.0f,
-            layout_spacing_rules::kMaximumScale * 100.0f, 1.0, 0,
-            [](DesktopDisplaySettings& settings, double value) {
-                settings.scrollingIconSpacingXScale = static_cast<float>(value / 100.0);
-            }, 100.0);
-        scrollingIconSpacingX->SetUnit(L"%");
         scrollingIconSpacingY = MakeDesktopNumber(
             layout_spacing_rules::kMinimumScale * 100.0f,
-            layout_spacing_rules::kMaximumScale * 100.0f, 1.0, 0,
+            layout_spacing_rules::kMaximumRowSpacingScale * 100.0f, 1.0, 0,
             [](DesktopDisplaySettings& settings, double value) {
                 settings.scrollingIconSpacingYScale = static_cast<float>(value / 100.0);
             }, 100.0);
         scrollingIconSpacingY->SetUnit(L"%");
         listRowSpacing = MakeDesktopNumber(
             layout_spacing_rules::kMinimumScale * 100.0f,
-            layout_spacing_rules::kMaximumScale * 100.0f, 1.0, 0,
+            layout_spacing_rules::kMaximumRowSpacingScale * 100.0f, 1.0, 0,
             [](DesktopDisplaySettings& settings, double value) {
                 settings.listRowSpacingScale = static_cast<float>(value / 100.0);
             }, 100.0);
@@ -1730,7 +1722,6 @@ struct DesktopPagePresenter::Impl
         for (std::size_t i = 0; i < lines.size(); ++i) titleLineCombos[i].SelectedIndex(std::clamp(lines[i], 1, 2) - 1);
         titleOverflow.SelectedIndex(settings.titleEllipsis ? 0 : 1);
         iconSpacing->SetValue(settings.iconSpacingScale * 100.0);
-        scrollingIconSpacingX->SetValue(settings.scrollingIconSpacingXScale * 100.0);
         scrollingIconSpacingY->SetValue(settings.scrollingIconSpacingYScale * 100.0);
         listRowSpacing->SetValue(settings.listRowSpacingScale * 100.0);
         iconSize->SetValue(settings.itemIconSizeScale * 100.0);
@@ -1782,7 +1773,7 @@ struct DesktopPagePresenter::Impl
     [[nodiscard]] bool HasActiveDesktopEdit() const noexcept
     {
         for (const NumericEditor* editor : {
-                 iconSpacing.get(), scrollingIconSpacingX.get(),
+                 iconSpacing.get(),
                  scrollingIconSpacingY.get(), listRowSpacing.get(),
                  iconSize.get(), itemFontSize.get(),
                  listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get(),
@@ -1848,7 +1839,7 @@ struct DesktopPagePresenter::Impl
     std::vector<NumericEditor*> ContinuousNumbers() const
     {
         return {
-            iconSpacing.get(), scrollingIconSpacingX.get(),
+            iconSpacing.get(),
             scrollingIconSpacingY.get(), listRowSpacing.get(),
             iconSize.get(), itemFontSize.get(),
             listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get(),
@@ -1967,8 +1958,6 @@ struct DesktopPagePresenter::Impl
         iconSpacing->SetLabel(L(
             "app.settings.layout_spacing", L"Layout spacing"), L(
             "app.settings.layout_spacing_hint"));
-        scrollingIconSpacingX->SetLabel(L("app.settings.scrolling_icon_spacing_x",
-            L"Scrolling icon horizontal spacing"));
         scrollingIconSpacingY->SetLabel(L("app.settings.scrolling_icon_spacing_y",
             L"Scrolling icon vertical spacing"));
         listRowSpacing->SetLabel(L("app.settings.list_row_spacing", L"List row spacing"));
@@ -1996,7 +1985,7 @@ struct DesktopPagePresenter::Impl
         muxa::AutomationProperties::SetName(titleOverflow, titleOverflowRow.label.Text());
         itemFontWeight->SetLabel(L(
             "app.settings.title_font_weight", L"Title font weight"));
-        for (NumericEditor* editor : {iconSpacing.get(), scrollingIconSpacingX.get(),
+        for (NumericEditor* editor : {iconSpacing.get(),
                  scrollingIconSpacingY.get(), listRowSpacing.get(), iconSize.get(),
                  itemFontSize.get(), listFontSize.get(), fanTitleFontSize.get(),
                  itemFontWeight.get()})
@@ -2159,7 +2148,6 @@ struct DesktopPagePresenter::Impl
         };
         if (id == "desktop.spacing" || id == "desktop.iconSpacing")
             return iconSpacing->slider;
-        if (id == "desktop.scrollingIconSpacingX") return scrollingIconSpacingX->slider;
         if (id == "desktop.scrollingIconSpacingY") return scrollingIconSpacingY->slider;
         if (id == "desktop.listRowSpacing") return listRowSpacing->slider;
         if (id == "desktop.iconSize") return iconSize->slider;
@@ -2243,7 +2231,6 @@ struct DesktopPagePresenter::Impl
         if (edgeLightEditor) edgeLightEditor->Close();
         if (gradientEditor) gradientEditor->Close();
         iconSpacing->Close();
-        scrollingIconSpacingX->Close();
         scrollingIconSpacingY->Close();
         listRowSpacing->Close();
         iconSize->Close();
@@ -2348,7 +2335,7 @@ std::vector<mux::UIElement>
 DesktopPagePresenter::LayoutSpacingContent() const
 {
     if (!impl_) return {};
-    return {impl_->iconSpacing->root, impl_->scrollingIconSpacingX->root,
+    return {impl_->iconSpacing->root,
         impl_->scrollingIconSpacingY->root, impl_->listRowSpacing->root};
 }
 
