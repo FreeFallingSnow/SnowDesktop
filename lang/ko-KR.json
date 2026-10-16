@@ -2767,7 +2767,7 @@
   "iconStyle.strategy": "아이콘 처리 방식",
   "iconStyle.smart": "스마트 꾸미기",
   "iconStyle.shrinkAll": "모두 축소하고 테마 배경 추가",
-  "settings.dock.edgeHoverDelay": "마우스 오버 지연",
+  "settings.dock.edgeHoverDelay": "화면 가장자리 마우스 오버 지연",
   "app.interact.auto_collect_all": "모든 범주 수집",
   "app.interact.auto_collect_off": "자동 수집 끄기"
 }

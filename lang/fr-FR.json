@@ -2767,7 +2767,7 @@
   "iconStyle.strategy": "Traitement des icônes",
   "iconStyle.smart": "Embellissement intelligent",
   "iconStyle.shrinkAll": "Tout réduire et ajouter le fond du thème",
-  "settings.dock.edgeHoverDelay": "Délai de survol",
+  "settings.dock.edgeHoverDelay": "Délai de survol du bord de l’écran",
   "app.interact.auto_collect_all": "Collecter toutes les catégories",
   "app.interact.auto_collect_off": "Désactiver la collecte automatique"
 }
