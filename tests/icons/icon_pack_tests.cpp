@@ -3,6 +3,7 @@
 #include "icons/android_icon_pack.h"
 #include "icons/icon_image_codec.h"
 #include "icons/icon_beautify.h"
+#include "icons/large_icon_config.h"
 #include "data/atomic_file.h"
 #include <algorithm>
 #include <objbase.h>
@@ -52,10 +53,11 @@ std::string Pool(const std::vector<std::string>& strings)
     while(data.size()%4)data+='\0';std::string out;U16(out,1);U16(out,28);U32(out,static_cast<unsigned>(28+offsets.size()+data.size()));
     U32(out,static_cast<unsigned>(strings.size()));U32(out,0);U32(out,256);U32(out,static_cast<unsigned>(28+offsets.size()));U32(out,0);return out+offsets+data;
 }
-std::string Type(unsigned id,const std::vector<std::tuple<unsigned,unsigned,unsigned>>& entries,bool compact,bool sparse)
+std::string Type(unsigned id,const std::vector<std::tuple<unsigned,unsigned,unsigned>>& entries,bool compact,bool sparse,unsigned sdk=0)
 {
     std::string out;U16(out,0x201);U16(out,84);const auto valueSize=compact?8u:16u;
     U32(out,84+static_cast<unsigned>(entries.size())*(4+valueSize));out+=static_cast<char>(id);out+=static_cast<char>(sparse?1:0);U16(out,0);U32(out,static_cast<unsigned>(entries.size()));U32(out,84+static_cast<unsigned>(entries.size())*4);U32(out,64);out.append(60,'\0');
+    out[44]=static_cast<char>(sdk);out[45]=static_cast<char>(sdk>>8);
     for(unsigned i=0;i<entries.size();++i)if(sparse){U16(out,i);U16(out,i*valueSize/4);}else U32(out,i*valueSize);
     for(const auto& [key,type,data]:entries)
     {
@@ -64,11 +66,12 @@ std::string Type(unsigned id,const std::vector<std::tuple<unsigned,unsigned,unsi
     }
     return out;
 }
-std::string Table(bool compact=false,bool sparse=false,bool cycle=false,bool bitmap=false,std::string globals={})
+std::string Table(bool compact=false,bool sparse=false,bool cycle=false,bool bitmap=false,std::string globals={},bool systemPalette=false)
 {
     if(globals.empty())globals=Pool({"res/sample.xml",bitmap?"res/foreground.png":"res/foreground.xml"});
     const auto types=Pool({"drawable","color"}),keys=Pool({"sample","foreground","back"});
-    const auto entries=Type(1,{{0,3,0},{1,3,1}},compact,sparse)+Type(2,{{2,cycle?1u:28u,cycle?0x7f020000u:0xffff0000u}},compact,sparse);
+    auto entries=Type(1,{{0,3,0},{1,3,1}},compact,sparse)+Type(2,{{2,cycle?1u:28u,cycle?0x7f020000u:0xffff0000u}},compact,sparse);
+    if(systemPalette)entries+=Type(2,{{2,1,0x01060000u}},compact,sparse,31);
     std::string package;U16(package,0x200);U16(package,288);U32(package,static_cast<unsigned>(288+types.size()+keys.size()+entries.size()));U32(package,127);package.append(256,'\0');
     U32(package,288);U32(package,0);U32(package,static_cast<unsigned>(288+types.size()));U32(package,0);U32(package,0);package+=types+keys+entries;
     std::string out;U16(out,2);U16(out,12);U32(out,static_cast<unsigned>(12+globals.size()+package.size()));U32(out,1);return out+globals+package;
@@ -100,7 +103,24 @@ int RunIconPackTests(const std::filesystem::path& root)
             check(removed.succeeded&&removed.entries.size()==1&&removed.entries[0].groupIds.empty()&&std::filesystem::exists(IconAssetPath(root/L"group-library",id)),"deleting a group preserves its icons and original bytes");
         }
         check(std::filesystem::exists(root/L"group-library"/L"packs"/(std::wstring(imported.groups[0].packageId.begin(),imported.groups[0].packageId.end())+L".zip")),"original pack is retained for backup and future provenance");
-        (void)packGroup;
+        request={};request.action="import";request.paths={pack.wstring()};library.Invoke(request);
+        request={};request.action="createGroup";request.name=L"Other membership";auto other=library.Invoke(request);
+        const auto otherGroup=other.groups.back().id;
+        request={};request.action="import";request.paths={IconAssetPath(root/L"group-library",id).wstring()};request.groupId=otherGroup;
+        check(library.Invoke(request).entries[0].groupIds.size()==2,"one resource may belong to the imported pack and another group");
+        request={};request.action="deleteGroupWithAssets";request.groupId=packGroup;
+        check(!library.Invoke(request,{id}).succeeded&&std::filesystem::exists(IconAssetPath(root/L"group-library",id)),"group deletion cannot bypass the host's outstanding-reference protection");
+        const auto cascade=library.Invoke(request);
+        check(cascade.succeeded&&cascade.entries.empty()&&cascade.groups.size()==1&&cascade.groups[0].id==otherGroup&&
+            !std::filesystem::exists(IconAssetPath(root/L"group-library",id)),"optional cascading group deletion removes shared resources while preserving the other group");
+        IconLibrary cascadeReopened(root/L"group-library");check(cascadeReopened.Read().entries.empty(),"cascading deletion survives reopening the resource index");
+        LargeIconConfig large;large.columns=3;large.rows=2;large.effect=4;large.backgroundStyle=-2;large.content=1;large.image="old.png";large.imageAssetId=id;
+        large.foregroundContent=1;large.foregroundImageAssetId=std::string(64,'e')+".png";
+        check(RestoreIconLibraryAssetReferences(large,{id})&&large.imageAssetId.empty()&&large.image.empty()&&large.content==0&&large.backgroundStyle==-1&&
+            large.columns==3&&large.rows==2&&large.effect==4&&large.foregroundContent==1&&!large.foregroundImageAssetId.empty(),
+            "deleting a fill resource restores its default source while preserving geometry, effects and the independent foreground");
+        check(RestoreIconLibraryAssetReferences(large,{large.foregroundImageAssetId})&&large.foregroundContent==0&&large.foregroundImageAssetId.empty(),
+            "deleting the foreground restores its original icon without removing the large-icon configuration");
     }
     atomic_file::WriteAll(pack,Zip("dynamic.png",Hex("edc13101000000c2a06ceb5fca147e4001000000006f03"),0x131a7bbe,5000));
     check(icon_pack::Read(pack,archive,error)&&archive.images[0].bytes==std::string(5000,'A'),"decode independent dynamic-Huffman deflate stream");
@@ -113,10 +133,10 @@ int RunIconPackTests(const std::filesystem::path& root)
     for(const auto compact:{false,true})for(const auto sparse:{false,true})
     {
         icon_pack::Archive apk;
-        apk.documents={{"resources.arsc",Table(compact,sparse)},
+        apk.documents={{"resources.arsc",Table(compact,sparse,false,false,{},true)},
             {"assets/appfilter.xml","<resources><item drawable=\"sample\"/></resources>"},
             {"res/sample.xml",R"(<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android"><background android:drawable="@color/back"/><foreground><inset android:inset="25%"><vector android:viewportWidth="24" android:viewportHeight="24"><path android:fillColor="#80ffffff" android:pathData="M0,0H24V24H0Z"/></vector></inset></foreground><monochrome><vector android:viewportWidth="24" android:viewportHeight="24"><path android:fillColor="#ff000000" android:pathData="M6,6H18V18H6Z"/></vector></monochrome></adaptive-icon>)"}};
-        check(android_icon_pack::Convert(apk,error)&&apk.images.size()==2,"resolve Android full/compact/sparse tables and separate adaptive monochrome variant");
+        check(android_icon_pack::Convert(apk,error)&&apk.images.size()==2,"resolve Android full/compact/sparse tables, baseline colors instead of framework palettes, and separate adaptive monochrome variants");
         if(apk.images.size()==2)
         {
             icon_image::Image color,mono;check(icon_image::DecodeBytes(apk.images[0].bytes,108,color,error)&&icon_image::DecodeBytes(apk.images[1].bytes,108,mono,error),"rasterize composed Android assets through production SVG codec");

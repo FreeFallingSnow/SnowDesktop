@@ -81,13 +81,53 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
     }
     else if ((!state.initialized || request.action == "refresh" || request.action == "import" ||
         request.action == "rename" || request.action == "delete" || request.action == "export" ||
-        request.action == "createGroup" || request.action == "renameGroup" || request.action == "deleteGroup" || request.action == "moveGroup") && !state.busy)
+        request.action == "createGroup" || request.action == "renameGroup" || request.action == "deleteGroup" || request.action == "deleteGroupWithAssets" || request.action == "moveGroup") && !state.busy)
     {
-        if (request.action == "delete" && std::any_of(request.ids.begin(), request.ids.end(), [&](const auto& id) { return uses.contains(id); }))
-        { response.error = "iconLibrary.deleteInUse"; response.succeeded = false; return response; }
         if (request.action != "read" && request.action != "refresh" && request.action != "import" && !state.initialized)
         { response.error = "iconLibrary.working"; response.succeeded = false; return response; }
-        if (request.action == "delete" || request.action == "refresh" || request.action == "import")
+        if(request.action=="delete"||request.action=="deleteGroupWithAssets")
+        {
+            auto ids=request.ids;
+            if(request.action=="deleteGroupWithAssets")
+            {
+                if(std::none_of(state.snapshot.groups.begin(),state.snapshot.groups.end(),[&](const auto& group){return group.id==request.groupId;}))
+                {response.succeeded=false;response.error="iconLibrary.stale";return response;}
+                ids.clear();for(const auto& entry:state.snapshot.entries)
+                    if(std::find(entry.groupIds.begin(),entry.groupIds.end(),request.groupId)!=entry.groupIds.end())ids.push_back(entry.id);
+            }
+            const auto selected=[&](const auto& id){return !id.empty()&&std::find(ids.begin(),ids.end(),id)!=ids.end();};
+            const auto previousOverrides=iconOverrides_;const auto previousRecords=layoutRecords_;const auto previousEdit=largeIconEdit_;
+            std::vector<std::string> previousWidgetIcons;std::vector<std::optional<snowdesktop::LargeIconConfig>> previousItemConfigs;
+            std::vector<size_t> changedLargeIcons;bool changed=false;
+            for(const auto& item:items_)previousItemConfigs.push_back(item.largeIcon);
+            for(const auto& widget:widgets_)previousWidgetIcons.push_back(widget.dockIconAssetId);
+            changed=std::erase_if(iconOverrides_,[&](const auto& value){return selected(value.second);})>0;
+            for(auto& widget:widgets_)if(selected(widget.dockIconAssetId)){widget.dockIconAssetId.clear();changed=true;}
+            for(size_t i=0;i<items_.size();++i)if(items_[i].largeIcon&&snowdesktop::RestoreIconLibraryAssetReferences(*items_[i].largeIcon,ids))
+            {changed=true;changedLargeIcons.push_back(i);}
+            for(auto& [key,record]:layoutRecords_)
+            {(void)key;if(record.largeIcon)changed=snowdesktop::RestoreIconLibraryAssetReferences(*record.largeIcon,ids)||changed;}
+            bool edited=false;
+            if(largeIconEdit_.preview)edited=snowdesktop::RestoreIconLibraryAssetReferences(*largeIconEdit_.preview,ids);
+            for(auto& [key,config]:largeIconEdit_.previews){(void)key;edited=snowdesktop::RestoreIconLibraryAssetReferences(config,ids)||edited;}
+            if(edited)++largeIconEdit_.revision;
+            if(changed&&!SaveLayoutSlots())
+            {
+                iconOverrides_=previousOverrides;layoutRecords_=previousRecords;largeIconEdit_=previousEdit;
+                for(size_t i=0;i<items_.size();++i)items_[i].largeIcon=previousItemConfigs[i];
+                for(size_t i=0;i<widgets_.size();++i)widgets_[i].dockIconAssetId=previousWidgetIcons[i];
+                response.succeeded=false;response.error="iconLibrary.saveFailed";return response;
+            }
+            for(const auto& id:ids)uses.erase(id);
+            for(const auto i:changedLargeIcons)RequestLargeIconAsset(i);
+            if(changed||edited)
+            {
+                InvalidateDragStaticScene();InvalidateDockRects();
+                if(hwnd_)InvalidateRect(hwnd_,nullptr,FALSE);
+                if(floatingPopupHwnd_)InvalidateRect(floatingPopupHwnd_,nullptr,FALSE);
+            }
+        }
+        if (request.action == "delete" || request.action == "deleteGroupWithAssets" || request.action == "refresh" || request.action == "import")
         {
             state.images.Cancel();
             for (const auto& [key, bitmap] : state.bitmaps)
@@ -325,8 +365,11 @@ HMENU DesktopApp::AppendIconOverrideMenu(HMENU menu, const std::wstring& identit
         }
     };
     const auto personal = CreatePopupMenu(); if (!personal) return nullptr;
-    AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(personal), _LW("iconLibrary.personalization"));
-    SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(personal), L"\uF489", MenuIconFont::FluentRegular);
+    if(menu)
+    {
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(personal), _LW("iconLibrary.personalization"));
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(personal), L"\uF489", MenuIconFont::FluentRegular);
+    }
     if (!recycle) add(personal, change, Target(key));
     else for (int state = 0; state < 2; ++state)
     {

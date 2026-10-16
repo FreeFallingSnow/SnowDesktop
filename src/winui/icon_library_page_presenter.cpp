@@ -65,7 +65,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
     c::GridView grid;
     c::InfoBar status;
     c::TextBlock empty;
-    c::AppBarButton import, rename, remove, png, ico, retry;
+    c::AppBarButton import, rename, remove, png, ico, retry, selectAll;
     std::function<void()> cancelPicker;
     x::DispatcherTimer timer;
     bool active = false, picker = false, rendering = false, dockPickerStarted = false, importing = false;
@@ -88,16 +88,35 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
     static winrt::fire_and_forget LoadPreview(c::Image image, c::TextBlock missing, std::wstring path)
     {
+        const winrt::apartment_context foreground;
+        winrt::Windows::Storage::Streams::IRandomAccessStreamWithContentType stream{nullptr};
         try
         {
+            // Storage activation may synchronously pump COM messages. Starting
+            // it inside GridViewItem.Loaded reenters XAML layout and can fail
+            // fast before the coroutine reaches its first suspension.
+            co_await winrt::resume_background();
             const auto file = co_await winrt::Windows::Storage::StorageFile::GetFileFromPathAsync(path);
-            const auto stream = co_await file.OpenReadAsync();
+            stream = co_await file.OpenReadAsync();
+        }
+        catch (...) { }
+        bool resumed=false;
+        try
+        {
+            co_await foreground;
+            resumed=true;
+            if(!image.XamlRoot())co_return;
+            if(!stream){missing.Visibility(x::Visibility::Visible);co_return;}
             m::Imaging::BitmapImage bitmap;
             co_await bitmap.SetSourceAsync(stream);
             if (bitmap.PixelWidth() <= 0 || bitmap.PixelHeight() <= 0) throw winrt::hresult_invalid_argument();
             image.Source(bitmap); missing.Visibility(x::Visibility::Collapsed);
         }
-        catch (...) { image.Source(nullptr); missing.Visibility(x::Visibility::Visible); }
+        catch (...)
+        {
+            if(resumed)try{image.Source(nullptr);missing.Visibility(x::Visibility::Visible);}catch(...){}
+            // Island shutdown must not escape a fire-and-forget task.
+        }
     }
     c::StackPanel Tile(const IconLibraryEntry& entry)
     {
@@ -140,6 +159,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         newGroup.IsEnabled(!snapshot.busy);
         renameGroup.IsEnabled(!snapshot.busy && !groupId.empty() && groupId != "ungrouped");
         deleteGroup.IsEnabled(renameGroup.IsEnabled()); moveGroup.IsEnabled(!snapshot.busy && !selected.empty());
+        selectAll.IsEnabled(!snapshot.busy&&grid.Items().Size()>0);
         if (selectionChanged) selectionChanged();
     }
     void Render()
@@ -247,10 +267,26 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         const auto lifetime = shared_from_this(); const auto id = groupId;
         if (snapshot.busy || id.empty() || id == "ungrouped") co_return;
         c::ContentDialog dialog; dialog.XamlRoot(root.XamlRoot()); dialog.Title(winrt::box_value(L("iconLibrary.deleteGroup")));
-        dialog.Content(winrt::box_value(L("iconLibrary.deleteGroupHint"))); dialog.PrimaryButtonText(L("app.settings.delete"));
+        c::StackPanel content;content.Spacing(8);
+        c::CheckBox withIcons;withIcons.Content(winrt::box_value(L("iconLibrary.deleteGroupIcons")));
+        c::TextBlock hint;hint.Text(L("iconLibrary.deleteGroupHint"));hint.TextWrapping(x::TextWrapping::Wrap);
+        c::TextBlock uses;uses.TextWrapping(x::TextWrapping::Wrap);
+        std::wstring affected;
+        for(const auto& entry:snapshot.entries)
+            if(std::find(entry.groupIds.begin(),entry.groupIds.end(),id)!=entry.groupIds.end())
+                for(const auto& use:entry.uses)affected+=L"\n"+entry.name+L" · "+use;
+        uses.Text(affected.empty()?L"":L("iconLibrary.deleteRestoreUses")+affected);
+        c::ScrollViewer references;references.MaxHeight(180);references.Content(uses);references.Visibility(x::Visibility::Collapsed);
+        const auto update=[withIcons,hint,references,affected,keep=L("iconLibrary.deleteGroupHint"),removeHint=L("iconLibrary.deleteGroupIconsHint")](auto&&,auto&&){
+            const bool removeIcons=withIcons.IsChecked().Value();hint.Text(removeIcons?removeHint:keep);
+            references.Visibility(removeIcons&&!affected.empty()?x::Visibility::Visible:x::Visibility::Collapsed);
+        };
+        withIcons.Checked(update);withIcons.Unchecked(update);
+        content.Children().Append(withIcons);content.Children().Append(hint);content.Children().Append(references);
+        dialog.Content(content); dialog.PrimaryButtonText(L("app.settings.delete"));
         dialog.CloseButtonText(L("app.settings.cancel")); dialog.DefaultButton(c::ContentDialogButton::Close);
         try { if (co_await dialog.ShowAsync() == c::ContentDialogResult::Primary && active)
-            { IconLibraryRequest request; request.action = "deleteGroup"; request.groupId = id; Send(request); } }
+            { IconLibraryRequest request; request.action = withIcons.IsChecked().Value()?"deleteGroupWithAssets":"deleteGroup"; request.groupId = id; Send(request); } }
         catch (...) { }
     }
     winrt::fire_and_forget MoveGroup()
@@ -290,14 +326,17 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (const auto& id : ids)
         {
             const auto entry = visible.find(id); if (entry == visible.end()) continue;
-            if (!entry->second.uses.empty())
-            {
-                status.Message(L("iconLibrary.deleteInUse")); status.IsOpen(true); status.Severity(c::InfoBarSeverity::Warning); co_return;
-            }
             names += (names.empty() ? L"" : L"\n") + entry->second.name;
+            if(!entry->second.uses.empty())
+            {
+                names+=L"\n"+L("iconLibrary.deleteRestoreUses");
+                for(const auto& use:entry->second.uses)names+=L"\n  "+use;
+            }
         }
         c::ContentDialog dialog; dialog.XamlRoot(root.XamlRoot()); dialog.Title(winrt::box_value(L("iconLibrary.delete")));
-        dialog.Content(winrt::box_value(names)); dialog.PrimaryButtonText(L("app.settings.delete")); dialog.CloseButtonText(L("app.settings.cancel"));
+        c::TextBlock detail;detail.Text(names);detail.TextWrapping(x::TextWrapping::Wrap);
+        c::ScrollViewer details;details.MaxHeight(280);details.Content(detail);
+        dialog.Content(details); dialog.PrimaryButtonText(L("app.settings.delete")); dialog.CloseButtonText(L("app.settings.cancel"));
         dialog.DefaultButton(c::ContentDialogButton::Close);
         try
         {
@@ -355,6 +394,8 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
             { const auto selected = self->groups.SelectedItem().try_as<c::ComboBoxItem>();
               self->groupId = selected ? winrt::to_string(winrt::unbox_value<winrt::hstring>(selected.Tag())) : std::string{}; self->signature.clear(); self->Render(); } });
         add(import, "iconLibrary.import", [weak](auto&&, auto&&) { if (auto self = weak.lock()) self->Import(PickFiles(false)); });
+        add(selectAll,"iconLibrary.selectFiltered",[weak](auto&&,auto&&){if(const auto self=weak.lock())self->grid.SelectAll();});
+        x::Automation::AutomationProperties::SetAutomationId(selectAll,L"IconLibrarySelectFiltered");
         add(retry, "app.operation.retry", [weak](auto&&, auto&&) { if (auto self = weak.lock()) { IconLibraryRequest request; request.action = "refresh"; self->Send(request); } });
         add(rename, "iconLibrary.rename", [weak](auto&&, auto&&) { if (auto self = weak.lock()) self->Rename(); });
         add(remove, "iconLibrary.delete", [weak](auto&&, auto&&) { if (auto self = weak.lock()) self->Remove(); });
@@ -366,7 +407,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         { button.Label(L(key)); toolbar.SecondaryCommands().Append(button); }
         renameGroup.Click([weak](auto&&, auto&&) { if (auto self=weak.lock()) self->EditGroup(false); });
         deleteGroup.Click([weak](auto&&, auto&&) { if (auto self=weak.lock()) self->DeleteGroup(); });
-        if (picker) { newGroup.Visibility(x::Visibility::Collapsed); renameGroup.Visibility(x::Visibility::Collapsed); deleteGroup.Visibility(x::Visibility::Collapsed); moveGroup.Visibility(x::Visibility::Collapsed); rename.Visibility(x::Visibility::Collapsed); remove.Visibility(x::Visibility::Collapsed); png.Visibility(x::Visibility::Collapsed); ico.Visibility(x::Visibility::Collapsed); }
+        if (picker) { selectAll.Visibility(x::Visibility::Collapsed); newGroup.Visibility(x::Visibility::Collapsed); renameGroup.Visibility(x::Visibility::Collapsed); deleteGroup.Visibility(x::Visibility::Collapsed); moveGroup.Visibility(x::Visibility::Collapsed); rename.Visibility(x::Visibility::Collapsed); remove.Visibility(x::Visibility::Collapsed); png.Visibility(x::Visibility::Collapsed); ico.Visibility(x::Visibility::Collapsed); }
         grid.Height(picker ? 340 : 460); grid.SelectionMode(picker ? c::ListViewSelectionMode::Single : c::ListViewSelectionMode::Multiple);
         x::Automation::AutomationProperties::SetAutomationId(grid, L"IconLibraryGrid");
         grid.SelectionChanged([weak](auto&&, auto&&) { if (auto self = weak.lock(); self && !self->rendering) self->UpdateButtons(); });
@@ -385,6 +426,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (const auto& button : {remove, deleteGroup}) button.Icon(c::SymbolIcon(c::Symbol::Delete));
         for (const auto& button : {png, ico}) button.Icon(c::SymbolIcon(c::Symbol::Save));
         retry.Icon(c::SymbolIcon(c::Symbol::Refresh)); moveGroup.Icon(c::SymbolIcon(c::Symbol::Folder));
+        selectAll.Icon(c::SymbolIcon(c::Symbol::SelectAll));
     }
 };
 
@@ -440,6 +482,7 @@ void IconLibraryPagePresenter::RefreshLocalizedText()
     impl_->groupSignature.clear(); impl_->groups.Items().Clear();
     impl_->retry.Label(impl_->L("app.operation.retry"));
     impl_->ico.Label(impl_->L("iconLibrary.exportIco")); impl_->signature.clear(); impl_->Render();
+    impl_->selectAll.Label(impl_->L("iconLibrary.selectFiltered"));
 }
 std::function<void()> IconLibraryPagePresenter::Impl::ShowDialog(x::XamlRoot root, IconLibraryPagePresenter::Localize localize,
     IconLibraryAction action, std::string selected, std::function<void(std::string)> completed)

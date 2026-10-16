@@ -321,7 +321,7 @@ void DesktopApp::ShowItemContextMenu(
         entitlement.bridgeAvailable, entitlement.registered);
     const auto customIconIdentity = items_[itemIndex].layoutKey;
     const auto iconPersonalization = selectedCount == 1 && !items_[itemIndex].largeIcon ?
-        AppendIconOverrideMenu(menu, customIconIdentity) : nullptr;
+        AppendIconOverrideMenu(nullptr, customIconIdentity) : nullptr;
     if (largeIconMenu)
     {
         if (items_[itemIndex].largeIcon && largeIconAccess == EntryAccess::Edit)
@@ -400,6 +400,10 @@ void DesktopApp::ShowItemContextMenu(
     AppendMenuW(menu,
         canShowProperties ? MF_STRING : MF_STRING | MF_GRAYED,
         kContextPropertiesCommand, _LW("app.menu.properties"));
+    if(iconPersonalization)
+    {
+        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(iconPersonalization),_LW("iconLibrary.personalization"));
+    }
     if (selectedCount == 1 && canFile)
         AppendWebsiteIconMenu(menu, itemPath);
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
@@ -532,6 +536,7 @@ void DesktopApp::ShowItemContextMenu(
             snowdesktop::menu_fluent_glyphs::kFolderMapping, MenuIconFont::FluentRegular);
     SetMenuItemIcon(iconPersonalization ? iconPersonalization : menu,
         kContextLargeIconCreate, L"\uF0B2");
+    if(iconPersonalization)SetMenuItemIcon(menu,reinterpret_cast<UINT_PTR>(iconPersonalization),L"\uF489",MenuIconFont::FluentRegular);
     SetMenuItemIcon(menu, kContextLargeIconSettings, L"\uF013");
     SetMenuItemIcon(menu, kContextLargeIconRestore,
         snowdesktop::menu_fluent_glyphs::kCompactGrid, MenuIconFont::FluentRegular);

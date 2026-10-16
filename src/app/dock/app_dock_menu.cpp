@@ -30,6 +30,7 @@ constexpr UINT kDockReserveMaximized = 41873;
 constexpr UINT kDockStartButton = 41874;
 constexpr UINT kDockQuickSearchButton = 41875;
 constexpr UINT kDockStartIcon = 41876, kDockSearchIcon = 41877;
+constexpr UINT kDockStartRestoreIcon = 41878, kDockSearchRestoreIcon = 41879;
 constexpr UINT kDesktopStyleFirst = 41880;
 constexpr wchar_t const* kDesktopStyles[]{L"native", L"taskbar-dock", L"island", L"merged", L"side"};
 constexpr char const* kDesktopStyleLabels[]{"settings.desktopStyle.native.title", "settings.desktopStyle.taskbar-dock.title",
@@ -175,10 +176,19 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     };
     addToggle(menu, kDockStartButton, _LW("app.dock.start_button"), dockSettings_.showWindowsButton,
         L"\uF133", true, true);
-    AppendMenuW(menu, MF_STRING, kDockStartIcon, _LW("iconLibrary.personalize"));
+    const auto addIconPersonalization = [&](UINT change, UINT restore, const wchar_t* target) {
+        const HMENU submenu=CreatePopupMenu(); if(!submenu)return submenu;
+        AppendMenuW(submenu,MF_STRING,change,_LW("iconLibrary.change"));
+        AppendMenuW(submenu,MF_STRING | (iconOverrides_.contains(target)?0:MF_GRAYED),restore,_LW("iconLibrary.restore"));
+        SetMenuItemIcon(submenu,change,L"\uF489",MenuIconFont::FluentRegular);
+        SetMenuItemIcon(submenu,restore,L"\uF19A",MenuIconFont::FluentRegular);
+        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(submenu),_LW("iconLibrary.personalize"));
+        return submenu;
+    };
+    const auto startIconMenu=addIconPersonalization(kDockStartIcon,kDockStartRestoreIcon,L"control:start");
     addToggle(menu, kDockQuickSearchButton, _LW("app.dock.quick_search"), dockSettings_.showQuickSearchButton,
         L"\uF690", true, true); // search_20
-    AppendMenuW(menu, MF_STRING, kDockSearchIcon, _LW("iconLibrary.personalize"));
+    const auto searchIconMenu=addIconPersonalization(kDockSearchIcon,kDockSearchRestoreIcon,L"control:search");
     addToggle(menu, kContextDockSingleClickLaunch, _LW("app.dock.single_click_launch"),
         dockSettings_.singleClickLaunchItems, L"\uE445"); // cursor_click_20
     addToggle(menu, kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
@@ -223,9 +233,9 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden);
     const auto bindFinalDockIcons = [&] {
         SetMenuItemInlineAction(menu, kDockStartButton, kDockStartButton);
-        SetMenuItemInlineAction(menu, kDockStartIcon, kDockStartButton, true, false, true);
+        if(startIconMenu)SetMenuItemInlineAction(menu,reinterpret_cast<UINT_PTR>(startIconMenu),kDockStartButton,true,false,true);
         SetMenuItemInlineAction(menu, kDockQuickSearchButton, kDockQuickSearchButton);
-        SetMenuItemInlineAction(menu, kDockSearchIcon, kDockQuickSearchButton, true, false, true);
+        if(searchIconMenu)SetMenuItemInlineAction(menu,reinterpret_cast<UINT_PTR>(searchIconMenu),kDockQuickSearchButton,true,false,true);
         // Icon metadata is indexed by HMENU row. Leading insertions below
         // shift those rows, so bind Dock actions after the final structure.
         for (const auto& [command, glyph] : dockActionIcons)
@@ -331,6 +341,11 @@ void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
     if (command == kDockStartIcon || command == kDockSearchIcon)
     {
         OpenIconOverrideLibrary(command == kDockStartIcon ? L"control:start" : L"control:search");
+        return;
+    }
+    if(command==kDockStartRestoreIcon||command==kDockSearchRestoreIcon)
+    {
+        SetIconOverride(command==kDockStartRestoreIcon?L"control:start":L"control:search",{});
         return;
     }
     if (command >= kDesktopStyleFirst && command < kDesktopStyleFirst + std::size(kDesktopStyles))

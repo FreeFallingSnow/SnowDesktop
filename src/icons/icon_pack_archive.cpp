@@ -92,7 +92,9 @@ bool Read(const std::filesystem::path& path, Archive& result, std::string& error
         const bool document = apk && (lower.ends_with(".xml") || lower == "resources.arsc");
         if (apk && !resource) continue;
         if (!ImageName(lower) && !document) continue;
-        if (apk && lower.ends_with(".9.png")) { result.skipped.push_back(name); continue; }
+        // Launcher UI nine-patches are not mapped icons. A mapped reference to
+        // one is reported by the Android converter using its icon identity.
+        if (apk && lower.ends_with(".9.png")) continue;
         expanded += unpacked;
         if (unpacked > icon_image::kMaxFileBytes || expanded > maxExpanded) return fail("iconLibrary.packTooLarge");
         if (!unpacked || flags & 1 || (method != 0 && method != 8)) { result.skipped.push_back(name); continue; }

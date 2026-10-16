@@ -164,7 +164,10 @@ Resources Table(std::string_view bytes)
                     if(!id || count>65536 || package>255 || id+offset>255)throw std::runtime_error("oversized Android type");
                     type.Check(header,static_cast<size_t>(count)*((flags&2)?2:4));
                     int rank=0; for(size_t c=24;c<header;++c) if(c!=34 && c!=35 && c!=44 && c!=45 && c!=46 && c!=47 && type.U8(c)) rank+=10000;
-                    if(header>=48)rank-=static_cast<int>(type.U16(34)+type.U16(44)*2);
+                    // Prefer the pack's baseline color over Android-version
+                    // wallpaper palette aliases, which require an Android
+                    // framework and have no corresponding Windows resource.
+                    if(header>=48)rank+=static_cast<int>(type.U16(44)*2)*(At(types,id-1)=="color"?1:-1)-static_cast<int>(type.U16(34));
                     for(unsigned i=0;i<count;++i)
                     {
                         unsigned index=i; std::uint32_t at=0;

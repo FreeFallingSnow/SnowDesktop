@@ -373,7 +373,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     });
     auto libraryFixture = std::make_shared<IconLibrarySnapshot>();
     libraryFixture->succeeded = true; libraryFixture->revision = 1;
-    const auto iconPreview = output / L"图标 # % preview.png";
+    const auto iconPreview = output / L"图标 # % preview.png"; // l10n-allow: isolated fixture checks Unicode and reserved characters in local image paths.
     std::vector<std::uint32_t> iconPixels(96 * 96);
     for (int y = 0; y < 96; ++y) for (int xx = 0; xx < 96; ++xx)
         if ((xx - 48) * (xx - 48) + (y - 48) * (y - 48) < 40 * 40) iconPixels[y * 96 + xx] = 0xffe88c22;
@@ -560,6 +560,9 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             grid.SelectedIndex(0); groups.SelectedIndex(2); Settle(shell.as<x::FrameworkElement>());
             if (grid.Items().Size() != 4 || grid.SelectedItems().Size() != 1)
                 throw std::runtime_error("group filter lost a visible selected resource identity");
+            const auto selectFiltered=PreviewControl<c::AppBarButton>(cards,L"IconLibrarySelectFiltered");
+            InvokePreview(selectFiltered);
+            if(grid.SelectedItems().Size()!=4)throw std::runtime_error("select filtered icons omitted resources in the current group");
             query.Text(L"no-matching-icon"); Settle(shell.as<x::FrameworkElement>());
             if (grid.Items().Size()) throw std::runtime_error("library search failed to filter resources");
             query.Text(L""); groups.SelectedIndex(0); Settle(shell.as<x::FrameworkElement>()); PumpUntil(loadedImages);

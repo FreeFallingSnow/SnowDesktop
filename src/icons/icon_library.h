@@ -56,6 +56,10 @@ inline bool IsIconAssetId(std::string_view id)
     return extension == "png" || extension == "ico" || extension == "jpg" || extension == "bmp" || extension == "svg" || extension == "webp";
 }
 std::filesystem::path IconAssetPath(const std::filesystem::path& directory, std::string_view id);
+struct LargeIconConfig;
+// Reverse operations remain available without premium entitlement. Only the
+// deleted library source is reset; sizing, effects and other sources survive.
+bool RestoreIconLibraryAssetReferences(LargeIconConfig& config, const std::vector<std::string>& ids);
 
 // Synchronous storage operations run exclusively on the host's resource worker.
 // UI and render code receive immutable snapshots/paths, never this mutable store.

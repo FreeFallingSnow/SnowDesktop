@@ -2,6 +2,7 @@
 #include "icon_image_codec.h"
 #include "icon_pack_archive.h"
 #include "android_icon_pack.h"
+#include "large_icon_config.h"
 #include "data/atomic_file.h"
 #include "common/json_value.h"
 #include "ui/preview/preview_png_writer.h"
@@ -86,6 +87,20 @@ std::filesystem::path IconAssetPath(const std::filesystem::path& directory, std:
 { return IsIconAssetId(id) ? directory / L"originals" / Wide(id) : std::filesystem::path{}; }
 
 IconLibrary::IconLibrary(std::filesystem::path directory) : directory_(std::move(directory)) {}
+bool RestoreIconLibraryAssetReferences(LargeIconConfig& config,const std::vector<std::string>& ids)
+{
+    const auto contains=[&](const auto& id){return !id.empty()&&std::find(ids.begin(),ids.end(),id)!=ids.end();};
+    bool changed=false;
+    if(contains(config.imageAssetId))
+    {
+        config.imageAssetId.clear();config.image.clear();config.content=0;
+        if(config.backgroundStyle==-2)config.backgroundStyle=-1;
+        changed=true;
+    }
+    if(contains(config.foregroundImageAssetId))
+    {config.foregroundImageAssetId.clear();config.foregroundImage.clear();config.foregroundContent=0;changed=true;}
+    return changed;
+}
 bool IconLibrary::Load()
 {
     if (loaded_) return valid_;
@@ -235,12 +250,18 @@ std::string IconLibrary::Import(const std::filesystem::path& path, std::string& 
 IconLibrarySnapshot IconLibrary::Invoke(const IconLibraryRequest& request, const std::vector<std::string>& protectedIds)
 {
     if (!Load()) { IconLibrarySnapshot result; result.error = "iconLibrary.readFailed"; return result; }
-    if (request.action == "delete" && std::any_of(request.ids.begin(), request.ids.end(), [&](const auto& id) {
+    auto deletionIds=request.ids;
+    if(request.action=="deleteGroupWithAssets")
+    {
+        deletionIds.clear();
+        for(const auto& entry:entries_)if(std::find(entry.groupIds.begin(),entry.groupIds.end(),request.groupId)!=entry.groupIds.end())deletionIds.push_back(entry.id);
+    }
+    if ((request.action == "delete"||request.action=="deleteGroupWithAssets") && std::any_of(deletionIds.begin(), deletionIds.end(), [&](const auto& id) {
             return std::find(protectedIds.begin(), protectedIds.end(), id) != protectedIds.end(); }))
     { auto result = Read(); result.succeeded = false; result.error = "iconLibrary.deleteInUse"; return result; }
     IconLibrarySnapshot operation;
     const auto group = std::find_if(groups_.begin(), groups_.end(), [&](const auto& value) { return value.id == request.groupId; });
-    if (request.action == "createGroup" || request.action == "renameGroup" || request.action == "deleteGroup" || request.action == "moveGroup")
+    if (request.action == "createGroup" || request.action == "renameGroup" || request.action == "deleteGroup" || request.action == "deleteGroupWithAssets" || request.action == "moveGroup")
     {
         const auto oldGroups = groups_; const auto oldEntries = entries_;
         if (request.action == "createGroup")
@@ -252,16 +273,25 @@ IconLibrarySnapshot IconLibrary::Invoke(const IconLibraryRequest& request, const
         else if (group == groups_.end() && !(request.action == "moveGroup" && request.groupId.empty())) operation.error = "iconLibrary.stale";
         else if (request.action == "renameGroup")
         { if (ValidName(request.name)) group->name = request.name; else operation.error = "iconLibrary.invalid"; }
-        else if (request.action == "deleteGroup")
+        else if (request.action == "deleteGroup" || request.action == "deleteGroupWithAssets")
         {
             groups_.erase(group);
-            for (auto& entry : entries_) std::erase(entry.groupIds, request.groupId);
+            if(request.action=="deleteGroupWithAssets")std::erase_if(entries_,[&](const auto& entry){return std::find(deletionIds.begin(),deletionIds.end(),entry.id)!=deletionIds.end();});
+            else for (auto& entry : entries_) std::erase(entry.groupIds, request.groupId);
         }
         else for (auto& entry : entries_)
             if (std::find(request.ids.begin(), request.ids.end(), entry.id) != request.ids.end())
             { entry.groupIds.clear(); if (!request.groupId.empty()) entry.groupIds.push_back(request.groupId); }
         if (operation.error.empty() && !Save()) { groups_ = oldGroups; entries_ = oldEntries; operation.error = "iconLibrary.saveFailed"; }
-        if (operation.error.empty()) ++revision_;
+        if (operation.error.empty())
+        {
+            ++revision_;
+            if(request.action=="deleteGroupWithAssets")for(const auto& id:deletionIds)
+            {
+                std::error_code ec;std::filesystem::remove(IconAssetPath(directory_,id),ec);
+                std::filesystem::remove(directory_/L"previews"/(Wide(id)+L"-v"+std::to_wstring(icon_image::kCacheVersion)+L".png"),ec);
+            }
+        }
     }
     else if (request.action == "import")
     {
