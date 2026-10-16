@@ -13,6 +13,17 @@
 - 暂停时间从扫描等待预算中扣除。关闭服务时必须先取消并唤醒扫描，再等待工作线程和 future
   收尾；停止后的调度器不得重新启动扫描。取消结果不能作为完整库存发布。
 
+注册表失效由 `shell_menu_registry_watch.h` 管理。目标存在时监听其子树的名称和值变化；
+可选目标缺失时，只监听最近现存祖先的直接子键名称。中间层出现后重新向下设防，直到目标
+出现才标记库存失效；无关子键和值变化不触发全量扫描。目标删除、通知等待或重新设防失败
+仍采用保守失效处理。
+
+设置进程环境变量 `SNOWDESKTOP_MENU_TRACE` 可启用按进程分文件的菜单诊断，记录监听编号、
+失效原因、扫描开始和完成；日志不包含注册表路径或用户选择。性能采集中，`shell.catalogue`
+的 `scan`、`file.roots`、`file.worker`、`associations.worker` 标记扫描阶段，
+`request.registry_revision` 和 `request.foreground` 记录请求代次与前台需求。阶段耗时可重叠，
+应结合请求日志及 CPU 采样分析，不能将耗时之和作为进程 CPU。
+
 控制器回归与私有注册表库存检查位于
 `tests/shell/shell_catalogue_registry_handle_tests.cpp`。原生全屏观察夹具只能显式调用
 `SnowDesktopShellContextMenuInvokeTests --fullscreen-scan-fixture`；其窗口位于现有窗口之后，
