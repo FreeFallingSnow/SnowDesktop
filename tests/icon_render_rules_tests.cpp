@@ -1,6 +1,7 @@
 #include "../src/icons/large_icon_preset_rules.h"
 #include "../src/taskbar_hook/taskbar_hook_protocol.h"
 #include "icons/icon_render_rules.h"
+#include "dock/dock_icon_render_rules.h"
 #include "icons/large_icon_render_rules.h"
 #include "icons/large_icon_motion.h"
 #include "icons/icon_bitmap_pixels.h"
@@ -13,6 +14,7 @@
 
 #include <iostream>
 #include <cstring>
+#include <utility>
 
 namespace rules = snowdesktop::icon_render_rules;
 int RunLargeIconAssetTests();
@@ -32,6 +34,7 @@ void Check(bool condition, const char* message)
     std::cerr << "FAILED: " << message << '\n';
 }
 #include "icon_hbitmap_cases.h"
+#include "dock/dock_icon_render_cases.h"
 } // namespace
 
 int main(int argc, char** argv)
@@ -41,6 +44,7 @@ int main(int argc, char** argv)
     if (argc >= 2 && std::string_view(argv[1]) == "--large-icon-rendering") return RunLargeIconRenderingTests(argc == 3 ? argv[2] : nullptr);
     failures += RunLargeIconAssetTests();
     TestIconBitmapRowOrder();
+    CheckDockIconBitmapScaling();
     using namespace snowdesktop::large_icon_render_rules;
     snowdesktop::LargeIconConfig config;
     {

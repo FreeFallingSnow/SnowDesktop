@@ -1569,7 +1569,7 @@
     "settings.animation.hover": "Efecto al pasar el cursor",
     "settings.animation.hover.description": "Amplía un icono o los iconos cercanos al pasar el cursor.",
     "settings.animation.hoverScale": "Ampliación al pasar el cursor (%)",
-    "settings.animation.hoverScale.description": "Solo se aplica al efecto de onda. Tamaño original: 100 %.",
+    "settings.animation.hoverScale.description": "Solo se aplica al efecto de onda.",
     "settings.animation.launch": "Animación al iniciar aplicaciones",
     "settings.animation.launch.description": "Efecto del icono al iniciar una aplicación desde el Dock.",
     "settings.animation.window": "Minimizar y restaurar ventanas",

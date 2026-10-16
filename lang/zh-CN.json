@@ -1569,7 +1569,7 @@
     "settings.animation.hover": "悬停形式",
     "settings.animation.hover.description": "鼠标悬停时放大单个或相邻图标。",
     "settings.animation.hoverScale": "悬停放大比例（%）",
-    "settings.animation.hoverScale.description": "仅适用于波浪效果，原始大小为 100%。",
+    "settings.animation.hoverScale.description": "仅适用于波浪效果。",
     "settings.animation.launch": "应用启动动画",
     "settings.animation.launch.description": "从 Dock 启动应用时的图标效果。",
     "settings.animation.window": "窗口最小化与还原",

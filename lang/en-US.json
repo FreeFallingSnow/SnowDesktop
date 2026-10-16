@@ -1569,7 +1569,7 @@
     "settings.animation.hover": "Hover effect",
     "settings.animation.hover.description": "Magnify one icon or nearby icons when you hover.",
     "settings.animation.hoverScale": "Hover magnification (%)",
-    "settings.animation.hoverScale.description": "Applies only to the wave effect. Original size: 100%.",
+    "settings.animation.hoverScale.description": "Applies only to the wave effect.",
     "settings.animation.launch": "App launch animation",
     "settings.animation.launch.description": "Icon effect when launching an app from the Dock.",
     "settings.animation.window": "Minimize and restore windows",

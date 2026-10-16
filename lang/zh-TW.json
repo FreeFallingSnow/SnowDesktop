@@ -1569,7 +1569,7 @@
     "settings.animation.hover": "游標暫留效果",
     "settings.animation.hover.description": "游標停留時放大單一或鄰近圖示。",
     "settings.animation.hoverScale": "游標停留放大比例（%）",
-    "settings.animation.hoverScale.description": "僅適用於波浪效果，原始大小為 100%。",
+    "settings.animation.hoverScale.description": "僅適用於波浪效果。",
     "settings.animation.launch": "應用程式啟動動畫",
     "settings.animation.launch.description": "從 Dock 啟動應用程式時的圖示效果。",
     "settings.animation.window": "視窗最小化與還原",

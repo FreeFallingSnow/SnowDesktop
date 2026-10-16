@@ -1569,7 +1569,7 @@
     "settings.animation.hover": "Effet au survol",
     "settings.animation.hover.description": "Agrandissez une icône ou les icônes voisines au survol.",
     "settings.animation.hoverScale": "Grossissement au survol (%)",
-    "settings.animation.hoverScale.description": "S'applique uniquement à l'effet de vague. Taille d'origine : 100 %.",
+    "settings.animation.hoverScale.description": "S'applique uniquement à l'effet de vague.",
     "settings.animation.launch": "Animation au lancement",
     "settings.animation.launch.description": "Effet de l’icône au lancement d’une application depuis le Dock.",
     "settings.animation.window": "Réduction et restauration des fenêtres",

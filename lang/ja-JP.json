@@ -1569,7 +1569,7 @@
     "settings.animation.hover": "ホバー効果",
     "settings.animation.hover.description": "マウスを重ねると、1 つまたは周囲のアイコンを拡大します。",
     "settings.animation.hoverScale": "ホバー時の拡大率 (%)",
-    "settings.animation.hoverScale.description": "波の効果にのみ適用します。元の大きさ：100%。",
+    "settings.animation.hoverScale.description": "波の効果にのみ適用します。",
     "settings.animation.launch": "アプリ起動時のアニメーション",
     "settings.animation.launch.description": "Dock からアプリを起動するときのアイコン効果です。",
     "settings.animation.window": "ウィンドウの最小化と復元",
