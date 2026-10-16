@@ -582,6 +582,7 @@ set(SNOWDESKTOP_SOURCES
     src/widget/packages/widget_package.cpp
     src/widget/packages/widget_package_paths.cpp
     src/steam/steam_workshop_cache.cpp
+    src/steam/steam_workshop_diagnostics.h
     src/steam/steam_workshop_source.cpp
     src/steam/steam_workshop_sync.cpp
     src/system/system_snapshot.cpp

@@ -6,6 +6,7 @@
 #pragma once
 
 #include "steam_workshop_sync.h"
+#include "steam_workshop_diagnostics.h"
 
 #include <chrono>
 #include <filesystem>
@@ -26,7 +27,8 @@ public:
     ProviderCapabilities Capabilities() const override;
     ProviderStatus Status() override;
     SteamWorkshopSubscriptionSnapshot QuerySubscriptions(
-        const PackageQuery& query, std::string& error);
+        const PackageQuery& query, std::string& error,
+        SteamWorkshopDiagnosticSink diagnostic = {});
     SteamWorkshopSubscriptionSnapshot QuerySubscriptionsOnline(
         const PackageQuery& query, std::string& error);
     bool Unsubscribe(const std::string& externalItemId,

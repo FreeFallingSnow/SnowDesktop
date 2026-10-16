@@ -1580,13 +1580,40 @@ void TestPartialWorkshopSourceAndPackageMutations()
     SteamWorkshopSource source(bridge);
     Check(source.Status().available, "a skipped library does not disable the usable Workshop provider");
     PackageQuery query;
-    auto snapshot = source.QuerySubscriptions(query, error);
+    struct DiagnosticRecords
+    {
+        std::mutex mutex;
+        std::vector<std::string> messages;
+        bool observerThrew = false;
+    };
+    const auto diagnosticRecords = std::make_shared<DiagnosticRecords>();
+    auto snapshot = source.QuerySubscriptions(query, error,
+        [diagnosticRecords](std::string_view message) {
+            std::lock_guard lock(diagnosticRecords->mutex);
+            diagnosticRecords->messages.emplace_back(message);
+            if (message.starts_with("phase=cache.result"))
+            {
+                diagnosticRecords->observerThrew = true;
+                throw std::runtime_error("isolated diagnostic observer failure");
+            }
+        });
     Check(error.empty() && snapshot.error.empty() && snapshot.partial && snapshot.authoritative &&
         snapshot.subscribedPublishedFileIds == std::vector<std::string>{"100"} &&
         snapshot.installable.size() == 1 && snapshot.localArtifacts.contains("100") &&
         snapshot.warning.find("disabled-library") != std::string::npos &&
         snapshot.warning.find("corrupt-library") != std::string::npos,
         "the real provider returns healthy packages and logs skipped roots without a search error");
+    {
+        std::lock_guard lock(diagnosticRecords->mutex);
+        const auto contains = [&](std::string_view text) {
+            return std::any_of(diagnosticRecords->messages.begin(), diagnosticRecords->messages.end(),
+                [&](const auto& message) { return message.find(text) != std::string::npos; });
+        };
+        Check(diagnosticRecords->observerThrew && contains("phase=cache.item item=100 ready=1") &&
+            contains("phase=package.validate.end item=100 result=ok") &&
+            contains("phase=source.end installable=1 failures=0"),
+            "subscription diagnostics identify the ready package and complete discovery despite an observer exception");
+    }
     if (snapshot.installable.size() != 1) return;
     InstalledPackage installed;
     Check(manager.InstallArchive(archive, {"steam-workshop", "100@42"}, false,

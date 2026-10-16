@@ -657,8 +657,13 @@ SteamWorkshopSource::ResolveCurrent(const std::string& externalItemId,
 }
 
 SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
-    const PackageQuery& query, std::string& error)
+    const PackageQuery& query, std::string& error,
+    SteamWorkshopDiagnosticSink diagnostic)
 {
+    const auto trace = [diagnostic](std::string_view message) {
+        EmitSteamWorkshopDiagnostic(diagnostic, message);
+    };
+    trace("phase=source.begin");
     SteamWorkshopSubscriptionSnapshot snapshot;
     snapshot.activeSteamAccountId = ReadSteamActiveUserAccountId();
     std::string discoveryError;
@@ -666,6 +671,17 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
         snowdesktop::kSnowDesktopSteamAppId, discoveryError);
     const auto cache = ReadSteamWorkshopLocalCache(
         libraries, snowdesktop::kSnowDesktopSteamAppId);
+    trace("phase=cache.result libraries=" + std::to_string(libraries.size()) +
+        " subscribed=" + std::to_string(cache.subscribedPublishedFileIds.size()) +
+        " ready=" + std::to_string(cache.readyItems.size()) +
+        " authoritative=" + std::to_string(cache.authoritative) +
+        " partial=" + std::to_string(cache.partial) + " error=" + cache.error);
+    for (const auto& id : cache.subscribedPublishedFileIds)
+    {
+        const bool ready = std::any_of(cache.readyItems.begin(), cache.readyItems.end(),
+            [&](const auto& item) { return item.publishedFileId == id; });
+        trace("phase=cache.item item=" + id + " ready=" + std::to_string(ready));
+    }
     snapshot.authoritative = cache.authoritative && discoveryError.empty();
     snapshot.partial = cache.partial ||
         (cache.authoritative && !discoveryError.empty());
@@ -689,6 +705,7 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
         error = discoveryError.empty() ? cache.error : discoveryError;
         if (error.empty()) error = "Steam Workshop cache is unavailable";
         snapshot.error = error;
+        trace("phase=source.end result=unavailable error=" + error);
         return snapshot;
     }
 
@@ -705,8 +722,9 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
     // Subscription fallback retries once a minute. A completion that missed
     // the 500 ms budget must remain available for those retries; delivering it
     // still forces the next request to validate afresh.
+    trace("phase=validation.wait.begin");
     const auto job = packageQueries.Request(std::move(validationKey),
-        [paths = validationPaths_, items = cache.readyItems] {
+        [paths = validationPaths_, items = cache.readyItems, trace] {
             SteamWorkshopSubscriptionSnapshot validated;
             for (const auto& item : items)
             {
@@ -716,9 +734,18 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
                     continue; // Theme artifacts belong to the host theme installer.
                 std::string itemError;
                 PackageManifest detectedManifest;
+                trace("phase=package.validate.begin item=" + item.publishedFileId);
+                const auto started = std::chrono::steady_clock::now();
                 auto resolved = ResolveInstalledFolder(
                     item.publishedFileId, {}, item.contentDirectory, itemError,
                     &detectedManifest, paths, true);
+                const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - started).count();
+                trace("phase=package.validate.end item=" + item.publishedFileId +
+                    " result=" + (resolved ? "ok" : "failed") +
+                    " elapsedMs=" + std::to_string(elapsed) +
+                    " package=" + detectedManifest.id +
+                    " version=" + detectedManifest.version + " error=" + itemError);
                 if (!resolved)
                 {
                     const std::string packageId = detectedManifest.id.empty()
@@ -742,10 +769,12 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
         // from ACF. A slow archive must not block local unsubscribe sync.
         if (!snapshot.warning.empty()) snapshot.warning += " | ";
         snapshot.warning += "Steam Workshop package validation query timed out; packages skipped";
+        trace("phase=validation.wait.end result=pending");
         error.clear();
         return snapshot;
     }
     snapshot.localArtifacts = std::move(validated->localArtifacts);
+    trace("phase=validation.wait.end result=ready");
     snapshot.discoveryFailures = std::move(validated->discoveryFailures);
     std::size_t matched = 0;
     for (auto& details : validated->installable)
@@ -757,6 +786,8 @@ SteamWorkshopSubscriptionSnapshot SteamWorkshopSource::QuerySubscriptions(
             snapshot.installable.push_back(std::move(details));
     }
     error.clear();
+    trace("phase=source.end installable=" + std::to_string(snapshot.installable.size()) +
+        " failures=" + std::to_string(snapshot.discoveryFailures.size()));
     return snapshot;
 }
 

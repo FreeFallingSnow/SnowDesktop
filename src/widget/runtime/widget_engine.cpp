@@ -47,6 +47,7 @@ namespace text_input = snowdesktop::text_input;
 #include "navigation/search_match.h"
 #include "widget/packages/widget_package.h"
 #include "steam/steam_workshop_source.h"
+#include "steam/steam_workshop_diagnostics.h"
 #include "steam/steam_entitlement.h"
 #include "widget/api/widget_api_registry.h"
 #include "widget_l10n_format.h"
@@ -31901,11 +31902,18 @@ bool WidgetEngine::InstallWidgetPackage(const std::wstring& manifestPath,
 }
 
 bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
-    const std::optional<std::string>& previousVersion, std::wstring& error)
+    const std::optional<std::string>& previousVersion, std::wstring& error,
+    std::uint64_t diagnosticQueryId)
 {
+    const auto trace = [&](std::string_view message) {
+        snowdesktop::widget::WriteSteamWorkshopDiagnostic(diagnosticQueryId,
+            "package=" + packageId + " " + std::string(message));
+    };
+    trace("phase=verify.begin previous=" + previousVersion.value_or("none"));
     if (snowdesktop::widget_runtime::HasStorageOverlay())
     {
         error = L"Another component storage migration is already running.";
+        trace("phase=verify.end result=failed reason=storage_overlay_busy");
         return false;
     }
 
@@ -31913,6 +31921,7 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
     if (!selected)
     {
         error = L"The installed component selection is unavailable.";
+        trace("phase=verify.end result=failed reason=selection_unavailable");
         return false;
     }
     std::vector<std::wstring> liveInstances;
@@ -31934,6 +31943,7 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
             DryLoadScope dryLoadScope;
             try
             {
+                trace("phase=dry_load.begin version=" + selected->manifest.version);
                 const std::wstring path =
                     ResolveWidgetPath(Utf8ToWideLocal(packageId));
                 ok = !path.empty() && LoadWidget(path, dryId);
@@ -31944,6 +31954,8 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
                         WidgetWideToUtf8(dryId) + ".lastError");
                     if (stored != storage.end()) failure = stored->second;
                 }
+                trace("phase=dry_load.end result=" + std::string(ok ? "ok" : "failed") +
+                    " pathResolved=" + std::to_string(!path.empty()) + " error=" + failure);
             }
             catch (...)
             {
@@ -31973,15 +31985,19 @@ bool WidgetEngine::VerifyInstalledWidgetPackage(const std::string& packageId,
         g_storage = std::move(migratedStorage);
         SaveStorageFile();
         error.clear();
+        trace("phase=verify.end result=ok");
         return true;
     }
 
-    RecoverWidgetPackage(packageId, previousVersion);
+    const bool recovered = RecoverWidgetPackage(packageId, previousVersion);
+    trace("phase=verify.recovery recovered=" + std::to_string(recovered) +
+        " retained=" + std::to_string(GetWidgetPackageManager().ContainsPackage(packageId)));
     for (const auto& widgetId : updatedInstances)
         (void)ReloadWidget(widgetId);
     error = Utf8ToWideLocal(failure.empty()
         ? "component dry-load or storage migration failed; restored last-known-good"
         : failure + "\nRestored last-known-good component version.");
+    trace("phase=verify.end result=failed error=" + WidgetWideToUtf8(error));
     return false;
 }
 
@@ -32122,8 +32138,14 @@ bool WidgetEngine::UnsubscribeSteamWorkshopItem(
 
 snowdesktop::widget::SteamWorkshopSubscriptionSnapshot
 WidgetEngine::QuerySteamWorkshopSubscriptions(
-    const std::string& locale)
+    const std::string& locale, std::uint64_t diagnosticQueryId)
 {
+    const auto trace = [diagnosticQueryId](std::string_view message) {
+        snowdesktop::widget::WriteSteamWorkshopDiagnostic(diagnosticQueryId, message);
+    };
+    trace("phase=query.begin host=" SNOWDESKTOP_VERSION " locale=" + locale +
+        " exe=" + WidgetWideToUtf8(GetExecutableDirectoryPath()) +
+        " data=" + WidgetWideToUtf8(GetDataDirectoryPath()));
     snowdesktop::widget::SteamWorkshopSubscriptionSnapshot snapshot;
     try
     {
@@ -32135,7 +32157,7 @@ WidgetEngine::QuerySteamWorkshopSubscriptions(
         // Runtime subscription reconciliation is deliberately local-only.
         // Steam's ACF is the subscription authority and content/<appid> is the
         // download authority; SteamAPI is reserved for explicit user actions.
-        snapshot = source.QuerySubscriptions(query, error);
+        snapshot = source.QuerySubscriptions(query, error, trace);
         if (!error.empty()) snapshot.error = std::move(error);
         if (snapshot.authoritative)
         {
@@ -32157,6 +32179,11 @@ WidgetEngine::QuerySteamWorkshopSubscriptions(
         snapshot = {};
         snapshot.error = "Steam Workshop subscription query failed";
     }
+    snapshot.diagnosticQueryId = diagnosticQueryId;
+    trace("phase=query.end subscribed=" + std::to_string(snapshot.subscribedPublishedFileIds.size()) +
+        " installable=" + std::to_string(snapshot.installable.size()) +
+        " failures=" + std::to_string(snapshot.discoveryFailures.size()) +
+        " warning=" + snapshot.warning + " error=" + snapshot.error);
     return snapshot;
 }
 
@@ -32180,7 +32207,19 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
     if (!snapshot.CanSynchronize()) return;
     const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
         installed, snapshot);
-    if (plan.actions.empty()) return;
+    const auto trace = [&](std::string_view message) {
+        snowdesktop::widget::WriteSteamWorkshopDiagnostic(snapshot.diagnosticQueryId, message);
+    };
+    trace("phase=prepare.begin registered=" + std::to_string(installed.size()) +
+        " actions=" + std::to_string(plan.actions.size()) +
+        " conflicts=" + std::to_string(plan.conflicts.size()));
+    for (const auto& conflict : plan.conflicts)
+        trace("phase=plan.conflict error=" + conflict);
+    if (plan.actions.empty())
+    {
+        trace("phase=prepare.end prepared=0 errors=0");
+        return;
+    }
 
     std::error_code filesystemError;
     std::filesystem::create_directories(stagingRoot, filesystemError);
@@ -32189,11 +32228,15 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
         snapshot.preparationErrors.push_back(
             "cannot create local Workshop staging directory: " +
             filesystemError.message());
+        trace("phase=prepare.end result=failed error=" + filesystemError.message());
         return;
     }
 
     for (const auto& action : plan.actions)
     {
+        trace("phase=plan.action item=" + action.externalItemId + " package=" + action.packageId +
+            " kind=" + snowdesktop::widget::SteamWorkshopDiagnosticActionName(action.kind) +
+            " version=" + action.version);
         if (action.kind == snowdesktop::widget::
                 SteamWorkshopSyncActionKind::Uninstall)
             continue;
@@ -32212,6 +32255,7 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
                 snowdesktop::widget::WidgetPackageManager::GenerateUuid() +
                 ".snowwidget");
         filesystemError.clear();
+        trace("phase=stage.begin item=" + action.externalItemId);
         std::filesystem::copy_file(artifact->second, destination,
             std::filesystem::copy_options::overwrite_existing,
             filesystemError);
@@ -32220,10 +32264,15 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
             snapshot.preparationErrors.push_back(action.packageId +
                 ": cannot stage detected Workshop package: " +
                 filesystemError.message());
+            trace("phase=stage.end item=" + action.externalItemId +
+                " result=failed error=" + filesystemError.message());
             continue;
         }
         snapshot.preparedArtifacts[publishedFileId] = destination;
+        trace("phase=stage.end item=" + action.externalItemId + " result=ok");
     }
+    trace("phase=prepare.end prepared=" + std::to_string(snapshot.preparedArtifacts.size()) +
+        " errors=" + std::to_string(snapshot.preparationErrors.size()));
 }
 
 std::unordered_map<std::string, std::string>
@@ -32249,6 +32298,14 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
     auto& manager = GetWidgetPackageManager();
     const auto plan = snowdesktop::widget::BuildSteamWorkshopSyncPlan(
         manager.ListPackages(), snapshot);
+    const auto trace = [&](std::string_view message) {
+        snowdesktop::widget::WriteSteamWorkshopDiagnostic(snapshot.diagnosticQueryId, message);
+    };
+    trace("phase=apply.begin actions=" + std::to_string(plan.actions.size()) +
+        " conflicts=" + std::to_string(plan.conflicts.size()) +
+        " prepared=" + std::to_string(snapshot.preparedArtifacts.size()));
+    for (const auto& conflict : plan.conflicts)
+        trace("phase=plan.conflict error=" + conflict);
     snowdesktop::widget::SteamWorkshopSyncResult result;
     result.warnings = plan.conflicts;
     result.installFailures = snapshot.discoveryFailures;
@@ -32260,6 +32317,9 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         snapshot.preparationErrors.begin(), snapshot.preparationErrors.end());
     for (const auto& action : plan.actions)
     {
+        trace("phase=apply.action item=" + action.externalItemId + " package=" + action.packageId +
+            " kind=" + snowdesktop::widget::SteamWorkshopDiagnosticActionName(action.kind) +
+            " version=" + action.version);
         const auto recordInstallFailure = [&](std::string error)
         {
             snowdesktop::widget::SteamWorkshopInstallFailure failure;
@@ -32319,14 +32379,17 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
         std::string installError;
         const snowdesktop::widget::PackageSourceRef sourceRef{
             "steam-workshop", action.externalItemId };
+        trace("phase=install.begin item=" + action.externalItemId + " package=" + action.packageId);
         const bool installedOk = manager.InstallArchive(prepared->second,
             sourceRef, false, installed, report, installError, false,
             &action.expectedManifest);
+        trace("phase=install.end item=" + action.externalItemId + " package=" + action.packageId +
+            " result=" + (installedOk ? "ok" : "failed") + " error=" + installError);
         std::error_code cleanupError;
         std::filesystem::remove(prepared->second, cleanupError);
         std::wstring error;
         const bool verified = installedOk && VerifyInstalledWidgetPackage(
-            installed.manifest.id, previousVersion, error);
+            installed.manifest.id, previousVersion, error, snapshot.diagnosticQueryId);
         if (installedOk && verified)
         {
             if (action.kind ==
@@ -32404,6 +32467,13 @@ WidgetEngine::ApplySteamWorkshopSubscriptions(
                 result.installFailures.begin(), result.installFailures.end());
         }
     }
+    for (const auto& error : result.errors)
+        trace("phase=apply.error error=" + error);
+    trace("phase=apply.end installed=" + std::to_string(result.installed) +
+        " updated=" + std::to_string(result.updated) +
+        " uninstalled=" + std::to_string(result.uninstalled) +
+        " errors=" + std::to_string(result.errors.size()) +
+        " registered=" + std::to_string(manager.ListPackages().size()));
     return result;
 }
 

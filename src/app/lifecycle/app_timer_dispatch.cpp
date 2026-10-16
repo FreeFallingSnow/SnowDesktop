@@ -2,6 +2,7 @@
 #include "theme/theme_workshop.h"
 #include "theme/theme_library_settings.h"
 #include "steam/steam_workshop_cache.h"
+#include "steam/steam_workshop_diagnostics.h"
 #include "steam/steam_app_identity.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "app/dock/dock_taskbar_diagnostics.h"
@@ -27,6 +28,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
     }
     if (ready)
     {
+        snowdesktop::widget::WriteSteamWorkshopDiagnostic(ready->queryId,
+            "phase=poll.apply_ready");
         const bool hostReloadWouldDefer =
             shellFileOperationInFlight_ > 0 || reloading_ ||
             snowdesktop::drag_input_rules::ShouldDeferModelReload(
@@ -56,6 +59,8 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         }
         if (settingsCompletionReady)
         {
+            snowdesktop::widget::WriteSteamWorkshopDiagnostic(ready->queryId,
+                "phase=poll.deferred reason=host_reload_busy");
             // A settings operation is complete only after ReloadItems has
             // actually reconciled the persistent desktop instance table.
             // Retain the authoritative query while drag/Shell/reload state
@@ -171,6 +176,9 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         }
         if (settingsWindow_)
             settingsWindow_->RefreshWidgetsPage();
+        snowdesktop::widget::WriteSteamWorkshopDiagnostic(ready->queryId,
+            "phase=poll.reconciled success=" + std::to_string(synchronizationSucceeded) +
+            " hostReloaded=" + std::to_string(hostReloaded));
 
         const auto reconciledPackages = WidgetEngine::ListWidgetPackages();
         for (auto& completion : completions)
@@ -265,10 +273,17 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
         state->activeQueryId = queryId;
         state->queryInFlight.store(true);
     }
+    snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId,
+        "phase=poll.begin host=" SNOWDESKTOP_VERSION " registered=" +
+        std::to_string(installedPackages.size()));
     std::thread([state, locale, notifyWindow, queryId,
         installedPackages, subscriptionHistory, libraryHistory, packageStaging,
         confirmedUnsubscriptions = std::move(confirmedUnsubscriptions)]() mutable
     {
+        const auto trace = [queryId](std::string_view message) {
+            snowdesktop::widget::WriteSteamWorkshopDiagnostic(queryId, message);
+        };
+        trace("phase=theme_probe.begin");
         // Local cache inspection decides whether theme work is relevant. All
         // online theme requests still go through the independently capable bridge.
         try
@@ -288,8 +303,9 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 (void)themes::workshop::Sync(bridge, themes::LibraryPath(), library, error);
         }
         catch (...) { /* Failed/partial queries never remove installed themes. */ }
+        trace("phase=theme_probe.end");
         auto snapshot =
-            WidgetEngine::QuerySteamWorkshopSubscriptions(locale);
+            WidgetEngine::QuerySteamWorkshopSubscriptions(locale, queryId);
         // Completions are queued only after the bridge accepts the user's
         // unsubscribe, and this query began after that acknowledgement.
         snapshot.confirmedUnsubscribedPublishedFileIds =
@@ -306,6 +322,7 @@ void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
                 state->activeQueryId = 0;
             state->queryInFlight.store(false);
         }
+        trace("phase=poll.ready");
         if (notifyWindow)
             PostMessageW(notifyWindow,
                 kSteamWorkshopSubscriptionReadyMessage, 0, 0);

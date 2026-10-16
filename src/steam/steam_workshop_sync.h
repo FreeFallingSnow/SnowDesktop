@@ -46,6 +46,8 @@ struct SteamWorkshopSubscriptionSnapshot
     std::vector<SteamWorkshopInstallFailure> discoveryFailures;
     std::string warning;
     std::string error;
+    // Host-local correlation only; never persisted or sent to Steam.
+    std::uint64_t diagnosticQueryId = 0;
 
     bool CanSynchronize() const
     {

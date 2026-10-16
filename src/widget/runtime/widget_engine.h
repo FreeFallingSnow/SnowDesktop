@@ -1182,7 +1182,8 @@ public:
     static bool UnsubscribeSteamWorkshopItem(
         const std::string& externalItemId, std::string& error);
     static snowdesktop::widget::SteamWorkshopSubscriptionSnapshot
-        QuerySteamWorkshopSubscriptions(const std::string& locale);
+        QuerySteamWorkshopSubscriptions(const std::string& locale,
+            std::uint64_t diagnosticQueryId = 0);
     static snowdesktop::widget::SteamWorkshopSubscriptionHistory
         GetSteamWorkshopSubscriptionHistory();
     static snowdesktop::widget::SteamLibrarySubscriptionHistory
@@ -1751,7 +1752,7 @@ private:
         std::string_view focusedKey, bool drawLogicalSlotDrag);
     bool VerifyInstalledWidgetPackage(const std::string& packageId,
         const std::optional<std::string>& previousVersion,
-        std::wstring& error);
+        std::wstring& error, std::uint64_t diagnosticQueryId = 0);
     size_t HitTestHostInputPosition(const LuaWidget::HostControl& control,
         const std::wstring& widgetId, int x, int y) const;
     bool HandleHostScrollbarPointer(
