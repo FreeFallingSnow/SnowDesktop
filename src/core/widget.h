@@ -318,7 +318,7 @@ public:
         const DesktopWidget* demoCollection = nullptr,
         const ListItemDetails& details = {},
         std::optional<bool> lightTheme = std::nullopt,
-        bool drawTitle = true) const;
+        bool drawTitle = true, std::wstring_view iconIdentity = {}) const;
 
     int GetListRowHeight() const;
     RECT GetListItemTextRect(RECT cell) const;

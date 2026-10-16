@@ -18,6 +18,8 @@
 
 namespace rules = snowdesktop::icon_render_rules;
 int RunLargeIconAssetTests();
+int RunIconLibraryTests();
+int RunReportedWebpFillProbe(const char* sourcePath, const char* outputDirectory);
 int RunLargeIconShellAssetTests();
 int RunLargeIconRenderingTests(const char* outputDirectory);
 int RunIconBitmapRenderingTests();
@@ -40,6 +42,8 @@ void Check(bool condition, const char* message)
 
 int main(int argc, char** argv)
 {
+    if (argc == 2 && std::string_view(argv[1]) == "--icon-library") return RunIconLibraryTests();
+    if (argc == 4 && std::string_view(argv[1]) == "--webp-fill-probe") return RunReportedWebpFillProbe(argv[2], argv[3]);
     if (argc == 4 && std::string_view(argv[1]) == "--source-probe") return RunLargeIconSourceProbe(argv[2], argv[3]);
     if (argc == 2 && std::string_view(argv[1]) == "--large-icon-shell") return RunLargeIconShellAssetTests();
     if (argc >= 2 && std::string_view(argv[1]) == "--large-icon-rendering") return RunLargeIconRenderingTests(argc == 3 ? argv[2] : nullptr);

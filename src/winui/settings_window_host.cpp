@@ -2144,12 +2144,18 @@ struct SettingsWindowHost::Impl
             {
                 auto selected = ShowOpenPathDialog(state->owner->window,
                     state->owner->L("largeIcon.image"),
-                    {{state->owner->L("largeIcon.image"), L"*.png;*.jpg;*.jpeg;*.bmp;*.ico"}}, false);
+                    {{state->owner->L("largeIcon.image"), L"*.png;*.jpg;*.jpeg;*.bmp;*.ico;*.webp;*.svg"}}, false);
                 if (selected) request.path = selected->wstring();
                 else request.action = "status";
             }
             if (!state->alive.load() || !state->owner) return LargeIconSettingsSnapshot{};
             return state->owner->options.largeIconSettings(std::move(request));
+        });
+        shell->SetIconLibraryAction([weak](IconLibraryRequest request) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->options.iconLibrary)
+                return IconLibrarySnapshot{};
+            return state->owner->options.iconLibrary(std::move(request));
         });
 
         PersonalizationPageActions personalization;

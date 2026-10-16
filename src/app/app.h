@@ -525,6 +525,8 @@ struct DesktopWidgetCompositionItem
  * DesktopApp 是应用组合根；槽位规则、拖放目标解析、选择、重命名、
  * 弹窗驻留和托盘生命周期由独立核心/控制器对象承接。
  */
+struct IconLibraryHostState;
+
 class DesktopApp : private OleDragDropHandler
 {
 public:
@@ -2231,7 +2233,7 @@ private:
     /** @brief 将连续菜单项标记为同一行的紧凑操作。 */
     void SetMenuItemInlineAction(HMENU menu, UINT_PTR command,
         UINT group = 0, bool compact = false,
-        bool horizontalScroll = false);
+        bool horizontalScroll = false, bool measureToContent = false);
     /** @brief 将菜单项标记为可输入的搜索框。 */
     void SetMenuItemTextInput(HMENU menu, UINT_PTR command,
         const std::wstring& text = {});
@@ -3016,7 +3018,24 @@ private:
     ID2D1Bitmap1* GetOrCreateD2DBitmap(HBITMAP hbm, bool beautify);
     ID2D1Bitmap* GetOrCreateD2DBitmap(
         ID2D1RenderTarget* target, HBITMAP hbm, bool beautify);
-    ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm, bool beautify);
+    ComPtr<ID2D1Bitmap1> CreateD2DBitmapFromHBitmap(HBITMAP hbm, bool beautify, bool managedAlpha = false);
+    ID2D1Bitmap* GetOrCreateManagedD2DBitmap(ID2D1RenderTarget* target, HBITMAP bitmap, bool beautify);
+    IconLibraryHostState& EnsureIconLibrary();
+    snowdesktop::IconLibrarySnapshot EditIconLibrary(snowdesktop::IconLibraryRequest request);
+    void DrainIconLibrary();
+    void OpenDockIconLibrary(const std::wstring& widgetId);
+    void OpenIconOverrideLibrary(const std::wstring& target);
+    bool IsIconOverrideTarget(const std::wstring& target) const;
+    std::wstring IconOverrideTargetName(const std::wstring& target) const;
+    bool SetIconOverride(const std::wstring& target, const std::string& assetId);
+    void AppendIconOverrideMenu(HMENU menu, const std::wstring& identity);
+    bool ExecuteIconOverrideMenu(UINT command, const std::wstring& identity);
+    ID2D1Bitmap* GetSmallCustomIcon(ID2D1RenderTarget* context, std::wstring_view identity, int pixels);
+    std::unordered_map<std::wstring, std::string> iconOverrides_;
+    bool SetDockIconAsset(const std::wstring& widgetId, const std::string& assetId);
+    bool ApplyLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request, const std::string& id);
+    bool ImportLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request);
+    ID2D1Bitmap* GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels);
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
         RECT destination, float opacity = 1.0f,
         std::uintptr_t ownerKey = 0, bool preserveAspectRatio = true);
@@ -3652,6 +3671,7 @@ private:
         bool inlineAction = false;
         UINT inlineGroup = 0;
         bool compactInlineAction = false;
+        bool measureInlineToContent = false;
         bool horizontalScrollAction = false;
         bool textInput = false;
         std::wstring inputText;
@@ -3685,6 +3705,7 @@ private:
     std::vector<std::wstring> largeIconSettingsKeys_;
     std::uint64_t largeIconSessionSerial_ = 0;
     std::unique_ptr<snowdesktop::LargeIconAssets> largeIconAssets_;
+    std::shared_ptr<IconLibraryHostState> iconLibraryState_;
     struct LargeIconRuntime
     {
         int sourceContent = -1;

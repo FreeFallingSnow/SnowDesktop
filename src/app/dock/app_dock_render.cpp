@@ -200,6 +200,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 DrawDemoIdentityIcon(
                     ctx, demoIdentity, bitmapTarget, alpha);
         }
+        else if (auto custom = GetSmallCustomIcon(ctx, item.layoutKey, bitmapTarget.right - bitmapTarget.left))
+            DrawIconBitmap(ctx, custom, bitmapTarget, alpha, reinterpret_cast<std::uintptr_t>(&item));
         else if (!item.iconBitmap)
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
         else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(
@@ -351,6 +353,12 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
     const DesktopWidget& widget = widgets_[widgetIndex];
     if (entry.type == DockEntryType::FolderMapping)
     {
+        if (auto custom = GetDockCustomIcon(ctx, widget.dockIconAssetId, iconSize))
+        {
+            DrawIconBitmap(ctx, custom, iconRect, 1.f, reinterpret_cast<std::uintptr_t>(&entry));
+            if (state == 2) DrawDockSelectionIndicator(ctx, iconRect, lt);
+            return;
+        }
         const std::wstring iconCacheKey =
             ToUpperInvariant(entry.reference + L"\n" + widget.sourceFolderPath);
         const int requestedSize = GetMaximumShellIconBitmapSize();
@@ -402,62 +410,69 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 ctx, iconRect, lt);
         return;
     }
-    const auto collectionLayout =
-        snowdesktop::dock_collection_icon_rules::
-            CalculateLayout(iconRect);
-    DrawDockControlBackground(
-        ctx, collectionLayout.background,
-        0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
-    struct PreviewItem { const DesktopWidget* owner; const std::wstring* key; const FolderEntry* folder; };
-    std::vector<PreviewItem> previewItems;
-    auto appendPreview = [&](const DesktopWidget& source) {
-        if (source.type == DesktopWidgetType::FolderMapping)
-        {
-            for (const auto& folder : source.folderEntries)
-            {
-                if (previewItems.size() == 4) break;
-                previewItems.push_back({ &source, nullptr, &folder });
-            }
-        }
-        else
-            for (const auto& key : source.itemKeys)
-            {
-                if (previewItems.size() == 4) break;
-                if (FindItemIndexByKey(key) < items_.size() || initialShellReadPending_)
-                    previewItems.push_back({ &source, &key, nullptr });
-            }
-    };
-    if (IsGroupWidgetType(widget.type))
-        for (const auto& id : widget.childWidgetIds)
-        {
-            const size_t child = FindWidgetIndexById(id);
-            if (child < widgets_.size()) appendPreview(widgets_[child]);
-            if (previewItems.size() == 4) break;
-        }
-    else appendPreview(widget);
-    for (size_t i = 0; i < previewItems.size(); ++i)
+    if (auto* custom = widget.dockIconAssetId.empty() ? nullptr : GetDockCustomIcon(ctx, widget.dockIconAssetId, iconSize))
+        DrawIconBitmap(ctx, custom, iconRect, 1.f, reinterpret_cast<std::uintptr_t>(&entry));
+    else
     {
-        const auto& preview = previewItems[i];
-        size_t itemIndex = preview.key ? FindItemIndexByKey(*preview.key) : items_.size();
-        int col = static_cast<int>(i % 2);
-        int row = static_cast<int>(i / 2);
-        const RECT cell =
+        const auto collectionLayout =
             snowdesktop::dock_collection_icon_rules::
-                CellRect(
-                    collectionLayout,
-                    col, row);
-        if (itemIndex < items_.size())
-            drawDesktopItem(items_[itemIndex], cell, preview.owner);
-        else if (preview.folder && preview.folder->iconBitmap)
+                CalculateLayout(iconRect);
+        DrawDockControlBackground(
+            ctx, collectionLayout.background,
+            0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
+        struct PreviewItem { const DesktopWidget* owner; const std::wstring* key; const FolderEntry* folder; };
+        std::vector<PreviewItem> previewItems;
+        auto appendPreview = [&](const DesktopWidget& source) {
+            if (source.type == DesktopWidgetType::FolderMapping)
+            {
+                for (const auto& folder : source.folderEntries)
+                {
+                    if (previewItems.size() == 4) break;
+                    previewItems.push_back({ &source, nullptr, &folder });
+                }
+            }
+            else
+                for (const auto& key : source.itemKeys)
+                {
+                    if (previewItems.size() == 4) break;
+                    if (FindItemIndexByKey(key) < items_.size() || initialShellReadPending_)
+                        previewItems.push_back({ &source, &key, nullptr });
+                }
+        };
+        if (IsGroupWidgetType(widget.type))
+            for (const auto& id : widget.childWidgetIds)
+            {
+                const size_t child = FindWidgetIndexById(id);
+                if (child < widgets_.size()) appendPreview(widgets_[child]);
+                if (previewItems.size() == 4) break;
+            }
+        else appendPreview(widget);
+        for (size_t i = 0; i < previewItems.size(); ++i)
         {
-            if (auto* bitmap = GetOrCreateD2DBitmap(ctx, preview.folder->iconBitmap,
-                    ShouldBeautifyIconBitmap(preview.folder->iconIsMediaThumbnail)))
-                DrawIconBitmap(ctx, bitmap, cell);
+            const auto& preview = previewItems[i];
+            size_t itemIndex = preview.key ? FindItemIndexByKey(*preview.key) : items_.size();
+            int col = static_cast<int>(i % 2);
+            int row = static_cast<int>(i / 2);
+            const RECT cell =
+                snowdesktop::dock_collection_icon_rules::
+                    CellRect(
+                        collectionLayout,
+                        col, row);
+            if (itemIndex < items_.size())
+                drawDesktopItem(items_[itemIndex], cell, preview.owner);
+            else if (auto previewIcon = preview.folder ? GetSmallCustomIcon(ctx, preview.folder->fullPath, cell.right - cell.left) : nullptr)
+                DrawIconBitmap(ctx, previewIcon, cell);
+            else if (preview.folder && preview.folder->iconBitmap)
+            {
+                if (auto* bitmap = GetOrCreateD2DBitmap(ctx, preview.folder->iconBitmap,
+                        ShouldBeautifyIconBitmap(preview.folder->iconIsMediaThumbnail)))
+                    DrawIconBitmap(ctx, bitmap, cell);
+            }
+            else if (preview.folder)
+                DrawPlaceholderIcon(ctx, preview.folder->sysIconIndex, cell, 1.0f);
+            else if (initialShellReadPending_)
+                DrawPlaceholderIcon(ctx, -1, cell, 1.0f);
         }
-        else if (preview.folder)
-            DrawPlaceholderIcon(ctx, preview.folder->sysIconIndex, cell, 1.0f);
-        else if (initialShellReadPending_)
-            DrawPlaceholderIcon(ctx, -1, cell, 1.0f);
     }
     if (IsGroupDockEntryType(entry.type))
     {

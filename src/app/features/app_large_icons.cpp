@@ -78,6 +78,7 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
 
 void DesktopApp::ProcessLargeIconAssets()
 {
+    DrainIconLibrary();
     if (!largeIconAssets_) return;
     auto completed = largeIconAssets_->TakeCompleted();
     if (completed.empty()) return;
@@ -414,13 +415,18 @@ snowdesktop::LargeIconSettingsSnapshot DesktopApp::EditLargeIcon(snowdesktop::La
             result.succeeded = true;
         }
     }
+    else if (request.action == "library")
+    {
+        if (ApplyLargeIconLibraryAsset(request, WideToUtf8(request.path))) result.succeeded = true;
+        else result.error = "iconLibrary.stale";
+    }
     else if (request.action == "import")
     {
         if (request.path.empty()) result.error = "largeIcon.invalid";
         else
         {
-            RequestLargeIconAsset(index, true, request.path, 0, keys);
-            result.succeeded = true;
+            result.succeeded = ImportLargeIconLibraryAsset(request);
+            if (!result.succeeded) result.error = "iconLibrary.working";
         }
     }
     else if (request.action == "commit" || request.action == "preview")
@@ -597,7 +603,7 @@ void DesktopApp::DrawLargeIcon(ID2D1RenderTarget* context, const DesktopItem& it
         view.shine = state == 3 ? -1.f : runtime->second.motion.shine;
         if (const auto& asset = runtime->second.asset; asset && !demo)
         {
-            view.bitmap = GetOrCreateD2DBitmap(context, asset->bitmap, false);
+            view.bitmap = GetOrCreateManagedD2DBitmap(context, asset->bitmap, false);
             view.original = asset->source == "original" || asset->reference.starts_with("raw-");
             view.accent = asset->accent;
             view.hasEdgeColor = asset->hasEdgeColor; view.edgeColor = asset->edgeColor;

@@ -15,7 +15,7 @@ struct Buffer
 // Host-private input for icon analysis, beautification and D2D uploads. Neither
 // BITMAP nor the header returned by GetObject reliably retains a DIB's original
 // row direction. Ask GDI for top-down pixels, including CopyImage cache clones.
-inline bool ReadHBitmap(HBITMAP bitmap, Buffer& out)
+inline bool ReadHBitmap(HBITMAP bitmap, Buffer& out, bool shellAlpha = true)
 {
     out = {};
     BITMAP bm{};
@@ -40,7 +40,7 @@ inline bool ReadHBitmap(HBITMAP bitmap, Buffer& out)
         out.pixels.data(), &info, DIB_RGB_COLORS);
     ReleaseDC(nullptr, dc);
     if (rows != height) { out = {}; return false; }
-    NormalizeShellPixels(out.pixels);
+    if (shellAlpha) NormalizeShellPixels(out.pixels);
     return true;
 }
 }

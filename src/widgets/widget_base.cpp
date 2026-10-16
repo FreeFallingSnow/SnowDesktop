@@ -2320,7 +2320,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     bool iconIsMediaThumbnail, std::wstring_view demoIdentity,
     const DesktopWidget* demoCollection,
     const ListItemDetails& details,
-    std::optional<bool> lightTheme, bool drawTitle) const
+    std::optional<bool> lightTheme, bool drawTitle, std::wstring_view iconIdentity) const
 {
     if (!app_ || !context || IsRectEmptyRect(cell)) return;
 
@@ -2357,6 +2357,8 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
         else
             app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect);
     }
+    else if (auto custom = app_->GetSmallCustomIcon(context, iconIdentity, iconRect.right - iconRect.left))
+        app_->DrawIconBitmap(context, custom, iconRect);
     else if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(
             iconBitmap,
             app_->ShouldBeautifyIconBitmap(iconIsMediaThumbnail)))

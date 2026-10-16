@@ -16,6 +16,7 @@
 #include "home_about_page_presenter.h"
 #include "page_layout_page_presenter.h"
 #include "large_icon_page_presenter.h"
+#include "icon_library_page_presenter.h"
 #include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
 #include "settings_focus_feedback.h"
@@ -129,6 +130,7 @@ struct SettingsShell : SettingsShellT<SettingsShell>
     void SetPageLayoutPageActions(
         snowdesktop::winui::PageLayoutPageActions actions);
     void SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAction action);
+    void SetIconLibraryAction(snowdesktop::IconLibraryAction action);
     [[nodiscard]] bool ApplyHomeAboutStatusPatch(
         const snowdesktop::winui::HomeAboutStatusPatch& patch);
     void SetWidgetSettingsService(
@@ -311,6 +313,8 @@ private:
     snowdesktop::winui::PageLayoutPageActions pageLayoutPageActions_;
     snowdesktop::LargeIconSettingsAction largeIconSettingsAction_;
     std::unique_ptr<snowdesktop::winui::LargeIconPagePresenter> largeIconPage_;
+    snowdesktop::IconLibraryAction iconLibraryAction_;
+    std::unique_ptr<snowdesktop::winui::IconLibraryPagePresenter> iconLibraryPage_;
     snowdesktop::winui::WidgetsPageActions widgetsPageActions_;
     snowdesktop::winui::BackupDataPageActions backupDataPageActions_;
 

@@ -5,6 +5,17 @@ snowdesktop_check_shared_output()
 
 project(SnowDesktop LANGUAGES C CXX)
 
+# Ship a deterministic WebP decoder, independent of installed WIC extensions.
+foreach(WEBP_TOOL ANIM_UTILS CWEBP DWEBP GIF2WEBP IMG2WEBP VWEBP WEBPINFO LIBWEBPMUX WEBPMUX EXTRAS)
+    set(WEBP_BUILD_${WEBP_TOOL} OFF CACHE BOOL "" FORCE)
+endforeach()
+set(WEBP_BUILD_FUZZTEST OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_WEBP_JS OFF CACHE BOOL "" FORCE)
+set(WEBP_LINK_STATIC ON CACHE BOOL "" FORCE)
+add_subdirectory(third_party/libwebp EXCLUDE_FROM_ALL)
+# Decoder-only upstream target exports its root; expose the public API directory.
+target_include_directories(webpdecoder INTERFACE "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/third_party/libwebp/src>")
+
 # WinUI 3 XAML compilation and NuGet PackageReference integration are MSBuild
 # features. Keeping this requirement explicit avoids silently generating a
 # project that can compile the native host but cannot generate the XAML/WinRT
@@ -269,6 +280,12 @@ set(SNOWDESKTOP_SOURCES
     src/app/features/app_large_icons.cpp
     src/app/features/app_large_icon_interaction.cpp
     src/icons/large_icon_assets.cpp
+    src/icons/icon_image_codec.cpp
+    src/icons/icon_image_codec.h
+    src/icons/icon_override_rules.h
+    src/icons/icon_library.cpp
+    src/icons/icon_library.h
+    src/app/features/app_icon_library.cpp
     src/icons/large_icon_renderer.cpp
     src/app/lifecycle/app_lifecycle.cpp
     src/app/widgets/app_lua_panel.cpp
@@ -465,6 +482,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/hotkey_recorder_rules.h
     src/winui/page_layout_page_presenter.cpp
     src/winui/large_icon_page_presenter.cpp
+    src/winui/icon_library_page_presenter.cpp
+    src/winui/icon_library_page_presenter.h
     src/winui/large_icon_page_presenter.h
     src/winui/page_layout_page_presenter.h
     src/winui/personalization_page_presenter.cpp
@@ -1059,6 +1078,7 @@ else()
 endif()
 
 target_link_libraries(SnowDesktop PRIVATE
+    webpdecoder
     ${SNOWDESKTOP_SYSTEM_CONTROL_LIBRARIES}
     SnowDesktopLua SnowDesktopEverything SnowDesktopPinyinData
     SnowDesktopSearchVisibility
@@ -1079,6 +1099,12 @@ add_custom_command(TARGET SnowDesktop POST_BUILD
         "$<TARGET_FILE_DIR:SnowDesktop>/lang"
     COMMENT "Copying language files to output (SnowDesktop)..."
 )
+add_custom_command(TARGET SnowDesktop POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:SnowDesktop>/licenses"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/third_party/libwebp/COPYING" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/libwebp-LICENSE.txt"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/third_party/libwebp/PATENTS" "$<TARGET_FILE_DIR:SnowDesktop>/licenses/libwebp-PATENTS.txt")
 
 set(SNOWDESKTOP_WIDGET_SKILL_MANIFEST
     "${CMAKE_SOURCE_DIR}/widgets/snowdesktop-lua-widget/skill.json")
@@ -2443,11 +2469,14 @@ if (BUILD_TESTING)
             src/icons/shortcut_icon_resource.cpp
             src/icons/large_icon_renderer.cpp
             src/icons/large_icon_assets.cpp
+            src/icons/icon_image_codec.cpp
+            src/icons/icon_library.cpp
+            tests/icons/icon_library_tests.cpp
             src/icons/icon_beautify.cpp
             src/ui/preview/preview_png_writer.cpp
             src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid xmllite
+        LINK_LIBRARIES webp bcrypt ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid xmllite
         LABELS rules shell ui)
 
     add_test(NAME large_icon_shell_assets
@@ -2455,6 +2484,11 @@ if (BUILD_TESTING)
     set_tests_properties(large_icon_shell_assets PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopIconRenderRulesTests>"
         TIMEOUT 60 LABELS "integration;shell;icon;resource")
+
+    add_test(NAME icon_library COMMAND SnowDesktopIconRenderRulesTests --icon-library)
+    set_tests_properties(icon_library PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopIconRenderRulesTests>"
+        TIMEOUT 90 LABELS "integration;icon;resource;rendering")
 
     add_test(NAME large_icon_rendering
         COMMAND SnowDesktopIconRenderRulesTests --large-icon-rendering)

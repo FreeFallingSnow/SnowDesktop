@@ -719,7 +719,10 @@ void SettingsShell::EnsurePresentersForPage(SettingsPage page)
         if (!largeIconPage_) largeIconPage_ = std::make_unique<snowdesktop::winui::LargeIconPagePresenter>(
             localize, cardStyle(), largeIconSettingsAction_, [this] {
                 if (!closed_ && navigation_.Route().page == SettingsPage::LargeIcon) RenderPageHeading();
-            });
+            }, iconLibraryAction_);
+        break;
+    case SettingsPage::IconLibrary:
+        if (!iconLibraryPage_) iconLibraryPage_ = std::make_unique<snowdesktop::winui::IconLibraryPagePresenter>(localize, iconLibraryAction_);
         break;
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme:
@@ -886,6 +889,7 @@ void SettingsShell::Close() noexcept
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
     largeIconPage_.reset();
+    iconLibraryPage_.reset();
     widgetSettingsPage_.reset();
     widgetSettingsService_ = nullptr;
     widgetsPage_.reset();
@@ -995,6 +999,7 @@ void SettingsShell::ReleaseSessionResources() noexcept
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
     largeIconPage_.reset();
+    iconLibraryPage_.reset();
     widgetSettingsPage_.reset();
     widgetsPage_.reset();
     backupDataPage_.reset();
@@ -1031,7 +1036,7 @@ void SettingsShell::RefreshLocalizedText()
     setNavigationLabel(PersonalizationItem(), Localize("settings.nav.group.appearanceInteraction"));
     for (const auto page : {SettingsPage::General, SettingsPage::QuickNavigation,
         SettingsPage::DesktopStyle, SettingsPage::AnimationPerformance, SettingsPage::Calendar,
-        SettingsPage::ContextMenu, SettingsPage::AppearanceTheme, SettingsPage::ThemeManager,
+        SettingsPage::ContextMenu, SettingsPage::AppearanceTheme, SettingsPage::ThemeManager, SettingsPage::IconLibrary,
         SettingsPage::AppearanceDesktopIcons, SettingsPage::AppearanceIconBeautification,
         SettingsPage::WidgetBehavior, SettingsPage::Desktop, SettingsPage::DesktopPages,
         SettingsPage::DesktopCategories, SettingsPage::Dock, SettingsPage::StatusBar, SettingsPage::Taskbar})
@@ -1079,6 +1084,7 @@ void SettingsShell::RefreshLocalizedText()
     if (pageLayoutPage_)
         pageLayoutPage_->RefreshLocalizedText();
     if (largeIconPage_) largeIconPage_->RefreshLocalizedText();
+    if (iconLibraryPage_) iconLibraryPage_->RefreshLocalizedText();
     if (widgetSettingsPage_)
         widgetSettingsPage_->RefreshLocalizedText();
     if (widgetsPage_)
@@ -1253,6 +1259,7 @@ void SettingsShell::SetDesktopPageActions(
 void SettingsShell::SetDockPageActions(
     snowdesktop::winui::DockPageActions actions)
 {
+    actions.iconLibrary = iconLibraryAction_;
     dockPageActions_ = std::move(actions);
     if (statusBarPage_) statusBarPage_->SetActions(dockPageActions_);
     if (desktopStylePage_) desktopStylePage_->SetActions(dockPageActions_);
@@ -1276,6 +1283,13 @@ void SettingsShell::SetPageLayoutPageActions(
     pageLayoutPageActions_ = std::move(actions);
     if (pageLayoutPage_)
         pageLayoutPage_->SetActions(pageLayoutPageActions_);
+}
+
+void SettingsShell::SetIconLibraryAction(snowdesktop::IconLibraryAction action)
+{
+    iconLibraryAction_ = std::move(action);
+    dockPageActions_.iconLibrary = iconLibraryAction_;
+    if (dockPage_) dockPage_->SetActions(dockPageActions_);
 }
 
 void SettingsShell::SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAction action)
@@ -1571,6 +1585,7 @@ void SettingsShell::SuspendInteraction() noexcept
         if (pageLayoutPage_)
             pageLayoutPage_->Deactivate();
         if (largeIconPage_) largeIconPage_->Deactivate();
+        if (iconLibraryPage_) iconLibraryPage_->Deactivate();
         if (widgetSettingsPage_)
             widgetSettingsPage_->Deactivate();
         if (widgetsPage_)
@@ -2094,7 +2109,7 @@ void SettingsShell::HookEvents()
             for (const SettingsPage page : {
                      SettingsPage::General,
                      SettingsPage::AnimationPerformance,
-                     SettingsPage::AppearanceTheme, SettingsPage::ThemeManager,
+                     SettingsPage::AppearanceTheme, SettingsPage::ThemeManager, SettingsPage::IconLibrary,
                      SettingsPage::AppearanceDesktopIcons,
                      SettingsPage::AppearanceIconBeautification,
                      SettingsPage::Desktop, SettingsPage::DesktopPages,
@@ -2347,6 +2362,7 @@ void SettingsShell::ApplyNavigationIcons()
             L"ms-appx:///Assets/Settings/Icons/animation-performance.svg", L"\xE768"},
         IconDescriptor{PersonalizationItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance.svg", L"\xE771"},
+        IconDescriptor{IconLibraryItem(), L"ms-appx:///Assets/Settings/Icons/icon-library.svg", L"\xE8B9"},
         IconDescriptor{ThemeManagerItem(), L"ms-appx:///Assets/Settings/Icons/theme-manager.svg", L"\xE2B1"},
         IconDescriptor{AppearanceThemeItem(),
             L"ms-appx:///Assets/Settings/Icons/appearance-theme.svg",
@@ -2619,6 +2635,9 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::DesktopPages;
     if (leavingPageLayout && pageLayoutPage_)
         pageLayoutPage_->Deactivate();
+    if (iconLibraryPage_ && renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::IconLibrary &&
+        (pageRoute.page != SettingsPage::IconLibrary || pageRoute.itemKey != renderedPageRoute_->itemKey))
+        iconLibraryPage_->Deactivate();
     if (largeIconPage_ && renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::LargeIcon &&
         (pageRoute.page != SettingsPage::LargeIcon || pageRoute.itemKey != renderedPageRoute_->itemKey))
         largeIconPage_->Deactivate();
@@ -2870,6 +2889,16 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
             generalPage_->Activate();
         }
         break;
+    case SettingsPage::IconLibrary:
+        if (iconLibraryPage_)
+        {
+            PageCards().Children().Append(iconLibraryPage_->Content());
+            RegisterFocusTarget("iconLibrary", iconLibraryPage_->Content());
+            RegisterFocusTarget("iconLibrary.import", iconLibraryPage_->Content());
+            RegisterFocusTarget("iconLibrary.exportIco", iconLibraryPage_->Content());
+            iconLibraryPage_->Activate(pageRoute.itemKey);
+        }
+        break;
     case SettingsPage::LargeIcon:
         if (largeIconPage_)
         {
@@ -2987,6 +3016,7 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "dock.floatingShortcutMode", "dock.floatingEdgeSwipe",
                 "dock.fullscreenPolicy",
                 "dock.fullscreenExceptions",
+                "dock.startIcon", "dock.searchIcon",
                 "dock.showWindowsButton", "dock.showQuickSearchButton", "dock.showFrequentItems",
                 "dock.frequentItemCount", "dock.keepWhenDesktopHidden",
                 "dock.allowDesktopContentOverlap", "dock.reserveScreenSpace",
@@ -3541,6 +3571,7 @@ muxc::NavigationViewItem SettingsShell::NavigationItemForPage(
     case SettingsPage::Personalization:
     case SettingsPage::AppearanceTheme: return AppearanceThemeItem();
     case SettingsPage::ThemeManager: return ThemeManagerItem();
+    case SettingsPage::IconLibrary: return IconLibraryItem();
     case SettingsPage::AppearanceWidgets: return AppearanceThemeItem();
     case SettingsPage::WidgetBehavior: return WidgetBehaviorItem();
     case SettingsPage::AppearanceDesktopIcons:

@@ -83,6 +83,26 @@ void TestPersistenceTransactions(const std::filesystem::path& root)
         "\",\"titleMode\":\"custom\",\"userRenamed\":true}]}";
     snowdesktop::layout_storage::Document layout;
     std::string error;
+    const std::string assetId = std::string(64, 'a') + ".webp";
+    const std::string dockIconDocument = "{\"layoutSchemaVersion\":1,\"widgets\":[{\"id\":\"collection\",\"page\":\"__dock\",\"x\":0,\"y\":0,\"type\":\"collection\",\"dockIconAssetId\":\"" + assetId + "\"}]}";
+    const std::string overrideDocument = "{\"layoutSchemaVersion\":1,\"iconOverrides\":["
+        "{\"target\":\"control:start\",\"asset\":\"" + assetId + "\"},"
+        "{\"target\":\"control:search\",\"asset\":\"" + assetId + "\"},"
+        "{\"target\":\"item:C:\\\\A.LNK\",\"asset\":\"" + assetId + "\"},"
+        "{\"target\":\"recycle-empty:BIN\",\"asset\":\"" + assetId + "\"},"
+        "{\"target\":\"recycle-full:BIN\",\"asset\":\"" + std::string(64, 'b') + ".png\"}]}";
+    const auto overridePath = root / L"small-icon.layout.json";
+    Expect(snowdesktop::layout_storage::SaveDocument(overridePath, overrideDocument, &error) &&
+        snowdesktop::layout_storage::LoadDocument(overridePath, layout).status == snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+        layout.iconOverrides.size() == 5 && layout.iconOverrides[3].second != layout.iconOverrides[4].second,
+        "small icons and Dock controls persist independently, including distinct empty/full recycle states");
+    Expect(!snowdesktop::layout_storage::ValidateDocument("{\"iconOverrides\":[{\"target\":\"control:start\",\"asset\":\"../outside.png\"}]}"),
+        "layout cannot inject a path outside the managed icon library");
+    const auto dockIconPath = root / L"dock-icon.layout.json";
+    Expect(snowdesktop::layout_storage::SaveDocument(dockIconPath, dockIconDocument, &error) &&
+        snowdesktop::layout_storage::LoadDocument(dockIconPath, layout).status == snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+        layout.widgets.size() == 1 && layout.widgets.front().dockIconAssetId == assetId,
+        "component-owned Dock icon identity survives the production layout transaction independently of Dock array positions");
     Expect(snowdesktop::layout_storage::SaveDocument(titlePath, document, &error) &&
         snowdesktop::layout_storage::LoadDocument(titlePath, layout).status ==
             snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
@@ -2896,6 +2916,16 @@ int main()
             INVALID_FILE_ATTRIBUTES,
         "portable migration creates the long destination file");
 
+    const auto iconMigrationSource = root / L"icon-library-portable-source";
+    Write(iconMigrationSource / L"SnowDesktop.layout.json", "{\"widgets\":[]}");
+    Write(iconMigrationSource / L"icon-library" / L"library.json", "{\"version\":1,\"entries\":[]}");
+    Write(iconMigrationSource / L"icon-library" / L"originals" / L"fixture.webp", "original-icon-bytes");
+    const auto iconMigrationDestination = root / L"icon-library-portable-destination";
+    const auto iconMigration = snowdesktop::migration::CopyDataTree(iconMigrationSource, iconMigrationDestination);
+    Expect(iconMigration.ok && Read(iconMigrationDestination / L"icon-library" / L"originals" / L"fixture.webp") == "original-icon-bytes" &&
+        Read(iconMigrationDestination / L"icon-library" / L"library.json") == "{\"version\":1,\"entries\":[]}",
+        "portable data migration retains the icon index and originals together");
+
     std::stop_source cancelledCopySource;
     cancelledCopySource.request_stop();
     const auto cancelledCopyDestination =
@@ -3025,6 +3055,8 @@ int main()
         "{ \"longPath\": true }\n");
 
     Write(fullBackupData / L"large-icons" / L"import-user.png", "retained original image bytes");
+    Write(fullBackupData / L"icon-library" / L"library.json", "{\"version\":1,\"entries\":[]}");
+    Write(fullBackupData / L"icon-library" / L"originals" / L"fixture.webp", "retained icon library original");
     Write(fullBackupData / L"large-icons" / L"steam-999-portrait-english.png", "retained offline cover bytes");
     const auto upgradeState = root / L"large-icon-upgrade-state";
     const auto upgrade = snowdesktop::EnsureLargeIconUpgradeBackup(upgradeState, fullBackupData, "1.0.5.0");
@@ -3113,6 +3145,9 @@ int main()
     Expect(Read(createdFullBackup.backup.data / L"large-icons" / L"import-user.png") == "retained original image bytes" &&
         Read(createdFullBackup.backup.data / L"large-icons" / L"steam-999-portrait-english.png") == "retained offline cover bytes",
         "complete backups retain user image sources and the currently needed offline covers");
+    Expect(Read(createdFullBackup.backup.data / L"icon-library" / L"library.json") == "{\"version\":1,\"entries\":[]}" &&
+        Read(createdFullBackup.backup.data / L"icon-library" / L"originals" / L"fixture.webp") == "retained icon library original",
+        "complete backups retain the managed icon library index and original files");
     Expect(createdFullBackup.ok &&
         std::filesystem::is_regular_file(
             createdFullBackup.backup.root / L"backup.json"),

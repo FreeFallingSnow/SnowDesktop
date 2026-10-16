@@ -396,6 +396,11 @@ void DesktopApp::DrawCollectionPopup(
                 DrawDemoCollectionIdentityIcon(iconContext, widget,
                     desktopItem->layoutKey.empty() ? desktopItem->parsingName : desktopItem->layoutKey,
                     iconRect, 1.0f);
+            else if (auto* custom = GetSmallCustomIcon(iconContext, [&]() -> std::wstring_view {
+                if constexpr (requires { item.layoutKey; }) return item.layoutKey;
+                else return item.fullPath;
+            }(), iconRect.right - iconRect.left))
+                DrawIconBitmap(iconContext, custom, iconRect);
             else if (auto* icon = GetOrCreateD2DBitmap(item.iconBitmap,
                 ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
                 DrawIconBitmap(iconContext, icon, iconRect);
@@ -434,7 +439,7 @@ void DesktopApp::DrawCollectionPopup(
                         entry.fileSize,
                         entry.isDirectory,
                     },
-                    collectionPopupLightTheme_, !IsRenamingItem(&entry));
+                    collectionPopupLightTheme_, !IsRenamingItem(&entry), entry.fullPath);
                 continue;
             }
             const bool hovered =
@@ -505,7 +510,7 @@ void DesktopApp::DrawCollectionPopup(
                         item.fileSize,
                         false,
                     },
-                    collectionPopupLightTheme_, !IsRenamingItem(&item));
+                    collectionPopupLightTheme_, !IsRenamingItem(&item), item.layoutKey);
                 continue;
             }
             bool hovered =

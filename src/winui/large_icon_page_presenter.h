@@ -11,7 +11,7 @@ class LargeIconPagePresenter
 public:
     LargeIconPagePresenter(std::function<std::wstring(std::string_view)> localize,
         winrt::Microsoft::UI::Xaml::Style style, LargeIconSettingsAction action,
-        std::function<void()> nameChanged);
+        std::function<void()> nameChanged, IconLibraryAction iconLibrary = {});
     ~LargeIconPagePresenter();
     winrt::Microsoft::UI::Xaml::Controls::StackPanel Content() const;
     std::wstring_view NameForKey(std::wstring_view key) const;

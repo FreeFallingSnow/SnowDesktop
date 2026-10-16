@@ -885,6 +885,19 @@ int wmain(int argc, wchar_t** argv)
         inlineStatusBounds, light.disabledText) > 0,
         "inline page status uses disabled menu text");
 
+    const snowdesktop::menu_icon::ItemView dockStatus{L"Start\tShown", L""};
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    snowdesktop::menu_icon::DrawItem(dc, font, fluentFont, dockStatus,
+        inlineStatusBounds, 0, light, metrics96);
+    GdiFlush();
+    const std::vector<std::uint32_t> expectedDockStatus(pixels, pixels + kWidth * kHeight);
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    snowdesktop::menu_icon::DrawInlineAction(dc, font, fluentFont, dockStatus,
+        inlineStatusBounds, 0, light, metrics96);
+    GdiFlush();
+    Expect(std::equal(expectedDockStatus.begin(), expectedDockStatus.end(), pixels),
+        "inline Dock status preserves the ordinary right-aligned status beside personalization");
+
     const snowdesktop::menu_icon::ItemView checkedFilter{
         L"Installed 3", L"", false, false, true,
     };

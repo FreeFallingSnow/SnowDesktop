@@ -1167,7 +1167,7 @@ void CollectionGroup::DrawContent(
                     item->selected, item->iconIsMediaThumbnail,
                     demoIdentity, activeCollection,
                     { item->typeName, item->modifiedTime,
-                      item->fileSize, false }, std::nullopt, !app_->IsRenamingItem(item));
+                      item->fileSize, false }, std::nullopt, !app_->IsRenamingItem(item), item->layoutKey);
             }
         }
         else if (privacyActive)

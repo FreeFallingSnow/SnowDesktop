@@ -25,7 +25,7 @@ inline std::string CheckRequest(LargeIconEditSession& edit, const LargeIconSetti
     if (edit.token == 0 || edit.key != request.key || edit.token != request.session ||
         (request.action != "status" && edit.revision != request.revision)) return "largeIcon.stale";
     if (request.action != "status" && request.action != "preview" && request.action != "commit" &&
-        request.action != "cancel" && request.action != "refresh" && request.action != "import") return "largeIcon.invalid";
+        request.action != "cancel" && request.action != "refresh" && request.action != "import" && request.action != "library") return "largeIcon.invalid";
     return {};
 }
 
@@ -69,7 +69,8 @@ inline bool Patch(LargeIconConfig& target, const LargeIconConfig& draft, const s
     for (const auto& name : fields)
     {
         const auto value = source.Find(name);
-        if (!value || !merged.Find(name) || name == "version" || name == "cachedCover" || name == "image" || name == "foregroundImage") return false;
+        if (!value || !merged.Find(name) || name == "version" || name == "cachedCover" || name == "image" || name == "foregroundImage" ||
+            name == "imageAssetId" || name == "foregroundImageAssetId") return false;
         merged.object[name] = *value;
     }
     LargeIconConfig candidate;

@@ -43,6 +43,7 @@ enum class SettingsPage : std::uint8_t
     WidgetBehavior,
     QuickNavigation,
     ThemeManager,
+    IconLibrary,
 };
 
 /**

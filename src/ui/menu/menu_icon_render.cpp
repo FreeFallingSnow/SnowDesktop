@@ -1158,6 +1158,10 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     const ItemView& item, const RECT& bounds, UINT itemState,
     const Palette& palette, const Metrics& metrics, InlineActionStyle style)
 {
+    // The flexible action keeps the ordinary menu's right-aligned status;
+    // companion actions beside it retain their compact button presentation.
+    if (style == InlineActionStyle::Plain && item.label && std::wcschr(item.label, L'\t'))
+        return DrawItem(dc, textFont, iconFont, item, bounds, itemState, palette, metrics);
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
 

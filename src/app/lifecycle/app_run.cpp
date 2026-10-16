@@ -778,6 +778,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
 
     snowdesktop::winui::SettingsWindowHostOptions settingsHostOptions;
     settingsHostOptions.largeIconSettings = [this](auto request) { return EditLargeIcon(std::move(request)); };
+    settingsHostOptions.iconLibrary = [this](auto request) { return EditIconLibrary(std::move(request)); };
     settingsHostOptions.windowTitle = _LW("app.settings.title");
     settingsHostOptions.localize = [](std::string_view key) {
         const std::string ownedKey(key);

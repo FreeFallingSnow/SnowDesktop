@@ -525,6 +525,16 @@ void TestCodec()
     large.defaultConfig = snowdesktop::EncodeLargeIconConfig(defaults); large.imageWidth = 64; large.imageHeight = 48;
     large.itemCount = 3; large.anyFill = true; large.mixedFields = {"backgroundStyle", "effect"};
     const auto largeCopy = Unpack<snowdesktop::LargeIconSettingsSnapshot>(Pack(large));
+    snowdesktop::IconLibrarySnapshot library;
+    library.session = UINT64_MAX; library.revision = 27; library.busy = true; library.target = L"集合-雪";
+    snowdesktop::IconLibraryEntry asset; asset.id = std::string(64,'a') + ".webp"; asset.name = L"自定义图标";
+    asset.previewPath = L"file:///C:/图片/资源.png"; asset.width = 96; asset.height = 96; asset.uses = {L"集合 · Dock"};
+    library.entries.push_back(asset); library.failures = {L"无效图片.svg"};
+    const auto libraryCopy = Unpack<snowdesktop::IconLibrarySnapshot>(Pack(library));
+    Check(libraryCopy.session == library.session && libraryCopy.revision == 27 && libraryCopy.busy &&
+        libraryCopy.target == library.target && libraryCopy.entries.size() == 1 && libraryCopy.entries[0].id == asset.id &&
+        libraryCopy.entries[0].previewPath == asset.previewPath && libraryCopy.entries[0].uses == asset.uses && libraryCopy.failures == library.failures,
+        "icon library identities, usage guards, session tokens and Unicode paths survive the production IPC codec");
     Check(largeCopy.key == large.key && largeCopy.session == UINT64_MAX && largeCopy.revision == 47 &&
         largeCopy.landscapePath == large.landscapePath && largeCopy.portraitSource == large.portraitSource &&
         largeCopy.hasEdgeColor && largeCopy.edgeColor == large.edgeColor && largeCopy.loading && largeCopy.config == large.config && largeCopy.steam && largeCopy.accent == large.accent &&

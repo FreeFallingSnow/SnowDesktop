@@ -477,7 +477,7 @@ void DesktopApp::SetMenuItemQuickAction(
 
 void DesktopApp::SetMenuItemInlineAction(
     HMENU menu, UINT_PTR command, UINT group, bool compact,
-    bool horizontalScroll)
+    bool horizontalScroll, bool measureToContent)
 {
     if (!menu)
         return;
@@ -500,6 +500,7 @@ void DesktopApp::SetMenuItemInlineAction(
                 entry->inlineGroup = group;
                 entry->compactInlineAction = compact;
                 entry->horizontalScrollAction = horizontalScroll;
+                entry->measureInlineToContent = measureToContent;
                 return;
             }
         }
@@ -510,6 +511,7 @@ void DesktopApp::SetMenuItemInlineAction(
         entry->inlineGroup = group;
         entry->compactInlineAction = compact;
         entry->horizontalScrollAction = horizontalScroll;
+        entry->measureInlineToContent = measureToContent;
         menuIconPool_.push_back(std::move(entry));
         return;
     }
@@ -611,6 +613,8 @@ std::vector<snowdesktop::modern_menu::Item> DesktopApp::BuildModernMenuItems(HME
                     icon->compactInlineAction;
                 item.horizontalScrollAction =
                     icon->horizontalScrollAction;
+                item.measureInlineAction = icon->measureInlineToContent;
+                item.fitInlineActionToContent = icon->measureInlineToContent;
                 item.textInput = icon->textInput;
                 item.inputText = icon->inputText;
                 item.quickIcon = icon->quickIcon;

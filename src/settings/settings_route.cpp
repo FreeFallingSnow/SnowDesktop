@@ -313,6 +313,7 @@ bool SettingsRoute::IsValid() const noexcept
     case SettingsPage::DesktopStyle:
     case SettingsPage::WidgetBehavior:
     case SettingsPage::ThemeManager:
+    case SettingsPage::IconLibrary:
     case SettingsPage::QuickNavigation:
         break;
     default:
@@ -321,6 +322,7 @@ bool SettingsRoute::IsValid() const noexcept
 
     if (page == SettingsPage::LargeIcon)
         return !itemKey.empty() && widgetInstanceId.empty();
+    if (page == SettingsPage::IconLibrary) return widgetInstanceId.empty();
     if (!itemKey.empty())
         return page == SettingsPage::Widgets && focusId == "widgets.permissions" && widgetInstanceId.empty();
     if (page == SettingsPage::WidgetSettings)
@@ -361,6 +363,7 @@ std::string_view SettingsPageKey(SettingsPage page) noexcept
     case SettingsPage::DesktopStyle: return "desktop-style";
     case SettingsPage::WidgetBehavior: return "widget-behavior";
     case SettingsPage::ThemeManager: return "theme-manager";
+    case SettingsPage::IconLibrary: return "icon-library";
     case SettingsPage::QuickNavigation: return "quick-navigation";
     }
     return "home";

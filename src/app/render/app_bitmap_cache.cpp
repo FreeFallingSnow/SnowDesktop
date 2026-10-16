@@ -481,13 +481,13 @@ void DesktopApp::EraseD2DIconCacheForBitmap(HBITMAP hbm)
 }
 
 ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
-    HBITMAP hbm, bool beautify)
+    HBITMAP hbm, bool beautify, bool managedAlpha)
 {
     if (!hbm || !d2dContext_)
         return nullptr;
 
     snowdesktop::icon_bitmap_pixels::Buffer buffer;
-    if (!snowdesktop::icon_bitmap_pixels::ReadHBitmap(hbm, buffer))
+    if (!snowdesktop::icon_bitmap_pixels::ReadHBitmap(hbm, buffer, !managedAlpha))
         return nullptr;
 
     bool needsGlassBackdrop = false;
@@ -566,6 +566,17 @@ ID2D1Bitmap* DesktopApp::GetOrCreateD2DBitmap(
     if (FAILED(target->QueryInterface(IID_PPV_ARGS(&deviceContext))) || !deviceContext)
         return nullptr;
     return GetOrCreateD2DBitmap(hbm, beautify);
+}
+
+ID2D1Bitmap* DesktopApp::GetOrCreateManagedD2DBitmap(ID2D1RenderTarget* target, HBITMAP bitmap, bool beautify)
+{
+    if (!target || !bitmap) return nullptr;
+    const auto key = GetD2DIconCacheKey(bitmap, beautify);
+    const auto found = d2dIconCache_.find(key);
+    if (found != d2dIconCache_.end()) return found->second.Get();
+    auto uploaded = CreateD2DBitmapFromHBitmap(bitmap, beautify, true);
+    if (!uploaded) return nullptr;
+    auto* result = uploaded.Get(); d2dIconCache_[key] = std::move(uploaded); return result;
 }
 
 void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,

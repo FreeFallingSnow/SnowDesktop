@@ -148,6 +148,10 @@ void DesktopApp::LoadLayoutSlots()
     if (document.lastPageMonitor)
         lastPageMonitorId_ = Utf8ToWide(*document.lastPageMonitor);
 
+    iconOverrides_.clear();
+    for (const auto& [target, asset] : document.iconOverrides)
+        iconOverrides_[Utf8ToWide(target)] = asset;
+
     if (document.dockEnabled)
         generalSettings_.dockEnabled = *document.dockEnabled;
     if (document.dockLayout)
@@ -362,6 +366,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.type = WidgetTypeFromJson(Utf8ToWide(saved.type));
         widget.demoIconCategory = Utf8ToWide(
             saved.demoIconCategory);
+        widget.dockIconAssetId = saved.dockIconAssetId;
         widget.sourceFolderPath = Utf8ToWide(saved.sourceFolderPath);
         widget.sourceDesktopItemKey = Utf8ToWide(saved.sourceDesktopItemKey);
         widget.packageId = Utf8ToWide(saved.packageId);
@@ -1044,6 +1049,17 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
         if (firstPage) pagesToWrite.push_back(firstPage->id);
     }
 
+    std::ostringstream overrides;
+    overrides << "[";
+    bool firstOverride = true;
+    for (const auto& [target, asset] : iconOverrides_)
+    {
+        if (!firstOverride) overrides << ",";
+        firstOverride = false;
+        overrides << "{\"target\":\"" << JsonEscapeUtf8(target)
+            << "\",\"asset\":\"" << asset << "\"}";
+    }
+    overrides << "]";
     std::ostringstream file;
 
     file << "{\n  \"layoutSchemaVersion\": 1"
@@ -1053,6 +1069,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << "\",\n  \"lastPageMonitor\": \""  << JsonEscapeUtf8(lastPageMonitorId_)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
          << ",\n  \"dockLayout\": " << snowdesktop::layout_storage::SerializeDockLayout(dockSettings_)
+         << ",\n  \"iconOverrides\": " << overrides.str()
          << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"fanTitleFontSizeCu\": " << fanTitleFontSizeCu_
@@ -1174,6 +1191,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
              << "\", \"customTitle\": \"" << JsonEscapeUtf8(w.customTitle)
              << "\", \"demoIconCategory\": \""
              << JsonEscapeUtf8(w.demoIconCategory)
+             << "\", \"dockIconAssetId\": \"" << w.dockIconAssetId
              << "\", \"sourceFolderPath\": \"" << JsonEscapeUtf8(w.sourceFolderPath)
              << "\", \"sourceDesktopItemKey\": \"" << JsonEscapeUtf8(w.sourceDesktopItemKey)
              << "\", \"packageId\": \"" << JsonEscapeUtf8(w.packageId)

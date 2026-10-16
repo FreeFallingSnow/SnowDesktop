@@ -395,6 +395,9 @@ struct BackendServer::Impl
         channel.Bind<LargeIconSettingsSnapshot, LargeIconSettingsRequest>("largeIcon.edit", [this](auto request) {
             return options.largeIconSettings ? options.largeIconSettings(std::move(request)) : LargeIconSettingsSnapshot{};
         });
+        channel.Bind<IconLibrarySnapshot, IconLibraryRequest>("iconLibrary.action", [this](auto request) {
+            return options.iconLibrary ? options.iconLibrary(std::move(request)) : IconLibrarySnapshot{};
+        });
         channel.Bind<PageGridChangeImpact, std::wstring, int, int>("pages.analyze", [this](std::wstring id, int columns, int rows) {
             return options.pageLayoutPage.analyzeGrid ? options.pageLayoutPage.analyzeGrid(id, columns, rows) : PageGridChangeImpact{};
         });
@@ -547,6 +550,9 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.pageLayoutPage.removePage = [&channel](Token revision, const std::wstring& id) { return channel.Call<PageLayoutOperationResult>("pages.remove", revision, id); };
     options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
         return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);
+    };
+    options.iconLibrary = [&channel](IconLibraryRequest request) {
+        return channel.Call<IconLibrarySnapshot>("iconLibrary.action", request);
     };
     options.pageLayoutPage.analyzeGrid = [&channel](std::wstring_view id, int columns, int rows) { return channel.Call<PageGridChangeImpact>("pages.analyze", std::wstring(id), columns, rows); };
     options.pageLayoutPage.applyOrder = [&channel](Token revision, const std::vector<std::wstring>& ids) { return channel.Call<PageLayoutOperationResult>("pages.order", revision, ids); };

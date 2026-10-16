@@ -3,6 +3,7 @@
 #include "settings/settings_controller.h"
 #include "settings_focus_feedback.h"
 #include "theme_library_actions.h"
+#include "icons/icon_library.h"
 
 #include <winrt/Microsoft.UI.Xaml.h>
 
@@ -18,6 +19,7 @@ namespace snowdesktop::winui
 /** Commands emitted by the cached Dock and taskbar settings presenter. */
 struct DockPageActions
 {
+    IconLibraryAction iconLibrary;
     ThemeLibraryAction themeLibrary;
     ThemeLibraryAsyncAction themeAsync;
     using GeneralEdit = std::function<void(GeneralSettings&)>;

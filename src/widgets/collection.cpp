@@ -522,7 +522,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
                         di.sysIconIndex, di.name, di.selected,
                         di.iconIsMediaThumbnail, demoIdentity, data_,
                         { di.typeName, di.modifiedTime,
-                          di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di));
+                          di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
                 }
             }
         }

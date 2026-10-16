@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <utility>
 
 namespace snowdesktop::layout_storage
 {
@@ -53,6 +54,7 @@ struct WidgetRecord
     std::optional<std::string> customTitle;
     std::optional<std::string> titleMode;
     std::string demoIconCategory;
+    std::string dockIconAssetId;
     std::string sourceFolderPath;
     std::string sourceDesktopItemKey;
     std::string packageId;
@@ -199,6 +201,7 @@ struct Document
     std::optional<float> iconBeautifyOutlineG;
     std::optional<float> iconBeautifyOutlineB;
     std::optional<float> iconBeautifyShadowStrength;
+    std::vector<std::pair<std::string, std::string>> iconOverrides;
     std::vector<PageRecord> pages;
     std::vector<ItemRecord> items;
     std::vector<WidgetRecord> widgets;

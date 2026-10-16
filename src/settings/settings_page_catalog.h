@@ -24,6 +24,7 @@ constexpr SettingsCategory SettingsPageCategory(SettingsPage page) noexcept
     case SettingsPage::AppearanceIconBeautification: case SettingsPage::LargeIcon:
     case SettingsPage::AnimationPerformance: case SettingsPage::ContextMenu:
     case SettingsPage::ThemeManager:
+    case SettingsPage::IconLibrary:
         return SettingsCategory::Appearance;
     default: return SettingsCategory::None;
     }
@@ -49,6 +50,7 @@ constexpr std::string_view SettingsPageTitleKey(SettingsPage page) noexcept
     case SettingsPage::Personalization: case SettingsPage::AppearanceTheme:
     case SettingsPage::AppearanceWidgets: return "settings.nav.themeMaterials";
     case SettingsPage::ThemeManager: return "themeLibrary.manager";
+    case SettingsPage::IconLibrary: return "iconLibrary.title";
     case SettingsPage::AppearanceDesktopIcons: return "settings.nav.fontsIcons";
     case SettingsPage::AppearanceIconBeautification: return "app.settings.icon_beautify";
     case SettingsPage::WidgetBehavior: return "settings.widgetBehavior.title";

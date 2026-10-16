@@ -499,6 +499,8 @@ struct DesktopWidget
     std::wstring scriptTitle;
     // Empty means Demo Mode infers a category from the collection contents.
     std::wstring demoIconCategory;
+    // Presentation of this component's Dock entrance; retained on the desktop.
+    std::string dockIconAssetId;
     std::wstring sourceFolderPath;
     // Original icon replaced by an explicit folder/shortcut conversion. This
     // is separate from itemKeys, which orders the mapped directory contents.

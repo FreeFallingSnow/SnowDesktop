@@ -1,0 +1,2 @@
+# Keep official vendored sources and license files byte-for-byte.
+third_party/libwebp/** -whitespace

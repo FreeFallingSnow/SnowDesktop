@@ -186,6 +186,7 @@
                         <NavigationViewItem x:Name="AnimationItem" Tag="animation-performance" />
                         <NavigationViewItem x:Name="ContextMenuItem" Tag="context-menu" />
                         <NavigationViewItem x:Name="ThemeManagerItem" Tag="theme-manager" />
+                        <NavigationViewItem x:Name="IconLibraryItem" Tag="icon-library" />
                     </NavigationViewItem.MenuItems>
                 </NavigationViewItem>
                 <NavigationViewItem x:Name="WidgetsItem" Tag="widgets" />

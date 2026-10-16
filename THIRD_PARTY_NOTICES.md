@@ -40,6 +40,7 @@ described under "Optional Steamworks dependency" below.
 | Microsoft.Windows.CppWinRT | 3.0.260818.1 NuGet package | MIT | Copyright (c) Microsoft Corporation; <https://github.com/microsoft/cppwinrt> |
 | Dear ImGui | 1.92.5 WIP | MIT | Copyright (c) 2014-2025 Omar Cornut and contributors; <https://github.com/ocornut/imgui> |
 | Lua | 5.4.7 | MIT | Copyright (C) 1994-2024 Lua.org, PUC-Rio; <https://www.lua.org> |
+| libwebp decoder | 1.6.0 | BSD 3-Clause and patent grant | Copyright (c) 2010 Google Inc.; <https://developers.google.com/speed/webp> |
 | Everything SDK client | bundled source | MIT | Copyright (C) 2016, 2022 David Carpenter; <https://www.voidtools.com/support/everything/sdk/> |
 | pinyin-data | bundled data | MIT | Copyright (c) 2016 mozillazg; <https://github.com/mozillazg/pinyin-data> |
 | MinHook | bundled source | BSD 2-Clause | Copyright (c) 2009-2017 Tsuda Kageyu; <https://github.com/TsudaKageyu/minhook> |

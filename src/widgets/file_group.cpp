@@ -1987,6 +1987,7 @@ void FileGroup::DrawContent(
             Item* item = slot->GetItem();
             bool isDirectory = false;
             bool iconIsMediaThumbnail = false;
+            std::wstring_view iconIdentity;
             bool drawTitle = true;
             int sysIconIndex = -1;
             ListItemDetails details;
@@ -1997,6 +1998,7 @@ void FileGroup::DrawContent(
                     desktop->GetDesktopItem();
                 if (sourceItem)
                 {
+                    iconIdentity = sourceItem->layoutKey;
                     drawTitle = !app_->IsRenamingItem(sourceItem);
                     sysIconIndex =
                         sourceItem->sysIconIndex;
@@ -2015,6 +2017,7 @@ void FileGroup::DrawContent(
                     folder->GetFolderEntry();
                 if (sourceEntry)
                 {
+                    iconIdentity = sourceEntry->fullPath;
                     drawTitle = !app_->IsRenamingItem(sourceEntry);
                     isDirectory =
                         sourceEntry->isDirectory;
@@ -2040,7 +2043,7 @@ void FileGroup::DrawContent(
                     item->GetTitle(),
                     item->IsSelected(),
                     iconIsMediaThumbnail,
-                    {}, nullptr, details, std::nullopt, drawTitle);
+                    {}, nullptr, details, std::nullopt, drawTitle, iconIdentity);
             else
             {
                 const bool hovered =

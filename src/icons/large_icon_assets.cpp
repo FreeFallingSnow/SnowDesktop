@@ -1,4 +1,6 @@
 #include "large_icon_assets.h"
+#include "icon_image_codec.h"
+#include "icon_library.h"
 #include "icon_bitmap_pixels.h"
 #include "icon_render_rules.h"
 #include "shell/shortcut_application_rules.h"
@@ -85,7 +87,7 @@ bool ImportedImageName(std::wstring_view name)
 std::string RawSourcePrefix(const LargeIconAssetRequest& r)
 {
     return "raw-" + Hash(r.parsingName + L":" + std::to_wstring(r.sourceStamp) + L":" +
-        std::to_wstring(r.sourceIconIndex) + L":thumbnail4") + "-";
+        std::to_wstring(r.sourceIconIndex) + L":thumbnail5-alpha2") + "-";
 }
 std::filesystem::path SteamDirectory()
 {
@@ -159,45 +161,14 @@ std::uint32_t Accent(const std::vector<std::uint32_t>& pixels)
 }
 
 std::shared_ptr<LargeIconAsset> Decode(const std::filesystem::path& path, int target, const std::filesystem::path& output,
-    std::string reference, std::string source)
+    std::string reference, std::string source, std::filesystem::path previewDirectory = {})
 {
     std::error_code ec;
-    const auto size = std::filesystem::file_size(path, ec);
-    if (ec || size == 0 || size > maxFile) return {};
-    ComPtr<IWICImagingFactory> factory;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory)))) return {};
-    ComPtr<IWICBitmapDecoder> decoder;
-    if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &decoder))) return {};
-    GUID container{};
-    if (FAILED(decoder->GetContainerFormat(&container)) ||
-        (container != GUID_ContainerFormatPng && container != GUID_ContainerFormatJpeg &&
-         container != GUID_ContainerFormatBmp && container != GUID_ContainerFormatIco)) return {};
-    ComPtr<IWICBitmapFrameDecode> frame;
-    if (FAILED(decoder->GetFrame(0, &frame))) return {};
-    if (container == GUID_ContainerFormatIco)
-    {
-        UINT count = 0, bestEdge = 0;
-        decoder->GetFrameCount(&count);
-        for (UINT i = 0; i < std::min(count, 256u); ++i)
-        {
-            ComPtr<IWICBitmapFrameDecode> candidate;
-            UINT w = 0, h = 0;
-            if (SUCCEEDED(decoder->GetFrame(i, &candidate)) && SUCCEEDED(candidate->GetSize(&w, &h)) &&
-                std::uint64_t(w) * h <= maxPixels && std::max(w, h) > bestEdge)
-            { frame = candidate; bestEdge = std::max(w, h); }
-        }
-    }
-    UINT width = 0, height = 0;
-    if (FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0 || std::uint64_t(width) * height > maxPixels) return {};
-    const double ratio = std::min(1., static_cast<double>(std::clamp(target, 64, 2048)) / std::max(width, height));
-    width = std::max(1u, static_cast<UINT>(width * ratio)); height = std::max(1u, static_cast<UINT>(height * ratio));
-    ComPtr<IWICBitmapScaler> scaler;
-    if (FAILED(factory->CreateBitmapScaler(&scaler)) || FAILED(scaler->Initialize(frame.Get(), width, height, WICBitmapInterpolationModeFant))) return {};
-    ComPtr<IWICFormatConverter> converter;
-    if (FAILED(factory->CreateFormatConverter(&converter)) || FAILED(converter->Initialize(scaler.Get(), GUID_WICPixelFormat32bppPBGRA,
-        WICBitmapDitherTypeNone, nullptr, 0, WICBitmapPaletteTypeCustom))) return {};
-    std::vector<std::uint32_t> pixels(static_cast<size_t>(width) * height);
-    if (FAILED(converter->CopyPixels(nullptr, width * 4, static_cast<UINT>(pixels.size() * 4), reinterpret_cast<BYTE*>(pixels.data())))) return {};
+    icon_image::Image decoded;
+    std::string decodeError;
+    if (!icon_image::Decode(path, std::clamp(target, 64, 2048), decoded, decodeError)) return {};
+    const UINT width = static_cast<UINT>(decoded.width), height = static_cast<UINT>(decoded.height);
+    const auto& pixels = decoded.pixels;
     if (!output.empty() && path != output)
     {
         // Keep the validated source bytes. A later, larger display must decode
@@ -211,9 +182,9 @@ std::shared_ptr<LargeIconAsset> Decode(const std::filesystem::path& path, int ta
     }
     const auto managedPath = output.empty() ? path : output;
     const auto stamp = std::filesystem::last_write_time(managedPath, ec).time_since_epoch().count();
-    const std::string preview = "preview-" + Hash(Wide(reference) + std::to_wstring(stamp)) + "-" + std::to_string(target) + ".png";
+    const std::string preview = "preview-" + Hash(L"alpha2:" + Wide(reference) + std::to_wstring(stamp)) + "-" + std::to_string(target) + ".png";
     std::string previewError;
-    if (!preview_png::Save(managedPath.parent_path() / Wide(preview), width, height, pixels, previewError)) return {};
+    if (!preview_png::Save((previewDirectory.empty() ? managedPath.parent_path() : previewDirectory) / Wide(preview), width, height, pixels, previewError)) return {};
     BITMAPINFO info{}; info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER); info.bmiHeader.biWidth = width;
     info.bmiHeader.biHeight = -static_cast<LONG>(height); info.bmiHeader.biPlanes = 1; info.bmiHeader.biBitCount = 32;
     void* bits = nullptr;
@@ -240,6 +211,9 @@ std::shared_ptr<LargeIconAsset> RawIcon(const LargeIconAssetRequest& request, co
     const int target = std::clamp(request.pixels, 64, 256);
     auto extension = std::filesystem::path(request.parsingName).extension().wstring();
     std::transform(extension.begin(), extension.end(), extension.begin(), towlower);
+    if (extension == L".png" || extension == L".webp" || extension == L".svg" || extension == L".jpg" ||
+        extension == L".jpeg" || extension == L".bmp" || extension == L".ico")
+        if (auto asset = Decode(request.parsingName, std::clamp(request.pixels, 64, 2048), output, reference, "original")) return asset;
     if (extension == L".url" || extension == L".lnk")
         for (const auto& location : shortcut_icon_resource::ReadShortcutIconResources(request.parsingName))
         {
@@ -516,6 +490,12 @@ struct LargeIconAssets::Impl
         std::lock_guard sourceLock(sourceMutexes[std::hash<std::string>{}(reference) % sourceMutexes.size()]);
         if (stop.stop_requested()) return {};
         const auto output = directory / Wide(reference);
+        if (r.content == 1 && IsIconAssetId(reference))
+        {
+            auto result = Decode(IconAssetPath(directory.parent_path() / L"icon-library", reference), r.pixels, {}, reference, "library", directory);
+            if (!result) error = "largeIcon.unavailable";
+            return result;
+        }
         if (!r.refresh)
             if (auto cached = Decode(output, r.pixels, {}, reference, r.content == 0 ? "original" : "cache")) return cached;
         if (!r.importPath.empty())

@@ -104,6 +104,11 @@ SD_IPC_FIELDS(DesktopDisplaySettings,
 SD_IPC_FIELDS(SettingsRoute,
     v.page, v.widgetInstanceId, v.focusId, v.itemKey, v.guideTopic);
 SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path, v.fields);
+SD_IPC_FIELDS(IconLibraryEntry, v.id, v.format, v.name, v.previewPath, v.width, v.height, v.missing,
+    v.source, v.packageId, v.packageVersion, v.packageEntryId, v.uses);
+SD_IPC_FIELDS(IconLibraryRequest, v.action, v.ids, v.paths, v.name, v.destination, v.target, v.format, v.session, v.revision);
+SD_IPC_FIELDS(IconLibrarySnapshot, v.entries, v.imported, v.failures, v.revision, v.session, v.busy, v.succeeded,
+    v.error, v.target, v.targetName);
 SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, v.revision,
     v.available, v.editable, v.succeeded, v.maxColumns, v.maxRows, v.config, v.error,
     v.landscapePath, v.portraitPath, v.source, v.landscapeSource, v.portraitSource, v.accent, v.steam,

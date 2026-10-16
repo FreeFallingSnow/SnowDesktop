@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "large_icon_page_presenter.h"
+#include "icon_library_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "appearance_sections.h"
 #include "panel_gradient_editor.h"
@@ -24,6 +25,8 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     std::function<std::wstring(std::string_view)> localize;
     x::Style style{nullptr};
     LargeIconSettingsAction action;
+    IconLibraryAction iconLibrary;
+    std::function<void()> cancelLibraryPicker;
     std::function<void()> nameChanged;
     LargeIconSettingsSnapshot snapshot;
     std::wstring headingName;
@@ -168,6 +171,29 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void Cancel()
     {
         if (dirty) { Send("cancel"); Reload(); Sync(); }
+    }
+    void ChooseLibrary()
+    {
+        if (!iconLibrary || !active || !snapshot.available || !snapshot.editable) return;
+        if (dirty && !Send("commit")) return;
+        const auto key = snapshot.key; const auto session = snapshot.session, revision = snapshot.revision;
+        const auto selected = IsLargeIconFill(draft) ? draft.imageAssetId : draft.foregroundImageAssetId;
+        const auto weak = weak_from_this();
+        // Keep this editor/session alive; the modal picker shares the library
+        // grid without navigating away or serializing unfinished UI controls.
+        timer.Stop();
+        cancelLibraryPicker = IconLibraryPagePresenter::Pick(root.XamlRoot(), localize, iconLibrary, selected,
+            [weak, key, session, revision](std::string id) {
+                const auto self = weak.lock();
+                if (!self || !self->active || self->snapshot.key != key || self->snapshot.session != session) return;
+                if (!id.empty())
+                {
+                    try { self->snapshot = self->action({key, session, revision, "library", {}, winrt::to_hstring(id).c_str(), {}}); }
+                    catch (...) { self->snapshot.error = "iconLibrary.unavailable"; }
+                    self->dirty = false; self->Reload(); self->Sync();
+                }
+                self->timer.Start();
+            });
     }
     void Track(const x::FrameworkElement& element, Field field)
     {
@@ -726,6 +752,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
             {{0,"largeIcon.original"},{1,"largeIcon.image"},{2,"largeIcon.steam"}}, Field::Fill, 1);
         else Choice(bg, "largeIcon.fillSource", &LargeIconConfig::content, {{0,"largeIcon.original"},{1,"largeIcon.image"}}, Field::Fill, 1);
         Action(bg, "largeIcon.image", "largeIcon.import", [](auto& self) { self.Send("import"); }, Field::FillImage, 2);
+        Action(bg, "iconLibrary.choose", "iconLibrary.choose", [](auto& self) { self.ChooseLibrary(); }, Field::FillImage, 2);
         Slider(bg, "largeIcon.fillScale", &LargeIconConfig::fillScale, 25, 300, 1, 100, L"%", Field::Fill, 1);
         auto imageDetails = Section(bg, "largeIcon.imageDetails", Field::Fill);
         Choice(imageDetails, "largeIcon.fit", &LargeIconConfig::fit, {{1,"largeIcon.cover"},{0,"largeIcon.contain"}}, Field::Fill);
@@ -782,6 +809,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         auto icon = Group("largeIcon.foreground", Field::Foreground);
         Choice(icon, "largeIcon.foregroundSource", &LargeIconConfig::foregroundContent, {{0,"largeIcon.original"},{1,"largeIcon.image"}}, Field::Foreground);
         Action(icon, "largeIcon.image", "largeIcon.import", [](auto& self) { self.Send("import"); }, Field::ForegroundImage, 1);
+        Action(icon, "iconLibrary.choose", "iconLibrary.choose", [](auto& self) { self.ChooseLibrary(); }, Field::ForegroundImage, 1);
         Slider(icon, "largeIcon.iconSize", &LargeIconConfig::contentScale, 10, 100, 1, 100, L"%", Field::Foreground);
         Slider(icon, "largeIcon.positionX", &LargeIconConfig::iconX, 0, 100, 1, 100, L"%", Field::ForegroundPosition);
         Slider(icon, "largeIcon.positionY", &LargeIconConfig::iconY, 0, 100, 1, 100, L"%", Field::ForegroundPosition);
@@ -809,9 +837,10 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
     }
 };
 LargeIconPagePresenter::LargeIconPagePresenter(std::function<std::wstring(std::string_view)> localize,
-    x::Style style, LargeIconSettingsAction action, std::function<void()> nameChanged) : impl_(std::make_shared<Impl>())
+    x::Style style, LargeIconSettingsAction action, std::function<void()> nameChanged, IconLibraryAction iconLibrary) : impl_(std::make_shared<Impl>())
 {
     impl_->localize = std::move(localize); impl_->style = style; impl_->action = std::move(action);
+    impl_->iconLibrary = std::move(iconLibrary);
     impl_->nameChanged = std::move(nameChanged);
     impl_->status.Severity(c::InfoBarSeverity::Error);
     impl_->status.IsClosable(false);
@@ -848,6 +877,7 @@ void LargeIconPagePresenter::Activate(std::wstring key)
 }
 void LargeIconPagePresenter::Deactivate()
 {
+    if (auto cancel = std::exchange(impl_->cancelLibraryPicker, {})) cancel();
     impl_->timer.Stop();
     if (impl_->active) { if (impl_->gradient) impl_->gradient->Flush(); if (impl_->edge) impl_->edge->Flush(); if (impl_->dirty) impl_->Send("commit"); impl_->Send("cancel"); }
     impl_->active = false;

@@ -964,6 +964,7 @@ ShowDockFolderPopupContextMenu(
             kContextPropertiesCommand,
             _LW("app.menu.properties"));
         if (singleSelection) AppendWebsiteIconMenu(menu, selectedPaths.front());
+        if (singleSelection) AppendIconOverrideMenu(menu, selectedPaths.front());
         AppendMenuW(
             menu, MF_SEPARATOR,
             0, nullptr);
@@ -1103,6 +1104,7 @@ ShowDockFolderPopupContextMenu(
     DestroyMenu(menu);
     ClearMenuIcons();
 
+    if (selectedPaths.size() == 1 && ExecuteIconOverrideMenu(command, selectedPaths.front())) return;
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
         SortDockFolderPopupContents(sort->mode, sort->ascending);
 

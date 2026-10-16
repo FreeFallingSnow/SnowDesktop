@@ -319,6 +319,8 @@ void DesktopApp::ShowItemContextMenu(
     using snowdesktop::large_icon_edit_rules::EntryAccess;
     const auto largeIconAccess = snowdesktop::large_icon_edit_rules::ResolveEntryAccess(
         entitlement.bridgeAvailable, entitlement.registered);
+    const auto customIconIdentity = items_[itemIndex].layoutKey;
+    if (selectedCount == 1 && !items_[itemIndex].largeIcon) AppendIconOverrideMenu(menu, customIconIdentity);
     if (largeIconMenu)
     {
         if (items_[itemIndex].largeIcon && largeIconAccess == EntryAccess::Edit)
@@ -752,6 +754,7 @@ void DesktopApp::ShowItemContextMenu(
         return;
     }
     applyLargeIconCommand(command);
+    if (ExecuteIconOverrideMenu(command, customIconIdentity)) return;
     switch (command)
     {
     case kContextAddFolderMappingWidget:
@@ -1209,6 +1212,8 @@ void DesktopApp::ShowShellContextMenu(
             }, ctxMenu.GetAddressOf())))
         { DestroyMenu(menu); return; }
 
+    const auto customIconIdentity = items_[itemIndex].layoutKey;
+    if (!items_[itemIndex].largeIcon && std::count_if(items_.begin(), items_.end(), [](const auto& item) { return item.selected; }) == 1) AppendIconOverrideMenu(menu, customIconIdentity);
     ctxMenu.As(&activeContextMenu2_);
     ctxMenu.As(&activeContextMenu3_);
 
@@ -1231,6 +1236,8 @@ void DesktopApp::ShowShellContextMenu(
     activeContextMenu2_.Reset();
     activeContextMenu3_.Reset();
 
+    if (ExecuteIconOverrideMenu(cmd, customIconIdentity))
+    { DestroyMenu(menu); ClearMenuIcons(); RestoreDesktopWindowLayer(); return; }
     if (cmd != 0)
     {
         UINT commandOffset = cmd - kFirstCmd;

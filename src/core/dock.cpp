@@ -2311,7 +2311,9 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         context->CreateSolidColorBrush(
             D2D1::ColorF(0.0f, 0.47f, 0.84f, 0.94f),
             &windowsBrush);
-        if (windowsBrush)
+        if (auto custom = app_->GetSmallCustomIcon(context, L"control:start", backgroundSize))
+            app_->DrawIconBitmap(context, custom, background);
+        else if (windowsBrush)
         {
             context->FillRectangle(D2D1::RectF(logoLeft, logoTop,
                 logoLeft + paneSize, logoTop + paneSize), windowsBrush.Get());
@@ -2710,7 +2712,9 @@ void DockContainer::DrawContents(ID2D1DeviceContext* context)
         context->CreateSolidColorBrush(
             lt ? D2D1::ColorF(0.0f, 0.0f, 0.0f, 0.72f)
                : D2D1::ColorF(1.0f, 1.0f, 1.0f, 0.92f), &brush);
-        if (brush)
+        if (auto custom = app_->GetSmallCustomIcon(context, L"control:search", backgroundSize))
+            app_->DrawIconBitmap(context, custom, searchBackground);
+        else if (brush)
         {
             ComPtr<ID2D1Factory> factory;
             ComPtr<ID2D1StrokeStyle> roundedStroke;

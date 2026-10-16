@@ -1240,7 +1240,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                     di.sysIconIndex, di.name, di.selected,
                     di.iconIsMediaThumbnail, {}, nullptr,
                     { di.typeName, di.modifiedTime,
-                      di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di));
+                      di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
         }
         for (const auto& [item, bounds] : foregroundTitles)
             item->DrawTitle(
@@ -1370,7 +1370,7 @@ void FileCategories::DrawContent(ID2D1DeviceContext* context, RECT body)
                 di.sysIconIndex, di.name, di.selected,
                 di.iconIsMediaThumbnail, {}, nullptr,
                 { di.typeName, di.modifiedTime,
-                  di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di));
+                  di.fileSize, false }, std::nullopt, !app_->IsRenamingItem(&di), di.layoutKey);
     }
     for (const auto& [item, bounds] : foregroundTitles)
         item->DrawTitle(

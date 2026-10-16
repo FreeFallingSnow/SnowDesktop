@@ -191,6 +191,8 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
             app_->DrawDemoIdentityIcon(context, demoIdentity, iconRect, alpha);
     }
     // Loading describes pending work, not whether the last image is drawable.
+    else if (auto custom = app_->GetSmallCustomIcon(context, item_->layoutKey, iconRect.right - iconRect.left))
+        app_->DrawIconBitmap(context, custom, iconRect, alpha, reinterpret_cast<std::uintptr_t>(item_));
     else if (!item_->iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, item_->sysIconIndex, iconRect, alpha);
@@ -376,7 +378,9 @@ void FolderEntryIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, boo
                        : D2D1::ColorF(0.78f, 0.78f, 0.78f, 0.55f * opacity));
     }
 
-    if (!entry_->iconBitmap)
+    if (auto custom = app_->GetSmallCustomIcon(context, entry_->fullPath, iconRect.right - iconRect.left))
+        app_->DrawIconBitmap(context, custom, iconRect, opacity, reinterpret_cast<std::uintptr_t>(entry_));
+    else if (!entry_->iconBitmap)
     {
         app_->DrawPlaceholderIcon(context, entry_->sysIconIndex, iconRect, opacity);
     }

@@ -7,6 +7,7 @@
 #include "panel_appearance_editor.h"
 #include "merged_bar_height_editor.h"
 #include "dock_tray_settings_editor.h"
+#include "icon_library_page_presenter.h"
 
 #include "dock/dock_settings.h"
 #include "theme/taskbar_appearance.h"
@@ -409,6 +410,37 @@ struct DockPagePresenter::Impl
     };
     std::vector<FullscreenExceptionRow> fullscreenExceptionRows;
     std::vector<DockFullscreenException> fullscreenExceptionValues;
+    muxc::Button startIconChoose, startIconRestore, searchIconChoose, searchIconRestore;
+    SettingRow startIconRow, searchIconRow;
+    muxc::InfoBar iconStatus;
+    std::function<void()> cancelIconPicker;
+    std::shared_ptr<bool> iconPickerAlive = std::make_shared<bool>(true);
+    void ChooseControlIcon(std::wstring target)
+    {
+        if (!active || closed || !actions.iconLibrary) return;
+        IconLibraryRequest begin; begin.action = "begin"; begin.target = target;
+        auto snapshot = actions.iconLibrary(begin);
+        if (!snapshot.succeeded) return;
+        const auto action = actions.iconLibrary;
+        cancelIconPicker = IconLibraryPagePresenter::Pick(startIconRow.root.XamlRoot(), localize,
+            action, {}, [this, alive = std::weak_ptr<bool>(iconPickerAlive), action, target, session = snapshot.session](std::string id) {
+                const auto guard = alive.lock();
+                if (!guard || !*guard || !active || closed) id.clear();
+                IconLibraryRequest request; request.action = id.empty() ? "cancel" : "apply";
+                request.target = target; request.session = session;
+                if (!id.empty()) request.ids.push_back(std::move(id));
+                const auto result = action(std::move(request));
+                if (!guard || !*guard) return;
+                iconStatus.Message(L(result.error.c_str(), L"")); iconStatus.IsOpen(!result.error.empty());
+            });
+    }
+    void RestoreControlIcon(const std::wstring& target)
+    {
+        if (!active || closed || !actions.iconLibrary) return;
+        IconLibraryRequest request; request.action = "restore"; request.target = target;
+        const auto result = actions.iconLibrary(std::move(request));
+        iconStatus.Message(L(result.error.c_str(), L"")); iconStatus.IsOpen(!result.error.empty());
+    }
     muxc::ToggleSwitch showWindowsButtonToggle{nullptr};
     muxc::ToggleSwitch showQuickSearchButtonToggle{nullptr};
     muxc::ToggleSwitch suppressTaskbarToggle{nullptr};
@@ -668,6 +700,18 @@ struct DockPagePresenter::Impl
         singleClickLaunchItemsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         fullscreenPolicyRow.Initialize(fullscreenPolicyCombo);
         fullscreenPolicyRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        muxc::StackPanel startActions, searchActions;
+        for (const auto& panel : {startActions, searchActions})
+        { panel.Orientation(muxc::Orientation::Horizontal); panel.Spacing(8); }
+        startActions.Children().Append(startIconChoose); startActions.Children().Append(startIconRestore);
+        searchActions.Children().Append(searchIconChoose); searchActions.Children().Append(searchIconRestore);
+        startIconRow.Initialize(startActions); searchIconRow.Initialize(searchActions);
+        startIconChoose.Click([this](const auto&, const auto&) { ChooseControlIcon(L"control:start"); });
+        searchIconChoose.Click([this](const auto&, const auto&) { ChooseControlIcon(L"control:search"); });
+        startIconRestore.Click([this](const auto&, const auto&) { RestoreControlIcon(L"control:start"); });
+        searchIconRestore.Click([this](const auto&, const auto&) { RestoreControlIcon(L"control:search"); });
+        iconStatus.IsOpen(false); iconStatus.Severity(muxc::InfoBarSeverity::Error);
+        presenter_controls::BindInfoBarVisibility(iconStatus);
         showWindowsButtonRow.Initialize(showWindowsButtonToggle);
         showQuickSearchButtonRow.Initialize(showQuickSearchButtonToggle);
         showQuickSearchButtonRow.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -752,7 +796,10 @@ struct DockPagePresenter::Impl
         presenter_controls::BindInfoBarVisibility(suppressionStatus);
         behaviorCard.content.Children().Append(suppressionStatus);
         itemsCard.content.Children().Append(showWindowsButtonRow.root);
+        itemsCard.content.Children().Append(startIconRow.root);
         itemsCard.content.Children().Append(showQuickSearchButtonRow.root);
+        itemsCard.content.Children().Append(searchIconRow.root);
+        itemsCard.content.Children().Append(iconStatus);
         itemsCard.content.Children().Append(showFrequentItemsRow.root);
         itemsCard.content.Children().Append(frequentItemCount.root);
         itemsCard.content.Children().Append(windowPreviewsRow.root);
@@ -2851,6 +2898,12 @@ struct DockPagePresenter::Impl
         reserveScreenSpaceRow.SetText(L("settings.dock.reserveScreenSpace", L"Reserve screen space"),
             L("settings.dock.reserveScreenSpace.description", L"Keep maximized windows clear of the standalone Dock. A summon-only Dock reserves no space."));
         muxa::AutomationProperties::SetName(reserveScreenSpaceToggle, reserveScreenSpaceRow.label.Text());
+        startIconRow.SetText(L("iconLibrary.startIcon", L"Start button icon"));
+        searchIconRow.SetText(L("iconLibrary.searchIcon", L"Search button icon"));
+        for (const auto& button : {startIconChoose, searchIconChoose})
+            button.Content(winrt::box_value(L("iconLibrary.change", L"Change icon…")));
+        for (const auto& button : {startIconRestore, searchIconRestore})
+            button.Content(winrt::box_value(L("iconLibrary.restore", L"Restore default icon")));
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
         showQuickSearchButtonRow.SetText(L(
@@ -3161,6 +3214,8 @@ struct DockPagePresenter::Impl
                 return dockTarget(prerequisiteTarget(layoutCombo, "dependency", layoutRow.label.Text().c_str()));
             return dockTarget(id == "dock.reserveScreenSpace" ? reserveScreenSpaceToggle : allowDesktopContentOverlapToggle);
         }
+        if (id == "dock.startIcon") return dockTarget(startIconChoose);
+        if (id == "dock.searchIcon") return dockTarget(searchIconChoose);
         if (id == "dock.showWindowsButton")
             return dockTarget(showWindowsButtonToggle);
         if (id == "dock.showQuickSearchButton")
@@ -3385,6 +3440,8 @@ struct DockPagePresenter::Impl
             UnhookColorControl(control->borderColor);
             UnhookDynamicRule(*control);
         }
+        *iconPickerAlive = false;
+        if (cancelIconPicker) { cancelIconPicker(); cancelIconPicker = {}; }
         actions = {};
         localize = {};
     }
@@ -3539,6 +3596,8 @@ void DockPagePresenter::ActivateTaskbar() noexcept
 
 void DockPagePresenter::Deactivate() noexcept
 {
+    if (impl_ && impl_->cancelIconPicker)
+    { auto cancel = std::exchange(impl_->cancelIconPicker, {}); cancel(); }
     if (!impl_ || impl_->closed)
         return;
     impl_->mergedHeight->Flush();

@@ -435,6 +435,7 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
             !ReadString(object, "demoIconCategory",
                 path + ".demoIconCategory", record.demoIconCategory,
                 error) ||
+            !ReadString(object, "dockIconAssetId", path + ".dockIconAssetId", record.dockIconAssetId, error) ||
             !ReadString(object, "sourceFolderPath",
                 path + ".sourceFolderPath", record.sourceFolderPath,
                 error) ||
@@ -555,6 +556,8 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
         {
             return false;
         }
+        if (!record.dockIconAssetId.empty() && !IsIconAssetId(record.dockIconAssetId))
+            return Fail(error, path + ".dockIconAssetId", "invalid icon library identity");
         document.widgets.push_back(std::move(record));
     }
     return true;
@@ -674,6 +677,17 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         return Fail(error, "layout root", "must be an object");
 
     Document decoded;
+    const JsonValue* overrides = nullptr;
+    if (!ReadObjectArray(root, "iconOverrides", overrides, error)) return false;
+    if (overrides) for (const auto& object : overrides->array)
+    {
+        std::string target, asset;
+        if (!ReadRequiredString(object, "target", "iconOverrides.target", target, error) ||
+            !ReadRequiredString(object, "asset", "iconOverrides.asset", asset, error)) return false;
+        if (!IsIconAssetId(asset) || target.empty())
+            return Fail(error, "iconOverrides", "invalid target or asset");
+        decoded.iconOverrides.emplace_back(std::move(target), std::move(asset));
+    }
     std::optional<int> sourceSchemaVersion;
     if (!ReadOptionalInteger(root, "layoutSchemaVersion",
             "layoutSchemaVersion", sourceSchemaVersion, error))

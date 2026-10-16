@@ -16,6 +16,8 @@
 
 namespace
 {
+constexpr UINT kDockChooseIcon = 43770;
+constexpr UINT kDockRestoreIcon = 43771;
 bool ShowWidgetRemovalConfirmation(HWND owner, POINT anchor,
     const std::wstring& widgetTitle)
 {
@@ -325,6 +327,10 @@ void DesktopApp::ShowWidgetContextMenu(
     const auto menuWidgetId = widget.id;
     const auto menuPackageId = widget.packageId;
     const auto menuWidgetType = widget.type;
+    const bool dockIconMenu = dockRenameAnchor.has_value() && widget.gridCell.pageId == kDockPageId &&
+        (widget.type == DesktopWidgetType::Collection || widget.type == DesktopWidgetType::FileCategories ||
+         widget.type == DesktopWidgetType::CollectionGroup || widget.type == DesktopWidgetType::FileGroup ||
+         widget.type == DesktopWidgetType::FolderMapping);
     if (widget.type == DesktopWidgetType::FileGroup)
     {
         effectiveSourceIndex =
@@ -760,6 +766,17 @@ void DesktopApp::ShowWidgetContextMenu(
     if (!luaElementMenu)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        if (dockIconMenu)
+        {
+            AppendMenuW(menu, MF_STRING, kDockChooseIcon, _LW("iconLibrary.change"));
+            setFluentIcon(menu, kDockChooseIcon, L"\uF489"); // image_24_regular
+            if (!widget.dockIconAssetId.empty())
+            {
+                AppendMenuW(menu, MF_STRING, kDockRestoreIcon, _LW("iconLibrary.restore"));
+                setFluentIcon(menu, kDockRestoreIcon, L"\uF19A"); // arrow_undo_24_regular
+            }
+            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        }
         if (CanRenameWidget(widget))
         {
             AppendMenuW(menu, MF_STRING, kContextWidgetRename, _LW("app.menu.rename"));
@@ -891,6 +908,15 @@ void DesktopApp::ShowWidgetContextMenu(
         menu, screenPoint, hwnd_, dockRenameAnchor.has_value(), false, nullptr, {}, {}, {}, &shellRequest);
     DestroyMenu(menu);
     ClearMenuIcons();
+
+    if (dockIconMenu && (command == kDockChooseIcon || command == kDockRestoreIcon))
+    {
+        RestoreDesktopWindowLayer();
+        if (command == kDockChooseIcon) OpenDockIconLibrary(menuWidgetId);
+        else if (!SetDockIconAsset(menuWidgetId, {}))
+            MessageBoxW(hwnd_, _LW("iconLibrary.saveFailed"), L"SnowDesktop", MB_OK | MB_ICONWARNING);
+        return;
+    }
 
     if (command == kContextWidgetOpenComponentPanel && luaElementMenu)
     {

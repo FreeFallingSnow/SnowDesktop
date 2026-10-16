@@ -1,0 +1,346 @@
+#include "app/app.h"
+#include "icons/icon_library.h"
+#include "icons/icon_image_codec.h"
+#include "icons/icon_override_rules.h"
+#include "icons/large_icon_edit_rules.h"
+
+struct IconLibraryHostState
+{
+    std::shared_ptr<snowdesktop::IconLibrary> library;
+    snowdesktop::BackgroundWork operations{1}, images{2};
+    snowdesktop::IconLibrarySnapshot snapshot;
+    bool initialized = false, busy = false;
+    std::wstring target;
+    std::uint64_t session = 0;
+    std::optional<snowdesktop::LargeIconSettingsRequest> pendingLargeIcon;
+    std::unordered_map<std::string, std::shared_ptr<snowdesktop::BackgroundBitmap>> bitmaps;
+};
+
+IconLibraryHostState& DesktopApp::EnsureIconLibrary()
+{
+    if (!iconLibraryState_)
+    {
+        iconLibraryState_ = std::make_shared<IconLibraryHostState>();
+        iconLibraryState_->library = std::make_shared<snowdesktop::IconLibrary>(GetDataSubdirectoryPath(L"icon-library"));
+    }
+    return *iconLibraryState_;
+}
+void DesktopApp::DrainIconLibrary()
+{
+    if (!iconLibraryState_) return;
+    iconLibraryState_->operations.Drain();
+    iconLibraryState_->images.Drain();
+}
+
+snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLibraryRequest request)
+{
+    auto& state = EnsureIconLibrary(); DrainIconLibrary();
+    std::unordered_map<std::string, std::vector<std::wstring>> uses;
+    const auto retain = [&](const std::string& id, const std::wstring& name) {
+        if (!id.empty()) uses[id].push_back(name);
+    };
+    for (const auto& [target, asset] : iconOverrides_) retain(asset, IconOverrideTargetName(target));
+    for (const auto& widget : widgets_) retain(widget.dockIconAssetId, widget.title + L" · Dock");
+    const auto retainLarge = [&](const auto& config, const std::wstring& name) {
+        retain(config.imageAssetId, name); retain(config.foregroundImageAssetId, name);
+    };
+    for (const auto& item : items_) if (item.largeIcon) retainLarge(*item.largeIcon, item.name);
+    for (const auto& [key, record] : layoutRecords_) if (record.largeIcon && FindItemIndexByKey(key) >= items_.size())
+        retainLarge(*record.largeIcon, key);
+    for (const auto& [key, config] : largeIconEdit_.previews) retainLarge(config, key);
+    if (largeIconEdit_.preview) retainLarge(*largeIconEdit_.preview, largeIconEdit_.key);
+
+    if (request.action == "begin" &&
+        (request.target == snowdesktop::icon_override::start || request.target == snowdesktop::icon_override::search))
+    { state.target = request.target; ++state.session; request.action = "read"; }
+    if (request.action == "restore" &&
+        (request.target == snowdesktop::icon_override::start || request.target == snowdesktop::icon_override::search))
+    {
+        auto result = state.snapshot; result.succeeded = SetIconOverride(request.target, {});
+        result.error = result.succeeded ? "" : "iconLibrary.saveFailed"; return result;
+    }
+    auto response = state.snapshot;
+    response.busy = state.busy; response.target.clear(); response.targetName.clear(); response.session = 0;
+    if (!request.target.empty())
+    {
+        if (request.target != state.target || !IsIconOverrideTarget(request.target))
+        { response.succeeded = false; response.error = "iconLibrary.stale"; return response; }
+        response.target = state.target; response.session = state.session; response.targetName = IconOverrideTargetName(state.target);
+    }
+    if (request.action == "cancel")
+    {
+        if (state.target == request.target && state.session == request.session) { state.target.clear(); ++state.session; }
+        response.succeeded = true;
+    }
+    else if (request.action == "apply")
+    {
+        response.succeeded = !state.busy && request.target == state.target && request.session == state.session &&
+            request.ids.size() == 1 && SetIconOverride(request.target, request.ids[0]);
+        response.error = response.succeeded ? "" : "iconLibrary.stale";
+        if (response.succeeded) { state.target.clear(); ++state.session; }
+    }
+    else if ((!state.initialized || request.action == "refresh" || request.action == "import" ||
+        request.action == "rename" || request.action == "delete" || request.action == "export") && !state.busy)
+    {
+        if (request.action == "delete" && std::any_of(request.ids.begin(), request.ids.end(), [&](const auto& id) { return uses.contains(id); }))
+        { response.error = "iconLibrary.deleteInUse"; response.succeeded = false; return response; }
+        if (request.action != "read" && request.action != "refresh" && request.action != "import" && !state.initialized)
+        { response.error = "iconLibrary.working"; response.succeeded = false; return response; }
+        if (request.action == "delete" || request.action == "refresh" || request.action == "import")
+        {
+            state.images.Cancel();
+            for (const auto& [key, bitmap] : state.bitmaps)
+            {
+                (void)key;
+                if (bitmap && bitmap->bitmap) EraseD2DIconCacheForBitmap(bitmap->bitmap);
+            }
+            state.bitmaps.clear();
+        }
+        std::vector<std::string> protectedIds;
+        for (const auto& [id, names] : uses) { (void)names; protectedIds.push_back(id); }
+        const auto weak = std::weak_ptr<IconLibraryHostState>(iconLibraryState_);
+        state.busy = true;
+        response.error.clear(); response.failures.clear(); response.busy = true; response.succeeded = true;
+        const bool queued = state.operations.Submit(L"library-operation",
+            [library = state.library, request, protectedIds = std::move(protectedIds)] {
+                if (request.action == "refresh") return library->Refresh();
+                return request.action == "read" ? library->Read() : library->Invoke(request, protectedIds);
+            }, [this, weak](auto result) {
+                const auto current = weak.lock(); if (!current) return;
+                current->busy = false; current->initialized = true; current->snapshot = std::move(result);
+                const auto pending = std::exchange(current->pendingLargeIcon, {});
+                if (pending && current->snapshot.imported.size() == 1)
+                {
+                    if (!ApplyLargeIconLibraryAsset(*pending, current->snapshot.imported.front()))
+                        current->snapshot.error = "iconLibrary.stale";
+                }
+                else if (pending)
+                    largeIconRuntime_[pending->key].error = current->snapshot.error.empty() ? "iconLibrary.invalid" : current->snapshot.error;
+                InvalidateDockRects();
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            }, controlHwnd_, kLargeIconAssetsReadyMessage);
+        if (!queued) { state.busy = false; response.busy = false; response.succeeded = false; response.error = "iconLibrary.unavailable"; }
+    }
+    else if (request.action == "read") response.succeeded = true;
+    else if (state.busy) { response.succeeded = false; response.error = "iconLibrary.working"; }
+    for (auto& entry : response.entries) entry.uses = uses[entry.id];
+    return response;
+}
+
+void DesktopApp::OpenDockIconLibrary(const std::wstring& widgetId)
+{
+    const auto index = FindWidgetIndexById(widgetId);
+    if (index >= widgets_.size() || widgets_[index].gridCell.pageId != kDockPageId) return;
+    OpenIconOverrideLibrary(L"widget:" + widgetId);
+}
+
+bool DesktopApp::SetDockIconAsset(const std::wstring& widgetId, const std::string& assetId)
+{
+    const auto index = FindWidgetIndexById(widgetId);
+    if (index >= widgets_.size() || widgets_[index].gridCell.pageId != kDockPageId) return false;
+    auto& widget = widgets_[index];
+    if (widget.type != DesktopWidgetType::Collection && widget.type != DesktopWidgetType::FileCategories &&
+        widget.type != DesktopWidgetType::CollectionGroup && widget.type != DesktopWidgetType::FileGroup &&
+        widget.type != DesktopWidgetType::FolderMapping) return false;
+    if (!assetId.empty())
+    {
+        auto& state = EnsureIconLibrary();
+        if (state.busy || !snowdesktop::IsIconAssetId(assetId) ||
+            std::none_of(state.snapshot.entries.begin(), state.snapshot.entries.end(), [&](const auto& entry) { return entry.id == assetId && !entry.missing; })) return false;
+    }
+    const auto previous = widget.dockIconAssetId; widget.dockIconAssetId = assetId;
+    if (!SaveLayoutSlots()) { widget.dockIconAssetId = previous; return false; }
+    InvalidateDragStaticScene(); InvalidateDockRects(); return true;
+}
+
+bool DesktopApp::ApplyLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request, const std::string& id)
+{
+    auto& state = EnsureIconLibrary();
+    if (state.busy || !CanEditLargeIcons() || !snowdesktop::IsIconAssetId(id) ||
+        !snowdesktop::large_icon_edit_rules::CheckRequest(largeIconEdit_, request, true).empty() ||
+        std::none_of(state.snapshot.entries.begin(), state.snapshot.entries.end(), [&](const auto& entry) { return entry.id == id && !entry.missing; })) return false;
+    const auto keys = largeIconEdit_.keys.empty() ? std::vector<std::wstring>{request.key} : largeIconEdit_.keys;
+    std::vector<std::pair<size_t, std::optional<snowdesktop::LargeIconConfig>>> changes;
+    for (const auto& key : keys)
+    {
+        const auto index = FindItemIndexByKey(key);
+        if (index >= items_.size() || !items_[index].largeIcon || IsItemInAnyWidget(items_[index]) || items_[index].gridCell.pageId == kDockPageId) return false;
+        auto config = *items_[index].largeIcon; config.version = 3;
+        if (snowdesktop::IsLargeIconFill(config)) { config.content = 1; config.image.clear(); config.imageAssetId = id; }
+        else { config.foregroundContent = 1; config.foregroundImage.clear(); config.foregroundImageAssetId = id; }
+        changes.emplace_back(index, std::move(config));
+    }
+    return SetLargeIconConfigs(changes);
+}
+bool DesktopApp::ImportLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request)
+{
+    auto& state = EnsureIconLibrary();
+    if (state.busy || request.path.empty()) return false;
+    state.pendingLargeIcon = request;
+    snowdesktop::IconLibraryRequest operation; operation.action = "import"; operation.paths = {request.path};
+    if (EditIconLibrary(std::move(operation)).succeeded) return true;
+    state.pendingLargeIcon.reset(); return false;
+}
+
+ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels)
+{
+    if (!snowdesktop::IsIconAssetId(id)) return nullptr;
+    auto& state = EnsureIconLibrary();
+    const int edge = snowdesktop::icon_render_rules::SourcePixelsForTarget(pixels);
+    const auto key = id + ':' + std::to_string(edge);
+    const auto found = state.bitmaps.find(key);
+    if (found != state.bitmaps.end()) return found->second && found->second->bitmap ?
+        GetOrCreateManagedD2DBitmap(context, found->second->bitmap, iconBeautifySettings_.enabled) : nullptr;
+    if (state.busy) return nullptr;
+    if (state.bitmaps.size() >= 256)
+    {
+        state.images.Cancel();
+        for (const auto& [cacheKey, bitmap] : state.bitmaps)
+        { (void)cacheKey; if (bitmap && bitmap->bitmap) EraseD2DIconCacheForBitmap(bitmap->bitmap); }
+        state.bitmaps.clear();
+    }
+    state.bitmaps.emplace(key, nullptr);
+    const auto path = snowdesktop::IconAssetPath(GetDataSubdirectoryPath(L"icon-library"), id);
+    const auto weak = std::weak_ptr<IconLibraryHostState>(iconLibraryState_);
+    state.images.Submit(Utf8ToWide(key), [path, edge] {
+        auto result = std::make_shared<snowdesktop::BackgroundBitmap>(); snowdesktop::icon_image::Image image; std::string error;
+        if (snowdesktop::icon_image::Decode(path, edge, image, error))
+        { result->bitmap = snowdesktop::icon_image::CreateBitmap(image); result->size = {image.width, image.height}; }
+        return result;
+    }, [this, weak, key](auto bitmap) {
+        if (auto current = weak.lock())
+        {
+            current->bitmaps[key] = std::move(bitmap);
+            InvalidateDragStaticScene(); InvalidateDockRects();
+            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+            if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+        }
+    }, controlHwnd_, kLargeIconAssetsReadyMessage);
+    return nullptr;
+}
+
+
+bool DesktopApp::IsIconOverrideTarget(const std::wstring& target) const
+{
+    using namespace snowdesktop::icon_override;
+    if (target == start || target == search) return true;
+    if (target.starts_with(L"widget:"))
+    {
+        const auto index = FindWidgetIndexById(target.substr(7));
+        return index < widgets_.size() && widgets_[index].gridCell.pageId == kDockPageId;
+    }
+    const auto colon = target.find(L':');
+    if (colon == std::wstring::npos) return false;
+    const auto prefix = target.substr(0, colon);
+    if (prefix != L"item" && prefix != L"recycle-empty" && prefix != L"recycle-full") return false;
+    const auto key = target.substr(colon + 1);
+    for (const auto& item : items_)
+        if (ToUpperInvariant(item.layoutKey) == key)
+            return prefix == L"item" || _wcsicmp(item.desktopIconClsid.c_str(), kDesktopIconClsidRecycleBin) == 0;
+    if (prefix != L"item") return false;
+    for (const auto& widget : widgets_)
+        for (const auto& entry : widget.folderEntries)
+            if (ToUpperInvariant(entry.fullPath) == key) return true;
+    for (const auto& entry : dockFolderPopupWidget_.folderEntries)
+        if (ToUpperInvariant(entry.fullPath) == key) return true;
+    return false;
+}
+std::wstring DesktopApp::IconOverrideTargetName(const std::wstring& target) const
+{
+    if (target == snowdesktop::icon_override::start) return _LW("iconLibrary.startIcon");
+    if (target == snowdesktop::icon_override::search) return _LW("iconLibrary.searchIcon");
+    if (target.starts_with(L"widget:"))
+    {
+        const auto index = FindWidgetIndexById(target.substr(7));
+        return index < widgets_.size() ? widgets_[index].title + L" · Dock" : target.substr(7);
+    }
+    if (target.starts_with(L"recycle-empty:")) return _LW("iconLibrary.recycleEmpty");
+    if (target.starts_with(L"recycle-full:")) return _LW("iconLibrary.recycleFull");
+    const auto key = target.substr(target.find(L':') + 1);
+    for (const auto& item : items_) if (ToUpperInvariant(item.layoutKey) == key) return item.name;
+    return key;
+}
+void DesktopApp::OpenIconOverrideLibrary(const std::wstring& target)
+{
+    if (!IsIconOverrideTarget(target)) return;
+    auto& state = EnsureIconLibrary(); state.target = target; ++state.session;
+    auto route = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::IconLibrary);
+    route.itemKey = target; ShowSettingsWindow(std::move(route));
+}
+bool DesktopApp::SetIconOverride(const std::wstring& target, const std::string& assetId)
+{
+    if (!IsIconOverrideTarget(target)) return false;
+    if (target.starts_with(L"widget:")) return SetDockIconAsset(target.substr(7), assetId);
+    auto& state = EnsureIconLibrary();
+    if (!assetId.empty() && (state.busy || !snowdesktop::IsIconAssetId(assetId) ||
+        std::none_of(state.snapshot.entries.begin(), state.snapshot.entries.end(),
+            [&](const auto& entry) { return entry.id == assetId && !entry.missing; }))) return false;
+    const auto found = iconOverrides_.find(target);
+    const auto previous = found == iconOverrides_.end() ? std::string{} : found->second;
+    if (assetId.empty()) iconOverrides_.erase(target); else iconOverrides_[target] = assetId;
+    if (!SaveLayoutSlots())
+    {
+        if (previous.empty()) iconOverrides_.erase(target); else iconOverrides_[target] = previous;
+        return false;
+    }
+    InvalidateDragStaticScene(); InvalidateDockRects();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+    return true;
+}
+ID2D1Bitmap* DesktopApp::GetSmallCustomIcon(ID2D1RenderTarget* context, std::wstring_view identity, int pixels)
+{
+    using namespace snowdesktop::icon_override;
+    if (identity.empty()) return nullptr;
+    const auto key = ToUpperInvariant(std::wstring(identity));
+    std::wstring target;
+    if (identity == start || identity == search) target = identity;
+    else
+    {
+        const bool recycle = key.find(ToUpperInvariant(kDesktopIconClsidRecycleBin)) != std::wstring::npos;
+        if (recycle)
+        {
+            const auto status = recycleBinPollState_ ? recycleBinPollState_->hasItems.load() : -1;
+            if (status < 0) return nullptr;
+            target = Target(key, status > 0 ? 1 : 0);
+        }
+        else target = Target(key);
+    }
+    const auto found = iconOverrides_.find(target);
+    return found == iconOverrides_.end() ? nullptr : GetDockCustomIcon(context, found->second, pixels);
+}
+void DesktopApp::AppendIconOverrideMenu(HMENU menu, const std::wstring& identity)
+{
+    using namespace snowdesktop::icon_override;
+    const auto key = ToUpperInvariant(identity);
+    const bool recycle = key.find(ToUpperInvariant(kDesktopIconClsidRecycleBin)) != std::wstring::npos;
+    const auto add = [&](HMENU parent, UINT command, const std::wstring& target) {
+        AppendMenuW(parent, MF_STRING, command, _LW("iconLibrary.change"));
+        SetMenuItemIcon(parent, command, L"\uF489", MenuIconFont::FluentRegular);
+        if (iconOverrides_.contains(target))
+        {
+            AppendMenuW(parent, MF_STRING, command + 1, _LW("iconLibrary.restore"));
+            SetMenuItemIcon(parent, command + 1, L"\uF19A", MenuIconFont::FluentRegular);
+        }
+    };
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    if (!recycle) add(menu, change, Target(key));
+    else for (int state = 0; state < 2; ++state)
+    {
+        const auto child = CreatePopupMenu(); if (!child) continue;
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(child),
+            _LW(state ? "iconLibrary.recycleFull" : "iconLibrary.recycleEmpty"));
+        SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(child), L"\uF489", MenuIconFont::FluentRegular);
+        add(child, state ? fullChange : emptyChange, Target(key, state));
+    }
+}
+bool DesktopApp::ExecuteIconOverrideMenu(UINT command, const std::wstring& identity)
+{
+    using namespace snowdesktop::icon_override;
+    if (command < change || command > fullRestore) return false;
+    const int state = command >= fullChange ? 1 : command >= emptyChange ? 0 : -1;
+    const auto target = Target(ToUpperInvariant(identity), state);
+    if ((command - change) % 2 == 0) OpenIconOverrideLibrary(target);
+    else if (!SetIconOverride(target, {})) MessageBeep(MB_ICONWARNING);
+    return true;
+}
