@@ -1,5 +1,5 @@
 // Included at the engine binding boundary and by the native callback regression.
-// Every owning value survives outside the inner pcall, including error paths.
+// Parser-owned values live outside the inner pcall, including error paths.
 struct LuaDataSubscribeContext
 {
     std::string topicValue, rangeStart, rangeEnd, eventId, scopeHandle;
