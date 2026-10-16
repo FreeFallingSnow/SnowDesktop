@@ -2853,7 +2853,7 @@ struct DockPagePresenter::Impl
         SetContinuousText(edgeDistanceScale,
             "settings.dock.edgeDistance", L"Distance from screen edge",
             L("settings.dock.edgeDistance.description",
-                L"100% uses the desktop component margin."));
+                L"Relative to the desktop component margin."));
 
         floatingEdgeSwipeRow.SetText(
             L("app.dock.floating_edge_swipe", L"Edge Swipe"));
