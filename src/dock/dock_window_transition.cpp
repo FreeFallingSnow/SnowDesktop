@@ -709,7 +709,7 @@ void DockWindowTransition::ScheduleMinimizeObservation()
 {
     if (!animationScheduler_ || minimizeObservationToken_ || pollingMinimizeObservation_ ||
         !pendingMinimizes_.Waiting()) return;
-    minimizeObservationToken_ = animationScheduler_->ScheduleOnce(20, [this](double) {
+    minimizeObservationToken_ = animationScheduler_->ScheduleOnce(20, [this](snowdesktop::UiScheduleToken) {
         minimizeObservationToken_ = 0;
         PollMinimizeObservation();
     });
