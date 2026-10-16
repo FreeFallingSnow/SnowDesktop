@@ -1291,6 +1291,8 @@ void DesktopApp::ShowWidgetContextMenu(
             FinalizeCloseCollectionPopup();
         }
         const std::wstring deletedWidgetId = widgets_[widgetIndex].id;
+        const bool deletedLuaInstance =
+            widgets_[widgetIndex].type == DesktopWidgetType::LuaScript;
         if (widgets_[widgetIndex].type == DesktopWidgetType::CollectionGroup)
         {
             if (popupWidgetIndex_ < widgets_.size() &&
@@ -1308,8 +1310,6 @@ void DesktopApp::ShowWidgetContextMenu(
             ReleaseFileGroupChildren(widgetIndex);
         }
         ReleaseDesktopItemsFromWidget(widgetIndex);
-        if (widgets_[widgetIndex].type == DesktopWidgetType::LuaScript && widgetEngine_)
-            widgetEngine_->DeleteWidgetInstance(widgets_[widgetIndex].id);
         for (auto& group : widgets_)
         {
             if (group.id == deletedWidgetId ||
@@ -1338,6 +1338,12 @@ void DesktopApp::ShowWidgetContextMenu(
         ApplyPageMapping();
         LayoutItems();
         RebuildContainersAndItems();
+        // Remove the model and rebuild its wrappers before retiring pixels.
+        // Runtime disposal can invalidate surfaces or pump paints; it must
+        // observe no owner and no retained content/backdrop to redraw.
+        RemoveDesktopWidgetComposition(deletedWidgetId);
+        if (deletedLuaInstance && widgetEngine_)
+            widgetEngine_->DeleteWidgetInstance(deletedWidgetId);
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
         break;
