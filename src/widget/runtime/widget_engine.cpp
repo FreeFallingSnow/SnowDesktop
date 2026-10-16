@@ -15,6 +15,7 @@
  */
 
 #include "widget_engine.h"
+#include "ui/render/smooth_corner_geometry.h"
 #include "ui/input/text_input_accessibility.h"
 namespace text_input = snowdesktop::text_input;
 #include "widget/view/widget_appearance_presets.h"
@@ -20080,13 +20081,11 @@ bool WidgetEngine::RenderWidgetBackgroundLayer(
 
     ComPtr<ID2D1Factory> factory;
     context->GetFactory(&factory);
-    ComPtr<ID2D1RoundedRectangleGeometry> clip;
     const D2D1_RECT_F frame = D2D1::RectF(
         static_cast<float>(bounds.left), static_cast<float>(bounds.top),
         static_cast<float>(bounds.right), static_cast<float>(bounds.bottom));
-    if (!factory || FAILED(factory->CreateRoundedRectangleGeometry(
-            D2D1::RoundedRect(frame, std::max(0.0f, cornerRadius),
-                std::max(0.0f, cornerRadius)), &clip)) || !clip)
+    const auto clip = snowdesktop::smooth_corners::Geometry(factory.Get(), frame, cornerRadius);
+    if (!clip)
     {
         recordError("backgroundLayer cannot create the rounded clip");
         return false;
@@ -20601,6 +20600,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             }
             ResolveDeferredHostInputFocus(widgetId,
                 d2dState_->surfaceKind ? d2dState_->surfaceKind : "desktop");
+            ReconcileHostViewKeyboardFocus(*found, "desktop");
         }
         if (snowdesktop::widget_api::ConsumeTransientStateDirty(state))
             RuntimeInvalidateHost(widgetId);
@@ -20783,6 +20783,7 @@ void WidgetEngine::RenderWidget(const std::wstring& widgetId, const std::wstring
             }
             ResolveDeferredHostInputFocus(widgetId,
                 d2dState_->surfaceKind ? d2dState_->surfaceKind : "desktop");
+            ReconcileHostViewKeyboardFocus(current, "desktop");
         }
     }
     else
@@ -21180,6 +21181,7 @@ bool WidgetEngine::RenderWidgetPanel(
                 }
                 ResolveDeferredHostInputFocus(
                     widgetId, normalizedSurface);
+                ReconcileHostViewKeyboardFocus(current, normalizedSurface);
                 const auto initialFocusKeys =
                     current.panelInteractionRegions.KeyboardFocusableKeys();
                 const auto initialFocus = snowdesktop::widget_runtime::
@@ -27454,6 +27456,39 @@ std::vector<HostLogicalSlotKeyboardItem> CollectHostLogicalSlotKeyboardItems(
 }
 }
 
+void WidgetEngine::RevealHostViewKeyboardFocus(
+    LuaWidget& widget, std::string_view surface)
+{
+    const auto& regions = InteractionRegionsForSurface(widget, surface);
+    const auto* region = regions.Find(ViewFocusForSurface(widget, surface));
+    const auto& tree = IsPanelSurface(surface) ? widget.panelViewTree : widget.viewTree;
+    if (!region || !tree) return;
+    const auto requests = snowdesktop::widget_runtime::ComputeViewKeyboardScrollOffsets(*tree, *region);
+    auto& offsets = ScrollOffsetsForSurface(widget, surface);
+    for (const auto& [id, value] : requests)
+        offsets[id] = static_cast<int>(std::lround(value));
+    if (!requests.empty()) RuntimeInvalidateHost(widget.widgetId);
+}
+
+void WidgetEngine::ReconcileHostViewKeyboardFocus(
+    LuaWidget& widget, std::string_view surface)
+{
+    auto& regions = InteractionRegionsForSurface(widget, surface);
+    auto& focus = ViewFocusForSurface(widget, surface);
+    if (ViewFocusCueForSurface(widget, surface))
+    {
+        const auto target = regions.ReconcileKeyboardFocus(focus);
+        if (target != focus)
+        {
+            focus.clear();
+            if (!IsPanelSurface(surface)) widget.logicalSlotFocus.reset();
+            if (!target.empty()) RuntimeFocusViewTarget(widget.widgetId, target, "keyboard");
+        }
+    }
+    else if (!focus.empty() && !regions.IsKeyboardFocusable(focus))
+        focus.clear();
+}
+
 bool WidgetEngine::RuntimeFocusViewTarget(const std::wstring& widgetId,
     const std::string& id, const char* source)
 {
@@ -27468,7 +27503,11 @@ bool WidgetEngine::RuntimeFocusViewTarget(const std::wstring& widgetId,
             ? !widget.panelActive
             : !RuntimeIsWidgetSelected(widgetId)))
         return false;
-    if (RuntimeFocusHostInput(widgetId, id, source)) return true;
+    if (RuntimeFocusHostInput(widgetId, id, source))
+    {
+        RevealHostViewKeyboardFocus(widget, surface);
+        return true;
+    }
     if (!interactionRegions.IsKeyboardFocusable(id)) return false;
 
     if (focusedHostInput_.active &&
@@ -27502,6 +27541,7 @@ bool WidgetEngine::RuntimeFocusViewTarget(const std::wstring& widgetId,
                 slot->slotId, slot->itemId };
         }
     }
+    RevealHostViewKeyboardFocus(current, surface);
     if (hostInputFocusCallback_) hostInputFocusCallback_();
     RuntimeInvalidateHost(widgetId);
     return true;
@@ -27983,6 +28023,15 @@ void WidgetEngine::ClearHostViewKeyState() noexcept
     pressedViewKeyTargets_.clear();
 }
 
+bool WidgetEngine::HasHostViewKeyboardFocus() const
+{
+    return std::any_of(widgets_.begin(), widgets_.end(), [this](const auto& widget) {
+        return widget.valid && !widget.preview &&
+            (widget.panelActive || (!widget.viewKeyboardFocusKey.empty() &&
+                RuntimeIsWidgetSelected(widget.widgetId)));
+    });
+}
+
 bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     WPARAM key, bool ctrl, bool shift, bool alt,
     std::string_view surface, bool repeated)
@@ -28001,6 +28050,51 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     auto& surfaceRegions = InteractionRegionsForSurface(
         widget, normalizedSurface);
     auto& surfaceFocus = ViewFocusForSurface(widget, normalizedSurface);
+    if (!alt)
+    {
+        const auto* select = surfaceRegions.ExpandedSelectForFocus(surfaceFocus);
+        if (select && key == VK_TAB)
+        {
+            const auto parent = select->key;
+            auto keys = surfaceRegions.KeyboardFocusableKeys();
+            std::erase_if(keys, [&](const auto& id) {
+                const auto* region = surfaceRegions.Find(id);
+                return region && !region->keyboardNavigationGroup.empty();
+            });
+            const auto found = std::find(keys.begin(), keys.end(), parent);
+            const auto current = found == keys.end() ? std::optional<std::size_t>{} :
+                std::optional<std::size_t>(static_cast<std::size_t>(found - keys.begin()));
+            const auto next = snowdesktop::widget_runtime::CycleLogicalSlotFocus(keys.size(), current, shift);
+            const std::string target = next ? keys[*next] : parent;
+            surfaceFocus = target;
+            ViewFocusCueForSurface(widget, normalizedSurface) = true;
+            snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(trustedGestureState_, true);
+            DispatchInteractionAction(widget, parent, "click", 0, 0, 1, 0, 1,
+                false, "keyboard", 0, std::nullopt, std::nullopt, normalizedSurface);
+            RuntimeFocusViewTarget(widgetId, target, "keyboard");
+            RuntimeInvalidateHost(widgetId);
+            return true;
+        }
+        if (select && key == VK_ESCAPE)
+        {
+            const auto target = select->key;
+            surfaceFocus = target;
+            ViewFocusCueForSurface(widget, normalizedSurface) = true;
+            snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(trustedGestureState_, true);
+            DispatchInteractionAction(widget, target, "click", 0, 0, 1, 0, 1,
+                false, "keyboard", 0, std::nullopt, std::nullopt, normalizedSurface);
+            RuntimeInvalidateHost(widgetId);
+            return true;
+        }
+        if (key == VK_LEFT || key == VK_RIGHT || key == VK_UP || key == VK_DOWN ||
+            key == VK_HOME || key == VK_END)
+        {
+            const auto target = surfaceRegions.SelectKeyboardTarget(surfaceFocus,
+                key == VK_LEFT || key == VK_UP || key == VK_HOME ? -1 : 1,
+                key == VK_HOME || key == VK_END);
+            if (target) return RuntimeFocusViewTarget(widgetId, *target, "keyboard");
+        }
+    }
     if (alt && !repeated && key <= 0x7f)
     {
         const auto* foundAccessTarget = surfaceRegions.FindAccessKey(
@@ -28073,7 +28167,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     {
         auto& regions = widget.panelInteractionRegions;
         auto& focusKey = widget.panelViewKeyboardFocusKey;
-        const auto focusKeys = regions.KeyboardFocusableKeys();
+        const auto focusKeys = regions.KeyboardFocusableKeys(focusKey);
         if (focusKeys.empty())
         {
             focusKey.clear();
@@ -28111,6 +28205,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                 focusKey = targetKey;
                 widget.panelViewFocusCueVisible = true;
             }
+            RevealHostViewKeyboardFocus(widget, normalizedSurface);
             RuntimeInvalidateHost(widgetId);
             return true;
         };
@@ -28121,7 +28216,13 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                     focusKeys.size(), focusedIndex, shift);
             return next ? focusTarget(focusKeys[*next]) : false;
         }
-        if (!focusedIndex) return false;
+        if (!focusedIndex)
+        {
+            if (!alt && (key == VK_RETURN || key == VK_SPACE ||
+                    key == VK_LEFT || key == VK_RIGHT || key == VK_UP || key == VK_DOWN))
+                return focusTarget(focusKeys.front());
+            return false;
+        }
         widget.panelViewFocusCueVisible = true;
         const std::string focusedKey = focusKeys[*focusedIndex];
         const auto* focusedRegion = regions.Find(focusedKey);
@@ -28133,10 +28234,9 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                 focusedHostInput_.id == focusedKey &&
                 IsPanelSurface(focusedHostInput_.surface))
                 BlurHostInput(true);
-            focusKey.clear();
-            widget.panelViewFocusCueVisible = false;
-            RuntimeInvalidateHost(widgetId);
-            return true;
+            // Panel Escape belongs to its dismissal policy. Retain the logical
+            // keyboard session when a non-dismissible panel remains open.
+            return false;
         }
         if (key == VK_LEFT || key == VK_RIGHT ||
             key == VK_UP || key == VK_DOWN)
@@ -28196,15 +28296,6 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
                 float bottom = shape.type == snowdesktop::widget_runtime::
                         InteractionShapeType::Circle
                     ? shape.y + shape.radius : shape.y + shape.height;
-                if (candidate->clip)
-                {
-                    left = std::max(left, candidate->clip->x);
-                    top = std::max(top, candidate->clip->y);
-                    right = std::min(right,
-                        candidate->clip->x + candidate->clip->width);
-                    bottom = std::min(bottom,
-                        candidate->clip->y + candidate->clip->height);
-                }
                 bounds.push_back({
                     static_cast<int>(std::floor(left)),
                     static_cast<int>(std::floor(top)),
@@ -28230,6 +28321,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         }
         if ((key == VK_RETURN || key == VK_SPACE) && !alt)
         {
+            if (repeated) return true;
             const auto input = std::find_if(widget.hostControls.rbegin(),
                 widget.hostControls.rend(), [&](const auto& control) {
                     return control.type ==
@@ -28268,7 +28360,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         }
         return false;
     }
-    const auto focusKeys = widget.interactionRegions.KeyboardFocusableKeys();
+    const auto focusKeys = widget.interactionRegions.KeyboardFocusableKeys(widget.viewKeyboardFocusKey);
     if (focusKeys.empty())
     {
         widget.viewKeyboardFocusKey.clear();
@@ -28304,7 +28396,8 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
         const auto input = std::find_if(widget.hostControls.rbegin(),
             widget.hostControls.rend(), [&](const auto& control) {
                 return control.type == LuaWidget::HostControl::Type::Input &&
-                    control.enabled && control.id == targetKey;
+                    control.enabled && control.id == targetKey &&
+                    HostControlBelongsToSurface(control, normalizedSurface);
             });
         if (input != widget.hostControls.rend())
         {
@@ -28320,6 +28413,7 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
             widget.viewFocusCueVisible = true;
         }
         synchronizeSlotFocus(targetKey);
+        RevealHostViewKeyboardFocus(widget, normalizedSurface);
         RuntimeInvalidateHost(widgetId);
         return true;
     };
@@ -28440,15 +28534,6 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
             float bottom = shape.type == snowdesktop::widget_runtime::
                     InteractionShapeType::Circle
                 ? shape.y + shape.radius : shape.y + shape.height;
-            if (candidate->clip)
-            {
-                left = std::max(left, candidate->clip->x);
-                top = std::max(top, candidate->clip->y);
-                right = std::min(right,
-                    candidate->clip->x + candidate->clip->width);
-                bottom = std::min(bottom,
-                    candidate->clip->y + candidate->clip->height);
-            }
             bounds.push_back({
                 static_cast<int>(std::floor(left)),
                 static_cast<int>(std::floor(top)),
@@ -28498,10 +28583,12 @@ bool WidgetEngine::HandleHostViewKey(const std::wstring& widgetId,
     }
     if ((key == VK_RETURN || key == VK_SPACE) && !alt)
     {
+        if (repeated) return true;
         const auto input = std::find_if(widget.hostControls.rbegin(),
             widget.hostControls.rend(), [&](const auto& control) {
                 return control.type == LuaWidget::HostControl::Type::Input &&
-                    control.enabled && control.id == focusedKey;
+                    control.enabled && control.id == focusedKey &&
+                    HostControlBelongsToSurface(control, normalizedSurface);
             });
         if (input != widget.hostControls.rend())
             return RuntimeFocusHostInput(widgetId, focusedKey, "keyboard");
@@ -28784,6 +28871,7 @@ bool WidgetEngine::RuntimeSetAccessibilityFocus(
     if (slot != slotItems.end())
         widget.logicalSlotFocus = LuaWidget::LogicalSlotFocus{
             slot->slotId, slot->itemId };
+    RevealHostViewKeyboardFocus(widget, "desktop");
     RuntimeInvalidateHost(widgetId);
     return true;
 }
@@ -29369,7 +29457,7 @@ bool WidgetEngine::GetFocusedHostInputCaretRect(RECT& rect) const
     return true;
 }
 
-void WidgetEngine::BlurHostInput(bool cancel)
+void WidgetEngine::BlurHostInput(bool cancel, bool preserveViewFocus)
 {
     if (!focusedHostInput_.active) return;
 
@@ -29415,8 +29503,8 @@ void WidgetEngine::BlurHostInput(bool cancel)
     if (const int index = FindWidget(widgetId); index >= 0 &&
         ViewFocusForSurface(widgets_[index], inputSurface) == inputId)
     {
-        ViewFocusForSurface(widgets_[index], inputSurface).clear();
-        ViewFocusCueForSurface(widgets_[index], inputSurface) = false;
+        if (!preserveViewFocus) ViewFocusForSurface(widgets_[index], inputSurface).clear();
+        ViewFocusCueForSurface(widgets_[index], inputSurface) = preserveViewFocus;
     }
     focusedHostInput_ = {};
     RuntimeInvalidateHost(widgetId);
@@ -29943,7 +30031,7 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
     }
     else if (key == VK_ESCAPE)
     {
-        BlurHostInput(true);
+        BlurHostInput(true, true);
         return true;
     }
     else if (key == VK_RETURN)
@@ -29960,7 +30048,7 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
                 const auto inputSurface = focusedHostInput_.surface;
                 const auto submitAction = focusedHostInput_.submitAction;
                 const auto text = focusedHostInput_.text;
-                BlurHostInput(false);
+                BlurHostInput(false, true);
                 WidgetSurfaceScope surfaceScope(d2dState_, inputSurface.c_str());
                 snowdesktop::widget_runtime::WidgetTrustedGestureScope gestureScope(
                     trustedGestureState_, true);
@@ -29973,7 +30061,7 @@ bool WidgetEngine::HandleHostInputKey(WPARAM key)
             DispatchHostInputAction(focusedHostInput_.widgetId,
                 focusedHostInput_.id, focusedHostInput_.submitAction,
                 "submit", focusedHostInput_.text, false, "keyboard");
-            BlurHostInput(false);
+            BlurHostInput(false, true);
             return true;
         }
         const size_t start = selectionStart();

@@ -476,21 +476,23 @@ ui::InputResult SystemPanelModel::HandleKey(ui::Input& input,unsigned key,bool s
             Reveal(input.Focused());input.Sync(scene_);return {};
         }
     }
+    const auto previousFocus=input.Focused();
     auto result=input.Key(scene_,key,shift);
+    const bool focusMoved=previousFocus!=input.Focused();
     // A slider owns its direction and range keys, including at either limit.
     // Otherwise a list can scroll without triggering a device control.
     const auto* focused=scene_.Find(input.Focused());
     const bool fixedCalendar=action_==StatusBarAction::Calendar&&focused&&
         ((bodyLeft_>0&&(focused->bounds.right<=bodyLeft_||focused->bounds.bottom<=bodyStart_))||
             (calendarStacked_&&scene_.cards.size()>1&&focused->bounds.top>=scene_.cards.back().top));
-    if(result.kind==ui::InputResult::Kind::None&&!fixedCalendar)
+    if(result.kind==ui::InputResult::Kind::None&&!fixedCalendar&&!focusMoved)
     {
         const float page=(std::max)(42.f,scrollViewport_.bottom-scrollViewport_.top-32);
         if(key==VK_UP||key==VK_DOWN)Scroll(key==VK_UP?-42.f:42.f);
         else if(key==VK_PRIOR||key==VK_NEXT)Scroll(key==VK_PRIOR?-page:page);
         else if(key==VK_HOME||key==VK_END)Scroll(key==VK_HOME?-scroll_:maxScroll_-scroll_);
     }
-    if(key==VK_TAB||result.kind!=ui::InputResult::Kind::None)Reveal(input.Focused());
+    if(key==VK_TAB||focusMoved||result.kind!=ui::InputResult::Kind::None)Reveal(input.Focused());
     input.Sync(scene_);return result;
 }
 void SystemPanelModel::Wheel(D2D1_POINT_2F point,float notches)

@@ -1657,6 +1657,7 @@ public:
     bool DispatchHostViewKeyEvent(WPARAM key, bool pressed, bool repeated,
         bool ctrl, bool shift, bool alt);
     void ClearHostViewKeyState() noexcept;
+    bool HasHostViewKeyboardFocus() const;
     bool HandleHostViewKey(const std::wstring& widgetId, WPARAM key,
         bool ctrl, bool shift, bool alt,
         std::string_view surface = "desktop", bool repeated = false);
@@ -1684,7 +1685,7 @@ public:
         std::string_view surface = "desktop");
     bool HandleHostInputPointerUp(const std::wstring& widgetId, int x, int y,
         std::string_view surface = "desktop");
-    void BlurHostInput(bool cancel = false);
+    void BlurHostInput(bool cancel = false, bool preserveViewFocus = false);
     int RuntimeGetScrollOffset(const std::wstring& widgetId,
         const std::string& id, std::string_view surface = {}) const;
     bool RuntimeHasScrollOffset(const std::wstring& widgetId,
@@ -1720,6 +1721,8 @@ public:
         std::string_view surface = {});
 
 private:
+    void ReconcileHostViewKeyboardFocus(LuaWidget& widget, std::string_view surface);
+    void RevealHostViewKeyboardFocus(LuaWidget& widget, std::string_view surface);
     friend class snowdesktop::widget_runtime::WidgetEngineSettingsBackend;
 
     std::unordered_map<std::string, std::string>&

@@ -701,6 +701,7 @@ void DesktopApp::EndFloatingDockKeyboardSession(
 
 void DesktopApp::RestoreInteractionInputFocus()
 {
+    if (systemPanel_ && systemPanel_->IsOpen()) return;
     if (floatingDockKeyboardSessionActive_ &&
         floatingDockVisible_)
     {

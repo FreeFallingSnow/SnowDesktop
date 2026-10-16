@@ -7,7 +7,9 @@
 #include <stdexcept>
 #include <tuple>
 #include "native_control_geometry.h"
+#include "smooth_corner_geometry.h"
 #include "system/status_bar/status_bar_battery.h"
+#include "layout/logical_slot_keyboard_rules.h"
 
 namespace snowdesktop::native_ui
 {
@@ -142,7 +144,12 @@ void Input::Sync(const Scene& scene)
     }
     validation.AbortFrame();regions_.CommitFrame();identities_=std::move(identities);
     semanticRegions_=std::move(semantics);focusable_=std::move(focusable);
-    if(!focused_.empty()&&std::find(focusable_.begin(),focusable_.end(),focused_)==focusable_.end())focused_.clear();
+    if(!focused_.empty()&&std::find(focusable_.begin(),focusable_.end(),focused_)==focusable_.end())
+    {
+        const bool replaced=focusVisible_&&!scene.Find(focused_);
+        focused_=replaced&&!focusable_.empty()?focusable_.front():std::string{};
+        if(focused_.empty())focusVisible_=false;
+    }
     const auto* pressed=scene.Find(Pressed());
     if(!pressed||!pressed->Interactive())Cancel();
 }
@@ -199,12 +206,34 @@ InputResult Input::Key(const Scene& scene,unsigned key,bool shift)
         const auto index=it==focusable_.end()?(shift?focusable_.size()-1:0):(static_cast<std::size_t>(it-focusable_.begin())+(shift?focusable_.size()-1:1))%focusable_.size();
         focused_=focusable_[index];return {};
     }
-    if(focused_.empty())return {};
+    if(focused_.empty())
+    {
+        if(!focusable_.empty()&&(key==VK_LEFT||key==VK_RIGHT||key==VK_UP||key==VK_DOWN||key==VK_RETURN||key==VK_SPACE))
+            focused_=focusable_.front();
+        return {};
+    }
     if(key==VK_LEFT||key==VK_RIGHT||key==VK_UP||key==VK_DOWN||key==VK_HOME||key==VK_END)
     {
         const auto regionKey=RegionKey(focused_);
         const auto it=std::find_if(semanticRegions_.begin(),semanticRegions_.end(),[&](const auto& r){return r.key==regionKey;});
-        if(it==semanticRegions_.end()||it->controlKind!=widget_runtime::InteractionControlKind::Slider)return {};
+        if(it==semanticRegions_.end()||it->controlKind!=widget_runtime::InteractionControlKind::Slider)
+        {
+            if(key==VK_HOME||key==VK_END)return {};
+            std::vector<widget_runtime::LogicalSlotFocusRect> bounds;
+            std::optional<std::size_t> current;
+            for(const auto& id:focusable_)
+            {
+                const auto* node=scene.Find(id);if(!node)return {};
+                if(id==focused_)current=bounds.size();
+                bounds.push_back({static_cast<int>(std::floor(node->bounds.left)),static_cast<int>(std::floor(node->bounds.top)),
+                    static_cast<int>(std::ceil(node->bounds.right)),static_cast<int>(std::ceil(node->bounds.bottom))});
+            }
+            const auto direction=key==VK_LEFT?widget_runtime::LogicalSlotFocusDirection::Left:
+                key==VK_RIGHT?widget_runtime::LogicalSlotFocusDirection::Right:
+                key==VK_UP?widget_runtime::LogicalSlotFocusDirection::Up:widget_runtime::LogicalSlotFocusDirection::Down;
+            if(current)if(const auto next=widget_runtime::FindLogicalSlotSpatialFocus(bounds,*current,direction))focused_=focusable_[*next];
+            return {};
+        }
         widget_runtime::WidgetInteractionRegions keyboard;keyboard.BeginFrame();std::string error;
         if(!keyboard.Submit(*it,error)){keyboard.AbortFrame();throw std::runtime_error(error);}keyboard.CommitFrame();
         if(key==VK_HOME||key==VK_END)return Resolve(keyboard.ResolveRangeValue(regionKey,key==VK_HOME?0.f:1.f));
@@ -268,10 +297,10 @@ HRESULT Draw(ID2D1DeviceContext* dc, IDWriteFactory* factory, const Scene& scene
                 if (n.joinLeft) fillBounds.left -= radius;
                 if (n.joinRight) fillBounds.right += radius;
             }
-            dc->FillRoundedRectangle(D2D1::RoundedRect(fillBounds, radius, radius), brush.Get());
+            smooth_corners::Fill(dc, fillBounds, radius, brush.Get());
             if (n.joinLeft || n.joinRight) dc->PopAxisAlignedClip();
         }
-        if(n.outlined){color(p.accent);auto outline=r;outline.left+=1;outline.top+=1;outline.right-=1;outline.bottom-=1;dc->DrawRoundedRectangle(D2D1::RoundedRect(outline,7,7),brush.Get(),2);}
+        if(n.outlined){color(p.accent);auto outline=r;outline.left+=1;outline.top+=1;outline.right-=1;outline.bottom-=1;smooth_corners::Stroke(dc,outline,7,brush.Get(),2);}
         auto ink = (n.accent || (n.role == Role::Toggle && n.selected)) ? p.accentText : n.secondary?p.secondary:p.text;
         if (!n.enabled) ink.a *= .4f;
         if (n.role == Role::Separator) { color(p.stroke); dc->DrawLine({r.left, r.top}, {r.right, r.top}, brush.Get(), 1); }

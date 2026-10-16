@@ -353,7 +353,7 @@ struct SystemPanel::Impl
         dc->SetDpi(96,96);dc->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);dc->SetTransform(D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x),static_cast<float>(offset.y)));dc->Clear(D2D1::ColorF(0,0.f));
         for(const auto& card:cards)
         {
-            if(HighContrast()){ComPtr<ID2D1SolidColorBrush> b;dc->CreateSolidColorBrush(SystemColor(COLOR_WINDOW),&b);dc->FillRoundedRectangle(popup_round_geometry::Resolve(card,current->appearance.cornerRadius*scale),b.Get());}
+            if(HighContrast()){ComPtr<ID2D1SolidColorBrush> b;dc->CreateSolidColorBrush(SystemColor(COLOR_WINDOW),&b);const auto shape=popup_round_geometry::Resolve(card,current->appearance.cornerRadius*scale);smooth_corners::Fill(dc.Get(),shape.rect,shape.radiusX,b.Get());}
             else if(background)background(dc.Get(),card,current->appearance,scale);
         }
         dc->SetTransform(D2D1::Matrix3x2F::Scale(scale,scale)*D2D1::Matrix3x2F::Translation(static_cast<float>(offset.x+kSurfacePadding),static_cast<float>(offset.y+kSurfacePadding)));dc->SetTextAntialiasMode(D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
@@ -743,9 +743,10 @@ struct SystemPanel::Impl
                 self->StopPointerHover();
                 if(wp==VK_ESCAPE){if(self->model->ControlBack()){if(self->ApplyDismissRequest()||!self->Arrange())return 0;SetFocus(w);self->Paint();}else if(self->model->CalendarBack()){if(!self->Arrange())return 0;self->FocusCalendarPage(true);self->Paint();}else{self->transition.Cancel();self->Animate(false);}return 0;}
                 self->input.Cancel();self->scrollbarDragging=false;if(GetCapture()==w)ReleaseCapture();
+                const auto previousFocus=self->input.Focused();
                 const auto result=self->model->HandleKey(self->input,static_cast<unsigned>(wp),(GetKeyState(VK_SHIFT)&0x8000)!=0);if(!self->Arrange())return 0;POINT p{};
                 if(const auto* n=self->model->View().Find(result.id)){p={static_cast<LONG>(n->bounds.left*self->scale)+kSurfacePadding,static_cast<LONG>(n->bounds.bottom*self->scale)+kSurfacePadding};ClientToScreen(w,&p);}
-                self->Result(result,p,true);if(life->alive){if(wp==VK_TAB&&self->calendarInputs)self->calendarInputs->Focus(self->input.Focused(),true);self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}return 0;
+                self->Result(result,p,true);if(life->alive){if((wp==VK_TAB||previousFocus!=self->input.Focused())&&self->calendarInputs)self->calendarInputs->Focus(self->input.Focused(),true);self->Paint();if(self->accessibility)self->accessibility->RefreshEvents();}return 0;
             }
         }
         catch(...){WriteDiagnosticLogEntry(L"Native system panel failed; dismissing its surface");if(life->alive){self->transition.Cancel();self->afterClose={};++self->closeGeneration;self->HideNow();}}
@@ -817,7 +818,21 @@ void SystemPanel::HideForMonitor(HMONITOR m, bool animate)
         else {++impl_->closeGeneration;impl_->FinishClose();}
     }
 }
-bool SystemPanel::PreTranslateMessage(MSG*){return false;}
+bool SystemPanel::PreTranslateMessage(MSG* message)
+{
+    // A key queued on the desktop input proxy before activation must reach the
+    // active panel rather than dispatching a desktop command after it opens.
+    if(!message||!impl_->showing||impl_->closing||impl_->modal||!impl_->window)return false;
+    if(message->message!=WM_KEYDOWN&&message->message!=WM_KEYUP&&message->message!=WM_CHAR)return false;
+    const HWND foreground=GetForegroundWindow();
+    if(foreground!=impl_->window&&!IsChild(impl_->window,foreground))return false;
+    if(message->hwnd==impl_->window||IsChild(impl_->window,message->hwnd))return false;
+    const HWND focus=GetFocus();
+    const HWND target=focus&&IsChild(impl_->window,focus)?focus:impl_->window;
+    message->hwnd=target;
+    // Let the normal TranslateMessage/DispatchMessage path preserve text input.
+    return false;
+}
 bool SystemPanel::DropTrayIcon(std::string_view key,POINT p){if(!impl_->showing||impl_->closing||impl_->modal||impl_->slide.IsAnimating()||!impl_->model)return false;ScreenToClient(impl_->window,&p);const bool ok=impl_->model->Drop(key,impl_->ModelPoint(p.x,p.y));if(ok){impl_->Arrange();impl_->Paint();}return ok;}
 bool SystemPanel::PreviewTrayDrop(std::string_view key,POINT p)
 {

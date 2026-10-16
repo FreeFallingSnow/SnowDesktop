@@ -14,6 +14,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace snowdesktop::widget_runtime
@@ -889,6 +890,10 @@ std::optional<ViewRect> ResolveViewClipForKey(
     bool includeMatchedNode) noexcept;
 ViewRect ApplyViewTransform(const ViewRect& rect,
     const ViewResolvedTransform& transform) noexcept;
+// Host-only reveal requests for already realized controls, including nested
+// scroll containers and expanded select overlays. Offsets use view coordinates.
+std::vector<std::pair<std::string, float>> ComputeViewKeyboardScrollOffsets(
+    const ViewNode& root, const InteractionRegion& target);
 void ApplyViewTransform(const ViewNode& root,
     InteractionRegion& region, bool preserveClip = false) noexcept;
 std::vector<const ViewNode*> ViewChildrenInPaintOrder(const ViewNode& node);

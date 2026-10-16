@@ -184,6 +184,10 @@ struct InteractionRegion
     bool vertical = false;
     std::string currentSelection;
     std::string proposedSelection;
+    // Host-generated select option ownership; independent of author key syntax.
+    std::string keyboardNavigationGroup;
+    // Host-generated scroll ownership, outermost first. Pointer clips stay exact.
+    std::vector<std::string> keyboardScrollAncestors;
     std::vector<std::string> currentSelectedKeys;
     std::string proposedSelectedKey;
     bool hasExpandedProposal = false;
@@ -261,7 +265,11 @@ public:
     const InteractionAction* FileDropActionAt(float x, float y,
         std::string* targetKey = nullptr) const noexcept;
 
-    std::vector<std::string> KeyboardFocusableKeys() const;
+    std::vector<std::string> KeyboardFocusableKeys(std::string_view focused = {}) const;
+    std::string ReconcileKeyboardFocus(std::string_view current) const;
+    const InteractionRegion* ExpandedSelectForFocus(std::string_view current) const noexcept;
+    std::optional<std::string> SelectKeyboardTarget(
+        std::string_view current, int direction, bool endpoint = false) const;
     const InteractionRegion* FindAccessKey(
         char key) const noexcept;
     std::vector<InteractionRegion> AccessibilityRegions() const;

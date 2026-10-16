@@ -27,7 +27,10 @@ bool DesktopApp::TryHandlePageNavigationKey(
         snowdesktop::page_navigation_rules::ResolveKeyboardNavigationAction(
             generalSettings_.pageNavigationKeyboardEnabled, textInputActive,
             quickNavigationOpen_ || IsCollectionPopupInteractive() ||
-                !luaWidgetPanelRequest_.widgetId.empty(),
+                !luaWidgetPanelRequest_.widgetId.empty() ||
+                (systemPanel_ && systemPanel_->IsOpen()) ||
+                keyboardNavInsideWidget_ ||
+                (widgetEngine_ && widgetEngine_->HasHostViewKeyboardFocus()),
             dragSession_.IsActive() || movingWidget);
     if (navigationAction == KeyboardNavigationAction::Ignore)
         return false;
@@ -304,7 +307,9 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         return true;
     }
     if (!luaWidgetPanelRequest_.widgetId.empty() &&
-        luaWidgetPanelRequest_.modal && key != VK_ESCAPE)
+        (luaWidgetPanelRequest_.modal ||
+            (widgetEngine_ && widgetEngine_->HasHostViewKeyboardFocus())) &&
+        key != VK_ESCAPE)
         return true;
 
     if (ctrl && (key == 'Z' || key == 'Y') && widgetEngine_)
