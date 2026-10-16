@@ -133,12 +133,15 @@ void TestOnDemandCaptureLifecycle()
         "analysis publishes must coalesce into one pending UI wake");
     Check(provider.DrainChanged() && !provider.DrainChanged(),
         "analysis changes must be coalesced and drainable");
-    Check(WaitFor([&wakeCount] {
-            return wakeCount.load(std::memory_order_relaxed) >= 2;
+    // Hardware can remain silent throughout this test. Snapshot freshness is
+    // independent of redraw delivery; rearming on a real content change is
+    // covered by the deterministic production-publication cases below.
+    Check(WaitFor([&] {
+            const auto latest = provider.Snapshot();
+            return latest && latest->revision > snapshot->revision &&
+                latest->timestampMs > snapshot->timestampMs;
         }),
-        "draining an analysis change must re-arm the next UI wake");
-    Check(provider.DrainChanged(),
-        "the re-armed UI wake must correspond to a drainable change");
+        "capture must keep readable snapshots fresh after draining, including unchanged silence");
     provider.Stop();
     Check(!provider.Running() && !provider.ResourcesActive() &&
             !provider.Snapshot(),
