@@ -2767,5 +2767,7 @@
   "iconStyle.strategy": "Icon processing",
   "iconStyle.smart": "Smart beautification",
   "iconStyle.shrinkAll": "Shrink all with theme background",
-  "settings.dock.edgeHoverDelay": "Hover delay"
+  "settings.dock.edgeHoverDelay": "Hover delay",
+  "app.interact.auto_collect_all": "Collect All Categories",
+  "app.interact.auto_collect_off": "Turn Off Auto-Collection"
 }

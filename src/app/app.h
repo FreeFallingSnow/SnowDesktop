@@ -3187,9 +3187,9 @@ private:
      */
     bool CollectFileCategoryWidget(size_t widgetIndex, bool persist);
     /** @brief 对所有标记为自动收集的文件分类部件执行收集。 */
-    void ApplyAutoCollectFileCategoryWidgets();
-    /** @brief 确保只有一个自动收集的文件分类部件处于激活状态。 @param activeWidgetIndex 当前激活的部件索引 */
-    void EnforceSingleAutoCollectFileCategory(size_t activeWidgetIndex);
+    bool ApplyAutoCollectFileCategoryWidgets();
+    /** @brief 新选择的收纳类别从其他自动收纳组件中取消。 */
+    bool EnforceAutoCollectFileCategorySelection(size_t activeWidgetIndex);
     /**
      * @brief 在指定位置打开集合弹出面板。
      * @param widgetIndex 部件索引

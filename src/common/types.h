@@ -511,6 +511,8 @@ struct DesktopWidget
     float cellScale = 1.0f; // Runtime layout cache; recalculated by LayoutItems().
     bool selected = false;
     bool autoCollect = false;
+    // Empty preserves the legacy All scope; IDs reference category settings.
+    std::vector<std::wstring> autoCollectCategoryIds;
     bool dissolveWhenSingle = false; // Only groups created by the pair-drop gesture.
     bool listMode = false;
     bool fanPopup = false; // Per-object popup layout; preserves the inline view.

@@ -397,6 +397,8 @@ void DesktopApp::LoadLayoutSlots()
         widget.gridSpan.columns = std::max(1, saved.width);
         widget.gridSpan.rows = std::max(1, saved.height);
         widget.autoCollect = saved.autoCollect;
+        for (const auto& category : saved.autoCollectCategoryIds)
+            widget.autoCollectCategoryIds.push_back(Utf8ToWide(category));
         widget.dissolveWhenSingle = saved.dissolveWhenSingle;
         widget.listMode = saved.listMode;
         widget.fanPopup = saved.fanPopup;
@@ -1224,7 +1226,13 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
                     NormalizeMode(w.folderSortMode)
              << ", \"folderSortAscending\": "
              << (w.folderSortAscending ? "true" : "false")
-             << ", \"categoryTabOrder\": [";
+             << ", \"autoCollectCategoryIds\": [";
+        for (size_t j = 0; j < w.autoCollectCategoryIds.size(); ++j)
+        {
+            if (j) file << ",";
+            file << "\"" << JsonEscapeUtf8(w.autoCollectCategoryIds[j]) << "\"";
+        }
+        file << "], \"categoryTabOrder\": [";
         for (size_t j = 0; j < w.categoryTabOrder.size(); ++j)
         {
             if (j) file << ",";

@@ -6,6 +6,7 @@
 #include "ui/menu/right_click_contract.h"
 #include "widget/packages/widget_removal.h"
 #include "widgets/collection_group_rules.h"
+#include "widgets/file_category_auto_collect_rules.h"
 #include "widgets/storage_title_bar_layout.h"
 
 #include <commctrl.h>
@@ -368,6 +369,46 @@ void DesktopApp::ShowWidgetContextMenu(
             ? _LW("app.interact.list_view_state")
             : _LW("app.interact.icon_view_state"));
     HMENU detailsMenu = nullptr;
+    HMENU autoCollectMenu = nullptr;
+    std::vector<std::wstring> autoCollectCategories;
+    const auto appendAutoCollectMenu = [&]() {
+        autoCollectMenu = CreatePopupMenu();
+        if (!autoCollectMenu) return;
+        AppendMenuW(autoCollectMenu,
+            MF_STRING | (effectiveSource.autoCollect &&
+                effectiveSource.autoCollectCategoryIds.empty() ? MF_CHECKED : 0),
+            kContextWidgetAutoCollectAll, _LW("app.interact.auto_collect_all"));
+        setFluentIcon(autoCollectMenu, kContextWidgetAutoCollectAll,
+            snowdesktop::menu_fluent_glyphs::kCollectItems);
+        AppendMenuW(autoCollectMenu, MF_SEPARATOR, 0, nullptr);
+        for (const auto& category : GetCategoryOrder(categorySettings_))
+        {
+            if (category == L"all") continue;
+            const UINT commandId = kContextWidgetAutoCollectCategoryFirst +
+                static_cast<UINT>(autoCollectCategories.size());
+            if (commandId > kContextWidgetAutoCollectCategoryLast) break;
+            autoCollectCategories.push_back(category);
+            const bool checked = effectiveSource.autoCollect &&
+                snowdesktop::file_category_auto_collect_rules::Matches(
+                    effectiveSource, category);
+            AppendMenuW(autoCollectMenu, MF_STRING | (checked ? MF_CHECKED : 0),
+                commandId, GetCategoryLabel(categorySettings_, category).c_str());
+            setFluentIcon(autoCollectMenu, commandId,
+                snowdesktop::menu_fluent_glyphs::kCategoryBar);
+        }
+        AppendMenuW(autoCollectMenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(autoCollectMenu,
+            MF_STRING | (!effectiveSource.autoCollect ? MF_CHECKED : 0),
+            kContextWidgetToggleAutoCollect, _LW("app.interact.auto_collect_off"));
+        setFluentIcon(autoCollectMenu, kContextWidgetToggleAutoCollect,
+            snowdesktop::menu_fluent_glyphs::kAutoCollect);
+        const auto label = statusLabel(_LW("app.interact.auto_collect"),
+            effectiveSource.autoCollect ? _LW("app.interact.on") : _LW("app.interact.off"));
+        AppendMenuW(menu, MF_POPUP,
+            reinterpret_cast<UINT_PTR>(autoCollectMenu), label.c_str());
+        setFluentIcon(menu, reinterpret_cast<UINT_PTR>(autoCollectMenu),
+            snowdesktop::menu_fluent_glyphs::kAutoCollect);
+    };
     const auto appendDetailsMenu = [&]() {
         detailsMenu = CreatePopupMenu();
         if (!detailsMenu) return;
@@ -499,14 +540,7 @@ void DesktopApp::ShowWidgetContextMenu(
             AppendMenuW(menu, MF_STRING,
                 kContextWidgetManualCollect,
                 _LW("app.interact.collect_now"));
-            const std::wstring autoCollectLabel = statusLabel(
-                _LW("app.interact.auto_collect"),
-                effectiveSource.autoCollect
-                    ? _LW("app.interact.on")
-                    : _LW("app.interact.off"));
-            AppendMenuW(menu, MF_STRING,
-                kContextWidgetToggleAutoCollect,
-                autoCollectLabel.c_str());
+            appendAutoCollectMenu();
         }
         else if (effectiveSource.type ==
                  DesktopWidgetType::FolderMapping)
@@ -552,13 +586,7 @@ void DesktopApp::ShowWidgetContextMenu(
             kContextNewMenu, _LW("app.menu.new"));
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, kContextWidgetManualCollect, _LW("app.interact.collect_now"));
-        const std::wstring autoCollectLabel = statusLabel(
-            _LW("app.interact.auto_collect"),
-            widget.autoCollect
-                ? _LW("app.interact.on")
-                : _LW("app.interact.off"));
-        AppendMenuW(menu, MF_STRING, kContextWidgetToggleAutoCollect,
-            autoCollectLabel.c_str());
+        appendAutoCollectMenu();
         AppendMenuW(menu, MF_STRING, kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
         appendDetailsMenu();
@@ -787,8 +815,6 @@ void DesktopApp::ShowWidgetContextMenu(
     setFluentIcon(menu, kContextWidgetOpen, L"\uF582");
     setFluentIcon(menu, kContextWidgetManualCollect,
         snowdesktop::menu_fluent_glyphs::kCollectItems);
-    setFluentIcon(menu, kContextWidgetToggleAutoCollect,
-        snowdesktop::menu_fluent_glyphs::kAutoCollect);
     setFluentIcon(menu, kContextWidgetToggleListMode,
         snowdesktop::menu_fluent_glyphs::kContentLayout);
     if (detailsMenu)
@@ -974,6 +1000,35 @@ void DesktopApp::ShowWidgetContextMenu(
     };
 
     bool needsDesktopFocus = true;
+    if (command == kContextWidgetAutoCollectAll ||
+        (command >= kContextWidgetAutoCollectCategoryFirst &&
+            command <= kContextWidgetAutoCollectCategoryLast))
+    {
+        if (effectiveSourceIndex < widgets_.size() &&
+            widgets_[effectiveSourceIndex].type == DesktopWidgetType::FileCategories)
+        {
+            auto& source = widgets_[effectiveSourceIndex];
+            if (command == kContextWidgetAutoCollectAll)
+            {
+                source.autoCollect = true;
+                source.autoCollectCategoryIds.clear();
+            }
+            else
+            {
+                const size_t categoryIndex = command - kContextWidgetAutoCollectCategoryFirst;
+                if (categoryIndex < autoCollectCategories.size())
+                    snowdesktop::file_category_auto_collect_rules::ToggleCategory(
+                        source, autoCollectCategories[categoryIndex]);
+            }
+            EnforceAutoCollectFileCategorySelection(effectiveSourceIndex);
+            ApplyAutoCollectFileCategoryWidgets();
+            LayoutItems();
+            RebuildContainersAndItems();
+            SaveLayoutSlots();
+            refreshOpenPopupDisplay();
+            InvalidateRect(hwnd_, nullptr, TRUE);
+        }
+    }
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
         SortWidgetContents(contentSortTargetIndex, sort->mode, sort->ascending);
 
@@ -1119,15 +1174,7 @@ void DesktopApp::ShowWidgetContextMenu(
             widgets_[effectiveSourceIndex].type !=
                 DesktopWidgetType::FileCategories)
             break;
-        widgets_[effectiveSourceIndex].autoCollect =
-            !widgets_[effectiveSourceIndex].autoCollect;
-        if (widgets_[effectiveSourceIndex].autoCollect)
-        {
-            EnforceSingleAutoCollectFileCategory(
-                effectiveSourceIndex);
-            CollectFileCategoryWidget(
-                effectiveSourceIndex, false);
-        }
+        widgets_[effectiveSourceIndex].autoCollect = false;
         RebuildContainersAndItems();
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);

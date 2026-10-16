@@ -1503,6 +1503,23 @@ int main()
                 std::vector<std::string>({"programs", "others", "all", "folders"}),
         "restart preserves the position of All and program category tabs");
     Expect(typedLayout.widgets[0].categoryTabOrder.empty(), "old layouts keep their default category tab order");
+    Expect(typedLayout.widgets[0].autoCollectCategoryIds.empty(),
+        "legacy layouts default to collecting all categories");
+    {
+        snowdesktop::layout_storage::Document scoped;
+        const std::string scopedText = R"({"widgets":[{"id":"images","page":"page-a","x":0,"y":0,"type":"fileCategories","autoCollect":true,"autoCollectCategoryIds":["images","custom-work"]},{"id":"docs","page":"page-a","x":2,"y":0,"type":"fileCategories","autoCollect":true,"autoCollectCategoryIds":["documents"]}]})";
+        const auto scopedPath = root / L"layout-storage" / L"auto-collect-categories.layout.json";
+        Expect(snowdesktop::layout_storage::SaveDocument(scopedPath, scopedText, &layoutError) &&
+            snowdesktop::layout_storage::LoadDocument(scopedPath, scoped).status ==
+                snowdesktop::layout_storage::LoadStatus::LoadedPrimary &&
+            scoped.widgets.size() == 2 && scoped.widgets[0].autoCollect && scoped.widgets[1].autoCollect &&
+            scoped.widgets[0].autoCollectCategoryIds == std::vector<std::string>({"images", "custom-work"}) &&
+            scoped.widgets[1].autoCollectCategoryIds == std::vector<std::string>{"documents"},
+            "independent collection scopes and custom category IDs survive a disk round trip");
+        Expect(!snowdesktop::layout_storage::ParseDocument(
+            R"({"widgets":[{"id":"files","page":"page-a","x":0,"y":0,"type":"fileCategories","autoCollectCategoryIds":[123]}]})",
+            scoped, &layoutError), "malformed collection scope IDs are rejected without broadening collection");
+    }
     {
         snowdesktop::layout_storage::Document converted;
         const std::string convertedText = R"({"widgets":[{"id":"folder-map","page":"__snowdesktop_dock__","x":0,"y":0,"type":"folderMapping","sourceFolderPath":"D:\\Projects","sourceDesktopItemKey":"C:\\Desktop\\Projects.lnk","items":["D:\\Projects\\notes.txt"]}]})";

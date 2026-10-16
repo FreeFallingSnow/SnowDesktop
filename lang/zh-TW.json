@@ -2767,5 +2767,7 @@
   "iconStyle.strategy": "圖示處理方式",
   "iconStyle.smart": "智慧美化",
   "iconStyle.shrinkAll": "全部縮小並加入主題背景",
-  "settings.dock.edgeHoverDelay": "停留延遲"
+  "settings.dock.edgeHoverDelay": "停留延遲",
+  "app.interact.auto_collect_all": "全部收納",
+  "app.interact.auto_collect_off": "關閉自動收納"
 }

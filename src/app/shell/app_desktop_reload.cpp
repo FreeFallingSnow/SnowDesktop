@@ -1254,14 +1254,7 @@ bool DesktopApp::OnIconLoaded(WPARAM /*wParam*/, LPARAM lParam)
         bool membershipChanged = false;
         if (result->isDesktopItem)
         {
-            for (size_t index = 0; index < widgets_.size(); ++index)
-            {
-                if (widgets_[index].type != DesktopWidgetType::FileCategories) continue;
-                FileCategories categories(&widgets_[index], this);
-                membershipChanged = categories.PruneUncollectableItems() || membershipChanged;
-                if (widgets_[index].autoCollect)
-                    membershipChanged = CollectFileCategoryWidget(index, false) || membershipChanged;
-            }
+            membershipChanged = ApplyAutoCollectFileCategoryWidgets();
         }
         if (membershipChanged)
         {

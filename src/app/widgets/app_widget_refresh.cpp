@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "app/shell/shell_icon_request.h"
 #include "layout/folder_mapping_rules.h"
+#include "widgets/file_category_auto_collect_rules.h"
 
 // Folder-mapping enumeration and automatic file-category collection.
 
@@ -223,43 +224,38 @@ bool DesktopApp::CollectFileCategoryWidget(size_t widgetIndex, bool persist)
 }
 
 /**
- * @brief 确保只有一个文件分类组件开启自动收集模式。
+ * @brief 保证每个类别只由最后选择它的组件自动收纳。
  * @param activeWidgetIndex 当前激活的组件索引。
  */
-void DesktopApp::EnforceSingleAutoCollectFileCategory(size_t activeWidgetIndex)
+bool DesktopApp::EnforceAutoCollectFileCategorySelection(size_t activeWidgetIndex)
 {
-    for (size_t i = 0; i < widgets_.size(); ++i)
-    {
-        if (i != activeWidgetIndex && widgets_[i].type == DesktopWidgetType::FileCategories)
-            widgets_[i].autoCollect = false;
-    }
+    return !snowdesktop::file_category_auto_collect_rules::EnforceExclusiveSelection(
+        widgets_, activeWidgetIndex, GetCategoryOrder(categorySettings_)).empty();
 }
 
 /**
  * @brief 应用所有开启了 autoCollect 的文件分类组件的自动收集。
  */
-void DesktopApp::ApplyAutoCollectFileCategoryWidgets()
+bool DesktopApp::ApplyAutoCollectFileCategoryWidgets()
 {
-    size_t active = static_cast<size_t>(-1);
+    bool changed = false;
+    // Normalize persisted selections too, without switching off unrelated scopes.
+    for (size_t i = 0; i < widgets_.size(); ++i)
+        changed = EnforceAutoCollectFileCategorySelection(i) || changed;
     for (size_t i = 0; i < widgets_.size(); ++i)
     {
         if (widgets_[i].type != DesktopWidgetType::FileCategories)
             continue;
 
         FileCategories collector(&widgets_[i], this);
-        collector.PruneUncollectableItems();
-
-        if (widgets_[i].autoCollect)
-        {
-            if (active == static_cast<size_t>(-1))
-                active = i;
-            else
-                widgets_[i].autoCollect = false;
-        }
+        changed = collector.PruneUncollectableItems() || changed;
     }
     RefreshCollectedKeysCache();
-    if (active != static_cast<size_t>(-1))
-        CollectFileCategoryWidget(active, false);
+    for (size_t i = 0; i < widgets_.size(); ++i)
+        if (widgets_[i].type == DesktopWidgetType::FileCategories &&
+            widgets_[i].autoCollect)
+            changed = CollectFileCategoryWidget(i, false) || changed;
+    return changed;
 }
 
 // ── 组件创建辅助函数 ──────────────────────────────────

@@ -2767,5 +2767,7 @@
   "iconStyle.strategy": "アイコンの処理方法",
   "iconStyle.smart": "スマート美化",
   "iconStyle.shrinkAll": "すべて縮小してテーマの背景を追加",
-  "settings.dock.edgeHoverDelay": "ホバー待機時間"
+  "settings.dock.edgeHoverDelay": "ホバー待機時間",
+  "app.interact.auto_collect_all": "すべてのカテゴリを収集",
+  "app.interact.auto_collect_off": "自動収集をオフにする"
 }

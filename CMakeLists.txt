@@ -591,6 +591,7 @@ set(SNOWDESKTOP_SOURCES
     src/widgets/collection_group.cpp
     src/widgets/file_group.cpp
     src/widgets/file_categories.cpp
+    src/widgets/file_category_auto_collect_rules.h
     src/widgets/folder_mapping.cpp
     src/widgets/lua_script.cpp
     src/widgets/lua_logical_slot.cpp

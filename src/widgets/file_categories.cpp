@@ -23,6 +23,7 @@
 #include "layout/file_date_category.h"
 #include "desktop/desktop_category_item_rules.h"
 #include "storage_title_bar_layout.h"
+#include "file_category_auto_collect_rules.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -444,10 +445,14 @@ bool FileCategories::CollectTopLevelDesktopItems()
         // Wait before admitting a new unknown link. Existing members remain in
         // place during a refresh until their target classification completes.
         const auto extension = DesktopItemExtensionUpper(item);
-        if (!app_->GetCategorySettings().collectProgramsEnabled &&
+        if ((!app_->GetCategorySettings().collectProgramsEnabled ||
+                !data_->autoCollectCategoryIds.empty()) &&
             (extension == L".LNK" || extension == L".URL") && !item.shortcutTarget.classified)
             continue;
         if (!IsCollectable(app_->GetCategorySettings(), item) || app_->IsItemInAnyWidget(item))
+            continue;
+        if (!snowdesktop::file_category_auto_collect_rules::Matches(*data_,
+                FileCategoryIdForItem(item, app_->GetCategorySettings())))
             continue;
 
         std::wstring key = ToUpperInvariant(item.layoutKey);
@@ -478,8 +483,16 @@ bool FileCategories::PruneUncollectableItems()
         std::remove_if(data_->itemKeys.begin(), data_->itemKeys.end(),
             [&](const std::wstring& key) {
                 size_t itemIdx = app_->FindItemIndexByKey(key);
-                return itemIdx != static_cast<size_t>(-1) &&
-                    !IsCollectable(app_->GetCategorySettings(), app_->GetDesktopItems()[itemIdx]);
+                if (itemIdx == static_cast<size_t>(-1)) return false;
+                const auto& item = app_->GetDesktopItems()[itemIdx];
+                if (!IsCollectable(app_->GetCategorySettings(), item)) return true;
+                const auto extension = DesktopItemExtensionUpper(item);
+                if ((extension == L".LNK" || extension == L".URL") &&
+                    !item.shortcutTarget.classified)
+                    return false;
+                return data_->autoCollect &&
+                    !snowdesktop::file_category_auto_collect_rules::Matches(*data_,
+                        FileCategoryIdForItem(item, app_->GetCategorySettings()));
             }),
         data_->itemKeys.end());
     if (data_->itemKeys.size() == oldSize) return false;

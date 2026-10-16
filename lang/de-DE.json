@@ -2767,5 +2767,7 @@
   "iconStyle.strategy": "Symbolverarbeitung",
   "iconStyle.smart": "Intelligente Verschönerung",
   "iconStyle.shrinkAll": "Alle verkleinern und Designhintergrund hinzufügen",
-  "settings.dock.edgeHoverDelay": "Verzögerung beim Verweilen"
+  "settings.dock.edgeHoverDelay": "Verzögerung beim Verweilen am Bildschirmrand",
+  "app.interact.auto_collect_all": "Alle Kategorien sammeln",
+  "app.interact.auto_collect_off": "Automatisches Sammeln ausschalten"
 }

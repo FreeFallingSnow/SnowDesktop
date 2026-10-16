@@ -1241,8 +1241,12 @@ public:
         {
             const bool collectionPolicyChanged = app_.categorySettings_.collectProgramsEnabled !=
                 snapshot.values.category.collectProgramsEnabled ||
-                GetProgramCategoryExtensions(app_.categorySettings_) !=
-                    GetProgramCategoryExtensions(snapshot.values.category);
+                app_.categorySettings_.rules.size() != snapshot.values.category.rules.size() ||
+                !std::equal(app_.categorySettings_.rules.begin(), app_.categorySettings_.rules.end(),
+                    snapshot.values.category.rules.begin(), [](const CategoryRule& before, const CategoryRule& after) {
+                        return before.id == after.id && before.enabled == after.enabled &&
+                            before.extensions == after.extensions;
+                    });
             app_.categorySettings_ = snapshot.values.category;
             NormalizeCategorySettings(app_.categorySettings_);
             for (auto& container : app_.containers_)

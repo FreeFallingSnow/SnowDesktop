@@ -1,5 +1,6 @@
 #include "shell/shortcut_application_rules.h"
 #include "layout/category_collection_rules.h"
+#include "widgets/file_category_auto_collect_rules.h"
 #include "desktop/desktop_category_item_rules.h"
 #include "shell/shortcut_category_target.h"
 #include "drag_drop/empty_group_drop_rules.h"
@@ -315,6 +316,68 @@ int wmain(int argc, wchar_t** argv)
     Check(collection::MoveTab(order, L"all", L"images") && order.front() == L"all",
         "All can be moved back to the beginning");
     Check(!collection::MoveTab(order, L"all", L"missing"), "an invalid target cannot discard a tab");
+
+    namespace autoCollect = snowdesktop::file_category_auto_collect_rules;
+    DesktopWidget scope;
+    Check(autoCollect::Matches(scope, L"images") && autoCollect::Matches(scope, L"custom-new"),
+        "legacy empty selection includes all current and future categories");
+    autoCollect::ToggleCategory(scope, L"images");
+    Check(scope.autoCollect && autoCollect::Matches(scope, L"images") &&
+        !autoCollect::Matches(scope, L"documents"),
+        "selecting a category from All starts an explicit selection");
+    autoCollect::ToggleCategory(scope, L"documents");
+    autoCollect::ToggleCategory(scope, L"images");
+    Check(scope.autoCollect && scope.autoCollectCategoryIds == std::vector<std::wstring>{L"documents"},
+        "category selection supports adding and removing individual categories");
+    autoCollect::ToggleCategory(scope, L"documents");
+    Check(!scope.autoCollect, "removing the last category disables automatic collection");
+
+    const std::vector<std::wstring> available{L"all", L"images", L"documents", L"custom-work", L"others"};
+    std::vector<DesktopWidget> collectors(4);
+    for (size_t index = 0; index < collectors.size(); ++index)
+    {
+        collectors[index].type = DesktopWidgetType::FileCategories;
+        collectors[index].id = std::to_wstring(index);
+        collectors[index].autoCollect = index < 3;
+    }
+    collectors[1].autoCollectCategoryIds = {L"images"};
+    collectors[2].autoCollectCategoryIds = {L"documents"};
+    autoCollect::EnforceExclusiveSelection(collectors, 1, available);
+    Check(collectors[0].autoCollect && !autoCollect::Matches(collectors[0], L"images") &&
+        autoCollect::Matches(collectors[0], L"custom-work") && collectors[2].autoCollect,
+        "claiming Images removes only that option from an earlier All selection");
+    autoCollect::EnforceExclusiveSelection(collectors, 2, available);
+    Check(!autoCollect::Matches(collectors[0], L"documents") && collectors[1].autoCollect,
+        "different components keep disjoint enabled categories");
+    collectors[1].autoCollectCategoryIds.push_back(L"custom-work");
+    autoCollect::EnforceExclusiveSelection(collectors, 1, available);
+    autoCollect::ToggleCategory(collectors[2], L"custom-work");
+    autoCollect::EnforceExclusiveSelection(collectors, 2, available);
+    Check(collectors[1].autoCollect &&
+        collectors[1].autoCollectCategoryIds == std::vector<std::wstring>{L"images"} &&
+        collectors[2].autoCollectCategoryIds == std::vector<std::wstring>({L"documents", L"custom-work"}),
+        "transferring a custom category keeps the previous owner's remaining categories enabled");
+    autoCollect::ToggleCategory(collectors[3], L"images");
+    collectors[1].itemKeys = {L"PHOTO.PNG"};
+    collectors[1].missingItems.push_back({L"MISSING-PHOTO.PNG", {}, 0});
+    const auto displaced = autoCollect::EnforceExclusiveSelection(collectors, 3, available);
+    Check(!collectors[1].autoCollect && collectors[3].autoCollect &&
+        collectors[1].itemKeys.empty() && collectors[1].missingItems.empty() &&
+        std::find(displaced.begin(), displaced.end(), 1) != displaced.end(),
+        "the latest Images selection disables the previous owner and releases live and missing memberships");
+    collectors[1].autoCollect = true;
+    collectors[1].autoCollectCategoryIds.clear();
+    autoCollect::EnforceExclusiveSelection(collectors, 1, available);
+    Check(collectors[1].autoCollect && !collectors[0].autoCollect &&
+        !collectors[2].autoCollect && !collectors[3].autoCollect,
+        "choosing All disables every previous automatic collector");
+    collectors[0].autoCollectCategoryIds = {L"removed-custom"};
+    Check(!autoCollect::Matches(collectors[0], L"others"),
+        "a deleted custom category never silently broadens into All or Others");
+    collectors[0].itemKeys = {L"MANUALLY-KEPT"};
+    Check(autoCollect::EnforceExclusiveSelection(collectors, 1, available).empty() &&
+        collectors[0].itemKeys == std::vector<std::wstring>{L"MANUALLY-KEPT"},
+        "inactive components keep their contents and repeated enforcement is stable");
 
     namespace emptyGroup = snowdesktop::empty_group_drop_rules;
     for (const auto groupType : {DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})

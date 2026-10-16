@@ -2767,5 +2767,7 @@
   "iconStyle.strategy": "Procesamiento de íconos",
   "iconStyle.smart": "Mejora inteligente",
   "iconStyle.shrinkAll": "Reducir todos y agregar el fondo del tema",
-  "settings.dock.edgeHoverDelay": "Retraso al mantener el puntero"
+  "settings.dock.edgeHoverDelay": "Retraso al mantener el puntero",
+  "app.interact.auto_collect_all": "Recopilar todas las categorías",
+  "app.interact.auto_collect_off": "Desactivar la recopilación automática"
 }
