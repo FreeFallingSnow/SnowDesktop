@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "layout/layout_scroll_save_rules.h"
+#include "layout/page_navigation_rules.h"
 #include "desktop/desktop_hover_rules.h"
 #include "app/shell/shell_change_notification.h"
 #include "desktop/desktop_keyboard_rules.h"
@@ -1056,7 +1057,21 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             overWidgetArea = IsPointOverWidgetChrome(pt);
 
         if (!overWidgetArea && generalSettings_.doubleClickHideDesktop)
+        {
+            if (MaxPageOffset() > 0)
+            {
+                RECT previousEdge{};
+                RECT nextEdge{};
+                GetNavHotEdgeRects(previousEdge, nextEdge);
+                // The first click may have reached the first or last page.
+                // Keep both rails excluded even if that direction is now unavailable.
+                if (snowdesktop::page_navigation_rules::IsEdgeTarget(
+                        snowdesktop::page_navigation_rules::HitTestPointerTarget(
+                            pt, previousEdge, nextEdge)))
+                    return 0;
+            }
             ToggleDesktopIconsVisibility();
+        }
 
         return 0;
     }
