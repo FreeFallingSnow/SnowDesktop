@@ -2772,5 +2772,6 @@
   "app.interact.auto_collect_off": "Turn Off Auto-Collection",
   "app.settings.scrolling_icon_spacing_x": "Scrolling icon horizontal spacing",
   "app.settings.scrolling_icon_spacing_y": "Scrolling icon vertical spacing",
-  "app.settings.list_row_spacing": "List row spacing"
+  "app.settings.list_row_spacing": "List row spacing",
+  "app.settings.hotkey_edit": "Edit"
 }

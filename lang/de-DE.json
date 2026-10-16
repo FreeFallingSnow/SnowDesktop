@@ -2772,5 +2772,6 @@
   "app.interact.auto_collect_off": "Automatisches Sammeln ausschalten",
   "app.settings.scrolling_icon_spacing_x": "Horizontaler Symbolabstand im Scrollbereich",
   "app.settings.scrolling_icon_spacing_y": "Vertikaler Symbolabstand im Scrollbereich",
-  "app.settings.list_row_spacing": "Zeilenabstand in Listen"
+  "app.settings.list_row_spacing": "Zeilenabstand in Listen",
+  "app.settings.hotkey_edit": "Bearbeiten"
 }

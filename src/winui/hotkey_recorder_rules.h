@@ -100,6 +100,15 @@ public:
         };
     }
 
+    void RestartCapture() noexcept
+    {
+        if (!active_)
+            return;
+        candidate_ = {};
+        availability_ = HotkeyAvailability::Unknown;
+        ++requestId_;
+    }
+
     void Close() noexcept
     {
         active_ = false;

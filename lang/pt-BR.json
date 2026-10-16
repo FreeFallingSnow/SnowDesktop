@@ -2772,5 +2772,6 @@
   "app.interact.auto_collect_off": "Desativar a coleta automática",
   "app.settings.scrolling_icon_spacing_x": "Espaçamento horizontal dos ícones na área de rolagem",
   "app.settings.scrolling_icon_spacing_y": "Espaçamento vertical dos ícones na área de rolagem",
-  "app.settings.list_row_spacing": "Espaçamento entre linhas de listas"
+  "app.settings.list_row_spacing": "Espaçamento entre linhas de listas",
+  "app.settings.hotkey_edit": "Editar"
 }

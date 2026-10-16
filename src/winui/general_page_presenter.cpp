@@ -950,6 +950,7 @@ struct GeneralPagePresenter::Impl
         text.systemConflict = L("app.settings.hotkey_conflict_system");
         text.apply = L("app.settings.apply");
         text.cancel = L("app.settings.cancel");
+        text.edit = L("app.settings.hotkey_edit");
         text.clear = L("app.settings.widget.clear");
         text.restoreDefault = L("app.settings.restore_default");
         return text;

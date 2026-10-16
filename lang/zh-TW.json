@@ -2772,5 +2772,6 @@
   "app.interact.auto_collect_off": "關閉自動收納",
   "app.settings.scrolling_icon_spacing_x": "捲動圖示水平間距",
   "app.settings.scrolling_icon_spacing_y": "捲動圖示垂直間距",
-  "app.settings.list_row_spacing": "清單列間距"
+  "app.settings.list_row_spacing": "清單列間距",
+  "app.settings.hotkey_edit": "編輯"
 }

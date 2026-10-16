@@ -2772,5 +2772,6 @@
   "app.interact.auto_collect_off": "自動収集をオフにする",
   "app.settings.scrolling_icon_spacing_x": "スクロール領域のアイコンの横間隔",
   "app.settings.scrolling_icon_spacing_y": "スクロール領域のアイコンの縦間隔",
-  "app.settings.list_row_spacing": "リストの行間隔"
+  "app.settings.list_row_spacing": "リストの行間隔",
+  "app.settings.hotkey_edit": "編集"
 }

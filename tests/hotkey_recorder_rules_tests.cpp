@@ -142,6 +142,42 @@ int main()
             rules.Committed().virtualKey == 'D',
         "dialog cancellation restores the saved chord after a conflict");
 
+    // Edit restarts recording without the destructive Clear action. Pending
+    // availability replies must not re-enable Apply for the previous candidate.
+    const HotkeyChord saved = rules.Committed();
+    (void)rules.BeginCapture();
+    const auto beforeEdit = rules.KeyDown('E',
+        HotkeyRecorderRules::ModifierControl);
+    Check(rules.ApplyAvailability(20, beforeEdit.requestId, false),
+        "the candidate before Edit can have a conflict");
+    rules.RestartCapture();
+    Check(rules.Active() && rules.Candidate().Empty() &&
+            rules.Committed() == saved &&
+            rules.Availability() == HotkeyAvailability::Unknown,
+        "Edit waits for a new chord while retaining the saved shortcut");
+    Check(!rules.ApplyAvailability(20, beforeEdit.requestId, true) &&
+            rules.Commit().action == HotkeyRecorderAction::None,
+        "a late probe cannot enable applying the old chord after Edit");
+    Check(rules.CancelCapture().action == HotkeyRecorderAction::Cancel &&
+            rules.Committed() == saved && rules.Candidate() == saved,
+        "cancelling Edit without new input restores the saved chord");
+
+    (void)rules.BeginCapture();
+    rules.RestartCapture();
+    const auto edited = rules.KeyDown('N',
+        HotkeyRecorderRules::ModifierControl);
+    Check(rules.Committed() == saved &&
+            rules.Commit().action == HotkeyRecorderAction::None,
+        "recording a replacement does not save before validation and Apply");
+    Check(rules.ApplyAvailability(20, edited.requestId, true) &&
+            rules.Commit().action == HotkeyRecorderAction::Commit &&
+            rules.Committed() == HotkeyChord{
+                HotkeyRecorderRules::ModifierControl, 'N'},
+        "Edit applies a validated replacement without clearing first");
+    rules.RestartCapture();
+    Check(!rules.Active() && rules.Candidate() == rules.Committed(),
+        "Edit cannot restart a completed dialog");
+
     (void)rules.BeginCapture();
     const auto closing = rules.KeyDown('Z', 0);
     rules.Close();

@@ -2772,5 +2772,6 @@
   "app.interact.auto_collect_off": "Désactiver la collecte automatique",
   "app.settings.scrolling_icon_spacing_x": "Espacement horizontal des icônes défilantes",
   "app.settings.scrolling_icon_spacing_y": "Espacement vertical des icônes défilantes",
-  "app.settings.list_row_spacing": "Espacement des lignes de liste"
+  "app.settings.list_row_spacing": "Espacement des lignes de liste",
+  "app.settings.hotkey_edit": "Modifier"
 }

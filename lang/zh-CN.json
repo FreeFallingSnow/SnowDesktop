@@ -2772,5 +2772,6 @@
   "app.interact.auto_collect_off": "关闭自动收纳",
   "app.settings.scrolling_icon_spacing_x": "滚动图标横向间距",
   "app.settings.scrolling_icon_spacing_y": "滚动图标纵向间距",
-  "app.settings.list_row_spacing": "列表行间距"
+  "app.settings.list_row_spacing": "列表行间距",
+  "app.settings.hotkey_edit": "编辑"
 }

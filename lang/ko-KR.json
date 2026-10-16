@@ -2772,5 +2772,6 @@
   "app.interact.auto_collect_off": "자동 수집 끄기",
   "app.settings.scrolling_icon_spacing_x": "스크롤 영역 아이콘 가로 간격",
   "app.settings.scrolling_icon_spacing_y": "스크롤 영역 아이콘 세로 간격",
-  "app.settings.list_row_spacing": "목록 행 간격"
+  "app.settings.list_row_spacing": "목록 행 간격",
+  "app.settings.hotkey_edit": "편집"
 }
