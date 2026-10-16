@@ -906,7 +906,7 @@ int RunDesktopBackdropCompositorTests()
             if (observed) DeleteObject(observed);
             return failures;
         }
-        check(glass.BeginStagedFrame() && glass.AddPanel(candidate, 12, 18, 101),
+        check(glass.BeginStagedFrame() && glass.AddPanel(candidate, 12, 18, 101, true),
             "Dock candidate collects new geometry under the stable owner");
         glass.SetOcclusionRect(exclusion);
         check(glass.PanelCount() == 2 && glass.HasPanelContaining(candidate) && !glass.HasPanelContaining(oldPanel),

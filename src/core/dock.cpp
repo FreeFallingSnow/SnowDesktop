@@ -11,6 +11,7 @@
 #include "slot.h"
 #include "common/l10n.h"
 #include "layout/item_location.h"
+#include "ui/render/smooth_corner_geometry.h"
 
 #include <algorithm>
 #include <cmath>
@@ -2239,12 +2240,12 @@ void DockContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             {
                 const float inset = borderWidth * 0.5f;
                 const float borderRadius = std::max(0.0f, panelRadius - inset);
-                context->DrawRoundedRectangle(D2D1::RoundedRect(
+                snowdesktop::smooth_corners::Stroke(context,
                     D2D1::RectF(static_cast<float>(bounds.left) + inset,
                         static_cast<float>(bounds.top) + inset,
                         static_cast<float>(bounds.right) - inset,
                         static_cast<float>(bounds.bottom) - inset),
-                    borderRadius, borderRadius), borderBrush.Get(), borderWidth);
+                    borderRadius, borderBrush.Get(), borderWidth);
             }
         }
     }

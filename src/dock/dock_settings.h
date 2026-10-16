@@ -11,6 +11,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -90,6 +91,8 @@ struct DockSettings : DockLayoutSettings
     bool showWindowPreviews = true;
     bool singleClickLaunchItems = false;
     bool followComponentAppearance = true;
+    bool followComponentCornerRadius = true;
+    float cornerRadius = 12.0f;
     int appearancePreset = kAppearancePresetCustom;
     PersonalizationSettings customAppearance;
     int hoverEffect = 2;
@@ -132,7 +135,7 @@ inline PersonalizationSettings ResolveDockAppearance(const DockSettings& setting
 {
     auto value = settings.followComponentAppearance ? global :
         settings.appearancePreset == kAppearancePresetCustom ? settings.customAppearance : MakeAppearancePreset(settings.appearancePreset);
-    value.cornerRadius = global.cornerRadius;
+    value.cornerRadius = settings.followComponentCornerRadius ? global.cornerRadius : settings.cornerRadius;
     return value;
 }
 
@@ -151,6 +154,8 @@ inline void SelectDockAppearance(DockSettings& settings, bool followGlobal,
 
 inline void NormalizeDockSettings(DockSettings& settings)
 {
+    settings.cornerRadius = std::isfinite(settings.cornerRadius)
+        ? std::clamp(settings.cornerRadius, 0.0f, 28.0f) : DockSettings{}.cornerRadius;
     switch (settings.appearancePreset)
     {
     case kAppearancePresetDark: case kAppearancePresetLight:

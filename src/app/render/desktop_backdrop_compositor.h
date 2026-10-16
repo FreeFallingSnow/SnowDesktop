@@ -106,7 +106,7 @@ public:
      */
     bool AddPanel(
         const RECT& frame, float cornerRadius, float blurRadius,
-        std::uintptr_t ownerKey = 0);
+        std::uintptr_t ownerKey = 0, bool smoothCorners = true);
     // Host-private icon regions share the same native blur backend.
     bool AddIconPanel(const RECT& frame, snowdesktop::IconBeautifyShape shape,
         float blurRadius, std::uintptr_t ownerKey);

@@ -17,6 +17,7 @@
 #include "dock/dock_genie_rules.h"
 #include "navigation/quick_navigation_genie_rules.h"
 #include "layout/popup_round_geometry.h"
+#include "ui/render/smooth_corner_geometry.h"
 #include "icons/large_icon_shape_geometry.h"
 #include "platform/shell_overlay_window.h"
 
@@ -243,18 +244,13 @@ std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
     namespace genie = snowdesktop::dock_genie;
     const float axisLength = vertical ? height : width;
     const float crossLength = vertical ? width : height;
-    const float radius = std::clamp(cornerRadius, 0.0f,
-        std::min(width, height) * 0.5f);
-    // Uniform angle samples preserve the rounded corners even when a whole
-    // corner falls inside one strip. Cache source points until geometry changes.
-    constexpr std::size_t cornerSamples = 12;
-    constexpr double halfPi = 1.57079632679489661923;
+    const snowdesktop::smooth_corners::Corner corner(cornerRadius, std::min(width, height)*.5f);
+    // Include the smooth ramps even when a whole corner fits in one strip.
+    constexpr std::size_t cornerSamples = 24;
     std::array<float, cornerSamples * 2> cornerAxes{};
     for (std::size_t index = 0; index < cornerSamples; ++index)
     {
-        const double angle = halfPi * static_cast<double>(index + 1) /
-            static_cast<double>(cornerSamples);
-        const float offset = radius * static_cast<float>(1.0 - std::cos(angle));
+        const float offset = corner.Point(static_cast<float>(index+1) / static_cast<float>(cornerSamples)).y;
         cornerAxes[index] = offset;
         cornerAxes[cornerAxes.size() - 1 - index] = axisLength - offset;
     }
@@ -262,12 +258,7 @@ std::vector<GenieOutlinePoint> BuildGenieSourceOutline(
     std::vector<GenieOutlinePoint> outline;
     outline.reserve(genie::StripCount * 4 + cornerAxes.size() * 2);
     const auto appendLowSide = [&](std::size_t strip, float axis) {
-        const float distance = std::max(0.0f,
-            radius - std::min(axis, axisLength - axis));
-        const float inset = radius > 0.0f
-            ? radius - std::sqrt(std::max(0.0f,
-                radius * radius - distance * distance))
-            : 0.0f;
+        const float inset = corner.Inset(std::min(axis, axisLength-axis));
         outline.push_back({vertical ? D2D1_POINT_2F{inset, axis}
                                    : D2D1_POINT_2F{axis, inset}, strip});
     };
@@ -333,7 +324,11 @@ struct DesktopBackdropCompositor::Impl
         int blurRadius = 0;
         wuc::SpriteVisual visual{nullptr};
         wuc::CompositionRoundedRectangleGeometry geometry{nullptr};
+        wuc::CompositionPathGeometry smoothGeometry{nullptr};
+        SIZE smoothSize{};
+        float smoothRadius = -1.f;
         wuc::CompositionGeometricClip clip{nullptr};
+        wuc::CompositionGeometry customGeometry{nullptr};
         bool seen = false;
         int iconShape = -1;
         SIZE iconSize{};
@@ -348,6 +343,7 @@ struct DesktopBackdropCompositor::Impl
         enum class Kind { Rounded, Icon, LargeIcon } kind = Kind::Rounded;
         RECT frame{};
         float cornerRadius = 0, blurRadius = 0, opacity = 1;
+        bool smoothCorners = false;
         std::uintptr_t ownerKey = 0;
         int shape = 0, flagDirection = 0;
         bool transformed = false;
@@ -1548,7 +1544,7 @@ bool DesktopBackdropCompositor::ApplyStagedFrame()
         switch (panel.kind)
         {
         case Impl::StagedPanel::Kind::Rounded:
-            applied = AddPanel(panel.frame, panel.cornerRadius, panel.blurRadius, panel.ownerKey);
+            applied = AddPanel(panel.frame, panel.cornerRadius, panel.blurRadius, panel.ownerKey, panel.smoothCorners);
             break;
         case Impl::StagedPanel::Kind::Icon:
             applied = AddIconPanel(panel.frame, static_cast<snowdesktop::IconBeautifyShape>(panel.shape),
@@ -1578,7 +1574,7 @@ bool DesktopBackdropCompositor::ApplyStagedFrame()
 
 bool DesktopBackdropCompositor::AddPanel(
     const RECT& frame, float cornerRadius,
-    float blurRadius, std::uintptr_t ownerKey)
+    float blurRadius, std::uintptr_t ownerKey, bool smoothCorners)
 {
     if (!impl_->available || frame.right <= frame.left || frame.bottom <= frame.top)
         return false;
@@ -1589,6 +1585,7 @@ bool DesktopBackdropCompositor::AddPanel(
         candidate.cornerRadius = cornerRadius;
         candidate.blurRadius = blurRadius;
         candidate.ownerKey = ownerKey;
+        candidate.smoothCorners = smoothCorners;
         auto existing = std::find_if(impl_->stagedPanels.begin(), impl_->stagedPanels.end(),
             [&](const auto& panel) {
                 return snowdesktop::desktop_backdrop_update_rules::PanelIdentityMatches(
@@ -1657,6 +1654,28 @@ bool DesktopBackdropCompositor::AddPanel(
         existing->geometry.Size(panelSize);
         existing->geometry.CornerRadius(wfn::float2{
             resolvedRadius, resolvedRadius });
+        if (smoothCorners)
+        {
+            const SIZE size{frame.right-frame.left, frame.bottom-frame.top};
+            if (!existing->smoothGeometry || existing->smoothRadius != resolvedRadius ||
+                existing->smoothSize.cx != size.cx || existing->smoothSize.cy != size.cy)
+            {
+                if (!impl_->genieGeometryFactory)
+                    winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+                        impl_->genieGeometryFactory.put()));
+                const auto path = snowdesktop::smooth_corners::Geometry(impl_->genieGeometryFactory.get(),
+                    D2D1::RectF(0, 0, panelSize.x, panelSize.y), resolvedRadius);
+                if (!path) return false;
+                winrt::com_ptr<ID2D1Geometry> source;
+                source.copy_from(path.Get());
+                if (!existing->smoothGeometry) existing->smoothGeometry = impl_->compositor.CreatePathGeometry();
+                existing->smoothGeometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
+                existing->smoothSize = size;
+                existing->smoothRadius = resolvedRadius;
+            }
+            existing->clip.Geometry(existing->smoothGeometry);
+        }
+        else existing->clip.Geometry(existing->geometry);
         // AddPanel represents an ordinarily rendered, visible panel. A
         // floating-Dock hand-off can temporarily set an existing panel to
         // zero opacity; reusing that same rectangle on the next desktop paint
@@ -1770,9 +1789,11 @@ bool DesktopBackdropCompositor::AddIconPanel(const RECT& frame,
             winrt::check_hresult(sink->Close());
             auto geometry = impl_->compositor.CreatePathGeometry();
             geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(path))));
+            panel->customGeometry = geometry;
             panel->clip.Geometry(geometry);
             panel->iconShape = static_cast<int>(shape); panel->iconSize = size;
         }
+        else panel->clip.Geometry(panel->customGeometry);
         return true;
     }
     catch (const winrt::hresult_error& error)
@@ -1807,14 +1828,13 @@ bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
         if (panel == impl_->panels.end()) return false;
         if (shape <= 1)
         {
-            if (panel->largeIconShape >= 0) panel->clip.Geometry(panel->geometry);
             panel->largeIconShape = -1;
             return true;
         }
         const SIZE size{frame.right - frame.left, frame.bottom - frame.top};
         if (panel->largeIconShape == shape && panel->largeIconFlagDirection == flagDirection &&
             panel->largeIconSize.cx == size.cx && panel->largeIconSize.cy == size.cy)
-            return true;
+        { panel->clip.Geometry(panel->customGeometry); return true; }
         if (!impl_->genieGeometryFactory)
             winrt::check_hresult(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, impl_->genieGeometryFactory.put()));
         const auto mask = snowdesktop::large_icon_shape::Geometry(impl_->genieGeometryFactory.get(), shape,
@@ -1823,6 +1843,7 @@ bool DesktopBackdropCompositor::AddLargeIconPanel(const RECT& frame,
         winrt::com_ptr<ID2D1Geometry> source; source.copy_from(mask.Get());
         auto geometry = impl_->compositor.CreatePathGeometry();
         geometry.Path(wuc::CompositionPath(winrt::make<BackdropGeometrySource>(std::move(source))));
+        panel->customGeometry = geometry;
         panel->clip.Geometry(geometry);
         panel->largeIconShape = shape; panel->largeIconFlagDirection = flagDirection; panel->largeIconSize = size;
         return true;

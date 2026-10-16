@@ -262,7 +262,7 @@ protected:
     mutable std::vector<std::unique_ptr<Item>> slotItemCache_;
 
     // ── Cached D2D resources (recreated only when frame/radius changes) ──
-    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> cachedClipGeometry_;
+    Microsoft::WRL::ComPtr<ID2D1Geometry> cachedClipGeometry_;
     RECT cachedClipFrame_{ -1, -1, -1, -1 };
     float cachedClipRadius_ = 0.0f;
     RECT hostedFrame_{};
@@ -271,7 +271,7 @@ protected:
     float popupFrameScale_ = 1.0f;
 
     /** @brief 获取或创建圆角矩形裁剪几何体，frame/radius 不变时跨帧复用。 */
-    ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
+    ID2D1Geometry* GetCachedClipGeometry(ID2D1Factory1* factory,
         const RECT& frame, float radius);
 };
 
@@ -1069,11 +1069,11 @@ private:
     void DrawInternal(ID2D1DeviceContext* context, RECT rect, int state,
         WidgetEngine* engine, bool preview, bool registerBackdrop);
 
-    ID2D1RoundedRectangleGeometry* GetCachedClipGeometry(ID2D1Factory1* factory,
+    ID2D1Geometry* GetCachedClipGeometry(ID2D1Factory1* factory,
         const RECT& frame, float radius);
 
     // Cached clip geometry (recreated only when frame/radius changes)
-    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> cachedClipGeometry_;
+    Microsoft::WRL::ComPtr<ID2D1Geometry> cachedClipGeometry_;
     RECT cachedClipFrame_{ -1, -1, -1, -1 };
     float cachedClipRadius_ = 0.0f;
 };

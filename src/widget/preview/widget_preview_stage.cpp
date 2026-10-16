@@ -1,6 +1,7 @@
 #include "widget_preview_stage.h"
 #include "widget_wallpaper_pixels.h"
 #include "ui/render/acrylic_noise_asset.h"
+#include "ui/render/smooth_corner_geometry.h"
 #include "theme/flat_glass_rim.h"
 #include "widget/view/widget_composition_layer_rules.h"
 
@@ -509,12 +510,9 @@ bool DrawStage(ID2D1DeviceContext* context, const RECT& bounds,
 
     ComPtr<ID2D1Factory> factory;
     context->GetFactory(&factory);
-    ComPtr<ID2D1RoundedRectangleGeometry> clip;
     const float radius = std::max(0.0f, style.cornerRadius);
-    if (!factory || FAILED(factory->CreateRoundedRectangleGeometry(
-            D2D1::RoundedRect(ToD2DRect(bounds), radius, radius), &clip)) ||
-        !clip)
-        return true;
+    const auto clip = smooth_corners::Geometry(factory.Get(), ToD2DRect(bounds), radius);
+    if (!clip) return true;
     context->PushLayer(D2D1::LayerParameters(
         ToD2DRect(bounds), clip.Get()), nullptr);
     context->DrawImage(blur.Get(), D2D1::Point2F(
@@ -556,8 +554,7 @@ void DrawAcrylicNoise(ID2D1DeviceContext* context, const RECT& bounds,
         -static_cast<float>(pixelOrigin.x),
         -static_cast<float>(pixelOrigin.y)));
     const float radius = std::max(0.0f, cornerRadius);
-    context->FillRoundedRectangle(
-        D2D1::RoundedRect(ToD2DRect(bounds), radius, radius), brush.Get());
+    smooth_corners::Fill(context, ToD2DRect(bounds), radius, brush.Get());
 }
 
 namespace
@@ -581,6 +578,7 @@ struct EdgeHighlightMaskKey
     EdgeLightSettings edgeLight;
     bool occlusion = false;
     HighlightEdge edge = HighlightEdge::All;
+    bool smoothCorners = false;
 
     bool operator==(const EdgeHighlightMaskKey&) const = default;
 };
@@ -624,7 +622,7 @@ std::uint32_t QuantizeSixteenths(float value)
 
 std::vector<std::uint8_t> GenerateEdgeHighlightMask(
     UINT32 width, UINT32 height, float cornerRadius, float bevelDepth,
-    const EdgeLightSettings& edgeLight, bool occlusion, HighlightEdge edge)
+    const EdgeLightSettings& edgeLight, bool occlusion, HighlightEdge edge, bool smoothCorners)
 {
     constexpr UINT32 padding = flat_glass_rim::kPanelOverdraw;
     const UINT32 bitmapWidth = width + padding * 2, bitmapHeight = height + padding * 2;
@@ -634,6 +632,7 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
     const float innerSupport = material.InnerSupport(bevelDepth, occlusion);
     constexpr std::array<float, 2> offsets{.25f, .75f};
     const float wf = static_cast<float>(width), hf = static_cast<float>(height);
+    const smooth_corners::Distance smoothDistance(wf, hf, cornerRadius);
     const auto distanceAt = [&](float x, float y) {
         // Keep the reflection peak on the actual allocation boundary. Clip
         // its exterior half below; shifting the peak inward changes the visual
@@ -642,7 +641,8 @@ std::vector<std::uint8_t> GenerateEdgeHighlightMask(
         if (edge == HighlightEdge::Bottom) return y - hf;
         if (edge == HighlightEdge::Left) return -x;
         if (edge == HighlightEdge::Right) return x - wf;
-        return EvaluateRoundedRectDistance(x, y, wf, hf, cornerRadius).distance;
+        return smoothCorners ? smoothDistance.At(x, y)
+            : EvaluateRoundedRectDistance(x, y, wf, hf, cornerRadius).distance;
     };
     for (UINT32 y = 0; y < bitmapHeight; ++y)
     {
@@ -723,7 +723,7 @@ void CacheEdgeHighlightMask(const EdgeHighlightMaskKey& key,
 ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
     UINT32 width, UINT32 height, float cornerRadius, float bevelDepth,
     const EdgeLightSettings& edgeLight, bool occlusion = false,
-    HighlightEdge edge = HighlightEdge::All)
+    HighlightEdge edge = HighlightEdge::All, bool smoothCorners = false)
 {
     if (!context || width == 0 || height == 0 ||
         !context->IsDxgiFormatSupported(DXGI_FORMAT_A8_UNORM))
@@ -744,6 +744,7 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
         .edgeLight = NormalizeEdgeLight(edgeLight),
         .occlusion = occlusion,
         .edge = edge,
+        .smoothCorners = smoothCorners,
     };
     if (auto cached = FindCachedEdgeHighlightMask(key))
         return cached;
@@ -753,7 +754,7 @@ ComPtr<ID2D1Bitmap1> GetEdgeHighlightMask(ID2D1DeviceContext* context,
     const float quantizedDepth =
         static_cast<float>(key.depthSixteenths) / 16.0f;
     const std::vector<std::uint8_t> pixels = GenerateEdgeHighlightMask(
-        width, height, quantizedRadius, quantizedDepth, key.edgeLight, occlusion, edge);
+        width, height, quantizedRadius, quantizedDepth, key.edgeLight, occlusion, edge, smoothCorners);
     constexpr UINT32 padding = flat_glass_rim::kPanelOverdraw;
     const UINT32 bitmapWidth = width + padding * 2;
     const UINT32 bitmapHeight = height + padding * 2;
@@ -803,7 +804,7 @@ D2D1_COLOR_F ResolveEdgeHighlightReflection(
 
 bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
     float cornerRadius, D2D1_COLOR_F color, float strokeWidth,
-    float effectStrength, const EdgeLightSettings& edgeLight, HighlightEdge edge)
+    float effectStrength, const EdgeLightSettings& edgeLight, HighlightEdge edge, bool smoothCorners)
 {
     const float strength = std::clamp(effectStrength, 0.0f, 1.0f);
     if (!context || strength <= 0.0005f ||
@@ -833,10 +834,10 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
         return false;
     const ComPtr<ID2D1Bitmap1> mask = GetEdgeHighlightMask(context,
         static_cast<UINT32>(pixelWidth), static_cast<UINT32>(pixelHeight),
-        cornerRadius, strokeWidth, material, false, edge);
+        cornerRadius, strokeWidth, material, false, edge, smoothCorners);
     const ComPtr<ID2D1Bitmap1> shadowMask = material.shadowStrength > 0.f
         ? GetEdgeHighlightMask(context, static_cast<UINT32>(pixelWidth),
-            static_cast<UINT32>(pixelHeight), cornerRadius, strokeWidth, material, true, edge)
+            static_cast<UINT32>(pixelHeight), cornerRadius, strokeWidth, material, true, edge, smoothCorners)
         : nullptr;
     ComPtr<ID2D1SolidColorBrush> shadowBrush;
     if (shadowMask)
@@ -869,10 +870,10 @@ bool DrawEdgeHighlight(ID2D1DeviceContext* context, const RECT& bounds,
             context->DrawLine(D2D1::Point2F(outerRect.left, y), D2D1::Point2F(outerRect.right, y), reflectionBrush.Get(), strokeWidth);
             return true;
         }
-        context->DrawRoundedRectangle(
-            D2D1::RoundedRect(fallbackRect,
-                fallbackRadius, fallbackRadius),
-            reflectionBrush.Get(), strokeWidth);
+        if (smoothCorners)
+            smooth_corners::Stroke(context, fallbackRect, fallbackRadius, reflectionBrush.Get(), strokeWidth);
+        else context->DrawRoundedRectangle(D2D1::RoundedRect(fallbackRect,
+            fallbackRadius, fallbackRadius), reflectionBrush.Get(), strokeWidth);
         return true;
     }
 

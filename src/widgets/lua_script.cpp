@@ -22,7 +22,7 @@ const std::unordered_map<std::string, std::string>
     kEmptyPreviewStorage;
 }
 
-ID2D1RoundedRectangleGeometry* LuaScript::GetCachedClipGeometry(
+ID2D1Geometry* LuaScript::GetCachedClipGeometry(
     ID2D1Factory1* factory, const RECT& frame, float radius)
 {
     return snowdesktop::ResolveWidgetClipGeometry(factory, frame, radius,
@@ -656,7 +656,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                 {
                     auto* factory = app_->GetD2DFactory();
                     const float radius = static_cast<float>(Cu(12.0f));
-                    ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
+                    ID2D1Geometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
                     bool pushed = false;
                     if (clipGeo)
                     {

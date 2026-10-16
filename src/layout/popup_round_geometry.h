@@ -5,6 +5,7 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
+#include "ui/render/smooth_corner_geometry.h"
 
 namespace snowdesktop::popup_round_geometry
 {
@@ -67,10 +68,6 @@ inline bool Contains(const D2D1_ROUNDED_RECT& rounded, D2D1_POINT_2F point)
     const auto& frame = rounded.rect;
     if (!std::isfinite(point.x) || !std::isfinite(point.y) || point.x < frame.left ||
         point.y < frame.top || point.x >= frame.right || point.y >= frame.bottom) return false;
-    const float radius = rounded.radiusX;
-    if (radius <= 0) return true;
-    const float x = point.x - std::clamp(point.x, frame.left + radius, frame.right - radius);
-    const float y = point.y - std::clamp(point.y, frame.top + radius, frame.bottom - radius);
-    return x * x + y * y <= radius * radius;
+    return smooth_corners::Contains(frame, rounded.radiusX, point);
 }
 }

@@ -5,6 +5,7 @@
 #include "quick_navigation_theme.h"
 #include "dock/dock_genie_rules.h"
 #include "navigation/quick_navigation_genie_rules.h"
+#include "ui/render/smooth_corner_geometry.h"
 
 // Quick-navigation DirectWrite and DirectComposition rendering resources.
 
@@ -505,19 +506,10 @@ void DesktopApp::DrawQuickNavigationSurface(ID2D1DeviceContext* context)
     const float windowCornerRadius =
         static_cast<float>(
             QuickNavScale(navigationSettings_.layout.cornerRadius));
-    ComPtr<ID2D1RoundedRectangleGeometry>
-        windowClipGeometry;
+    const auto windowClipGeometry = snowdesktop::smooth_corners::Geometry(
+        d2dFactory_.Get(), ToD2DRect(overlay), windowCornerRadius);
     bool windowClipPushed = false;
-    if (d2dFactory_ &&
-        SUCCEEDED(
-            d2dFactory_->
-                CreateRoundedRectangleGeometry(
-                    D2D1::RoundedRect(
-                        ToD2DRect(overlay),
-                        windowCornerRadius,
-                        windowCornerRadius),
-                    &windowClipGeometry)) &&
-        windowClipGeometry)
+    if (windowClipGeometry)
     {
         ctx->PushLayer(
             D2D1::LayerParameters(

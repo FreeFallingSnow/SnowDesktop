@@ -37,7 +37,7 @@ bool KeepOrRestoreWidgetPanel(Compositor& compositor, const Widget& widget)
         return true;
     return compositor.AddPanel(widget.bounds,
         static_cast<float>(widget.backdropCornerRadius),
-        static_cast<float>(widget.backdropBlurRadius));
+        static_cast<float>(widget.backdropBlurRadius), 0, true);
 }
 
 // Call after the final panel collection, so a remove/add pair in one frame

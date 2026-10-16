@@ -1282,6 +1282,10 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     else if (taskbarStyle.backgroundPreset != kAppearancePresetCustom)
         ApplyAppearancePreset(taskbarStyle, taskbarStyle.backgroundPreset);
     ReadBoolField(text, "followComponentAppearance", settings.followComponentAppearance);
+    if (const auto* follow = gradientDocument.Find("followComponentCornerRadius"); follow && follow->IsBoolean())
+        settings.followComponentCornerRadius = follow->boolean;
+    if (const auto* radius = gradientDocument.Find("cornerRadius"); radius && radius->IsNumber())
+        settings.cornerRadius = static_cast<float>(radius->number);
     if (ReadDoubleField(text, "dockAppearancePreset", value))
         settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));
     if (const auto* appearance = gradientDocument.Find("customAppearance"))
@@ -1411,6 +1415,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << materialFields.str();
     file << gradientFields.str();
     file << "  \"followComponentAppearance\": " << (settings.followComponentAppearance ? "true" : "false") << ",\n";
+    file << "  \"followComponentCornerRadius\": " << (settings.followComponentCornerRadius ? "true" : "false") << ",\n";
+    file << "  \"cornerRadius\": " << settings.cornerRadius << ",\n";
     file << "  \"dockAppearancePreset\": " << settings.appearancePreset << ",\n";
     file << "  \"customAppearance\": " << customAppearance << ",\n";
     file << "  \"dynamicTaskbarSchemaVersion\": 1\n";

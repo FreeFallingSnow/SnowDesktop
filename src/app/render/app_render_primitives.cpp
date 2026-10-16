@@ -27,8 +27,6 @@ void DesktopApp::DrawD2DRoundedRectangle(
         brushCacheContext_ = ctx;
     }
 
-    D2D1_ROUNDED_RECT rounded =
-        D2D1::RoundedRect(rect, radius, radius);
     if (fill.a > 0.0f)
     {
         std::uint64_t k = D2DColorBrushKey(fill);
@@ -42,7 +40,7 @@ void DesktopApp::DrawD2DRoundedRectangle(
                 return;
         }
         if (it != brushCache_.end() && it->second)
-            ctx->FillRoundedRectangle(rounded, it->second.Get());
+            snowdesktop::smooth_corners::Fill(ctx, rect, radius, it->second.Get());
     }
     if (stroke.a > 0.0f)
     {
@@ -57,7 +55,7 @@ void DesktopApp::DrawD2DRoundedRectangle(
                 return;
         }
         if (it != brushCache_.end() && it->second)
-            ctx->DrawRoundedRectangle(rounded, it->second.Get(), strokeWidth, nullptr);
+            snowdesktop::smooth_corners::Stroke(ctx, rect, radius, it->second.Get(), strokeWidth);
     }
 }
 
@@ -111,20 +109,20 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
                         frame,
                         renderingPersistentDockHost_->sourceRect),
                 radius, p.glassBlurRadius,
-                backdropOwnerKey);
+                backdropOwnerKey, true);
         }
         else
         {
             desktopBackdropCompositor_.AddPanel(
                 frame, radius, p.glassBlurRadius,
-                backdropOwnerKey);
+                backdropOwnerKey, true);
         }
     }
 
-    if (!snowdesktop::DrawPanelGradient(ctx, ToD2DRect(frame), radius, p.panelGradient) && fill.a > 0.0f)
+    if (!snowdesktop::DrawPanelGradient(ctx, ToD2DRect(frame), radius, p.panelGradient, 1.f, true) && fill.a > 0.0f)
     {
         if (auto* fillBrush = getBrush(fill))
-            ctx->FillRoundedRectangle(rr, fillBrush);
+            snowdesktop::smooth_corners::Fill(ctx, rr.rect, radius, fillBrush);
     }
     if (p.glassEnabled && p.acrylicEnabled)
     {
@@ -155,7 +153,7 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
                     rr.rect.right - inset, rr.rect.bottom - inset);
                 outline.radiusX = outline.radiusY = std::max(0.0f, radius - inset);
             }
-            ctx->DrawRoundedRectangle(outline, strokeBrush, strokeWidth, nullptr);
+            snowdesktop::smooth_corners::Stroke(ctx, outline.rect, outline.radiusX, strokeBrush, strokeWidth);
         }
     }
     if (!selected)
@@ -243,8 +241,7 @@ void DesktopApp::DrawAcrylicNoise(ID2D1DeviceContext* ctx, RECT frame,
         found->second->SetTransform(D2D1::Matrix3x2F::Translation(
             -static_cast<float>(screenOrigin.x),
             -static_cast<float>(screenOrigin.y)));
-        ctx->FillRoundedRectangle(D2D1::RoundedRect(
-            ToD2DRect(frame), radius, radius), found->second.Get());
+        snowdesktop::smooth_corners::Fill(ctx, ToD2DRect(frame), radius, found->second.Get());
     }
 }
 

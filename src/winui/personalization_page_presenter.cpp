@@ -65,6 +65,7 @@ struct ContinuousControl
     muxc::TextBlock unit{nullptr};
     muxc::Button reset{nullptr};
     float PersonalizationSettings::* member = nullptr;
+    float DockSettings::* dockMember = nullptr;
     double scale = 1.0;
     double defaultValue = std::numeric_limits<double>::quiet_NaN();
     bool dirty = false;
@@ -212,6 +213,11 @@ struct PersonalizationPagePresenter::Impl
     muxc::TextBlock collectionThemeLinkTitle, collectionThemeLinkDescription;
     muxc::TextBlock collectionRelatedTitle;
     SettingRow dockAppearanceRow;
+    muxc::Border dockCornerCard;
+    muxc::ToggleSwitch dockFollowCornerRadius;
+    SettingRow dockFollowCornerRadiusRow;
+    ContinuousControl dockCornerRadius;
+    winrt::event_token dockFollowCornerRadiusToken{};
     winrt::event_token dockAppearanceToken{}, statusBarLinkToken{}, taskbarLinkToken{}, dockLinkToken{}, quickLinkToken{};
     winrt::event_token collectionFooterLinkToken{}, collectionThemeLinkToken{};
     PersonalizationSettings currentGlobalAppearance;
@@ -281,7 +287,7 @@ struct PersonalizationPagePresenter::Impl
     SettingRow contentThemeRow;
     SettingRow contextMenuRow;
 
-    std::array<ContinuousControl*, 15> continuousControls = {
+    std::array<ContinuousControl*, 16> continuousControls = {
         &widgetAlpha,
         &borderAlpha,
         &borderWidth,
@@ -290,6 +296,7 @@ struct PersonalizationPagePresenter::Impl
         &gradientEndAlpha,
         &blurRadius,
         &cornerRadius,
+        &dockCornerRadius,
         &barHeight,
         &categorizedTabHeight,
         &luaWidgetContentRowHeight,
@@ -611,6 +618,7 @@ struct PersonalizationPagePresenter::Impl
         presenter_controls::JoinSettingsSections(popupAppearanceContent);
         popupThemeCard.content.Children().Append(popupAppearanceContent);
         dockThemeRoot = muxc::StackPanel{};
+        dockThemeRoot.Spacing(8.0);
         dockThemeCard.content = muxc::StackPanel{};
         dockThemeCard.content.Spacing(0);
         muxc::Border dockThemeSurface;
@@ -638,6 +646,19 @@ struct PersonalizationPagePresenter::Impl
         dockThemeCard.content.Children().Append(dockAppearanceEditor->Content());
         dockThemeCard.content.Children().Append(dockThemes->SaveContent());
         presenter_controls::JoinSettingsSections(dockThemeCard.content);
+        muxc::StackPanel dockCornerRows;
+        presenter_controls::InitializeSettingsGroup(dockCornerCard, nullptr, dockCornerRows, cardStyle);
+        dockFollowCornerRadius.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        dockFollowCornerRadiusRow.Initialize(dockFollowCornerRadius);
+        dockFollowCornerRadiusRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        presenter_controls::StyleSettingsSubrow(dockFollowCornerRadiusRow.root, true, 0);
+        dockCornerRows.Children().Append(dockFollowCornerRadiusRow.root);
+        InitializeContinuousControl(dockCornerRadius, nullptr, 0.0, 28.0, 1.0, 1.0, DockSettings{}.cornerRadius);
+        dockCornerRadius.dockMember = &DockSettings::cornerRadius;
+        SetUnit(dockCornerRadius, L"cu");
+        presenter_controls::StyleSettingsSubrow(dockCornerRadius.row.root, false, 16.0);
+        dockCornerRows.Children().Append(dockCornerRadius.row.root);
+        dockThemeRoot.Children().Append(dockCornerCard);
         InitializeCard(fontCard, cardStyle, widgetLayoutRoot);
         fontPicker.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         fontPicker.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
@@ -1103,6 +1124,14 @@ struct PersonalizationPagePresenter::Impl
                     index > 0 ? kPresetIds[index - 1] : settings.appearancePreset, global);
             });
         });
+        dockFollowCornerRadiusToken = dockFollowCornerRadius.Toggled([this](const auto&, const auto&) {
+            if (!CanEmit()) return;
+            const bool follow = dockFollowCornerRadius.IsOn();
+            Commit(dockCornerRadius);
+            EmitDockAppearance(SettingsUpdateMode::PreviewAndCommit, [follow](auto& settings) {
+                settings.followComponentCornerRadius = follow;
+            });
+        });
         dockLinkToken = dockLink.Click([this](const auto&, const auto&) {
             if (CanEmit() && actions.navigate) actions.navigate(SettingsRoute::ForPage(SettingsPage::Dock, "personalization.dockAppearance"));
         });
@@ -1314,11 +1343,7 @@ struct PersonalizationPagePresenter::Impl
                     control.dirty = false;
                     const float value = static_cast<float>(
                         control.defaultValue * control.scale);
-                    const auto member = control.member;
-                    Emit(SettingsUpdateMode::PreviewAndCommit,
-                        [member, value](PersonalizationSettings& settings) {
-                            settings.*member = value;
-                        });
+                    EmitContinuous(control, SettingsUpdateMode::PreviewAndCommit, value);
                 });
         }
     }
@@ -1338,11 +1363,7 @@ struct PersonalizationPagePresenter::Impl
         if (!control.dirty || !CanEmit())
             return;
         const float value = static_cast<float>(uiValue * control.scale);
-        const auto member = control.member;
-        Emit(SettingsUpdateMode::Preview,
-            [member, value](PersonalizationSettings& settings) {
-                settings.*member = value;
-            });
+        EmitContinuous(control, SettingsUpdateMode::Preview, value);
     }
 
     void Commit(ContinuousControl& control)
@@ -1355,19 +1376,22 @@ struct PersonalizationPagePresenter::Impl
         control.dirty = false;
         const float value = static_cast<float>(
             control.slider.Value() * control.scale);
-        const auto member = control.member;
-        Emit(SettingsUpdateMode::PreviewAndCommit,
-            [member, value](PersonalizationSettings& settings) {
-                settings.*member = value;
-            });
+        EmitContinuous(control, SettingsUpdateMode::PreviewAndCommit, value);
+    }
+
+    void EmitContinuous(ContinuousControl& control, SettingsUpdateMode mode, float value)
+    {
+        if (const auto dockMember = control.dockMember)
+            EmitDockAppearance(mode, [dockMember, value](auto& settings) { settings.*dockMember = value; });
+        else
+            Emit(mode, [member = control.member, value](auto& settings) { settings.*member = value; });
     }
 
     void PatchContinuous(
         ContinuousControl& control,
-        const PersonalizationSettings& settings)
+        double rawValue)
     {
-        const double value = static_cast<double>(settings.*control.member) /
-            control.scale;
+        const double value = rawValue / control.scale;
         const double clamped = QuantizeNumericValue(value,
             control.slider.Minimum(), control.slider.Maximum(),
             control.slider.StepFrequency());
@@ -1401,7 +1425,7 @@ struct PersonalizationPagePresenter::Impl
         PatchColor(pinBorderColor, settings);
         pinBorderEnabled.IsOn(settings.windowPinBorderEnabled);
         for (ContinuousControl* control : continuousControls)
-            PatchContinuous(*control, settings);
+            if (control->member) PatchContinuous(*control, settings.*control->member);
         panelGradientEnabled = settings.panelGradient.enabled;
         panelGradientEditor->SetValue(settings.panelGradient);
         gradientToggle.IsOn(settings.gradientEndA > 0.001f);
@@ -1713,6 +1737,9 @@ struct PersonalizationPagePresenter::Impl
         quickLinkDescription.Text(L("appearance.openQuickNavigation", L"Open quick navigation appearance"));
         muxa::AutomationProperties::SetName(quickLink, quickLinkDescription.Text());
         dockAppearanceRow.SetText(L("app.settings.theme", L"Theme"));
+        dockFollowCornerRadiusRow.SetText(L("largeIcon.followComponentRadius", L"Follow component corner radius"));
+        muxa::AutomationProperties::SetName(dockFollowCornerRadius, dockFollowCornerRadiusRow.label.Text());
+        SetContinuousText(dockCornerRadius, "app.settings.corner_radius", L"Corner Radius");
         ReplaceComboItems(dockAppearanceCombo, {{"app.settings.taskbar_follow_global", L"Follow global theme"},
             {"app.settings.dark", L"Dark"}, {"app.settings.light", L"Light"},
             {"app.settings.dark_glass", L"Dark glass"}, {"app.settings.light_glass", L"Light glass"},
@@ -1924,6 +1951,8 @@ struct PersonalizationPagePresenter::Impl
             }
         }
         dockAppearanceHost.IsEnabled(snapshot.values.general.dockEnabled);
+        dockFollowCornerRadiusRow.SetEnabled(snapshot.values.general.dockEnabled);
+        dockCornerRadius.row.SetEnabled(snapshot.values.general.dockEnabled);
         currentGlobalAppearance = snapshot.values.personalization;
         if (personalizationChanged)
         {
@@ -1938,7 +1967,7 @@ struct PersonalizationPagePresenter::Impl
             PatchGeneral(snapshot.values.general);
             generalRevision = snapshot.domainRevisions.general;
         }
-        if (dockChanged)
+        if (dockChanged || personalizationChanged)
         {
             const auto& dock = snapshot.values.dock;
             const auto found = std::find(kPresetIds.begin(), kPresetIds.end(), dock.appearancePreset);
@@ -1947,6 +1976,10 @@ struct PersonalizationPagePresenter::Impl
             dockAppearanceEditor->SetValue(ResolveDockAppearance(dock, currentGlobalAppearance), newGeneration);
             dockAppearanceEditor->Content().Visibility(!dock.followComponentAppearance && dock.appearancePreset == kAppearancePresetCustom ? mux::Visibility::Visible : mux::Visibility::Collapsed);
             dockThemes->SaveContent().Visibility(dockAppearanceEditor->Content().Visibility());
+            dockFollowCornerRadius.IsOn(dock.followComponentCornerRadius);
+            PatchContinuous(dockCornerRadius, dock.cornerRadius);
+            dockCornerRadius.row.root.Visibility(dock.followComponentCornerRadius
+                ? mux::Visibility::Collapsed : mux::Visibility::Visible);
             dockRevision = snapshot.domainRevisions.dock;
         }
         if (navigationChanged || generalChanged || personalizationChanged)
@@ -2027,6 +2060,13 @@ struct PersonalizationPagePresenter::Impl
         }
         if (id == "personalization.tooltipFontSize") return tooltipFontSizeSlider;
         if (id == "personalization.dockAppearance") return dockAppearanceCombo;
+        if (id == "dock.followComponentCornerRadius") return dockFollowCornerRadius;
+        if (id == "dock.cornerRadius")
+        {
+            if (dockFollowCornerRadius.IsOn())
+                return prerequisiteTarget(dockFollowCornerRadius, "disable", dockFollowCornerRadiusRow.label.Text().c_str());
+            return dockCornerRadius.slider;
+        }
         if (id == "personalization.statusBarTheme") return statusBarLink;
         if (id == "personalization.taskbar") return taskbarLink;
         if (id == "personalization.backgroundColor")
@@ -2183,6 +2223,7 @@ struct PersonalizationPagePresenter::Impl
         tooltipFontSizeSlider.ValueChanged(tooltipFontSizeSliderToken);
         tooltipFontSizeReset.Click(tooltipFontSizeResetToken);
         popupCopyComponent.Click(popupCopyComponentToken);
+        dockFollowCornerRadius.Toggled(dockFollowCornerRadiusToken);
         dockAppearanceCombo.SelectionChanged(dockAppearanceToken); statusBarLink.Click(statusBarLinkToken); taskbarLink.Click(taskbarLinkToken); dockLink.Click(dockLinkToken); quickLink.Click(quickLinkToken);
         collectionFooterLink.Click(collectionFooterLinkToken);
         collectionThemeLink.Click(collectionThemeLinkToken);

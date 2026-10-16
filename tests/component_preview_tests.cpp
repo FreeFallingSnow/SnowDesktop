@@ -26,8 +26,55 @@ void Expect(bool condition, const char* message)
     std::exit(1);
 }
 
+void TestSmoothCornerGeometry()
+{
+    using namespace snowdesktop::smooth_corners;
+    Microsoft::WRL::ComPtr<ID2D1Factory> factory;
+    Expect(SUCCEEDED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, factory.GetAddressOf())),
+        "create smooth corner geometry factory");
+    const auto frame = D2D1::RectF(0, 0, 480, 320);
+    const auto path = Geometry(factory.Get(), frame, 80);
+    Expect(static_cast<bool>(path), "smooth panel geometry is available");
+    const auto contains = [&](ID2D1Geometry* geometry, float x, float y) {
+        BOOL inside = FALSE;
+        Expect(SUCCEEDED(geometry->FillContainsPoint({x, y}, nullptr, .01f, &inside)),
+            "query actual panel geometry");
+        return inside != FALSE;
+    };
+    Microsoft::WRL::ComPtr<ID2D1RoundedRectangleGeometry> circular;
+    Expect(SUCCEEDED(factory->CreateRoundedRectangleGeometry(D2D1::RoundedRect(frame, 80, 80), &circular)),
+        "create circular negative control");
+    Expect(contains(circular.Get(), 70, 1) && !contains(path.Get(), 70, 1),
+        "continuous corner ramps must replace the abrupt circular tangent");
+    const float equivalentCut = 80.f * (1.f - std::sqrt(.5f));
+    Expect(!contains(path.Get(), equivalentCut-.2f, equivalentCut-.2f) &&
+        contains(path.Get(), equivalentCut+.2f, equivalentCut+.2f),
+        "existing radius values retain the exact 45-degree circular cut");
+    const Distance distance(480, 320, 80);
+    for (const auto point : {D2D1::Point2F(70, 1), D2D1::Point2F(24, 24),
+            D2D1::Point2F(1, 160), D2D1::Point2F(479, 160), D2D1::Point2F(460, 310)})
+        Expect((distance.At(point.x, point.y) <= 0) == contains(path.Get(), point.x, point.y),
+            "rim distances and real content clipping agree on inside and outside");
+    Expect(std::abs(distance.At(equivalentCut, equivalentCut)) < .06f,
+        "glass rim stays on the equivalent 45-degree contour");
+    const Corner corner(80, 160);
+    const float handle = std::hypot(corner.c, corner.d);
+    const float curvature = 2.f*corner.b*corner.d/(3.f*handle*handle*handle);
+    Expect(std::abs(curvature - 1.f/80.f) < .00001f && corner.extent > 80.f,
+        "ramp curvature joins the middle arc continuously while extending the straight-edge transition");
+    for (const auto bounds : {D2D1::RectF(0, 0, 32, 32), D2D1::RectF(13, 7, 613, 47)})
+        for (const float radius : {0.f, 12.f, 28.f, 1000.f})
+        {
+            const auto boundedGeometry = Geometry(factory.Get(), bounds, radius);
+            const float x = (bounds.left+bounds.right)*.5f, y = (bounds.top+bounds.bottom)*.5f;
+            Expect(boundedGeometry && contains(boundedGeometry.Get(), x, y) && !contains(boundedGeometry.Get(), bounds.left-1, y),
+                "square, thin Dock, zero radius and oversized radii remain bounded and filled");
+        }
+}
+
 void TestWidgetClipFactoryReplacement()
 {
+    TestSmoothCornerGeometry();
     // Issue #11: the real widget cache survives recovery. Replacing its factory
     // with unchanged bounds used to return geometry from the previous factory.
     using Microsoft::WRL::ComPtr;
@@ -67,7 +114,7 @@ void TestWidgetClipFactoryReplacement()
             }
             return result;
         };
-        ComPtr<ID2D1RoundedRectangleGeometry> cached;
+        ComPtr<ID2D1Geometry> cached;
         RECT cachedFrame{};
         float cachedRadius = 0;
         const RECT frame{8, 8, 56, 56};

@@ -1166,6 +1166,7 @@ int main(int argc, char** argv)
             ResolveSurfaceTheme(following, transparentGlass, 0, false).backgroundPreset == kAppearancePresetAcrylicDark,
             "popup and quick navigation follow transparent global glass with dark acrylic");
         DockSettings dock;
+        Check(dock.followComponentCornerRadius, "existing Dock settings continue following component radius by default");
         dock.followComponentAppearance = false;
         for (int preset : {0, 1, 6, 7, 10, 11, kAppearancePresetGlassTransparent})
         {
@@ -1179,6 +1180,28 @@ int main(int argc, char** argv)
         Check(ResolveDockAppearance(dock, global) == global, "Dock follow mode uses the complete component appearance");
         dock.appearancePreset = 123; NormalizeDockSettings(dock);
         Check(dock.appearancePreset == kAppearancePresetCustom, "unsupported Dock preset falls back to retained custom settings");
+        dock.cornerRadius = 23.f;
+        dock.followComponentCornerRadius = false;
+        auto radiusGlobal = global;
+        radiusGlobal.cornerRadius = 7.f;
+        Check(ResolveDockAppearance(dock, radiusGlobal).cornerRadius == 23.f,
+            "independent Dock radius overrides radius even while the theme follows components");
+        SelectDockAppearance(dock, false, kAppearancePresetLight, radiusGlobal);
+        Check(ResolveDockAppearance(dock, radiusGlobal).cornerRadius == 23.f,
+            "changing a Dock theme leaves the independent radius unchanged");
+        dock.followComponentCornerRadius = true;
+        Check(ResolveDockAppearance(dock, radiusGlobal).cornerRadius == 7.f && dock.cornerRadius == 23.f,
+            "reenabling radius inheritance preserves the saved independent radius");
+        radiusGlobal.cornerRadius = 18.f;
+        Check(ResolveDockAppearance(dock, radiusGlobal).cornerRadius == 18.f,
+            "inherited radius tracks subsequent component changes");
+        for (const float invalid : {-10.f, 50.f, std::numeric_limits<float>::quiet_NaN()})
+        {
+            dock.cornerRadius = invalid;
+            NormalizeDockSettings(dock);
+            Check(std::isfinite(dock.cornerRadius) && dock.cornerRadius >= 0.f && dock.cornerRadius <= 28.f,
+                "malformed independent radii never reach panel geometry");
+        }
         auto staleWidget = global;
         staleWidget.widgetAlpha = .17f;
         staleWidget.edgeLight.direction = 137.f;

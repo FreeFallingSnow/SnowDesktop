@@ -263,13 +263,13 @@ struct NativeTooltip::Impl
                 brush->SetColor(highContrast ? SystemColor(COLOR_INFOBK) : D2D1::ColorF(
                     appearance.widgetBgR, appearance.widgetBgG, appearance.widgetBgB, appearance.widgetAlpha));
                 if (highContrast || !DrawPanelGradient(context.Get(), shape.rect, radius, appearance.panelGradient))
-                    context->FillRoundedRectangle(shape, brush.Get());
+                    smooth_corners::Fill(context.Get(), shape.rect, radius, brush.Get());
                 brush->SetColor(highContrast ? SystemColor(COLOR_INFOTEXT) : D2D1::ColorF(
                     appearance.widgetBorderR, appearance.widgetBorderG, appearance.widgetBorderB, appearance.widgetBorderAlpha));
                 const float halfStroke = stroke / 2;
-                context->DrawRoundedRectangle(D2D1::RoundedRect(D2D1::RectF(panel.left + halfStroke,
+                smooth_corners::Stroke(context.Get(), D2D1::RectF(panel.left + halfStroke,
                     panel.top + halfStroke, panel.right - halfStroke, panel.bottom - halfStroke),
-                    std::max(0.f, radius - halfStroke), std::max(0.f, radius - halfStroke)), brush.Get(), stroke);
+                    std::max(0.f, radius - halfStroke), brush.Get(), stroke);
             }
             // Background callbacks share application brushes and can alter the
             // context. Restore the tooltip text contract before drawing it.

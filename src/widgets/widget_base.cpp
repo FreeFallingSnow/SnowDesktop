@@ -2637,7 +2637,7 @@ void WidgetContainer::DrawScrollbar(ID2D1DeviceContext* context, bool hovered) c
 
 // ── Cached clip geometry ─────────────────────────────────────
 
-ID2D1RoundedRectangleGeometry* WidgetContainer::GetCachedClipGeometry(
+ID2D1Geometry* WidgetContainer::GetCachedClipGeometry(
     ID2D1Factory1* factory, const RECT& frame, float radius)
 {
     return snowdesktop::ResolveWidgetClipGeometry(factory, frame, radius,
@@ -2730,7 +2730,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     if (!IsCollapsed())
     {
         auto* factory = app_->GetD2DFactory();
-        ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
+        ID2D1Geometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
         if (clipGeo)
             context->PushLayer(D2D1::LayerParameters(
                 D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
@@ -2778,7 +2778,7 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                     stops.Get(), &brush)) && brush)
                 {
                     auto* factory = app_->GetD2DFactory();
-                    ID2D1RoundedRectangleGeometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
+                    ID2D1Geometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
                     bool pushed = false;
                     if (clipGeo)
                     {

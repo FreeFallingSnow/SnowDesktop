@@ -411,7 +411,7 @@ bool DesktopApp::FlushPendingDesktopWidgetComposition()
                     desktopBackdropCompositor_.AddPanel(
                         bounds,
                         static_cast<float>(backdropCornerRadius),
-                        static_cast<float>(backdropBlurRadius));
+                        static_cast<float>(backdropBlurRadius), 0, true);
             }
             item.backdropCornerRadius = backdropCornerRadius;
             item.backdropBlurRadius = backdropBlurRadius;

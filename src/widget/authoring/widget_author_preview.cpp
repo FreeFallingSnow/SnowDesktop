@@ -442,8 +442,8 @@ void DrawHostBackground(ID2D1DeviceContext* context,
             static_cast<float>(bounds.right),
             static_cast<float>(bounds.bottom)), radius, radius);
     if (drawMaterial && !DrawPanelGradient(context, rounded.rect, radius,
-            resolved.material.panelGradient) && theme.alpha > 0.0f)
-        context->FillRoundedRectangle(rounded, fill.Get());
+            resolved.material.panelGradient, 1.f, true) && theme.alpha > 0.0f)
+        smooth_corners::Fill(context, rounded.rect, radius, fill.Get());
     if (drawOverlay && resolved.material.glassEnabled &&
         resolved.material.acrylicEnabled)
     {
@@ -465,9 +465,7 @@ void DrawHostBackground(ID2D1DeviceContext* context,
         {
             const float borderRadius = std::max(
                 0.0f, radius - borderInset);
-            context->DrawRoundedRectangle(
-                D2D1::RoundedRect(borderBounds,
-                    borderRadius, borderRadius), border.Get(), strokeWidth);
+            smooth_corners::Stroke(context, borderBounds, borderRadius, border.Get(), strokeWidth);
         }
     }
 }
@@ -493,7 +491,7 @@ void DrawHostEdgeHighlight(ID2D1DeviceContext* context,
     (void)snowdesktop::widget_preview::DrawEdgeHighlight(
         context, bounds, radius, color(theme.bg, theme.alpha), edgeWidth,
         resolved.material.widgetEdgeHighlightStrength,
-        resolved.material.edgeLight);
+        resolved.material.edgeLight, snowdesktop::widget_preview::HighlightEdge::All, true);
 }
 
 std::string FirstValidationError(

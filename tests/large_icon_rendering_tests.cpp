@@ -138,6 +138,17 @@ void Save(const char* directory, const char* name, const std::vector<unsigned>& 
 
 void CheckShapes(Canvas& canvas, const char* outputDirectory)
 {
+    {
+        snowdesktop::LargeIconConfig smooth;
+        smooth.backgroundStyle = -2; smooth.radius = 80; smooth.radiusPercent = -1;
+        snowdesktop::large_icon_renderer::View card;
+        card.frame = {40, 40, 440, 320};
+        auto cover = canvas.Image(800, 560); card.bitmap = cover.Get();
+        const auto pixels = canvas.Draw(smooth, card);
+        Check((Pixel(pixels, 120, 40) >> 24) < 220 && Red(Pixel(pixels, 120, 44)),
+            "filled large icons use the continuous tangent ramp instead of a circular image clip");
+        Save(outputDirectory, "smooth-large-icon.png", pixels);
+    }
     // Exercise the actual card renderer on unequal grid dimensions. These
     // pixels catch ellipse stretching, lost rounding, and rectangular material
     // or effect layers leaking outside a nonrectangular silhouette.

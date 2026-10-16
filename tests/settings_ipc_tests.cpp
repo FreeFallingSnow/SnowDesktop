@@ -153,11 +153,17 @@ void TestCodec()
     dockSpace.mergedBarHeight = 64;
     dockSpace.thicknessScale = 2.f;
     dockSpace.mergedIconScale = 0.75f;
+    dockSpace.followComponentCornerRadius = false;
+    dockSpace.cornerRadius = 23.f;
     Check(Unpack<DockSettings>(Pack(dockSpace)) == dockSpace,
         "system Dock space reservation must cross the settings-process boundary");
     for (const bool enabled : {true, false})
     {
         dockSpace.singleClickLaunchItems = enabled;
+        dockSpace.followComponentCornerRadius = enabled;
+        const auto restoredDock = Unpack<DockSettings>(Pack(dockSpace));
+        Check(restoredDock.followComponentCornerRadius == enabled && restoredDock.cornerRadius == 23.f,
+            "Dock radius inheritance and its retained independent value reach the host through settings IPC");
         Check(Unpack<DockSettings>(Pack(dockSpace)).singleClickLaunchItems == enabled,
             "enabling and disabling single-click launch must reach the desktop host through settings IPC");
     }
