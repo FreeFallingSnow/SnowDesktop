@@ -377,7 +377,7 @@ void Collection::DrawThumbnail(ID2D1DeviceContext* context,
         if (bmp)
         {
             app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
-                reinterpret_cast<std::uintptr_t>(&item), false);
+                reinterpret_cast<std::uintptr_t>(&item));
         }
         else
         {

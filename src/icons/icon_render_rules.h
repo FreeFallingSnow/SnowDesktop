@@ -58,8 +58,8 @@ struct FittedSize
     int height = 0;
 };
 
-/** Fit a bitmap inside a destination box without changing its aspect ratio or upscaling it. */
-inline FittedSize FitWithoutUpscaling(
+/** Honor the requested icon size while preserving the bitmap's aspect ratio. */
+inline FittedSize FitToBounds(
     int sourceWidth, int sourceHeight,
     int destinationWidth, int destinationHeight)
 {
@@ -67,12 +67,11 @@ inline FittedSize FitWithoutUpscaling(
         destinationWidth <= 0 || destinationHeight <= 0)
         return {};
 
-    const double scale = std::min({
-        1.0,
+    const double scale = std::min(
         static_cast<double>(destinationWidth) /
             static_cast<double>(sourceWidth),
         static_cast<double>(destinationHeight) /
-            static_cast<double>(sourceHeight) });
+            static_cast<double>(sourceHeight));
     return {
         std::max(1, static_cast<int>(std::lround(sourceWidth * scale))),
         std::max(1, static_cast<int>(std::lround(sourceHeight * scale)))

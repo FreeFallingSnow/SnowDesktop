@@ -1,4 +1,5 @@
 #include "icons/large_icon_renderer.h"
+#include "icons/icon_bitmap_renderer.h"
 #include "icons/icon_loading_placeholder.h"
 #include "ui/preview/preview_png_writer.h"
 #include "icons/large_icon_shape_geometry.h"
@@ -83,6 +84,10 @@ struct Canvas
             Check(snowdesktop::large_icon_renderer::DrawCard3D(device.Get(), fonts.Get(), config, view, *transform, card), "production 3D draw accepted");
         else snowdesktop::large_icon_renderer::DrawFrame(target.Get(), fonts.Get(), config, view);
         Require(target->EndDraw(), "production draw");
+        return ReadPixels();
+    }
+    std::vector<unsigned> ReadPixels()
+    {
         std::vector<unsigned> pixels(width * height);
         if (device)
         {
@@ -93,6 +98,19 @@ struct Canvas
         }
         else Require(surface->CopyPixels(nullptr, width * 4, width * height * 4, reinterpret_cast<BYTE*>(pixels.data())), "read rendered pixels");
         return pixels;
+    }
+    std::vector<unsigned> DrawBitmap(ID2D1Bitmap* bitmap, RECT frame,
+        bool preserveAspectRatio = true)
+    {
+        const auto source = bitmap->GetPixelSize();
+        const auto plan = snowdesktop::icon_bitmap_renderer::Prepare(
+            static_cast<int>(source.width), static_cast<int>(source.height),
+            frame, preserveAspectRatio);
+        target->BeginDraw();
+        target->Clear(D2D1::ColorF(0, 0.f));
+        snowdesktop::icon_bitmap_renderer::Draw(target.Get(), bitmap, plan);
+        Require(target->EndDraw(), "shared icon bitmap draw");
+        return ReadPixels();
     }
 };
 unsigned Pixel(const std::vector<unsigned>& image, int x, int y) { return image[static_cast<size_t>(y) * Canvas::width + x]; }
@@ -484,6 +502,65 @@ void CheckLoadingPlaceholder(Canvas& canvas, const char* outputDirectory)
     }
     Save(outputDirectory, "14-loading-size-comparison.png", comparison);
 }
+}
+
+int RunIconBitmapRenderingTests()
+{
+    const HRESULT apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    const int previousFailures = failures;
+    try
+    {
+        struct Fixture
+        {
+            int width, height;
+            RECT frame, expected;
+            const char* message;
+            bool preserveAspectRatio = true;
+        };
+        const Fixture fixtures[] = {
+            {16, 16, {20, 20, 76, 76}, {20, 20, 76, 76},
+                "a 16px navigation source actually paints the complete 56px icon frame"},
+            {32, 32, {20, 20, 74, 74}, {20, 20, 74, 74},
+                "a navigation list icon honors its 54px frame at 150 percent DPI"},
+            {64, 64, {20, 20, 102, 102}, {20, 20, 102, 102},
+                "Dock 128 percent hover paints 82px instead of retaining the 64px source limit"},
+            {32, 16, {20, 20, 116, 116}, {20, 44, 116, 92},
+                "landscape collection previews paint at 2:1 without being stretched into squares"},
+            {16, 32, {20, 20, 116, 116}, {44, 20, 92, 116},
+                "portrait collection previews paint at 1:2 without being stretched into squares"},
+            {16, 16, {20, 20, 56, 48}, {24, 20, 52, 48},
+                "rectangular list cells center a proportional icon inside their short dimension"},
+            {16, 32, {20, 20, 76, 76}, {20, 20, 76, 76},
+                "generated artwork explicitly requesting stretch still fills its rectangle", false},
+        };
+        // Exercise the production geometry and bitmap renderer, then measure
+        // opaque pixels. A source-size cap in either layer fails these bounds.
+        for (const bool deviceContext : {false, true})
+        {
+            Canvas canvas(deviceContext);
+            for (const auto& fixture : fixtures)
+            {
+                const auto source = canvas.Image(fixture.width, fixture.height);
+                const auto pixels = canvas.DrawBitmap(source.Get(), fixture.frame,
+                    fixture.preserveAspectRatio);
+                const auto actual = RedBounds(pixels);
+                Check(EqualRect(&actual, &fixture.expected) != FALSE, fixture.message);
+            }
+            const auto transparent = canvas.Image(64, 64, true);
+            const auto pixels = canvas.DrawBitmap(transparent.Get(), {20, 20, 116, 116});
+            Check(Red(Pixel(pixels, 68, 68)) && (Pixel(pixels, 28, 28) >> 24) == 0,
+                "shared bitmap fitting preserves artwork transparency instead of cropping its margins");
+        }
+    }
+    catch (const std::exception& error)
+    {
+        ++failures;
+        std::cerr << error.what() << '\n';
+    }
+    if (SUCCEEDED(apartment)) CoUninitialize();
+    const int addedFailures = failures - previousFailures;
+    if (addedFailures == 0) std::cout << "Shared icon bitmap rendering tests passed\n";
+    return addedFailures == 0 ? 0 : 1;
 }
 
 int RunLargeIconRenderingTests(const char* outputDirectory)

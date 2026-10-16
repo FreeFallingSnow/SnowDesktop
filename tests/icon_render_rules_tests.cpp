@@ -1,7 +1,7 @@
 #include "../src/icons/large_icon_preset_rules.h"
 #include "../src/taskbar_hook/taskbar_hook_protocol.h"
 #include "icons/icon_render_rules.h"
-#include "dock/dock_icon_render_rules.h"
+#include "icons/icon_bitmap_renderer.h"
 #include "icons/large_icon_render_rules.h"
 #include "icons/large_icon_motion.h"
 #include "icons/icon_bitmap_pixels.h"
@@ -20,6 +20,7 @@ namespace rules = snowdesktop::icon_render_rules;
 int RunLargeIconAssetTests();
 int RunLargeIconShellAssetTests();
 int RunLargeIconRenderingTests(const char* outputDirectory);
+int RunIconBitmapRenderingTests();
 int RunLargeIconSourceProbe(const char* shortcutPath, const char* outputDirectory);
 
 namespace
@@ -34,7 +35,7 @@ void Check(bool condition, const char* message)
     std::cerr << "FAILED: " << message << '\n';
 }
 #include "icon_hbitmap_cases.h"
-#include "dock/dock_icon_render_cases.h"
+#include "icons/icon_bitmap_sizing_cases.h"
 } // namespace
 
 int main(int argc, char** argv)
@@ -42,9 +43,10 @@ int main(int argc, char** argv)
     if (argc == 4 && std::string_view(argv[1]) == "--source-probe") return RunLargeIconSourceProbe(argv[2], argv[3]);
     if (argc == 2 && std::string_view(argv[1]) == "--large-icon-shell") return RunLargeIconShellAssetTests();
     if (argc >= 2 && std::string_view(argv[1]) == "--large-icon-rendering") return RunLargeIconRenderingTests(argc == 3 ? argv[2] : nullptr);
+    if (argc == 2 && std::string_view(argv[1]) == "--icon-bitmap-rendering") return RunIconBitmapRenderingTests();
     failures += RunLargeIconAssetTests();
     TestIconBitmapRowOrder();
-    CheckDockIconBitmapScaling();
+    CheckIconBitmapSizing();
     using namespace snowdesktop::large_icon_render_rules;
     snowdesktop::LargeIconConfig config;
     {
@@ -529,13 +531,13 @@ int main(int argc, char** argv)
     Check(!rules::IsMediaThumbnail(false, false),
         "ordinary icons are not classified as media thumbnails");
 
-    const auto downscaled = rules::FitWithoutUpscaling(96, 96, 65, 65);
+    const auto downscaled = rules::FitToBounds(96, 96, 65, 65);
     Check(downscaled.width == 65 && downscaled.height == 65,
         "large square sources fit the requested target exactly");
-    const auto noUpscale = rules::FitWithoutUpscaling(64, 64, 96, 96);
-    Check(noUpscale.width == 64 && noUpscale.height == 64,
-        "undersized sources are never enlarged");
-    const auto aspectFit = rules::FitWithoutUpscaling(96, 64, 65, 65);
+    const auto upscaled = rules::FitToBounds(64, 64, 96, 96);
+    Check(upscaled.width == 96 && upscaled.height == 96,
+        "low-resolution icon sources fill the requested layout size");
+    const auto aspectFit = rules::FitToBounds(96, 64, 65, 65);
     Check(aspectFit.width == 65 && aspectFit.height == 43,
         "non-square thumbnails keep their aspect ratio");
 

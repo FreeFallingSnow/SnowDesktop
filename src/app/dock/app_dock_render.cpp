@@ -1,20 +1,9 @@
 #include "app/app.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "dock_platform_helpers.h"
-#include "dock/dock_icon_render_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 
 // Dock controls, entries and running-application rendering.
-
-namespace
-{
-RECT DockBitmapDestination(ID2D1Bitmap* bitmap, RECT frame)
-{
-    const auto source = bitmap->GetPixelSize();
-    return snowdesktop::dock_icon_render_rules::BitmapDestination(
-        frame, static_cast<int>(source.width), static_cast<int>(source.height));
-}
-} // namespace
 
 bool DesktopApp::DrawDockControlBackground(
     ID2D1DeviceContext* ctx, RECT rect, int state, bool forceWhiteStyle, std::uintptr_t ownerKey)
@@ -217,8 +206,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 item.iconBitmap,
                 !recycleBin &&
                     ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
-            DrawIconBitmap(ctx, bitmap, DockBitmapDestination(bitmap, bitmapTarget), alpha,
-                reinterpret_cast<std::uintptr_t>(&item), false);
+            DrawIconBitmap(ctx, bitmap, bitmapTarget, alpha,
+                reinterpret_cast<std::uintptr_t>(&item));
         else
             DrawPlaceholderIcon(ctx, item.sysIconIndex, bitmapTarget, alpha, !recycleBin);
         if (!useDemoIdentity &&
@@ -399,8 +388,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 }, hwnd_, kBackgroundShellReadyMessage);
         }
         if (local.value && local.value->Get())
-            DrawIconBitmap(ctx, local.value->Get(), DockBitmapDestination(local.value->Get(), iconRect),
-                1.0f, reinterpret_cast<std::uintptr_t>(&entry), false);
+            DrawIconBitmap(ctx, local.value->Get(), iconRect,
+                1.0f, reinterpret_cast<std::uintptr_t>(&entry));
         else if (local.fresh)
             DrawPrivacyFaIcon(ctx, iconRect, true);
         else
@@ -463,7 +452,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         {
             if (auto* bitmap = GetOrCreateD2DBitmap(ctx, preview.folder->iconBitmap,
                     ShouldBeautifyIconBitmap(preview.folder->iconIsMediaThumbnail)))
-                DrawIconBitmap(ctx, bitmap, DockBitmapDestination(bitmap, cell), 1.0f, 0, false);
+                DrawIconBitmap(ctx, bitmap, cell);
         }
         else if (preview.folder)
             DrawPlaceholderIcon(ctx, preview.folder->sysIconIndex, cell, 1.0f);
@@ -540,8 +529,8 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
         DrawDemoIdentityIcon(ctx, identity, iconRect);
     }
     else if (ID2D1Bitmap1* bitmap = GetOrCreateD2DBitmap(app.iconBitmap))
-        DrawIconBitmap(ctx, bitmap, DockBitmapDestination(bitmap, iconRect),
-            presence, reinterpret_cast<std::uintptr_t>(&app), false);
+        DrawIconBitmap(ctx, bitmap, iconRect,
+            presence, reinterpret_cast<std::uintptr_t>(&app));
     else
         DrawPlaceholderIcon(ctx, -1, iconRect, presence, true);
     if (dockWindowAttention_.HasAny(app.window, app.trackedWindows))
