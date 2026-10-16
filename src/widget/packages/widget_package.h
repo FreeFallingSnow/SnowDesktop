@@ -237,6 +237,9 @@ struct InstalledPackage
     // management UI.
     bool selected = false;
     bool active = true;
+    // Files discovered under installed/ without a registry owner are inactive
+    // recovery candidates, not a locally installed source reservation.
+    bool unregistered = false;
 };
 
 // Private host registry metadata, independent of the public package manifest.

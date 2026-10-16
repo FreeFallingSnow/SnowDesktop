@@ -32213,6 +32213,21 @@ void WidgetEngine::PrepareSteamWorkshopSubscriptionArtifacts(
     trace("phase=prepare.begin registered=" + std::to_string(installed.size()) +
         " actions=" + std::to_string(plan.actions.size()) +
         " conflicts=" + std::to_string(plan.conflicts.size()));
+    for (const auto& package : installed)
+    {
+        if (std::none_of(snapshot.installable.begin(), snapshot.installable.end(),
+            [&](const auto& available) { return available.manifest.id == package.manifest.id; }))
+            continue;
+        trace("phase=registry.candidate package=" + package.manifest.id +
+            " version=" + package.manifest.version +
+            " provider=" + package.source.providerId +
+            " item=" + package.source.externalItemId +
+            " active=" + std::to_string(package.active) +
+            " builtin=" + std::to_string(package.builtin) +
+            " development=" + std::to_string(package.development) +
+            " unregistered=" + std::to_string(package.unregistered) +
+            " path=" + WideToUtf8(package.root.wstring()));
+    }
     for (const auto& conflict : plan.conflicts)
         trace("phase=plan.conflict error=" + conflict);
     if (plan.actions.empty())

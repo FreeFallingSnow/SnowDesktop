@@ -288,6 +288,9 @@ SteamWorkshopSyncPlan BuildSteamWorkshopSyncPlan(
             // must not prevent the subscribed Workshop version from being
             // installed and kept up to date in the background.
             if (package.development) continue;
+            // Inactive installed files without a registry owner must be
+            // recoverable through a fresh validated install, not reserve the ID.
+            if (package.unregistered && !package.builtin) continue;
             packageIdExists = true;
             if (package.source.providerId != "steam-workshop" ||
                 SteamPublishedFileId(package.source.externalItemId) !=

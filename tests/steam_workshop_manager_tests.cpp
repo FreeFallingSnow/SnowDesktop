@@ -1506,6 +1506,131 @@ void TestSteamLibraryDiscovery()
         "partially written library metadata reports an error and retains the fallback");
 }
 
+void TestUnregisteredWorkshopInstallRecovery()
+{
+    // Reproduce downloaded/installed files without packages.json ownership.
+    // Only filesystem roots are substituted; discovery, planning, installation,
+    // permission decisions and registry persistence use production code.
+    TemporaryDirectory temporary;
+    const auto makePaths = [](const std::filesystem::path& root) {
+        PackagePaths paths;
+        paths.builtin = root / L"builtin";
+        paths.installed = root / L"installed";
+        paths.development = root / L"dev";
+        paths.staging = root / L"staging";
+        paths.quarantine = root / L"quarantine";
+        paths.migrations = root / L"migrations";
+        paths.registry = root / L"packages.json";
+        return paths;
+    };
+    const auto read = [](const std::filesystem::path& path) {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), {});
+    };
+    const std::string id = "fe32b603-6fcf-4bc1-a4cf-367f06d42e17";
+    const auto source = temporary.path / L"source";
+    const auto archive = temporary.path / L"package.snowwidget";
+    std::filesystem::create_directory(source);
+    std::ofstream(source / L"widget.json") <<
+        R"({"schemaVersion":2,"apiVersion":2,"dataVersion":1,"id":"fe32b603-6fcf-4bc1-a4cf-367f06d42e17","slug":"recovery-test","version":"1.0.0","entry":"main.lua","permissions":["network.internet"],"name":"Recovery test"})";
+    const std::string trustedEntry = "return widget.define({})";
+    const std::string previousEntry = "-- preserved unregistered contents";
+    std::ofstream(source / L"main.lua") << trustedEntry;
+    const auto paths = makePaths(temporary.path / L"recovery");
+    const auto seedUnregistered = [&](const PackagePaths& packagePaths) {
+        const auto target = packagePaths.installed / std::wstring(id.begin(), id.end()) / L"1.0.0";
+        std::filesystem::create_directories(target.parent_path());
+        std::filesystem::copy(source, target, std::filesystem::copy_options::recursive);
+        std::ofstream(target / L"main.lua", std::ios::trunc) << previousEntry;
+        std::ofstream(target / L"retained.txt") << "preserve me";
+        return target;
+    };
+    const auto target = seedUnregistered(paths);
+    const auto storage = temporary.path / L"component-storage.json";
+    std::ofstream(storage) << "saved component state";
+    WidgetPackageManager manager(paths);
+    std::string error;
+    if (!manager.Initialize(error))
+    {
+        Check(false, "initialize a real unregistered installed directory");
+        return;
+    }
+    const auto discovered = manager.ListPackages();
+    Check(discovered.size() == 1 && discovered[0].unregistered &&
+        !discovered[0].active && !discovered[0].selected,
+        "unregistered files have no active or selected local source ownership");
+    PackageArtifact artifact;
+    ValidationReport report;
+    if (!manager.ExportDirectory(source, archive, artifact, report, error))
+    {
+        Check(false, "export the independently validated Workshop recovery payload");
+        return;
+    }
+    PackageDetails details;
+    report = manager.ValidateArchive(archive, &details.manifest);
+    details.source = {"steam-workshop", "3792642049@42"};
+    SteamWorkshopSubscriptionSnapshot snapshot;
+    snapshot.authoritative = true;
+    snapshot.subscribedPublishedFileIds = {"3792642049"};
+    snapshot.installable = {details};
+    const auto plan = BuildSteamWorkshopSyncPlan(discovered, snapshot);
+    Check(report.Ok() && plan.conflicts.empty() && plan.actions.size() == 1 &&
+        plan.actions[0].kind == SteamWorkshopSyncActionKind::Install,
+        "unregistered installed files cannot permanently block a current subscription");
+    InstalledPackage installed;
+    if (!manager.InstallArchive(archive, details.source, false, installed,
+            report, error, false, &details.manifest))
+    {
+        Check(false, "install and register a validated subscription over an unregistered version");
+        return;
+    }
+    Check(installed.active && installed.selected && !installed.unregistered &&
+        installed.source == details.source &&
+        installed.permissionState == PermissionDecisionState::Pending &&
+        installed.grantedPermissions.empty() && read(target / L"main.lua") == trustedEntry,
+        "recovery installs trusted contents and requests fresh permission consent");
+    bool preservedOriginal = false;
+    for (const auto& entry : std::filesystem::directory_iterator(paths.quarantine))
+        if (entry.is_directory() && read(entry.path() / L"main.lua") == previousEntry &&
+            read(entry.path() / L"retained.txt") == "preserve me")
+            preservedOriginal = true;
+    Check(preservedOriginal && read(storage) == "saved component state",
+        "successful recovery preserves the original tree and unrelated component storage");
+    WidgetPackageManager reopened(paths);
+    Check(reopened.Initialize(error) && reopened.ResolveSelected(id).has_value() &&
+        reopened.ResolveSelected(id)->source == details.source &&
+        BuildSteamWorkshopSyncPlan(reopened.ListPackages(), snapshot).actions.empty(),
+        "recovered Workshop ownership persists and the next synchronization is idle");
+
+    const auto localPaths = makePaths(temporary.path / L"registered-local");
+    WidgetPackageManager local(localPaths);
+    Check(local.Initialize(error) && local.InstallDirectory(source,
+        {"local-import", "retained-local"}, false, installed, report, error),
+        "register a legitimate local source before a matching Workshop subscription");
+    const auto localPlan = BuildSteamWorkshopSyncPlan(local.ListPackages(), snapshot);
+    error.clear();
+    Check(localPlan.actions.empty() && localPlan.conflicts.size() == 1 &&
+        !local.InstallArchive(archive, details.source, false, installed, report, error) &&
+        local.ResolveSelected(id).has_value() &&
+        local.ResolveSelected(id)->source.providerId == "local-import",
+        "recovery never takes ownership from a registered local installation");
+
+    const auto rollbackPaths = makePaths(temporary.path / L"rollback");
+    const auto rollbackTarget = seedUnregistered(rollbackPaths);
+    WidgetPackageManager rollback(rollbackPaths);
+    Check(rollback.Initialize(error), "initialize the recovery rollback scenario");
+    // Force a real atomic registry write failure after payload activation.
+    std::filesystem::create_directory(rollbackPaths.registry);
+    std::ofstream(rollbackPaths.registry / L"blocker") << "retained";
+    error.clear();
+    Check(!rollback.InstallArchive(archive, details.source, false, installed,
+        report, error, false, &details.manifest) && !error.empty() &&
+        read(rollbackTarget / L"main.lua") == previousEntry &&
+        read(rollbackTarget / L"retained.txt") == "preserve me" &&
+        !rollback.ResolveSelected(id).has_value(),
+        "a registry commit failure restores the original unregistered directory without activating it");
+}
+
 void TestPartialWorkshopSourceAndPackageMutations()
 {
     TemporaryDirectory temporary;
@@ -2095,6 +2220,7 @@ int wmain(int argc, wchar_t** argv)
     TestManagerLocalization();
     TestSteamSubscriptionSyncPlan();
     TestSteamLibraryDiscovery();
+    TestUnregisteredWorkshopInstallRecovery();
     TestPartialWorkshopSourceAndPackageMutations();
     TestSteamWorkshopLocalCache();
     TestProjectStore();

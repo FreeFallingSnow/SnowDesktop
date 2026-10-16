@@ -2710,6 +2710,7 @@ bool WidgetPackageManager::Refresh(std::string& error, bool persistDiscovery)
                 else
                 {
                     package.source = { "local", id };
+                    package.unregistered = true;
                     package.permissionState =
                         PermissionDecisionState::LegacyImplicit;
                     package.grantedPermissions =
@@ -3112,21 +3113,57 @@ bool WidgetPackageManager::CommitStagedPackage(
     const auto target = paths_.installed / Utf8ToWide(manifest.id) /
         Utf8ToWide(manifest.version);
     std::error_code ec;
+    std::filesystem::path unregisteredBackup;
     if (std::filesystem::exists(target, ec))
     {
-        error = "this package version is already installed";
-        return false;
+        if (existing != registry_.end())
+        {
+            error = "this package version is already installed";
+            return false;
+        }
+        // An interrupted/older installation can leave valid files without an
+        // owner. Install the freshly validated payload with fresh permissions;
+        // preserve the old tree instead of trusting or deleting its contents.
+        if (!std::filesystem::is_directory(target, ec) ||
+            PathContainsReparsePoint(target))
+        {
+            error = "cannot recover an unsafe unregistered package directory";
+            return false;
+        }
+        std::filesystem::create_directories(paths_.quarantine, ec);
+        if (ec || PathContainsReparsePoint(paths_.quarantine))
+        {
+            error = "cannot prepare unregistered package recovery backup";
+            return false;
+        }
+        unregisteredBackup = paths_.quarantine / Utf8ToWide(
+            manifest.id + "-" + manifest.version + "-unregistered-" + GenerateUuid());
+        std::filesystem::rename(target, unregisteredBackup, ec);
+        if (ec)
+        {
+            error = "cannot preserve unregistered package: " + ec.message();
+            return false;
+        }
     }
+    const auto restoreUnregistered = [&] {
+        if (unregisteredBackup.empty()) return;
+        std::error_code restoreError;
+        std::filesystem::rename(unregisteredBackup, target, restoreError);
+        if (restoreError)
+            error += "; cannot restore unregistered package: " + restoreError.message();
+    };
     std::filesystem::create_directories(target.parent_path(), ec);
     if (ec)
     {
         error = "cannot create package version directory: " + ec.message();
+        restoreUnregistered();
         return false;
     }
     std::filesystem::rename(stagedRoot, target, ec);
     if (ec)
     {
         error = "cannot atomically activate staged package: " + ec.message();
+        restoreUnregistered();
         return false;
     }
     RegistryEntry entry;
@@ -3153,9 +3190,10 @@ bool WidgetPackageManager::CommitStagedPackage(
     {
         if (error.empty()) error = "installed package could not be selected";
         const auto quarantine = paths_.quarantine /
-            (Utf8ToWide(manifest.id + "-" + manifest.version + "-" + Timestamp()));
+            Utf8ToWide(manifest.id + "-" + manifest.version + "-failed-" + GenerateUuid());
         std::filesystem::rename(target, quarantine, ec);
         if (ec) error += "; cannot quarantine uncommitted package: " + ec.message();
+        else restoreUnregistered();
         return false;
     }
     *this = std::move(candidate);
