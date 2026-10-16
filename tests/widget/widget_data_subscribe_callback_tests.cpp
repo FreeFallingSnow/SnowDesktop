@@ -46,12 +46,19 @@ void operator delete[](void* pointer,std::size_t) noexcept{::operator delete(poi
 namespace {
 using namespace snowdesktop::widget_runtime;
 void Require(bool value,const char* message){if(!value)throw std::runtime_error(message);}
+__declspec(noinline) void DirtyCallbackStack() noexcept
+{
+    // Premature MSVC longjmp cleanup used to inspect unconstructed string
+    // storage. Error handling must work independently of previous stack bytes.
+    volatile unsigned char scratch[8192];
+    for(auto& byte:scratch)byte=0xa5;
+}
 struct Host
 {
     WidgetDataBroker broker;
     std::string lastHandle;
     DataSubscriptionResult RuntimeSubscribeData(const std::wstring&,
-        const std::string& topic,std::chrono::milliseconds age,DataHiddenPolicy policy,
+        std::string topic,std::chrono::milliseconds age,DataHiddenPolicy policy,
         std::string start,std::string end,std::string handle,
         WidgetAudioAnalysisConfiguration audio,std::string eventId,
         std::optional<CalendarEventQueryOptions> query)
@@ -84,6 +91,11 @@ struct Fixture
     int rejectedUserdata=0;
     Fixture()
     {
+        // MSVC lazily creates process-owned num_put facets on the first date
+        // formatting call. Initialize them outside callback allocation tracking
+        // so the isolated errors case does not depend on normal running first.
+        Require(snowdesktop::calendar::CalendarService::AddDays("2000-01-01",1)==
+            std::optional<std::string>("2000-01-02"),"initialize calendar date formatting before ownership tracking");
         std::string error;
         for(const char* topic:{"calendar.events","audio.output.analysis","filesystem.watch","system.cpu","system.gpu"})
             Require(host.broker.RegisterProvider({topic,"",std::chrono::milliseconds(1),std::chrono::milliseconds(1000),std::chrono::milliseconds(0),false,true},error),"register actual callback broker providers");
@@ -114,6 +126,7 @@ struct Fixture
         const auto expression="return "+options;
         Require(luaL_loadstring(state,expression.c_str())==LUA_OK,"compile callback options");
         Require(lua_pcall(state,0,1,0)==LUA_OK,"construct callback options before native tracking");
+        if(track)DirtyCallbackStack();
         allocation_probe::enabled=track;
         const int status=lua_pcall(state,2,1,0);
         allocation_probe::enabled=false;
@@ -157,8 +170,11 @@ void TestErrorsAndNativeOwnership()
     };
     for(const auto& [topic,options]:requests)
     {
+        std::cout<<"CASE data.subscribe topic="<<topic<<" options="<<options<<'\n';
         const auto before=allocation_probe::live.load();
         Require(vm.Invoke(topic,options,true)!=LUA_OK,"invalid actual callback request must report a Lua error");
+        if(allocation_probe::live.load()!=before)
+            std::cerr<<"Native owners before="<<before<<", after="<<allocation_probe::live.load()<<'\n';
         Require(allocation_probe::live.load()==before,"actual callback must destroy all native owners before raising a Lua error");
         Require(vm.host.broker.SubscriptionCount()==0,"invalid callback request never registers a native subscription");
         vm.Collect();

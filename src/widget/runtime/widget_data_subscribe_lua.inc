@@ -10,6 +10,32 @@ struct LuaDataSubscribeContext
     snowdesktop::widget_runtime::DataSubscriptionResult result;
     bool nativeFailure = false;
 };
+
+// Lua errors use longjmp. Keep nontrivial C++ temporaries out of the parsing
+// frame: MSVC /EHsc can otherwise run their cleanup before construction when
+// unwinding an extern-C Lua error. These helpers must not inline into it.
+static __declspec(noinline) void LuaDataSubscribeMaximumEnd(LuaDataSubscribeContext& context)
+{
+    context.maximumEnd = snowdesktop::calendar::CalendarService::
+        AddDays(context.rangeStart, 365);
+}
+
+template <typename Host>
+static __declspec(noinline) void LuaDataSubscribeRegister(lua_State* state,
+    Host& host, LuaDataSubscribeContext& context, lua_Integer maxAgeMs,
+    snowdesktop::widget_runtime::DataHiddenPolicy hiddenPolicy,
+    snowdesktop::widget_runtime::WidgetAudioAnalysisConfiguration audioAnalysis)
+{
+    // Resolve Lua state before constructing the native call's by-value
+    // arguments. No Lua API operation follows the owning widget ID here.
+    const auto widgetId = BoundWidgetId(state);
+    context.result = host.RuntimeSubscribeData(
+        widgetId, context.topicValue, std::chrono::milliseconds(maxAgeMs), hiddenPolicy,
+        std::move(context.rangeStart), std::move(context.rangeEnd),
+        std::move(context.scopeHandle), audioAnalysis, std::move(context.eventId),
+        std::move(context.calendarQuery));
+}
+
 static int LuaDataSubscribeBody(lua_State* state, LuaDataSubscribeContext& context)
 {
     size_t topicLength = 0;
@@ -311,8 +337,7 @@ static int LuaDataSubscribeBody(lua_State* state, LuaDataSubscribeContext& conte
             return luaL_error(state,
                 "data.subscribe: fromDate/toDate require a valid calendar.events range");
         }
-        context.maximumEnd = snowdesktop::calendar::CalendarService::
-            AddDays(rangeStart, 365);
+        LuaDataSubscribeMaximumEnd(context);
         if (context.maximumEnd && rangeEnd > *context.maximumEnd)
         {
             return luaL_error(state,
@@ -335,11 +360,8 @@ static int LuaDataSubscribeBody(lua_State* state, LuaDataSubscribeContext& conte
     luaL_getmetatable(state, kDataSubscriptionHandleMetatable);
     lua_setmetatable(state, -2);
     auto& result = context.result;
-    result = d2d->engine->RuntimeSubscribeData(
-        BoundWidgetId(state), topicValue,
-        std::chrono::milliseconds(maxAgeMs), hiddenPolicy,
-        std::move(rangeStart), std::move(rangeEnd),
-        std::move(scopeHandle), audioAnalysis, std::move(eventId), std::move(calendarQuery));
+    LuaDataSubscribeRegister(state, *d2d->engine, context,
+        maxAgeMs, hiddenPolicy, audioAnalysis);
     if (!result)
         return luaL_error(state, "data.subscribe: %s", result.error.c_str());
 
