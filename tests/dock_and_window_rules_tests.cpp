@@ -3538,10 +3538,10 @@ int main(int argc, char** argv)
         popupLayout::ResolveMaximumHeight(standardPopupMetrics, 480, groupPopupOverhead) == 456,
         "complete group popup compensation must still fit a short screen work area");
     Check(
-        popupLayout::ResolveGridColumnCount(552, 84, 1.0f) == 5 &&
-            popupLayout::ResolveGridColumnCount(300, 84, 1.0f) == 3 &&
-            popupLayout::ResolveGridColumnCount(40, 84, 1.0f) == 1 &&
-            popupLayout::ResolveGridColumnCount(828, 126, 1.0f) == 5,
+        popupLayout::ResolveGridColumnCount(552, 84) == 5 &&
+            popupLayout::ResolveGridColumnCount(300, 84) == 3 &&
+            popupLayout::ResolveGridColumnCount(40, 84) == 1 &&
+            popupLayout::ResolveGridColumnCount(828, 126) == 5,
         "native popup grids must fit their own width and scaled icon metrics instead of desktop widget spans");
     Check(
         popupLayout::DetailsVisible(
@@ -4255,8 +4255,8 @@ int main(int argc, char** argv)
             bottomTooltip.bottom <= 176,
         "a titleless tooltip near the lower edge must flip above its icon and remain inside the Collection frame");
 
-    // The independent controls must change real item positions and the same
-    // rectangles used for scrolling, without changing the other axis.
+    // Horizontal title gaps change within a fixed column capacity and fixed
+    // outer padding; vertical gaps retain their own scroll geometry.
     const RECT independentViewport{0, 0, 360, 500};
     const auto independentDefault = localLayout::ResolveGrid(
         independentViewport, 3, 0, 40, 80, {1.0f, 1.0f});
@@ -4264,13 +4264,11 @@ int main(int argc, char** argv)
         independentViewport, 3, 0, 40, 80, {0.1f, 1.0f});
     const auto independentY = localLayout::ResolveGrid(
         independentViewport, 3, 0, 40, 80, {1.0f, 2.0f});
-    Check(localLayout::ItemRect(independentDefault, 1).left -
-            localLayout::ItemRect(independentDefault, 0).left == 120 &&
-            localLayout::ItemRect(independentX, 1).left -
-            localLayout::ItemRect(independentX, 0).left == 103 &&
-            independentX.horizontal.cell == independentDefault.horizontal.cell &&
+    Check(independentX.horizontal.gap < independentDefault.horizontal.gap &&
+            independentX.horizontal.cell > independentDefault.horizontal.cell &&
+            independentX.horizontal.count == independentDefault.horizontal.count &&
             independentX.vertical.gap == independentDefault.vertical.gap,
-        "horizontal scrolling-icon spacing moves icons without resizing labels or changing row spacing");
+        "horizontal scrolling-icon spacing changes title gaps and width without changing column capacity or row spacing");
     Check(independentY.horizontal.cell == independentDefault.horizontal.cell &&
             independentY.horizontal.gap == independentDefault.horizontal.gap &&
             localLayout::ItemRect(independentY, 3).top -
@@ -4279,11 +4277,24 @@ int main(int argc, char** argv)
         "vertical scrolling-icon spacing changes row positions and content height without changing columns");
     const auto independentWide = localLayout::ResolveGrid(
         independentViewport, 3, 0, 40, 80, {2.0f, 1.0f});
-    Check(independentWide.horizontal.count == 2 &&
-            localLayout::ItemRect(independentWide, 1).right <= independentViewport.right &&
-            localLayout::ItemRect(independentWide, 2).top >
-                localLayout::ItemRect(independentWide, 1).top,
-        "wider icon gaps reflow into visible columns instead of clipping items beyond the frame");
+    Check(independentWide.horizontal.count == 3 &&
+            independentWide.horizontal.gap > independentDefault.horizontal.gap &&
+            localLayout::ItemRect(independentWide, 2).top ==
+                localLayout::ItemRect(independentWide, 0).top &&
+            localLayout::ContentHeight(independentWide, 9) ==
+                localLayout::ContentHeight(independentDefault, 9),
+        "wider title gaps retain columns and the vertical content extent instead of reflowing items");
+    const auto firstDefaultTitle = localLayout::ItemRect(independentDefault, 0);
+    const auto lastDefaultTitle = localLayout::ItemRect(independentDefault, 2);
+    for (int percentage = 10; percentage <= 200; ++percentage)
+    {
+        const auto horizontalStep = localLayout::ResolveGrid(
+            independentViewport, 3, 0, 40, 80, {percentage / 100.0f, 1.0f});
+        Check(localLayout::ItemRect(horizontalStep, 0).left == firstDefaultTitle.left &&
+                localLayout::ItemRect(horizontalStep, 2).right == lastDefaultTitle.right &&
+                horizontalStep.horizontal.count == 3 && horizontalStep.horizontal.cell >= 40,
+            "every horizontal spacing step must keep both outer paddings and column capacity fixed");
+    }
     const auto narrowDefault = localLayout::ResolveGrid(
         {0, 0, 380, 500}, 4, 0, 90, 80, {1.0f, 1.0f});
     Check(narrowDefault.horizontal.count == 4 &&
@@ -4292,9 +4303,11 @@ int main(int argc, char** argv)
         "100-percent scrolling spacing preserves columns when the baseline gap is limited by minimum cell width");
     const auto zeroGapExpanded = localLayout::ResolveGrid(
         {0, 0, 360, 500}, 4, 0, 90, 80, {2.0f, 1.0f});
-    Check(zeroGapExpanded.horizontal.gap == 15 &&
-            zeroGapExpanded.horizontal.count == 3,
-        "increasing horizontal spacing opens a real gap even when the default grid has no spare width");
+    Check(zeroGapExpanded.horizontal.gap == 0 &&
+            zeroGapExpanded.horizontal.count == 4 && zeroGapExpanded.horizontal.cell == 90 &&
+            localLayout::ItemRect(zeroGapExpanded, 0).left == 0 &&
+            localLayout::ItemRect(zeroGapExpanded, 3).right == 360,
+        "horizontal spacing saturates when no title width is available instead of shrinking icons or changing padding");
     const auto denseDefault = localLayout::ResolveGrid(
         {0, 0, 100, 500}, 30, 0, 3, 8, {1.0f, 1.0f});
     Check(denseDefault.horizontal.count == 30,

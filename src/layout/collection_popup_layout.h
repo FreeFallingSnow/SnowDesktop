@@ -218,11 +218,11 @@ inline int PreferredColumnCount(
 }
 
 inline int ResolveGridColumnCount(
-    int viewportWidth, int minimumCellWidth, float spacingScale)
+    int viewportWidth, int minimumCellWidth)
 {
     const int cell = std::max(1, minimumCellWidth);
-    const float spacing = layout_spacing_rules::ClampScale(spacingScale);
-    const int gap = std::max(0, static_cast<int>(std::round(cell * kGapPercentX * spacing)));
+    // Horizontal spacing changes title gaps, not popup column capacity.
+    const int gap = std::max(0, static_cast<int>(std::round(cell * kGapPercentX)));
     return std::clamp(std::max(1, viewportWidth) / (cell + gap), 1, kMaximumColumns);
 }
 

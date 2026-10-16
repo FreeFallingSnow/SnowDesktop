@@ -125,31 +125,33 @@ inline Axis ResolveScrollingAxis(int start, int minimumCell,
     return result;
 }
 
-// Keep the 100% cell width, then vary the actual pitch. Reflow when a wider
-// gap no longer fits; changing X must move icons, not only narrow their labels.
+// Keep the column capacity and the 100% outer padding. Only the gaps between
+// title cells change; a gap saturates before consuming the minimum icon width.
 inline Axis ResolveScrollingColumns(int start, int extent, int columns,
     int minimumCell, float spacingScale)
 {
-    const auto baseline = ResolveBoundedAxis(start, extent, columns,
+    const int count = std::clamp(columns, 1, 50);
+    const auto baseline = ResolveBoundedAxis(start, extent, count,
         minimumCell, kGapPercentX, 1.0f);
     Axis result;
     result.start = start;
     result.extent = std::max(1, extent);
-    result.cell = std::clamp(
-        std::max(minimumCell, baseline.cell), 1, result.extent);
+    result.count = count;
+    result.edge = std::max(0, (result.extent - count * baseline.cell -
+        (count - 1) * baseline.gap) / 2);
+    const int innerExtent = std::max(count, result.extent - result.edge * 2);
+    const int fittedMinimum = std::clamp(minimumCell, 1, innerExtent / count);
+    const int maximumGap = count > 1
+        ? std::max(0, (innerExtent - count * fittedMinimum) / (count - 1)) : 0;
     const int referencePitch = baseline.cell + baseline.gap;
-    // The baseline gap may already be smaller than the preferred percentage
-    // to preserve minimum cell width. Keep that correction at 100%, while
-    // allowing larger settings to open a gap and reflow even from zero gap.
-    result.gap = std::max(0, baseline.gap +
+    result.gap = std::clamp(baseline.gap +
         DesiredGap(referencePitch, kGapPercentX, spacingScale) -
-        DesiredGap(referencePitch, kGapPercentX, 1.0f));
-    const int maximumColumns = layout_spacing_rules::ClampScale(spacingScale) < 1.0f
-        ? 50 : std::clamp(columns, 1, 50);
-    result.count = std::clamp((result.extent + result.gap) /
-        (result.cell + result.gap), 1, maximumColumns);
-    result.edge = std::max(0, (result.extent - result.count * result.cell -
-        (result.count - 1) * result.gap) / 2);
+        DesiredGap(referencePitch, kGapPercentX, 1.0f), 0, maximumGap);
+    result.cell = std::max(1, (innerExtent - (count - 1) * result.gap) / count);
+    // Distribute integer rounding between cells rather than into the right
+    // padding, so both outside edges stay fixed throughout the slider range.
+    result.visualItemSize = result.cell;
+    result.visualOuterPadding = result.edge;
     return result;
 }
 
@@ -267,7 +269,7 @@ inline RECT ItemRect(const Layout& layout, std::size_t index,
         static_cast<std::size_t>(columns));
     const int row = static_cast<int>(index /
         static_cast<std::size_t>(columns));
-    const int left = layout.scrolling
+    const int left = layout.scrolling && layout.horizontal.visualOuterPadding < 0
         ? AxisCellStart(layout.horizontal, column)
         : BoundedAxisCellStart(layout.horizontal, column);
     const int top = (layout.scrolling

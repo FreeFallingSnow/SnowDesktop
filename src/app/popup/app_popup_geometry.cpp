@@ -509,7 +509,7 @@ RECT DesktopApp::GetCollectionPopupRect(const DesktopWidget& widget) const
         const auto spacing = listMode ? GetListSpacing() : GetScrollingIconSpacing();
         const int nativeColumns = listMode ? 1
             : snowdesktop::collection_popup_layout::ResolveGridColumnCount(
-                viewport.right - viewport.left, visual.minimumGridWidth, spacing.horizontal);
+                viewport.right - viewport.left, visual.minimumGridWidth);
         const auto layout = listMode
             ? snowdesktop::widget_item_layout::ResolveList(viewport,
                 std::max(groupView->GetItemHeight(), visual.minimumListHeight), spacing)
