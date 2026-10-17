@@ -401,8 +401,10 @@ void DesktopApp::DrawCollectionPopup(
                 else return item.fullPath;
             }(), iconRect.right - iconRect.left))
                 DrawIconBitmap(iconContext, custom, iconRect);
-            else if (auto* icon = GetOrCreateD2DBitmap(item.iconBitmap,
-                ShouldBeautifyIconBitmap(item.iconIsMediaThumbnail)))
+            else if (auto* icon = GetTargetIconBitmap(iconContext, item.iconBitmap, [&]() -> std::wstring_view {
+                    if constexpr (requires { item.layoutKey; }) return item.layoutKey;
+                    else return item.fullPath;
+                }(), item.iconIsMediaThumbnail))
                 DrawIconBitmap(iconContext, icon, iconRect);
             else
                 DrawPlaceholderIcon(iconContext, item.sysIconIndex, iconRect, 1.0f);

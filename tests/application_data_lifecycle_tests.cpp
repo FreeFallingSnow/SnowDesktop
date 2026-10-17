@@ -2,6 +2,7 @@
 #include "desktop/desktop_source.h"
 #include "data/full_data_backup.h"
 #include "icons/large_icon_backup.h"
+#include "icons/icon_appearance_codec.h"
 #include "data/layout_storage.h"
 #include "layout/page_management_rules.h"
 #include "common/json_value.h"
@@ -515,6 +516,24 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
         }
     }
     layout::Document legacy;
+    {
+        snowdesktop::IconBeautifySettings style; style.enabled = false; style.mode = 1;
+        style.preset = snowdesktop::IconBeautifyPreset::Custom;
+        const auto record = std::string(R"({"target":"control:start","name":"Start","themeId":"","style":)") +
+            snowdesktop::icon_appearance::EncodeStyle(style) + "}";
+        const auto document = std::string(R"({"layoutSchemaVersion":1,"iconBeautifyOverrides":[)") + record + "]}";
+        Expect(layout::ParseDocument(document, legacy) && legacy.iconBeautifyOverrides.size() == 1 &&
+            legacy.iconBeautifyOverrides[0].target == L"control:start" && !legacy.iconBeautifyOverrides[0].settings.enabled &&
+            legacy.iconBeautifyOverrides[0].settings.mode == 1,
+            "independent disabled Start appearance reloads without becoming global inheritance");
+        std::string cleared;
+        Expect(layout::BuildClearedDocument(document, cleared) && layout::ParseDocument(cleared, legacy) &&
+            legacy.iconBeautifyOverrides.size() == 1, "clearing placement preserves independent icon appearance");
+        Expect(!layout::ParseDocument(std::string(R"({"iconBeautifyOverrides":[)") + record + "," + record + "]}", legacy),
+            "duplicate stable appearance identities reject rather than silently picking an arbitrary style");
+        Expect(layout::ParseDocument("{}", legacy) && legacy.iconBeautifyOverrides.empty(),
+            "legacy layouts have no implicit per-icon appearance list entries");
+    }
     Expect(layout::ParseDocument(R"({"iconBeautifyEnabled":true,"iconBeautifyPreset":5,"iconBeautifyMode":1,"iconBeautifyGradientEnabled":true,"iconBeautifyGradientDirection":3,"iconBeautifyFilterEnabled":true,"iconBeautifyFilterStrength":0.7,"iconBeautifyBgOpacity":0.4})", legacy) &&
             legacy.iconBeautifyMode == 1 && legacy.iconBeautifyGradientDirection == 3 && legacy.iconBeautifyFilterStrength == .7f &&
             !legacy.iconBeautifyBackgroundGradient && !legacy.iconBeautifyBackgroundSource && !legacy.iconBeautifyFilterMode,

@@ -2313,6 +2313,11 @@ DesktopPagePresenter::~DesktopPagePresenter()
     Close();
 }
 
+void DesktopPagePresenter::SetIconEditorMode()
+{
+    if (impl_ && !impl_->closed) impl_->iconThemes->SetAuthoringEnabled(false);
+}
+
 void DesktopPagePresenter::SetActions(DesktopPageActions actions)
 {
     if (impl_ && !impl_->closed)

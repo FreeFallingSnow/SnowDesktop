@@ -246,6 +246,7 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
         "settings.personalization.windowPinBorder.opacity", "settings.personalization.windowPinBorder"},
     {SettingsPage::AppearanceWidgets, "personalization.tooltipFontSize",
         "font.tooltipSize", "font.tooltipSizeHint"},
+    {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify.overrides", "iconAppearance.list", ""},
     {SettingsPage::IconLibrary, "iconLibrary", "iconLibrary.title", ""},
     {SettingsPage::IconLibrary, "iconLibrary.import", "iconLibrary.import", ""},
     {SettingsPage::IconLibrary, "iconLibrary.exportIco", "iconLibrary.exportIco", ""},

@@ -411,7 +411,7 @@ struct DockPagePresenter::Impl
     };
     std::vector<FullscreenExceptionRow> fullscreenExceptionRows;
     std::vector<DockFullscreenException> fullscreenExceptionValues;
-    muxc::Button startIconChoose, startIconRestore, searchIconChoose, searchIconRestore;
+    muxc::Button startIconChoose, startIconRestore, searchIconChoose, searchIconRestore, startIconBeautify, searchIconBeautify;
     SettingRow startIconRow, searchIconRow;
     muxc::InfoBar iconStatus;
     std::function<void()> cancelIconPicker;
@@ -713,7 +713,10 @@ struct DockPagePresenter::Impl
         { panel.Orientation(muxc::Orientation::Horizontal); panel.Spacing(8); }
         startActions.Children().Append(startIconChoose); startActions.Children().Append(startIconRestore);
         searchActions.Children().Append(searchIconChoose); searchActions.Children().Append(searchIconRestore);
+        startActions.Children().Append(startIconBeautify); searchActions.Children().Append(searchIconBeautify);
         startIconRow.Initialize(startActions); searchIconRow.Initialize(searchActions);
+        startIconBeautify.Click([this](const auto&, const auto&) { if (active && !closed && actions.editIconAppearance) actions.editIconAppearance(L"control:start"); });
+        searchIconBeautify.Click([this](const auto&, const auto&) { if (active && !closed && actions.editIconAppearance) actions.editIconAppearance(L"control:search"); });
         startIconChoose.Click([this](const auto&, const auto&) { ChooseControlIcon(L"control:start"); });
         searchIconChoose.Click([this](const auto&, const auto&) { ChooseControlIcon(L"control:search"); });
         startIconRestore.Click([this](const auto&, const auto&) { RestoreControlIcon(L"control:start"); });
@@ -2920,6 +2923,13 @@ struct DockPagePresenter::Impl
         reserveScreenSpaceRow.SetText(L("settings.dock.reserveScreenSpace", L"Reserve screen space"),
             L("settings.dock.reserveScreenSpace.description", L"Keep maximized windows clear of the standalone Dock. A summon-only Dock reserves no space."));
         muxa::AutomationProperties::SetName(reserveScreenSpaceToggle, reserveScreenSpaceRow.label.Text());
+        startIconBeautify.Content(winrt::box_value(L("iconAppearance.edit", L"Adjust this icon’s appearance…")));
+        searchIconBeautify.Content(winrt::box_value(L("iconAppearance.edit", L"Adjust this icon’s appearance…")));
+        for (const auto& button : {startIconBeautify, searchIconBeautify})
+        {
+            muxc::TextBlock text; text.Text(L("iconAppearance.edit", L"Adjust this icon’s appearance…"));
+            text.TextWrapping(mux::TextWrapping::Wrap); text.MaxWidth(180); button.Content(text);
+        }
         startIconRow.SetText(L("iconLibrary.startIcon", L"Start button icon"));
         searchIconRow.SetText(L("iconLibrary.searchIcon", L"Search button icon"));
         for (const auto& button : {startIconChoose, searchIconChoose})

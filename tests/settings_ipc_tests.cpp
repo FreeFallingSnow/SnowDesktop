@@ -518,6 +518,18 @@ void TestCodec()
     large.config = snowdesktop::EncodeLargeIconConfig({}); large.landscapePath = L"file:///C:/图片/preview.png";
     large.hasEdgeColor = true; large.edgeColor = 0x119955; large.loading = true;
     large.portraitSource = "steam-local"; large.accent = 0x445566; large.steam = true;
+    {
+        snowdesktop::IconAppearanceSnapshot appearance; appearance.succeeded = true; appearance.independent = true;
+        appearance.current.target = L"recycle-full:BIN"; appearance.current.settings.enabled = false;
+        appearance.current.settings.mode = 1; appearance.current.themeId = "saved-icon-theme";
+        appearance.entries = {appearance.current}; appearance.session = 9; appearance.revision = 11;
+        appearance.previewPng = std::string("png\0bytes", 9);
+        const auto copy = Unpack<snowdesktop::IconAppearanceSnapshot>(Pack(appearance));
+        Check(copy.entries.size() == 1 && !copy.entries[0].settings.enabled && copy.entries[0].settings.mode == 1 &&
+            copy.current.target == L"recycle-full:BIN" && copy.current.themeId == "saved-icon-theme" &&
+            copy.session == 9 && copy.revision == 11 && copy.previewPng == appearance.previewPng,
+            "per-icon settings IPC preserves explicit None, state identity, session guard and binary preview");
+    }
     large.frameWidth = 436; large.frameHeight = 213; large.frameColumns = 4; large.frameRows = 2;
     large.unitScale = 1.5; large.durationScale = 2; large.frameLimit = 30; large.animations = false; large.neutral = 0x123456;
     large.frameWidths = {100, 212, 324, 436}; large.frameHeights = {100, 213};

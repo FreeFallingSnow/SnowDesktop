@@ -2822,5 +2822,14 @@
   "iconLibrary.selectFiltered": "全選目前篩選結果",
   "iconLibrary.deleteRestoreUses": "使用這些圖示的位置將還原預設圖示：",
   "iconLibrary.deleteGroupIcons": "同時刪除群組內的圖示",
-  "iconLibrary.deleteGroupIconsHint": "相同圖示也會從其他群組移除，使用位置將還原預設圖示。"
+  "iconLibrary.deleteGroupIconsHint": "相同圖示也會從其他群組移除，使用位置將還原預設圖示。",
+  "iconAppearance.edit": "個別調整美化…",
+  "iconAppearance.inherit": "跟隨全域美化",
+  "iconAppearance.list": "個別美化",
+  "iconAppearance.search": "搜尋個別美化的圖示",
+  "iconAppearance.empty": "尚無個別美化的圖示",
+  "iconAppearance.source": "美化設定",
+  "iconAppearance.follow": "跟隨全域",
+  "iconAppearance.independent": "個別設定",
+  "iconAppearance.unavailable": "目標無法使用"
 }

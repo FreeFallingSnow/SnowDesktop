@@ -3,6 +3,8 @@
 #include "icon_library_page_presenter.h"
 #include "settings/settings_search_catalog.h"
 #include "SettingsShell.xaml.h"
+#include "icons/icon_appearance_rules.h"
+#include "icons/icon_image_codec.h"
 #include "winui_runtime.h"
 #include "common/l10n.h"
 #include "data/data_paths.h"
@@ -407,6 +409,42 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         if(request.action=="apply"||request.action=="cancel")pickerRequests->push_back(request);
         auto result=*libraryFixture; result.target=request.target; result.session=1; return result;
     });
+    struct AppearanceFixture
+    {
+        std::vector<IconAppearanceRecord> entries;
+        std::uint64_t revision = 1, session = 0;
+        std::wstring target;
+        std::string png;
+    };
+    const auto appearanceFixture = std::make_shared<AppearanceFixture>();
+    {
+        auto style = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassDark); style.mode = 1;
+        appearanceFixture->entries.push_back({L"control:start", _LW("iconLibrary.startIcon"), style, {}});
+        style.enabled = false;
+        appearanceFixture->entries.push_back({L"recycle-empty:PREVIEW", _LW("iconLibrary.recycleEmpty"), style, {}});
+        icon_image::Image source; std::string error;
+        if (!icon_image::Decode(libraryFixture->entries[1].previewPath, 128, source, error) ||
+            !icon_image::EncodePng(source, appearanceFixture->png, error)) throw std::runtime_error("appearance preview source failed");
+    }
+    shell->SetIconAppearanceAction([appearanceFixture](IconAppearanceRequest request) {
+        auto& state = *appearanceFixture; IconAppearanceSnapshot result;
+        result.succeeded = true; result.available = true;
+        if (request.action == "begin") { state.target = request.target; ++state.session; }
+        if (request.action == "apply" || request.action == "inherit")
+        {
+            if ((request.action == "apply" || request.session) && !icon_appearance::CurrentEdit(request, state.target, state.session, state.revision))
+            { result.succeeded = false; result.error = "iconLibrary.stale"; return result; }
+            std::erase_if(state.entries, [&](const auto& record) { return record.target == request.target; });
+            if (request.action == "apply") state.entries.push_back({request.target, _LW("iconLibrary.searchIcon"), request.settings, request.themeId});
+            ++state.revision;
+        }
+        result.current.target = request.target;
+        result.current.name = request.target == L"control:search" ? _LW("iconLibrary.searchIcon") : _LW("iconLibrary.startIcon");
+        result.current.settings = icon_beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
+        for (const auto& entry : state.entries) if (entry.target == request.target) { result.current = entry; result.independent = true; }
+        result.entries = state.entries; result.session = state.session; result.revision = state.revision;
+        result.previewPng = state.png; return result;
+    });
     bool loaded = false;
     const auto token = shell->Loaded([&](const auto&, const auto&) { loaded = true; });
     if (!host.runtime.Attach(host.window, shell.as<x::UIElement>())) throw winrt::hresult_error(E_FAIL, host.runtime.LastError());
@@ -535,6 +573,72 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         }
         Settle(shell.as<x::FrameworkElement>());
         const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
+        if (page == SettingsPage::AppearanceIconBeautification)
+        {
+            auto list = PreviewControl<c::ListView>(cards, L"IconAppearanceList");
+            if (list.Items().Size() != 2) throw std::runtime_error("following icons must not enter individual appearance list");
+            auto targetRoute = SettingsRoute::ForPage(SettingsPage::AppearanceIconBeautification); targetRoute.itemKey = L"control:start";
+            if (!shell->Navigate(targetRoute)) throw std::runtime_error("Start appearance route rejected");
+            const auto open = [&] {
+                shell->OpenRequestedIconAppearance(); c::ContentDialog opened{nullptr};
+                PumpUntil([&] {
+                    for (const auto& popup : x::Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(shell->XamlRoot()))
+                        if (popup.Child()) Walk(popup.Child(), [&](const x::DependencyObject& node) {
+                            if (const auto dialog = node.try_as<c::ContentDialog>(); dialog && x::Automation::AutomationProperties::GetAutomationId(dialog) == L"IconAppearanceEditor") opened = dialog;
+                        });
+                    return opened && opened.ActualWidth() > 0;
+                });
+                Settle(opened); return opened;
+            };
+            const auto close = [&](const c::ContentDialog& opened) {
+                bool closed = false; const auto token = opened.Closed([&](const auto&, const auto&) { closed = true; });
+                opened.Hide(); PumpUntil([&] { return closed; }); opened.Closed(token); Settle(shell.as<x::FrameworkElement>());
+            };
+            auto first = open();
+            auto preview = PreviewControl<c::Image>(first, L"IconAppearancePreview");
+            if (!preview.Source().try_as<x::Media::Imaging::WriteableBitmap>()) throw std::runtime_error("per-icon preview has no decoded pixels");
+            close(first);
+            auto second = open(); close(second);
+            if (appearanceFixture->entries.size() != 2) throw std::runtime_error("cancel or reopening unexpectedly saved an icon override");
+            targetRoute.itemKey = L"control:search";
+            if (!shell->Navigate(targetRoute)) throw std::runtime_error("Search appearance route rejected");
+            auto editor = open();
+            c::ComboBox mode{nullptr}, theme{nullptr};
+            Walk(editor, [&](const x::DependencyObject& node) {
+                if (const auto combo = node.try_as<c::ComboBox>())
+                {
+                    const auto name = x::Automation::AutomationProperties::GetName(combo);
+                    if (name == _LW("iconStyle.strategy")) mode = combo;
+                    if (name == _LW("app.settings.icon_beautify")) theme = combo;
+                }
+            });
+            if (!mode || !theme) throw std::runtime_error("shared processing mode/theme selectors are missing");
+            mode.SelectedIndex(1); theme.SelectedIndex(3); Settle(editor);
+            if (editor.ActualWidth() > shell->ActualWidth() || editor.ActualHeight() > shell->ActualHeight())
+                throw std::runtime_error("individual icon editor exceeds its settings window");
+            x::Media::Imaging::RenderTargetBitmap bitmap; Await(bitmap.RenderAsync(editor));
+            const auto pixels = Await(bitmap.GetPixelsAsync()); BYTE* bytes = nullptr;
+            winrt::check_hresult(pixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
+            std::string imageError;
+            if (!preview_png::Save(output / L"icon-appearance-editor.png", bitmap.PixelWidth(), bitmap.PixelHeight(),
+                {reinterpret_cast<const std::uint32_t*>(bytes), pixels.Length()/4}, imageError)) throw std::runtime_error(imageError);
+            c::Button apply{nullptr};
+            Walk(editor, [&](const x::DependencyObject& node) { if (const auto button = node.try_as<c::Button>(); button && button.Name() == L"PrimaryButton") apply = button; });
+            if (!apply) throw std::runtime_error("individual appearance Apply button is missing");
+            InvokePreview(apply); PumpUntil([&] { return appearanceFixture->entries.size() == 3; }); Settle(shell.as<x::FrameworkElement>());
+            if (appearanceFixture->entries.back().target != L"control:search" || appearanceFixture->entries.back().settings.mode != 1 ||
+                appearanceFixture->entries.back().settings.preset != IconBeautifyPreset::FrostedGlassDark)
+                throw std::runtime_error("Search mode/theme failed to reach the independent settings action");
+            list = PreviewControl<c::ListView>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceList");
+            auto filter = PreviewControl<c::TextBox>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceSearch");
+            filter.Text(_LW("iconLibrary.searchIcon")); Settle(shell.as<x::FrameworkElement>());
+            if (list.Items().Size() != 1) throw std::runtime_error("individual icon list search failed");
+            list.SelectedIndex(0);
+            InvokePreview(PreviewControl<c::Button>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceInherit"));
+            if (appearanceFixture->entries.size() != 2 || list.Items().Size() != 0) throw std::runtime_error("following global settings left an individual list record");
+            filter.Text(L""); Settle(shell.as<x::FrameworkElement>());
+            std::ofstream(output / L"icon-appearance.tsv") << "following-hidden\tcancel\treopen\tpreview\tsearch-mode-theme\tremove-to-follow\npassed\tpassed\tpassed\tpassed\tpassed\tpassed\n";
+        }
         if (page == SettingsPage::IconLibrary)
         {
             const auto grid = PreviewControl<c::GridView>(cards, L"IconLibraryGrid");

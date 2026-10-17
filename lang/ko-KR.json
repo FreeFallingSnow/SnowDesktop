@@ -2822,5 +2822,14 @@
   "iconLibrary.selectFiltered": "필터링된 아이콘 모두 선택",
   "iconLibrary.deleteRestoreUses": "다음 사용 위치는 기본 아이콘으로 복원됩니다:",
   "iconLibrary.deleteGroupIcons": "이 그룹의 아이콘도 삭제",
-  "iconLibrary.deleteGroupIconsHint": "같은 아이콘이 다른 그룹에서도 제거되며, 사용 위치는 기본 아이콘으로 복원됩니다."
+  "iconLibrary.deleteGroupIconsHint": "같은 아이콘이 다른 그룹에서도 제거되며, 사용 위치는 기본 아이콘으로 복원됩니다.",
+  "iconAppearance.edit": "이 아이콘의 꾸미기 조정…",
+  "iconAppearance.inherit": "전체 아이콘 꾸미기 사용",
+  "iconAppearance.list": "개별 아이콘 꾸미기",
+  "iconAppearance.search": "개별 설정된 아이콘 검색",
+  "iconAppearance.empty": "개별 설정된 아이콘이 없습니다",
+  "iconAppearance.source": "꾸미기 설정",
+  "iconAppearance.follow": "전체 설정 따르기",
+  "iconAppearance.independent": "개별 설정",
+  "iconAppearance.unavailable": "대상을 사용할 수 없음"
 }

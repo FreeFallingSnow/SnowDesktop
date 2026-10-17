@@ -18,6 +18,7 @@ namespace
 {
 constexpr UINT kDockChooseIcon = 43770;
 constexpr UINT kDockRestoreIcon = 43771;
+constexpr UINT kDockBeautifyIcon = 43786, kDockInheritIcon = 43787;
 bool ShowWidgetRemovalConfirmation(HWND owner, POINT anchor,
     const std::wstring& widgetTitle)
 {
@@ -766,17 +767,6 @@ void DesktopApp::ShowWidgetContextMenu(
     if (!luaElementMenu)
     {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        if (dockIconMenu)
-        {
-            AppendMenuW(menu, MF_STRING, kDockChooseIcon, _LW("iconLibrary.change"));
-            setFluentIcon(menu, kDockChooseIcon, L"\uF489"); // image_24_regular
-            if (!widget.dockIconAssetId.empty())
-            {
-                AppendMenuW(menu, MF_STRING, kDockRestoreIcon, _LW("iconLibrary.restore"));
-                setFluentIcon(menu, kDockRestoreIcon, L"\uF19A"); // arrow_undo_24_regular
-            }
-            AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        }
         if (CanRenameWidget(widget))
         {
             AppendMenuW(menu, MF_STRING, kContextWidgetRename, _LW("app.menu.rename"));
@@ -894,6 +884,28 @@ void DesktopApp::ShowWidgetContextMenu(
         setFluentIcon(menu,
             reinterpret_cast<UINT_PTR>(demoCategoryMenu), L"\uF18B");
 
+    if (dockIconMenu)
+    {
+        const auto iconMenu = CreatePopupMenu();
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(iconMenu), _LW("iconLibrary.personalization"));
+        setFluentIcon(menu, reinterpret_cast<UINT_PTR>(iconMenu), L"\uF592");
+        AppendMenuW(iconMenu, MF_STRING, kDockChooseIcon, _LW("iconLibrary.change"));
+        setFluentIcon(iconMenu, kDockChooseIcon, L"\uF489"); // image_24_regular
+        if (!widget.dockIconAssetId.empty())
+        {
+            AppendMenuW(iconMenu, MF_STRING, kDockRestoreIcon, _LW("iconLibrary.restore"));
+            setFluentIcon(iconMenu, kDockRestoreIcon, L"\uF19A"); // arrow_undo_24_regular
+        }
+        AppendMenuW(iconMenu, MF_STRING, kDockBeautifyIcon, _LW("iconAppearance.edit"));
+        setFluentIcon(iconMenu, kDockBeautifyIcon, L"\uF592");
+        if (iconAppearanceOverrides_.contains(L"widget:" + widget.id))
+        {
+            AppendMenuW(iconMenu, MF_STRING, kDockInheritIcon, _LW("iconAppearance.inherit"));
+            setFluentIcon(iconMenu, kDockInheritIcon, L"\uF19A");
+        }
+    }
+
     RestoreInteractionInputFocus();
     snowdesktop::shell_extensions::Request shellRequest;
     if (effectiveSourceIndex < widgets_.size() &&
@@ -909,6 +921,14 @@ void DesktopApp::ShowWidgetContextMenu(
     DestroyMenu(menu);
     ClearMenuIcons();
 
+    if (dockIconMenu && (command == kDockBeautifyIcon || command == kDockInheritIcon))
+    {
+        RestoreDesktopWindowLayer();
+        const auto target = L"widget:" + menuWidgetId;
+        if (command == kDockBeautifyIcon) OpenIconAppearance(target);
+        else { snowdesktop::IconAppearanceRequest request; request.action = "inherit"; request.target = target; (void)EditIconAppearance(request); }
+        return;
+    }
     if (dockIconMenu && (command == kDockChooseIcon || command == kDockRestoreIcon))
     {
         RestoreDesktopWindowLayer();

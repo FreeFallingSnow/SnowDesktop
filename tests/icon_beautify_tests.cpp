@@ -9,6 +9,8 @@
 #include <set>
 #include <vector>
 
+int RunIconAppearanceTests();
+
 namespace beautify = snowdesktop::icon_beautify;
 
 namespace
@@ -557,6 +559,7 @@ int main()
             "built-in preset detection and layout reload preserve the separate processing strategy");
     }
 
+    failures += RunIconAppearanceTests();
     if (failures != 0)
     {
         std::cerr << failures << " icon beautify test(s) failed\n";

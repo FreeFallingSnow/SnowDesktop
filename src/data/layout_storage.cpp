@@ -2,6 +2,8 @@
 
 #include "data/atomic_file.h"
 #include "common/json_value.h"
+#include "icons/icon_appearance_codec.h"
+#include <set>
 
 #include <windows.h>
 
@@ -693,6 +695,23 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         if (!IsIconAssetId(asset) || target.empty())
             return Fail(error, "iconOverrides", "invalid target or asset");
         decoded.iconOverrides.emplace_back(std::move(target), std::move(asset));
+    }
+    const JsonValue* appearances = nullptr;
+    if (!ReadObjectArray(root, "iconBeautifyOverrides", appearances, error)) return false;
+    std::set<std::string> appearanceTargets;
+    if (appearances) for (const auto& object : appearances->array)
+    {
+        std::string target, name, themeId;
+        IconAppearanceRecord record;
+        if (!ReadRequiredString(object, "target", "iconBeautifyOverrides.target", target, error) ||
+            !ReadRequiredString(object, "name", "iconBeautifyOverrides.name", name, error) ||
+            !ReadRequiredString(object, "themeId", "iconBeautifyOverrides.themeId", themeId, error)) return false;
+        const auto* style = object.Find("style");
+        record.target = icon_appearance::ToWide(target); record.name = icon_appearance::ToWide(name); record.themeId = themeId;
+        if (!icon_appearance::ValidTarget(record.target) || !appearanceTargets.insert(target).second ||
+            !style || !icon_appearance::DecodeStyle(*style, record.settings))
+            return Fail(error, "iconBeautifyOverrides", "invalid or duplicate target/style");
+        decoded.iconBeautifyOverrides.push_back(std::move(record));
     }
     std::optional<int> sourceSchemaVersion;
     if (!ReadOptionalInteger(root, "layoutSchemaVersion",

@@ -396,6 +396,9 @@ struct BackendServer::Impl
         channel.Bind<LargeIconSettingsSnapshot, LargeIconSettingsRequest>("largeIcon.edit", [this](auto request) {
             return options.largeIconSettings ? options.largeIconSettings(std::move(request)) : LargeIconSettingsSnapshot{};
         });
+        channel.Bind<IconAppearanceSnapshot, IconAppearanceRequest>("iconAppearance.edit", [this](auto request) {
+            return options.iconAppearance ? options.iconAppearance(std::move(request)) : IconAppearanceSnapshot{};
+        });
         BindIconLibraryPages(channel, [this](auto request) {
             return options.iconLibrary ? options.iconLibrary(std::move(request)) : IconLibrarySnapshot{};
         });
@@ -551,6 +554,9 @@ SettingsWindowHostOptions CreateRemoteHostOptions(Channel& channel)
     options.pageLayoutPage.removePage = [&channel](Token revision, const std::wstring& id) { return channel.Call<PageLayoutOperationResult>("pages.remove", revision, id); };
     options.largeIconSettings = [&channel](LargeIconSettingsRequest request) {
         return channel.Call<LargeIconSettingsSnapshot>("largeIcon.edit", request);
+    };
+    options.iconAppearance = [&channel](IconAppearanceRequest request) {
+        return channel.Call<IconAppearanceSnapshot>("iconAppearance.edit", request);
     };
     options.iconLibrary = [&channel](IconLibraryRequest request) {
         return CallIconLibraryPages(channel, request);

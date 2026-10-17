@@ -325,6 +325,7 @@ public:
         Run(ThemeLibraryCommand::Apply, selected->id);
         return true;
     }
+    void SetAuthoringEnabled(bool enabled) { authoringEnabled_ = enabled; PatchButtons(); }
     void SetActions(ThemeLibraryAction action, ThemeLibraryAsyncAction async, std::function<bool()> flush)
     { action_ = std::move(action); async_ = std::move(async); flush_ = std::move(flush); }
     void SetChanged(std::function<void()> changed) { changed_ = std::move(changed); }
@@ -417,6 +418,7 @@ private:
     EditSource edit_;
     std::map<themes::Kind, EditSource> boundSources_;
     EditSource followSource_;
+    bool authoringEnabled_ = true;
     bool editing_ = false, inheritedCustom_ = false, customVisible_ = false;
     std::vector<x::UIElement> customContent_;
     c::TextBox name_;
@@ -581,7 +583,7 @@ private:
             if (visible && !customVisible_) CollapseCustom();
             customVisible_ = visible;
             const auto visibility = visible ? x::Visibility::Visible : x::Visibility::Collapsed;
-            saveRoot_.Visibility(visibility);
+            saveRoot_.Visibility(authoringEnabled_ ? visibility : x::Visibility::Collapsed);
             const auto contentVisibility = CustomSelected() ||
                 (inheritedCustom_ && !Selected() && choice_.SelectedIndex() == 0)
                 ? x::Visibility::Visible : x::Visibility::Collapsed;

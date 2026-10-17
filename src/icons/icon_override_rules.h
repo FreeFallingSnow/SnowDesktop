@@ -6,6 +6,7 @@ namespace snowdesktop::icon_override
 {
 inline constexpr std::wstring_view start = L"control:start";
 inline constexpr std::wstring_view search = L"control:search";
+inline constexpr unsigned beautify = 43780, inherit = 43781;
 inline constexpr unsigned change = 43772, restore = 43773;
 inline constexpr unsigned emptyChange = 43774, emptyRestore = 43775;
 inline constexpr unsigned fullChange = 43776, fullRestore = 43777;

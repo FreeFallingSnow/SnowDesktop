@@ -3,6 +3,7 @@
 #include "desktop/desktop_membership_recovery.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "icons/large_icon_backup.h"
+#include "icons/icon_appearance_codec.h"
 #include "platform/operation_recovery_dialog.h"
 #include <set>
 #include "layout/collection_titleless_rules.h"
@@ -148,6 +149,10 @@ void DesktopApp::LoadLayoutSlots()
     if (document.lastPageMonitor)
         lastPageMonitorId_ = Utf8ToWide(*document.lastPageMonitor);
 
+    iconAppearanceOverrides_.clear();
+    for (const auto& record : document.iconBeautifyOverrides)
+        iconAppearanceOverrides_[record.target] = record;
+    ++iconAppearanceRevision_;
     iconOverrides_.clear();
     for (const auto& [target, asset] : document.iconOverrides)
         iconOverrides_[Utf8ToWide(target)] = asset;
@@ -1057,6 +1062,18 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
             << "\",\"asset\":\"" << asset << "\"}";
     }
     overrides << "]";
+    std::ostringstream appearances; appearances << "[";
+    bool firstAppearance = true;
+    for (const auto& [target, record] : iconAppearanceOverrides_)
+    {
+        if (!firstAppearance) appearances << ",";
+        firstAppearance = false;
+        appearances << "{\"target\":\"" << JsonEscapeUtf8(target)
+            << "\",\"name\":\"" << JsonEscapeUtf8(record.name)
+            << "\",\"themeId\":\"" << JsonEscapeUtf8(Utf8ToWide(record.themeId))
+            << "\",\"style\":" << snowdesktop::icon_appearance::EncodeStyle(record.settings) << "}";
+    }
+    appearances << "]";
     std::ostringstream file;
 
     file << "{\n  \"layoutSchemaVersion\": 1"
@@ -1067,6 +1084,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << "\",\n  \"dockEnabled\": " << (generalSettings_.dockEnabled ? "true" : "false")
          << ",\n  \"dockLayout\": " << snowdesktop::layout_storage::SerializeDockLayout(dockSettings_)
          << ",\n  \"iconOverrides\": " << overrides.str()
+         << ",\n  \"iconBeautifyOverrides\": " << appearances.str()
          << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"fanTitleFontSizeCu\": " << fanTitleFontSizeCu_

@@ -2822,5 +2822,14 @@
   "iconLibrary.selectFiltered": "全选当前筛选结果",
   "iconLibrary.deleteRestoreUses": "使用这些图标的位置将恢复默认图标：",
   "iconLibrary.deleteGroupIcons": "同时删除分组内的图标",
-  "iconLibrary.deleteGroupIconsHint": "相同图标也会从其他分组移除，使用位置将恢复默认图标。"
+  "iconLibrary.deleteGroupIconsHint": "相同图标也会从其他分组移除，使用位置将恢复默认图标。",
+  "iconAppearance.edit": "单独调整美化…",
+  "iconAppearance.inherit": "跟随全局美化",
+  "iconAppearance.list": "单独美化",
+  "iconAppearance.search": "搜索单独美化的图标",
+  "iconAppearance.empty": "暂无单独美化的图标",
+  "iconAppearance.source": "美化设置",
+  "iconAppearance.follow": "跟随全局",
+  "iconAppearance.independent": "单独设置",
+  "iconAppearance.unavailable": "目标不可用"
 }

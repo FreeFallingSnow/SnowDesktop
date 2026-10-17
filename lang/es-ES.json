@@ -2822,5 +2822,14 @@
   "iconLibrary.selectFiltered": "Seleccionar todos los iconos filtrados",
   "iconLibrary.deleteRestoreUses": "Estas ubicaciones volverán a sus iconos predeterminados:",
   "iconLibrary.deleteGroupIcons": "Eliminar también los iconos de este grupo",
-  "iconLibrary.deleteGroupIconsHint": "Los mismos iconos también se quitarán de otros grupos y sus usos volverán a los iconos predeterminados."
+  "iconLibrary.deleteGroupIconsHint": "Los mismos iconos también se quitarán de otros grupos y sus usos volverán a los iconos predeterminados.",
+  "iconAppearance.edit": "Personalizar el aspecto de este icono…",
+  "iconAppearance.inherit": "Usar el aspecto global de iconos",
+  "iconAppearance.list": "Aspecto individual de iconos",
+  "iconAppearance.search": "Buscar iconos personalizados",
+  "iconAppearance.empty": "No hay iconos personalizados individualmente",
+  "iconAppearance.source": "Ajustes de aspecto",
+  "iconAppearance.follow": "Seguir los ajustes globales",
+  "iconAppearance.independent": "Personalizar este icono",
+  "iconAppearance.unavailable": "Destino no disponible"
 }

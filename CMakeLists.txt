@@ -186,6 +186,10 @@ set(SNOWDESKTOP_SOURCES
     src/desktop/desktop_namespace_registry.h
     src/icons/icon_beautify.cpp
     src/icons/icon_beautify_preview.h
+    src/icons/icon_appearance.h
+    src/icons/icon_appearance_codec.h
+    src/icons/icon_appearance_rules.h
+    src/icons/icon_control_source.h
     src/app/render/app_bitmap_cache.cpp
     src/app/menus/app_background_menu.cpp
     src/app/render/app_animation_scheduler.cpp
@@ -305,6 +309,7 @@ set(SNOWDESKTOP_SOURCES
     src/icons/icon_library.cpp
     src/icons/icon_library.h
     src/app/features/app_icon_library.cpp
+    src/app/features/app_icon_appearance.cpp
     src/icons/large_icon_renderer.cpp
     src/app/lifecycle/app_lifecycle.cpp
     src/app/widgets/app_lua_panel.cpp
@@ -502,6 +507,8 @@ set(SNOWDESKTOP_SOURCES
     src/winui/hotkey_recorder_rules.h
     src/winui/page_layout_page_presenter.cpp
     src/winui/large_icon_page_presenter.cpp
+    src/winui/icon_appearance_presenter.cpp
+    src/winui/icon_appearance_presenter.h
     src/winui/icon_library_page_presenter.cpp
     src/winui/icon_library_page_presenter.h
     src/winui/large_icon_page_presenter.h
@@ -2532,6 +2539,7 @@ if (BUILD_TESTING)
         icon_beautify
         SOURCES
             tests/icon_beautify_tests.cpp
+            tests/icons/icon_appearance_tests.cpp
             src/icons/icon_beautify.cpp
         INCLUDE_DIRECTORIES src
         LABELS rules icon ui)

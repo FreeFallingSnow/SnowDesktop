@@ -2822,5 +2822,14 @@
   "iconLibrary.selectFiltered": "Alle gefilterten Symbole auswählen",
   "iconLibrary.deleteRestoreUses": "Diese Verwendungen werden auf die Standardsymbole zurückgesetzt:",
   "iconLibrary.deleteGroupIcons": "Auch die Symbole in dieser Gruppe löschen",
-  "iconLibrary.deleteGroupIconsHint": "Dieselben Symbole werden auch aus anderen Gruppen entfernt. Ihre Verwendungen werden auf Standardsymbole zurückgesetzt."
+  "iconLibrary.deleteGroupIconsHint": "Dieselben Symbole werden auch aus anderen Gruppen entfernt. Ihre Verwendungen werden auf Standardsymbole zurückgesetzt.",
+  "iconAppearance.edit": "Darstellung dieses Symbols anpassen…",
+  "iconAppearance.inherit": "Globale Symboldarstellung verwenden",
+  "iconAppearance.list": "Individuelle Symboldarstellung",
+  "iconAppearance.search": "Angepasste Symbole suchen",
+  "iconAppearance.empty": "Keine individuell angepassten Symbole",
+  "iconAppearance.source": "Darstellungseinstellungen",
+  "iconAppearance.follow": "Globalen Einstellungen folgen",
+  "iconAppearance.independent": "Dieses Symbol anpassen",
+  "iconAppearance.unavailable": "Ziel nicht verfügbar"
 }

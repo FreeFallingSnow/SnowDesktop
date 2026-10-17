@@ -890,6 +890,7 @@ void SettingsShell::Close() noexcept
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
     largeIconPage_.reset();
+    iconAppearancePage_.reset();
     iconLibraryPage_.reset();
     widgetSettingsPage_.reset();
     widgetSettingsService_ = nullptr;
@@ -1000,6 +1001,7 @@ void SettingsShell::ReleaseSessionResources() noexcept
     homeAboutPage_.reset();
     pageLayoutPage_.reset();
     largeIconPage_.reset();
+    iconAppearancePage_.reset();
     iconLibraryPage_.reset();
     widgetSettingsPage_.reset();
     widgetsPage_.reset();
@@ -1085,6 +1087,7 @@ void SettingsShell::RefreshLocalizedText()
     if (pageLayoutPage_)
         pageLayoutPage_->RefreshLocalizedText();
     if (largeIconPage_) largeIconPage_->RefreshLocalizedText();
+    if (iconAppearancePage_) iconAppearancePage_->RefreshLocalizedText();
     if (iconLibraryPage_) iconLibraryPage_->RefreshLocalizedText();
     if (widgetSettingsPage_)
         widgetSettingsPage_->RefreshLocalizedText();
@@ -1261,6 +1264,10 @@ void SettingsShell::SetDockPageActions(
     snowdesktop::winui::DockPageActions actions)
 {
     actions.iconLibrary = iconLibraryAction_;
+    actions.editIconAppearance = [this](std::wstring target) {
+        auto route = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::AppearanceIconBeautification);
+        route.itemKey = std::move(target); (void)Navigate(route, true);
+    };
     dockPageActions_ = std::move(actions);
     if (statusBarPage_) statusBarPage_->SetActions(dockPageActions_);
     if (desktopStylePage_) desktopStylePage_->SetActions(dockPageActions_);
@@ -1284,6 +1291,21 @@ void SettingsShell::SetPageLayoutPageActions(
     pageLayoutPageActions_ = std::move(actions);
     if (pageLayoutPage_)
         pageLayoutPage_->SetActions(pageLayoutPageActions_);
+}
+
+void SettingsShell::SetIconAppearanceAction(snowdesktop::IconAppearanceAction action)
+{
+    iconAppearanceAction_ = std::move(action);
+    dockPageActions_.editIconAppearance = [this](std::wstring target) {
+        auto route = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::AppearanceIconBeautification);
+        route.itemKey = std::move(target); (void)Navigate(route, true);
+    };
+    if (dockPage_) dockPage_->SetActions(dockPageActions_);
+}
+void SettingsShell::OpenRequestedIconAppearance()
+{
+    if (sessionActive_ && iconAppearancePage_ && navigation_.Route().page == snowdesktop::SettingsPage::AppearanceIconBeautification)
+        iconAppearancePage_->Activate(navigation_.Route().itemKey);
 }
 
 void SettingsShell::SetIconLibraryAction(snowdesktop::IconLibraryAction action)
@@ -1586,6 +1608,7 @@ void SettingsShell::SuspendInteraction() noexcept
         if (pageLayoutPage_)
             pageLayoutPage_->Deactivate();
         if (largeIconPage_) largeIconPage_->Deactivate();
+        if (iconAppearancePage_) iconAppearancePage_->Deactivate();
         if (iconLibraryPage_) iconLibraryPage_->Deactivate();
         if (widgetSettingsPage_)
             widgetSettingsPage_->Deactivate();
@@ -2640,6 +2663,9 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         pageRoute.page != SettingsPage::DesktopPages;
     if (leavingPageLayout && pageLayoutPage_)
         pageLayoutPage_->Deactivate();
+    if (iconAppearancePage_ && renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::AppearanceIconBeautification &&
+        (pageRoute.page != SettingsPage::AppearanceIconBeautification || pageRoute.itemKey != renderedPageRoute_->itemKey))
+        iconAppearancePage_->Deactivate();
     if (iconLibraryPage_ && renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::IconLibrary &&
         (pageRoute.page != SettingsPage::IconLibrary || pageRoute.itemKey != renderedPageRoute_->itemKey))
         iconLibraryPage_->Deactivate();
@@ -2977,6 +3003,11 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
                 "desktop.iconBeautify.outlineColor"});
             desktopPage_->Activate();
         }
+        if (!iconAppearancePage_) iconAppearancePage_ = std::make_unique<snowdesktop::winui::IconAppearancePresenter>(
+            [this](std::string_view key) { return Localize(std::string(key).c_str()); }, iconAppearanceAction_);
+        PageCards().Children().Append(iconAppearancePage_->Content());
+        RegisterFocusTarget("desktop.iconBeautify.overrides", iconAppearancePage_->Content());
+        iconAppearancePage_->Activate();
         break;
     case SettingsPage::DesktopCategories:
         if (desktopPage_)

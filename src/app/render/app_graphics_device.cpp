@@ -230,8 +230,10 @@ void DesktopApp::ResetCompositionRenderCaches()
     acrylicNoiseBrushCache_.clear();
     privacyFileIconBitmap_.Reset();
     privacyFolderIconBitmap_.Reset();
+    ClearStyledIconCache();
     d2dIconCache_.clear();
     iconGlassBackdrop_.clear();
+    iconBitmapStyles_.clear();
     iconReflectionCache_.Clear();
     ResetDemoIconLoader();
     placeholderIconCache_.clear();

@@ -31,6 +31,8 @@ constexpr UINT kDockStartButton = 41874;
 constexpr UINT kDockQuickSearchButton = 41875;
 constexpr UINT kDockStartIcon = 41876, kDockSearchIcon = 41877;
 constexpr UINT kDockStartRestoreIcon = 41878, kDockSearchRestoreIcon = 41879;
+constexpr UINT kDockStartBeautify = 41890, kDockStartInherit = 41891;
+constexpr UINT kDockSearchBeautify = 41892, kDockSearchInherit = 41893;
 constexpr UINT kDesktopStyleFirst = 41880;
 constexpr wchar_t const* kDesktopStyles[]{L"native", L"taskbar-dock", L"island", L"merged", L"side"};
 constexpr char const* kDesktopStyleLabels[]{"settings.desktopStyle.native.title", "settings.desktopStyle.taskbar-dock.title",
@@ -182,6 +184,15 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         AppendMenuW(submenu,MF_STRING | (iconOverrides_.contains(target)?0:MF_GRAYED),restore,_LW("iconLibrary.restore"));
         SetMenuItemIcon(submenu,change,L"\uF489",MenuIconFont::FluentRegular);
         SetMenuItemIcon(submenu,restore,L"\uF19A",MenuIconFont::FluentRegular);
+        const UINT beauty = change == kDockStartIcon ? kDockStartBeautify : kDockSearchBeautify;
+        AppendMenuW(submenu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(submenu, MF_STRING, beauty, _LW("iconAppearance.edit"));
+        SetMenuItemIcon(submenu, beauty, L"\uF592", MenuIconFont::FluentRegular);
+        if (iconAppearanceOverrides_.contains(target))
+        {
+            AppendMenuW(submenu, MF_STRING, beauty + 1, _LW("iconAppearance.inherit"));
+            SetMenuItemIcon(submenu, beauty + 1, L"\uF19A", MenuIconFont::FluentRegular);
+        }
         AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(submenu),_LW("iconLibrary.personalize"));
         return submenu;
     };
@@ -338,6 +349,13 @@ void DesktopApp::ShowDockContextMenu(POINT screenPoint)
 
 void DesktopApp::ExecuteDockContextMenuCommand(UINT command, HWND owner)
 {
+    if (command >= kDockStartBeautify && command <= kDockSearchInherit)
+    {
+        const std::wstring target = command <= kDockStartInherit ? L"control:start" : L"control:search";
+        if (command == kDockStartBeautify || command == kDockSearchBeautify) OpenIconAppearance(target);
+        else { snowdesktop::IconAppearanceRequest request; request.action = "inherit"; request.target = target; (void)EditIconAppearance(request); }
+        return;
+    }
     if (command == kDockStartIcon || command == kDockSearchIcon)
     {
         OpenIconOverrideLibrary(command == kDockStartIcon ? L"control:start" : L"control:search");

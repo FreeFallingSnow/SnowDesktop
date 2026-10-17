@@ -20,6 +20,7 @@ namespace snowdesktop::winui
 struct DockPageActions
 {
     IconLibraryAction iconLibrary;
+    std::function<void(std::wstring)> editIconAppearance;
     ThemeLibraryAction themeLibrary;
     ThemeLibraryAsyncAction themeAsync;
     using GeneralEdit = std::function<void(GeneralSettings&)>;

@@ -2822,5 +2822,14 @@
   "iconLibrary.selectFiltered": "絞り込み結果をすべて選択",
   "iconLibrary.deleteRestoreUses": "次の使用箇所は既定のアイコンに戻ります：",
   "iconLibrary.deleteGroupIcons": "グループ内のアイコンも削除する",
-  "iconLibrary.deleteGroupIconsHint": "同じアイコンは他のグループからも削除され、使用箇所は既定のアイコンに戻ります。"
+  "iconLibrary.deleteGroupIconsHint": "同じアイコンは他のグループからも削除され、使用箇所は既定のアイコンに戻ります。",
+  "iconAppearance.edit": "このアイコンの装飾を調整…",
+  "iconAppearance.inherit": "全体のアイコン装飾に従う",
+  "iconAppearance.list": "個別のアイコン装飾",
+  "iconAppearance.search": "個別設定したアイコンを検索",
+  "iconAppearance.empty": "個別設定したアイコンはありません",
+  "iconAppearance.source": "装飾設定",
+  "iconAppearance.follow": "全体設定に従う",
+  "iconAppearance.independent": "個別に設定",
+  "iconAppearance.unavailable": "対象を利用できません"
 }

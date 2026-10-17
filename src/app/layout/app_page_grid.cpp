@@ -1265,6 +1265,7 @@ void DesktopApp::SetIconBeautifySettings(
     iconBeautifySettings_ = settings;
     desktopBackdropFullCollectionPending_ = true;
 
+    ClearStyledIconCache();
     d2dIconCache_.clear();
     iconGlassBackdrop_.clear();
     iconReflectionCache_.Clear();

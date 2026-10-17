@@ -321,7 +321,7 @@ bool SettingsRoute::IsValid() const noexcept
 
     if (page == SettingsPage::LargeIcon)
         return !itemKey.empty() && widgetInstanceId.empty();
-    if (page == SettingsPage::IconLibrary) return widgetInstanceId.empty();
+    if (page == SettingsPage::IconLibrary || page == SettingsPage::AppearanceIconBeautification) return widgetInstanceId.empty();
     if (!itemKey.empty())
         return page == SettingsPage::Widgets && focusId == "widgets.permissions" && widgetInstanceId.empty();
     if (page == SettingsPage::WidgetSettings)

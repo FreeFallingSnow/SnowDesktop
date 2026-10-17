@@ -88,6 +88,11 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "layout/item_layout_rules.h"
 #include "icons/icon_render_rules.h"
 #include "icons/icon_beautify.h"
+#include "icons/icon_appearance.h"
+#include "icons/icon_appearance_rules.h"
+#include <tuple>
+#include <map>
+#include "icons/icon_image_codec.h"
 #include "platform/demo_collection_rules.h"
 #include "platform/demo_asset_paths.h"
 #include "dock/dock_window_rules.h"
@@ -2994,7 +2999,7 @@ private:
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state,
         int requestedIconSize = 0);
     void RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
-        float opacity, std::uintptr_t ownerKey);
+        float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style = nullptr);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
         D2D1_COLOR_F fill, D2D1_COLOR_F border, float strokeWidth, std::uintptr_t ownerKey = 0);
     void DrawPrivacyFaIcon(ID2D1DeviceContext* ctx, RECT rect, bool directory);
@@ -3032,10 +3037,36 @@ private:
     bool ExecuteIconOverrideMenu(UINT command, const std::wstring& identity);
     ID2D1Bitmap* GetSmallCustomIcon(ID2D1RenderTarget* context, std::wstring_view identity, int pixels);
     std::unordered_map<std::wstring, std::string> iconOverrides_;
+    std::map<std::wstring, snowdesktop::IconAppearanceRecord> iconAppearanceOverrides_;
+    std::uint64_t iconAppearanceRevision_ = 1, iconAppearanceSession_ = 0;
+    std::wstring iconAppearanceTarget_;
+    snowdesktop::IconAppearanceSnapshot EditIconAppearance(snowdesktop::IconAppearanceRequest request);
+    void OpenIconAppearance(const std::wstring& target);
+    std::wstring ResolveIconTarget(std::wstring_view identity) const;
+    snowdesktop::IconBeautifySettings ResolveIconAppearance(std::wstring_view identity, bool media = false) const;
+    ID2D1Bitmap* GetTargetIconBitmap(ID2D1RenderTarget* context, HBITMAP bitmap,
+        std::wstring_view identity, bool media = false);
+    ID2D1Bitmap* GetStyledD2DBitmap(ID2D1RenderTarget* context, HBITMAP bitmap,
+        const snowdesktop::IconBeautifySettings& style, bool managedAlpha = false);
+    ComPtr<ID2D1Bitmap1> CreateStyledD2DBitmap(HBITMAP bitmap,
+        const snowdesktop::IconBeautifySettings& style, bool managedAlpha = false);
+    snowdesktop::icon_appearance::StyleIdentities iconStyleCache_;
+    std::map<std::tuple<std::uintptr_t, size_t, bool>, ComPtr<ID2D1Bitmap1>> styledIconCache_;
+    std::unordered_map<ID2D1Bitmap*, snowdesktop::IconBeautifySettings> iconBitmapStyles_;
+    void ClearStyledIconCache();
+    snowdesktop::icon_image::Image MakeDockControlIconSource(std::wstring_view target, bool light) const;
+    std::map<std::wstring, std::shared_ptr<snowdesktop::BackgroundBitmap>> iconControlSources_;
+    struct DockAppearanceImage { std::vector<std::uintptr_t> sources; ComPtr<ID2D1Bitmap1> bitmap; };
+    std::map<std::wstring, DockAppearanceImage> dockAppearanceImages_;
+    void ClearDockAppearanceImages();
+    void DrawDockGroupBadge(ID2D1DeviceContext* ctx, RECT iconRect);
+    bool drawingIconAppearanceSource_ = false;
+    bool DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT target, int state);
+    snowdesktop::icon_image::Image CaptureDockIconSource(ID2D1DeviceContext* ctx, const DockEntry& entry);
     bool SetDockIconAsset(const std::wstring& widgetId, const std::string& assetId);
     bool ApplyLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request, const std::string& id);
     bool ImportLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request);
-    ID2D1Bitmap* GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels);
+    ID2D1Bitmap* GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels, std::wstring_view identity = {});
     void DrawIconBitmap(ID2D1RenderTarget* target, ID2D1Bitmap* bitmap,
         RECT destination, float opacity = 1.0f,
         std::uintptr_t ownerKey = 0, bool preserveAspectRatio = true);

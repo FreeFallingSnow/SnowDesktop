@@ -1,6 +1,7 @@
 #pragma once
 
 #include "icons/large_icon_config.h"
+#include "icons/icon_appearance.h"
 #include "dock/dock_layout_settings.h"
 
 #include <filesystem>
@@ -201,6 +202,7 @@ struct Document
     std::optional<float> iconBeautifyOutlineB;
     std::optional<float> iconBeautifyShadowStrength;
     std::vector<std::pair<std::string, std::string>> iconOverrides;
+    std::vector<IconAppearanceRecord> iconBeautifyOverrides;
     std::vector<PageRecord> pages;
     std::vector<ItemRecord> items;
     std::vector<WidgetRecord> widgets;

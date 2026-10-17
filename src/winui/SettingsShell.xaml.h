@@ -17,6 +17,7 @@
 #include "page_layout_page_presenter.h"
 #include "large_icon_page_presenter.h"
 #include "icon_library_page_presenter.h"
+#include "icon_appearance_presenter.h"
 #include "personalization_page_presenter.h"
 #include "settings_shell_navigation.h"
 #include "settings_focus_feedback.h"
@@ -131,6 +132,13 @@ struct SettingsShell : SettingsShellT<SettingsShell>
         snowdesktop::winui::PageLayoutPageActions actions);
     void SetLargeIconSettingsAction(snowdesktop::LargeIconSettingsAction action);
     void SetIconLibraryAction(snowdesktop::IconLibraryAction action);
+    void SetIconAppearanceAction(snowdesktop::IconAppearanceAction action);
+    void OpenRequestedIconAppearance();
+    void RefreshIconAppearanceList()
+    {
+        if (sessionActive_ && iconAppearancePage_ && navigation_.Route().page == snowdesktop::SettingsPage::AppearanceIconBeautification)
+            iconAppearancePage_->Activate();
+    }
     [[nodiscard]] bool ApplyHomeAboutStatusPatch(
         const snowdesktop::winui::HomeAboutStatusPatch& patch);
     void SetWidgetSettingsService(
@@ -319,6 +327,8 @@ private:
     snowdesktop::winui::PageLayoutPageActions pageLayoutPageActions_;
     snowdesktop::LargeIconSettingsAction largeIconSettingsAction_;
     std::unique_ptr<snowdesktop::winui::LargeIconPagePresenter> largeIconPage_;
+    snowdesktop::IconAppearanceAction iconAppearanceAction_;
+    std::unique_ptr<snowdesktop::winui::IconAppearancePresenter> iconAppearancePage_;
     snowdesktop::IconLibraryAction iconLibraryAction_;
     std::unique_ptr<snowdesktop::winui::IconLibraryPagePresenter> iconLibraryPage_;
     snowdesktop::winui::WidgetsPageActions widgetsPageActions_;

@@ -2,6 +2,7 @@
 #include "icons/icon_library.h"
 #include "icons/icon_image_codec.h"
 #include "icons/icon_override_rules.h"
+#include "icons/icon_control_source.h"
 #include "icons/large_icon_edit_rules.h"
 
 struct IconLibraryHostState
@@ -223,7 +224,7 @@ bool DesktopApp::ImportLargeIconLibraryAsset(const snowdesktop::LargeIconSetting
     state.pendingLargeIcon.reset(); return false;
 }
 
-ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels)
+ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std::string& id, int pixels, std::wstring_view identity)
 {
     if (!snowdesktop::IsIconAssetId(id)) return nullptr;
     auto& state = EnsureIconLibrary();
@@ -231,7 +232,7 @@ ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std
     const auto key = id + ':' + std::to_string(edge);
     const auto found = state.bitmaps.find(key);
     if (found != state.bitmaps.end()) return found->second && found->second->bitmap ?
-        GetOrCreateManagedD2DBitmap(context, found->second->bitmap, iconBeautifySettings_.enabled) : nullptr;
+        GetStyledD2DBitmap(context, found->second->bitmap, ResolveIconAppearance(identity), true) : nullptr;
     if (state.busy) return nullptr;
     if (state.bitmaps.size() >= 256)
     {
@@ -331,24 +332,24 @@ bool DesktopApp::SetIconOverride(const std::wstring& target, const std::string& 
 }
 ID2D1Bitmap* DesktopApp::GetSmallCustomIcon(ID2D1RenderTarget* context, std::wstring_view identity, int pixels)
 {
-    using namespace snowdesktop::icon_override;
     if (identity.empty()) return nullptr;
-    const auto key = ToUpperInvariant(std::wstring(identity));
-    std::wstring target;
-    if (identity == start || identity == search) target = identity;
-    else
-    {
-        const bool recycle = key.find(ToUpperInvariant(kDesktopIconClsidRecycleBin)) != std::wstring::npos;
-        if (recycle)
-        {
-            const auto status = recycleBinPollState_ ? recycleBinPollState_->hasItems.load() : -1;
-            if (status < 0) return nullptr;
-            target = Target(key, status > 0 ? 1 : 0);
-        }
-        else target = Target(key);
-    }
+    const auto target = ResolveIconTarget(identity);
     const auto found = iconOverrides_.find(target);
-    return found == iconOverrides_.end() ? nullptr : GetDockCustomIcon(context, found->second, pixels);
+    if (found != iconOverrides_.end())
+        if (auto* custom = GetDockCustomIcon(context, found->second, pixels, identity)) return custom;
+    if (snowdesktop::icon_control::UsesBitmap(identity, iconAppearanceOverrides_.contains(target), ResolveIconAppearance(identity)))
+    {
+        const bool light = CurrentDockAppearance().contentTheme == 1;
+        const auto sourceKey = target + (light ? L":light" : L":dark");
+        auto& source = iconControlSources_[sourceKey];
+        if (!source)
+        {
+            source = std::make_shared<snowdesktop::BackgroundBitmap>();
+            source->bitmap = snowdesktop::icon_image::CreateBitmap(MakeDockControlIconSource(target, light));
+        }
+        return GetStyledD2DBitmap(context, source->bitmap, ResolveIconAppearance(identity), true);
+    }
+    return nullptr;
 }
 HMENU DesktopApp::AppendIconOverrideMenu(HMENU menu, const std::wstring& identity)
 {
@@ -362,6 +363,15 @@ HMENU DesktopApp::AppendIconOverrideMenu(HMENU menu, const std::wstring& identit
         {
             AppendMenuW(parent, MF_STRING, command + 1, _LW("iconLibrary.restore"));
             SetMenuItemIcon(parent, command + 1, L"\uF19A", MenuIconFont::FluentRegular);
+        }
+        const auto state = command == emptyChange ? 1u : command == fullChange ? 2u : 0u;
+        AppendMenuW(parent, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(parent, MF_STRING, beautify + state * 2, _LW("iconAppearance.edit"));
+        SetMenuItemIcon(parent, beautify + state * 2, L"\uF592", MenuIconFont::FluentRegular);
+        if (iconAppearanceOverrides_.contains(target))
+        {
+            AppendMenuW(parent, MF_STRING, inherit + state * 2, _LW("iconAppearance.inherit"));
+            SetMenuItemIcon(parent, inherit + state * 2, L"\uF19A", MenuIconFont::FluentRegular);
         }
     };
     const auto personal = CreatePopupMenu(); if (!personal) return nullptr;
@@ -384,6 +394,14 @@ HMENU DesktopApp::AppendIconOverrideMenu(HMENU menu, const std::wstring& identit
 bool DesktopApp::ExecuteIconOverrideMenu(UINT command, const std::wstring& identity)
 {
     using namespace snowdesktop::icon_override;
+    if (command >= beautify && command <= inherit + 4)
+    {
+        const int state = command >= beautify + 4 ? 1 : command >= beautify + 2 ? 0 : -1;
+        const auto target = Target(ToUpperInvariant(identity), state);
+        if ((command - beautify) % 2 == 0) OpenIconAppearance(target);
+        else { snowdesktop::IconAppearanceRequest request; request.action = "inherit"; request.target = target; (void)EditIconAppearance(request); }
+        return true;
+    }
     if (command < change || command > fullRestore) return false;
     const int state = command >= fullChange ? 1 : command >= emptyChange ? 0 : -1;
     const auto target = Target(ToUpperInvariant(identity), state);

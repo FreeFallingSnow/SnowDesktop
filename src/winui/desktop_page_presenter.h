@@ -71,6 +71,7 @@ public:
     DesktopPagePresenter& operator=(const DesktopPagePresenter&) = delete;
 
     void SetActions(DesktopPageActions actions);
+    void SetIconEditorMode();
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         Content() const noexcept;

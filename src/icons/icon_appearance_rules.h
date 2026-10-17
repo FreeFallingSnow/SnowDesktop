@@ -1,0 +1,33 @@
+#pragma once
+#include "icon_appearance_codec.h"
+
+namespace snowdesktop::icon_appearance
+{
+inline IconBeautifySettings Resolve(const IconBeautifySettings& global,
+    const IconAppearanceRecord* independent, bool media, bool rawSource)
+{
+    auto style = independent ? independent->settings : global;
+    if (rawSource || (media && !independent)) style.enabled = false;
+    return style;
+}
+inline bool CurrentEdit(const IconAppearanceRequest& request, std::wstring_view target,
+    std::uint64_t session, std::uint64_t revision)
+{
+    return request.session != 0 && request.target == target && request.session == session && request.revision == revision;
+}
+// Intern complete normalized styles. Do not merge styles by an unchecked hash
+// or by a source handle alone; the same original may have different owners.
+class StyleIdentities
+{
+public:
+    size_t Get(const IconBeautifySettings& value)
+    {
+        for (size_t i = 0; i < styles_.size(); ++i)
+            if (styles_[i].mode == value.mode && styles_[i].preset == value.preset && themes::SameIconTheme(styles_[i], value)) return i;
+        styles_.push_back(value); return styles_.size() - 1;
+    }
+    void Clear() { styles_.clear(); }
+private:
+    std::vector<IconBeautifySettings> styles_;
+};
+}

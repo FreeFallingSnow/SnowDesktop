@@ -5,6 +5,7 @@
 #include "widget/settings/widget_settings_service.h"
 #include "layout/page_layout_settings.h"
 #include "icons/large_icon_settings.h"
+#include "icons/icon_appearance.h"
 #include "settings_search_index.h"
 
 // Private same-executable wire schema. Keep field lists explicit: no
@@ -104,6 +105,11 @@ SD_IPC_FIELDS(DesktopDisplaySettings,
 SD_IPC_FIELDS(SettingsRoute,
     v.page, v.widgetInstanceId, v.focusId, v.itemKey, v.guideTopic);
 SD_IPC_FIELDS(LargeIconSettingsRequest, v.key, v.session, v.revision, v.action, v.config, v.path, v.fields);
+SD_IPC_FIELDS(IconAppearanceRecord, v.target, v.name, v.settings, v.themeId, v.available);
+SD_IPC_FIELDS(IconAppearanceChoice, v.id, v.name, v.settings);
+SD_IPC_FIELDS(IconAppearanceRequest, v.action, v.target, v.session, v.revision, v.settings, v.themeId);
+SD_IPC_FIELDS(IconAppearanceSnapshot, v.entries, v.themes, v.current, v.session, v.revision,
+    v.succeeded, v.available, v.independent, v.error, v.previewPng);
 SD_IPC_FIELDS(IconLibraryGroup, v.id, v.name, v.source, v.packageId, v.packageVersion, v.sourceUri);
 SD_IPC_FIELDS(IconLibraryEntry, v.id, v.format, v.name, v.previewPath, v.width, v.height, v.missing,
     v.source, v.packageId, v.packageVersion, v.packageEntryId, v.uses, v.groupIds);

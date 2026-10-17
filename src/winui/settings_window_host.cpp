@@ -2151,6 +2151,11 @@ struct SettingsWindowHost::Impl
             if (!state->alive.load() || !state->owner) return LargeIconSettingsSnapshot{};
             return state->owner->options.largeIconSettings(std::move(request));
         });
+        shell->SetIconAppearanceAction([weak](IconAppearanceRequest request) {
+            const auto state = weak.lock();
+            if (!state || !state->alive.load() || !state->owner || !state->owner->options.iconAppearance) return IconAppearanceSnapshot{};
+            return state->owner->options.iconAppearance(std::move(request));
+        });
         shell->SetIconLibraryAction([weak](IconLibraryRequest request) {
             const auto state = weak.lock();
             if (!state || !state->alive.load() || !state->owner || !state->owner->options.iconLibrary)
@@ -2833,6 +2838,13 @@ struct SettingsWindowHost::Impl
             }
             if (!applied) { result.message = L("themeLibrary.savedPending"); return result; }
         }
+        if (result.succeeded && options.iconAppearance &&
+            (request.command == ThemeLibraryCommand::Update || request.command == ThemeLibraryCommand::Remove))
+        {
+            IconAppearanceRequest reconcile; reconcile.action = "themes";
+            if (!options.iconAppearance(reconcile).succeeded) result.message = L("themeLibrary.savedPending");
+            if (shell) shell->RefreshIconAppearanceList();
+        }
         feedback(); return result;
     }
 
@@ -2981,6 +2993,8 @@ struct SettingsWindowHost::Impl
         ApplySnapshotNow(snapshot);
         if (shell && route.page == SettingsPage::IconLibrary && !route.itemKey.empty())
             shell->OpenRequestedIconPicker();
+        if (shell && route.page == SettingsPage::AppearanceIconBeautification && !route.itemKey.empty())
+            shell->OpenRequestedIconAppearance();
         if (widgetSnapshot &&
             (!shell || !shell->ApplyWidgetSettingsSnapshot(
                 *widgetSnapshot)))

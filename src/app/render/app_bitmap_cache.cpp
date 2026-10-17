@@ -471,10 +471,14 @@ std::uintptr_t DesktopApp::GetD2DIconCacheKey(HBITMAP hbm, bool beautified) cons
 void DesktopApp::EraseD2DIconCacheForBitmap(HBITMAP hbm)
 {
     if (!hbm) return;
+    for (auto it = styledIconCache_.begin(); it != styledIconCache_.end();)
+        if (std::get<0>(it->first) == reinterpret_cast<std::uintptr_t>(hbm))
+        { iconGlassBackdrop_.erase(it->second.Get()); iconBitmapStyles_.erase(it->second.Get()); it = styledIconCache_.erase(it); }
+        else ++it;
     for (const bool beautified : {false, true})
     {
         const auto it = d2dIconCache_.find(GetD2DIconCacheKey(hbm, beautified));
-        if (it != d2dIconCache_.end()) iconGlassBackdrop_.erase(it->second.Get());
+        if (it != d2dIconCache_.end()) { iconGlassBackdrop_.erase(it->second.Get()); iconBitmapStyles_.erase(it->second.Get()); }
     }
     d2dIconCache_.erase(GetD2DIconCacheKey(hbm, false));
     d2dIconCache_.erase(GetD2DIconCacheKey(hbm, true));
@@ -482,6 +486,13 @@ void DesktopApp::EraseD2DIconCacheForBitmap(HBITMAP hbm)
 
 ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
     HBITMAP hbm, bool beautify, bool managedAlpha)
+{
+    auto style = iconBeautifySettings_; style.enabled = beautify && style.enabled;
+    return CreateStyledD2DBitmap(hbm, style, managedAlpha);
+}
+
+ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
+    const snowdesktop::IconBeautifySettings& style, bool managedAlpha)
 {
     if (!hbm || !d2dContext_)
         return nullptr;
@@ -491,10 +502,10 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
         return nullptr;
 
     bool needsGlassBackdrop = false;
-    if (beautify)
+    if (style.enabled)
     {
         std::optional<snowdesktop::icon_beautify::EdgeColor> edgeFill;
-        if (iconBeautifySettings_.mode == 0)
+        if (style.mode == 0)
         {
             IconBackgroundColor detected{};
             if (DetectSolidEdgeBackground(
@@ -504,10 +515,10 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
                     detected.r, detected.g, detected.b };
             }
         }
-        needsGlassBackdrop = iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled && !edgeFill;
+        needsGlassBackdrop = style.enabled && style.glassEnabled && !edgeFill;
         buffer.pixels = snowdesktop::icon_beautify::Render(
             buffer.pixels, buffer.width, buffer.height,
-            iconBeautifySettings_, edgeFill);
+            style, edgeFill);
     }
 
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
@@ -526,6 +537,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
     }
 
     iconGlassBackdrop_[bitmap.Get()] = needsGlassBackdrop;
+    iconBitmapStyles_[bitmap.Get()] = style;
     return bitmap;
 }
 
@@ -594,17 +606,19 @@ void DesktopApp::DrawIconBitmap(ID2D1RenderTarget* target,
         return;
 
     const auto glass = iconGlassBackdrop_.find(bitmap);
-    if (glass != iconGlassBackdrop_.end() && glass->second && iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
-    {
-        RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey);
-    }
+    const auto styled = iconBitmapStyles_.find(bitmap);
+    const auto& style = styled == iconBitmapStyles_.end() ? iconBeautifySettings_ : styled->second;
+    if (glass != iconGlassBackdrop_.end() && glass->second && style.enabled && style.glassEnabled)
+        RegisterIconBackdrop(target, plan.bounds, opacity, ownerKey, &style);
 
     snowdesktop::icon_bitmap_renderer::Draw(target, bitmap, plan, opacity);
 }
 
 void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
-    float opacity, std::uintptr_t ownerKey)
+    float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style)
 {
+    if (drawingIconAppearanceSource_) return;
+    const auto& appearance = style ? *style : iconBeautifySettings_;
     // Popup/quick-navigation backdrops are collected by their own animation
     // transaction. Icons inherit that panel rather than adding a second blur.
     if (renderingFloatingPopup_ || quickNavCompositionPaintInProgress_) return;
@@ -618,7 +632,7 @@ void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
         // old independent layer when the component supplies its own material.
         if (!parentSuppliesGlass && opacity > 0.0f)
             desktopWidgetIconBackdropsDrawing_->Collect({frame,
-                iconBeautifySettings_.shape, iconBeautifySettings_.glassBlurRadius,
+                appearance.shape, appearance.glassBlurRadius,
                 opacity, false, std::move(contentClip)});
         return;
     }
@@ -647,6 +661,32 @@ void DesktopApp::RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
     }
     const auto key = ownerKey ? ownerKey | 1u : 0;
     snowdesktop::desktop_backdrop_update_rules::ReconcileIconPanel(*compositor,
-        frame, iconBeautifySettings_.shape, iconBeautifySettings_.glassBlurRadius,
+        frame, appearance.shape, appearance.glassBlurRadius,
         opacity, key, parentSuppliesGlass, contentClip ? &*contentClip : nullptr);
+}
+
+void DesktopApp::ClearStyledIconCache()
+{
+    for (const auto& [key, bitmap] : styledIconCache_)
+    { (void)key; iconGlassBackdrop_.erase(bitmap.Get()); iconBitmapStyles_.erase(bitmap.Get()); }
+    ClearDockAppearanceImages();
+    styledIconCache_.clear(); iconStyleCache_.Clear();
+}
+ID2D1Bitmap* DesktopApp::GetStyledD2DBitmap(ID2D1RenderTarget* context, HBITMAP bitmap,
+    const snowdesktop::IconBeautifySettings& requested, bool managedAlpha)
+{
+    if (!context || !bitmap) return nullptr;
+    auto style = snowdesktop::icon_beautify::Normalize(requested);
+    const auto token = iconStyleCache_.Get(style);
+    const auto key = std::tuple{reinterpret_cast<std::uintptr_t>(bitmap), token, managedAlpha};
+    const auto found = styledIconCache_.find(key);
+    if (found != styledIconCache_.end()) return found->second.Get();
+    auto uploaded = CreateStyledD2DBitmap(bitmap, style, managedAlpha);
+    if (!uploaded) return nullptr;
+    auto* result = uploaded.Get(); styledIconCache_[key] = std::move(uploaded); return result;
+}
+ID2D1Bitmap* DesktopApp::GetTargetIconBitmap(ID2D1RenderTarget* context, HBITMAP bitmap,
+    std::wstring_view identity, bool media)
+{
+    return GetStyledD2DBitmap(context, bitmap, ResolveIconAppearance(identity, media));
 }

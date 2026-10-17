@@ -2822,5 +2822,14 @@
   "iconLibrary.selectFiltered": "Sélectionner toutes les icônes filtrées",
   "iconLibrary.deleteRestoreUses": "Ces emplacements retrouveront leurs icônes par défaut :",
   "iconLibrary.deleteGroupIcons": "Supprimer aussi les icônes de ce groupe",
-  "iconLibrary.deleteGroupIconsHint": "Les mêmes icônes seront aussi retirées des autres groupes et leurs utilisations retrouveront les icônes par défaut."
+  "iconLibrary.deleteGroupIconsHint": "Les mêmes icônes seront aussi retirées des autres groupes et leurs utilisations retrouveront les icônes par défaut.",
+  "iconAppearance.edit": "Personnaliser l’apparence de cette icône…",
+  "iconAppearance.inherit": "Utiliser l’apparence globale des icônes",
+  "iconAppearance.list": "Apparence individuelle des icônes",
+  "iconAppearance.search": "Rechercher des icônes personnalisées",
+  "iconAppearance.empty": "Aucune icône personnalisée individuellement",
+  "iconAppearance.source": "Réglages d’apparence",
+  "iconAppearance.follow": "Suivre les réglages globaux",
+  "iconAppearance.independent": "Personnaliser cette icône",
+  "iconAppearance.unavailable": "Cible indisponible"
 }

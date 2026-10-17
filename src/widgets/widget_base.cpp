@@ -2359,9 +2359,7 @@ void ScrollingItemWidget::DrawListItem(ID2D1DeviceContext* context, RECT cell,
     }
     else if (auto custom = app_->GetSmallCustomIcon(context, iconIdentity, iconRect.right - iconRect.left))
         app_->DrawIconBitmap(context, custom, iconRect);
-    else if (ID2D1Bitmap1* bmp = app_->GetOrCreateD2DBitmap(
-            iconBitmap,
-            app_->ShouldBeautifyIconBitmap(iconIsMediaThumbnail)))
+    else if (ID2D1Bitmap* bmp = app_->GetTargetIconBitmap(context, iconBitmap, iconIdentity, iconIsMediaThumbnail))
     {
         app_->DrawIconBitmap(context, bmp, iconRect, 1.0f,
             reinterpret_cast<std::uintptr_t>(iconBitmap));
