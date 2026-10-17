@@ -2,6 +2,7 @@
 #include "popup_opacity_scope.h"
 #include "app/navigation/quick_navigation_theme.h"
 #include "layout/item_render_layer_rules.h"
+#include "layout/popup_scrollbar_layout.h"
 #include "categorized_popup_scope.h"
 #include "ui/render/app_font.h"
 #include <d2d1effects.h>
@@ -622,9 +623,9 @@ void DesktopApp::DrawCollectionPopup(
         PtInRect(&popupRect_, lastMousePoint_);
     popupHovered = popupHovered || popupScrollbarDragging_;
     if (!fan) DrawScrollbarAt(
-        ctx, content, contentHeight, visibleHeight,
+        ctx, snowdesktop::popup_scrollbar_layout::Viewport(popupRect_, content), contentHeight, visibleHeight,
         popupScrollOffset_, popupHovered,
-        collectionPopupLightTheme_);
+        collectionPopupLightTheme_, popupMetrics.scale);
 
     if (!fan) (void)DrawWidgetPanelEdgeHighlight(
         ctx, popupRect_, 18.0f * popupMetrics.scale,

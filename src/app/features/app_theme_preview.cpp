@@ -93,7 +93,12 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             collectionPopupAppearance_ = appearance; collectionPopupLightTheme_ = light;
             collectionPopupGlassTheme_ = appearance.glassEnabled;
             bounds = GetCollectionPopupRect(widgets_.front()); material(bounds, appearance, 18.f);
-            DrawCollectionPopup(context.Get(), false); popupWidgetIndex_ = static_cast<std::size_t>(-1);
+            // Keep overflow tracks visible in this isolated renderer so a
+            // constrained canvas can inspect popup content/scrollbar spacing.
+            popupScrollbarDragging_ = true;
+            DrawCollectionPopup(context.Get(), false);
+            popupScrollbarDragging_ = false;
+            popupWidgetIndex_ = static_cast<std::size_t>(-1);
         }
         else if (request.component == "dock")
         {

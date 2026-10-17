@@ -21,6 +21,7 @@
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
 #include "single_cell_widget_rules.h"
+#include "layout/popup_scrollbar_layout.h"
 #include "storage_title_bar_layout.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "widget/preview/widget_preview_scene.h"
@@ -556,7 +557,8 @@ void WidgetContainer::DrawSingleCellContents(ID2D1DeviceContext* context, RECT b
             for (const auto& entry : source.folderEntries)
             {
                 if (entries.size() == 4) break;
-                entries.push_back({&source, nullptr, &entry});
+                const auto* icon = scene ? scene->FindFolderEntry(entry.fullPath) : &entry;
+                if (icon) entries.push_back({&source, nullptr, icon});
             }
         }
         else for (const auto& key : source.itemKeys)
@@ -642,7 +644,17 @@ snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
  */
 RECT WidgetContainer::GetBodyRect() const
 {
-    if (popupFrameActive_) return hostedFrame_;
+    if (popupFrameActive_)
+    {
+        RECT body = hostedFrame_;
+        const auto* popup = app_ ? app_->GetOpenPopupWidget() : nullptr;
+        // Group popups and their hosted sources otherwise fill the frame.
+        // Leave the edge scrollbar's 12-CU hit area outside their item layout.
+        if ((data_ && IsGroupWidgetType(data_->type)) ||
+            (popup && IsGroupWidgetType(popup->type)))
+            body.right = std::max<LONG>(body.left, body.right - Cu(14.0f));
+        return body;
+    }
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).body;
 }
@@ -679,7 +691,8 @@ LONG WidgetContainer::GetScrollContentBottom() const
 RECT WidgetContainer::GetScrollbarViewportRect() const
 {
     RECT viewport = GetContentViewportRect();
-    if (popupFrameActive_) return viewport;
+    if (popupFrameActive_)
+        return snowdesktop::popup_scrollbar_layout::Viewport(hostedFrame_, viewport);
     if (UsesTopTitleBar())
         viewport.bottom = std::max<LONG>(viewport.top,
             std::min(viewport.bottom, GetResizeHandleRect().top));

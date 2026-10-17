@@ -5,6 +5,7 @@
 #include "widget/view/widget_composition_layer_rules.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_scroll_rules.h"
+#include "layout/popup_scrollbar_layout.h"
 #include "drag_drop/ole_drag_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "app/popup/categorized_popup_scope.h"
@@ -398,7 +399,8 @@ void DesktopApp::OnMouseMoveAt(
         if (popupWidget)
         {
             const RECT popup = GetCollectionPopupRect(*popupWidget);
-            const RECT viewport = GetCollectionPopupContentRect(popup);
+            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
+                popup, GetCollectionPopupContentRect(popup));
             const int visible = std::max<int>(
                 1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(
@@ -407,7 +409,7 @@ void DesktopApp::OnMouseMoveAt(
                 ResolveScrollbarAxisGeometry(
                     viewport.top, viewport.bottom,
                     visible + maximum, visible,
-                    popupScrollbarDragStartOffset_);
+                    popupScrollbarDragStartOffset_, GetOpenCollectionPopupLayoutMetrics().scale);
             popupScrollOffset_ = snowdesktop::widget_scroll_rules::
                 ApplyScrollbarThumbDrag(
                     popupScrollbarDragStartOffset_,

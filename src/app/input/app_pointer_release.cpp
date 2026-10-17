@@ -6,6 +6,7 @@
 #include "steam/steam_app_identity.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/view/widget_scroll_rules.h"
+#include "layout/popup_scrollbar_layout.h"
 
 // Pointer leave, Dock click release and primary-button drag completion.
 
@@ -907,7 +908,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         if (popupWidget && IsCollectionPopupInteractive())
         {
             const RECT popup = GetCollectionPopupRect(*popupWidget);
-            const RECT viewport = GetCollectionPopupContentRect(popup);
+            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
+                popup, GetCollectionPopupContentRect(popup));
             const int visible = std::max<int>(
                 1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(
@@ -916,7 +918,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 ResolveScrollbarAxisGeometry(
                     viewport.top, viewport.bottom,
                     visible + maximum, visible,
-                    popupScrollbarDragStartOffset_);
+                    popupScrollbarDragStartOffset_, GetOpenCollectionPopupLayoutMetrics().scale);
             popupScrollOffset_ = snowdesktop::widget_scroll_rules::
                 ApplyScrollbarThumbDrag(
                     popupScrollbarDragStartOffset_,

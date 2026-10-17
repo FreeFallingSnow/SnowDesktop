@@ -2,6 +2,7 @@
 #include "app/dock/dock_taskbar_diagnostics.h"
 #include "navigation/quick_navigation_rules.h"
 #include "widget/view/widget_scroll_rules.h"
+#include "layout/popup_scrollbar_layout.h"
 #include "settings/animation_settings.h"
 #include "app/popup/categorized_popup_scope.h"
 
@@ -352,7 +353,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                     return;
                 }
             }
-            const RECT viewport = GetCollectionPopupContentRect(popup);
+            const RECT viewport = snowdesktop::popup_scrollbar_layout::Viewport(
+                popup, GetCollectionPopupContentRect(popup));
+            const float scrollbarScale = GetOpenCollectionPopupLayoutMetrics().scale;
             const int visible = std::max<int>(
                 1, viewport.bottom - viewport.top);
             const int maximum = GetCollectionPopupMaxScrollOffset(
@@ -361,9 +364,9 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 ResolveScrollbarAxisGeometry(
                     viewport.top, viewport.bottom,
                     visible + maximum, visible,
-                    popupScrollOffset_);
+                    popupScrollOffset_, scrollbarScale);
             if (snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
-                    geometry, pt.y, pt.x, viewport.right))
+                    geometry, pt.y, pt.x, viewport.right, scrollbarScale))
             {
                 popupScrollbarDragging_ = true;
                 popupScrollbarDragStartY_ = pt.y;

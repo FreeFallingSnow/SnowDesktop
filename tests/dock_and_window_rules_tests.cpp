@@ -24,6 +24,7 @@
 #include "layout/item_location.h"
 #include "dock/dock_collection_icon_rules.h"
 #include "layout/collection_popup_layout.h"
+#include "layout/popup_scrollbar_layout.h"
 #include "layout/folder_sort_rules.h"
 #include "shell/shell_item_visibility.h"
 #include "shell/shell_file_operation_worker.h"
@@ -3531,6 +3532,30 @@ int main(int argc, char** argv)
     const auto standardPopupMetrics =
         popupLayout::ResolveMetrics(
             92, 116, 84, 108, 1.0f, 34);
+    for (const float scale : {0.75f, 1.0f, 1.5f, 2.0f})
+    {
+        const auto px = [scale](int value) { return static_cast<LONG>(std::lround(value * scale)); };
+        const RECT panel{0, 0, px(360), px(640)};
+        const RECT icons{px(18), px(54), px(342), px(620)};
+        const RECT scrollbar = snowdesktop::popup_scrollbar_layout::Viewport(panel, icons);
+        Check(scrollbar.left == icons.left && scrollbar.top == icons.top &&
+                scrollbar.bottom == icons.bottom && scrollbar.right == px(360),
+            "popup scrollbars must use the outer panel edge without changing the content's vertical range");
+        const auto axis = snowdesktop::widget_scroll_rules::ResolveScrollbarAxisGeometry(
+            scrollbar.top, scrollbar.bottom, px(1200), px(566), 0, scale);
+        const int thumbY = (axis.thumbStart + axis.thumbEnd) / 2;
+        Check(snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    axis, thumbY, px(356), scrollbar.right, scale) &&
+                !snowdesktop::widget_scroll_rules::ScrollbarThumbHit(
+                    axis, thumbY, icons.right - 1, scrollbar.right, scale),
+            "the popup scrollbar hit target must follow the edge track without covering the last icon column");
+    }
+    const RECT clippedScrollbar = snowdesktop::popup_scrollbar_layout::Viewport(
+        RECT{100, 200, 460, 840}, RECT{118, 180, 442, 860});
+    Check(clippedScrollbar.top == 200 && clippedScrollbar.bottom == 840 && clippedScrollbar.right == 460,
+        "popup scrollbar tracks must remain inside the panel when the content viewport extends beyond it");
+    RECT emptyScrollbar = snowdesktop::popup_scrollbar_layout::Viewport(RECT{0, 0, 360, 640}, RECT{});
+    Check(IsRectEmpty(&emptyScrollbar), "empty popup content must not create a scrollbar hit target");
     Check(
         standardPopupMetrics.cellWidth == 92 &&
             standardPopupMetrics.cellHeight == 116 &&
