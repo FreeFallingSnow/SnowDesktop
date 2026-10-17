@@ -404,6 +404,9 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         if(!imported.succeeded||imported.entries.size()!=1||imported.entries[0].missing)throw std::runtime_error("original preview import failed");
         libraryFixture->entries[1]=imported.entries[0];
     }
+    libraryFixture->entries[2].groupNames.emplace(sampleGroup.id, L"Frost Browser");
+    libraryFixture->entries[6].groupNames.emplace(sampleGroup.id, L"Frost Browser");
+    libraryFixture->targetName = L"FrostBrowser.lnk";
     const auto pickerRequests=std::make_shared<std::vector<IconLibraryRequest>>();
     shell->SetIconLibraryAction([libraryFixture,pickerRequests](IconLibraryRequest request) {
         if (request.action != "read" && request.action != "refresh" && request.action!="apply" && request.action!="cancel") throw std::runtime_error("preview library mutations are disabled");
@@ -850,13 +853,15 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             PumpUntil([&] { return grid.Items().Size() == 7 && loadedImages(); });
             struct PickerResult { bool completed = false; std::string id; };
             const auto pickerResult = std::make_shared<PickerResult>();
+            const auto pickerReads = std::make_shared<unsigned>(0);
             struct PickerCleanup { std::function<void()> cancel; ~PickerCleanup() { if (cancel) cancel(); } } pickerCleanup;
             pickerCleanup.cancel = IconLibraryPagePresenter::Pick(shell->XamlRoot(),
                 [](std::string_view name) { return std::wstring(_LW(std::string(name).c_str())); },
-                [libraryFixture](IconLibraryRequest request) {
+                [libraryFixture,pickerReads](IconLibraryRequest request) {
                     if (request.action != "read") throw std::runtime_error("picker preview mutations are disabled");
-                    return *libraryFixture;
-                }, entries.front().id, [pickerResult](std::string id) { pickerResult->id = std::move(id); pickerResult->completed = true; });
+                    ++*pickerReads;
+                    auto result = *libraryFixture; result.targetName.clear(); return result;
+                }, entries.front().id, [pickerResult](std::string id) { pickerResult->id = std::move(id); pickerResult->completed = true; }, libraryFixture->targetName);
             c::ContentDialog pickerDialog{nullptr};
             PumpUntil([&] {
                 for (const auto& popup : x::Media::VisualTreeHelper::GetOpenPopupsForXamlRoot(shell->XamlRoot()))
@@ -868,7 +873,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             const auto pickerGrid = PreviewControl<c::GridView>(pickerDialog, L"IconLibraryGrid");
             const auto pickerQuery = PreviewControl<c::TextBox>(pickerDialog, L"IconLibrarySearch");
             const auto pickerGroups = PreviewControl<c::ComboBox>(pickerDialog, L"IconLibraryGroups");
-            pickerGroups.SelectedIndex(0); Settle(pickerDialog);
+            Settle(pickerDialog);
+            if (pickerGroups.SelectedIndex() != 0 || pickerGrid.Items().Size() != 7 ||
+                winrt::unbox_value<winrt::hstring>(pickerGroups.SelectedItem().as<c::ComboBoxItem>().Tag()) != L"")
+                throw std::runtime_error("fresh picker did not default to all icons");
             if (pickerDialog.ActualTheme() != shell->ActualTheme())
                 throw std::runtime_error("icon picker does not inherit its owner window theme");
             PumpUntil([&] { return pickerGrid.ContainerFromIndex(0) && pickerGrid.ContainerFromIndex(1) && pickerGrid.ContainerFromIndex(2); });
@@ -887,6 +895,32 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             winrt::check_hresult(columnsPixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&columnsBytes));
             if (!preview_png::Save(output / L"icon-picker-columns.png", columnsBitmap.PixelWidth(), columnsBitmap.PixelHeight(),
                 {reinterpret_cast<const std::uint32_t*>(columnsBytes), columnsPixels.Length() / 4}, iconError)) throw std::runtime_error(iconError);
+            pickerGroups.SelectedIndex(1); Settle(pickerDialog);
+            if (winrt::unbox_value<winrt::hstring>(pickerGroups.SelectedItem().as<c::ComboBoxItem>().Tag()) != L"recommended" ||
+                pickerGrid.Items().Size() != 1 || winrt::unbox_value<winrt::hstring>(pickerGrid.Items().GetAt(0)) != winrt::to_hstring(entries[2].id) ||
+                pickerDialog.IsPrimaryButtonEnabled())
+                throw std::runtime_error("name recommendations did not use pack aliases, exclude missing assets or require explicit selection");
+            pickerQuery.Text(L"Frost"); Settle(pickerDialog);
+            if(pickerGrid.Items().Size()!=1)throw std::runtime_error("search ignored the alias used to recommend an asset");
+            pickerQuery.Text(L""); Settle(pickerDialog);
+            pickerGrid.SelectedIndex(0);
+            // Polling must retain the user's filter and the captured target name,
+            // even though ordinary library snapshots have no target metadata.
+            const auto initialReads = *pickerReads;
+            PumpUntil([&] {
+                bool loaded=false; Walk(pickerGrid,[&](const x::DependencyObject& node) {
+                    if(const auto image=node.try_as<c::Image>();image)
+                        if(const auto bitmap=image.Source().try_as<x::Media::Imaging::BitmapImage>();bitmap&&bitmap.PixelWidth()==96)loaded=true;
+                });
+                return *pickerReads > initialReads && loaded && pickerDialog.IsPrimaryButtonEnabled();
+            });
+            if(pickerGroups.SelectedIndex()!=1||pickerGrid.Items().Size()!=1)throw std::runtime_error("polling reset the recommendation filter");
+            x::Media::Imaging::RenderTargetBitmap recommendedBitmap; Await(recommendedBitmap.RenderAsync(pickerDialog));
+            const auto recommendedPixels = Await(recommendedBitmap.GetPixelsAsync()); BYTE* recommendedBytes = nullptr;
+            winrt::check_hresult(recommendedPixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&recommendedBytes));
+            if (!preview_png::Save(output / L"icon-picker-recommended.png", recommendedBitmap.PixelWidth(), recommendedBitmap.PixelHeight(),
+                {reinterpret_cast<const std::uint32_t*>(recommendedBytes), recommendedPixels.Length() / 4}, iconError)) throw std::runtime_error(iconError);
+            pickerGroups.SelectedIndex(0); Settle(pickerDialog);
             pickerQuery.Text(L"Preview icon 3"); // l10n-allow: query matches the isolated preview fixture above.
             Settle(pickerDialog);
             if (pickerGrid.Items().Size() != 1) throw std::runtime_error("picker search lost its fixture resource");
@@ -931,7 +965,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             };
             const auto waitForAllPickerTiles=[&](const c::ContentDialog& opened) {
                 const auto currentGrid=PreviewControl<c::GridView>(opened,L"IconLibraryGrid");
-                PreviewControl<c::ComboBox>(opened,L"IconLibraryGroups").SelectedIndex(0);
+                const auto openedGroups=PreviewControl<c::ComboBox>(opened,L"IconLibraryGroups");
+                if(openedGroups.SelectedIndex()!=0)throw std::runtime_error("reopened picker did not default to all icons");
                 PumpUntil([&] {
                     unsigned loaded=0;
                     Walk(currentGrid,[&](const x::DependencyObject& node) {
@@ -943,9 +978,15 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             };
             auto reopened=openDialog();
             waitForAllPickerTiles(reopened);
+            PreviewControl<c::ComboBox>(reopened,L"IconLibraryGroups").SelectedIndex(1); Settle(reopened);
+            if(PreviewControl<c::GridView>(reopened,L"IconLibraryGrid").Items().Size()!=1)throw std::runtime_error("host target name did not reach recommendations");
             reopened.Hide();PumpUntil([&]{return pickerRequests->size()==1;});
+            libraryFixture->targetName=L"No matching application";
             shell->OpenRequestedIconPicker();reopened=openDialog();
             waitForAllPickerTiles(reopened);
+            PreviewControl<c::ComboBox>(reopened,L"IconLibraryGroups").SelectedIndex(1); Settle(reopened);
+            if(PreviewControl<c::GridView>(reopened,L"IconLibraryGrid").Items().Size()!=0||reopened.IsPrimaryButtonEnabled())throw std::runtime_error("picker reused recommendations from an earlier target");
+            PreviewControl<c::ComboBox>(reopened,L"IconLibraryGroups").SelectedIndex(0); Settle(reopened);
             const auto reopenedGrid=PreviewControl<c::GridView>(reopened,L"IconLibraryGrid");reopenedGrid.SelectedIndex(1);
             PumpUntil([&]{
                 bool originalLoaded=false;Walk(reopenedGrid,[&](const x::DependencyObject& node){
@@ -965,7 +1006,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                         if(const auto bitmap=image.Source().try_as<x::Media::Imaging::BitmapImage>();bitmap&&bitmap.PixelWidth()==96)++loaded;
                 });return currentGrid.Items().Size()==7&&loaded==6;
             });
-            std::ofstream(output / L"icon-library.tsv") << "stream-image-load\tgroup-filter\tstable-selection\tsearch\tempty-hint-removed\npassed\tpassed\tpassed\tpassed\tpassed\n";
+            std::ofstream(output / L"icon-library.tsv") << "stream-image-load\tgroup-filter\tstable-selection\tsearch\tempty-hint-removed\tdefault-all\trecommendations\treopen-all\ttarget-refresh\npassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\n";
         }
         if (page == SettingsPage::WidgetBehavior && expanded)
         {

@@ -433,7 +433,7 @@ struct DockPagePresenter::Impl
                 const auto result = action(std::move(request));
                 if (!guard || !*guard) return;
                 iconStatus.Message(L(result.error.c_str(), L"")); iconStatus.IsOpen(!result.error.empty());
-            });
+            }, snapshot.targetName);
     }
     void RestoreControlIcon(const std::wstring& target)
     {

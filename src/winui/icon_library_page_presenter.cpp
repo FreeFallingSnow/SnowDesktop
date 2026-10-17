@@ -1,5 +1,6 @@
 #include "pch.h"
 #include "icon_library_page_presenter.h"
+#include "icons/icon_library_match.h"
 #include "settings_presenter_controls.h"
 #include <shobjidl.h>
 #include <wrl/client.h>
@@ -54,7 +55,7 @@ std::vector<std::wstring> PickFiles(bool folder, bool cover = false)
 struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
 {
     static std::function<void()> ShowDialog(x::XamlRoot root, Localize localize,
-        IconLibraryAction action, std::string selected, std::function<void(std::string)> completed);
+        IconLibraryAction action, std::string selected, std::function<void(std::string)> completed, std::wstring targetName);
     static winrt::fire_and_forget AwaitDialog(std::shared_ptr<Impl> view, c::ContentDialog dialog, std::function<void(std::string)> completed);
     Localize localize; IconLibraryAction action;
     IconLibrarySnapshot snapshot;
@@ -68,6 +69,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
     bool pendingShare=false,groupSelectionInitialized=false;
     std::string pendingGroup;
     std::string groupId;
+    std::wstring targetName;
     std::wstring groupSignature;
     bool updatingGroups = false;
     c::TextBox search;
@@ -191,9 +193,15 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         {
             importing = false;
             if (!snapshot.importedGroupId.empty()) { groupId = snapshot.importedGroupId; groupSignature.clear(); signature.clear(); }
+            // An explicitly imported image may not match this target's name.
+            // Keep it visible and selectable after importing from Recommended.
+            if (picker && groupId == "recommended" && !snapshot.imported.empty())
+            { groupId.clear(); groupSignature.clear(); signature.clear(); }
             if (picker && snapshot.imported.size() == 1) selectImported = snapshot.imported.front();
         }
-        if(!groupSelectionInitialized&&!snapshot.groups.empty()){groupId=snapshot.groups.front().id;groupSelectionInitialized=true;}
+        // A fresh picker always starts at All, including when groups arrive
+        // after its first snapshot. Management-page group behavior is separate.
+        if(!picker&&!groupSelectionInitialized&&!snapshot.groups.empty()){groupId=snapshot.groups.front().id;groupSelectionInitialized=true;}
         std::wstring next = std::to_wstring(snapshot.revision) + winrt::to_hstring(groupId).c_str();
         std::wstring nextGroups;
         for (const auto& group : snapshot.groups) nextGroups += winrt::to_hstring(group.id).c_str() + group.name;
@@ -204,7 +212,9 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 c::ComboBoxItem item; item.Tag(winrt::box_value(winrt::to_hstring(id))); item.Content(winrt::box_value(name));
                 groups.Items().Append(item); if (id == groupId) groups.SelectedItem(item);
             };
-            append({}, L("iconLibrary.allGroups")); append("ungrouped", L("iconLibrary.ungrouped"));
+            append({}, L("iconLibrary.allGroups"));
+            if (picker && !targetName.empty()) append("recommended", L("iconLibrary.recommended"));
+            append("ungrouped", L("iconLibrary.ungrouped"));
             for (const auto& group : snapshot.groups)
             {
                 auto label=group.name;
@@ -226,13 +236,22 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         {
             signature = std::move(next); const auto selected = selectImported.empty() ? Selected() : std::vector<std::string>{selectImported}; rendering = true;
             grid.Items().Clear(); visible.clear();
-            for (auto entry : snapshot.entries)
+            std::vector<size_t> indices;
+            if (picker && groupId == "recommended") indices = icon_library_match::Recommend(snapshot.entries, targetName);
+            else for (size_t index = 0; index < snapshot.entries.size(); ++index) indices.push_back(index);
+            for (const auto index : indices)
             {
+                auto entry = snapshot.entries[index];
                 if(entry.groupNames.contains(groupId))entry.name=entry.groupNames.at(groupId);
                 auto name = entry.name; std::transform(name.begin(), name.end(), name.begin(), [](wchar_t v) { return static_cast<wchar_t>(std::towlower(v)); });
-                if (!lowerQuery.empty() && name.find(lowerQuery) == name.npos) continue;
+                if (!lowerQuery.empty() && name.find(lowerQuery) == name.npos &&
+                    std::none_of(entry.groupNames.begin(), entry.groupNames.end(), [&](const auto& alias) {
+                        auto label=alias.second;
+                        std::transform(label.begin(),label.end(),label.begin(),[](wchar_t v){return static_cast<wchar_t>(std::towlower(v));});
+                        return label.find(lowerQuery)!=label.npos;
+                    })) continue;
                 if (groupId == "ungrouped" ? !entry.groupIds.empty() :
-                    (!groupId.empty() && std::find(entry.groupIds.begin(), entry.groupIds.end(), groupId) == entry.groupIds.end())) continue;
+                    (!groupId.empty() && groupId != "recommended" && std::find(entry.groupIds.begin(), entry.groupIds.end(), groupId) == entry.groupIds.end())) continue;
                 visible.emplace(entry.id, entry);
                 const auto item = winrt::box_value(winrt::to_hstring(entry.id));
                 grid.Items().Append(item);
@@ -277,7 +296,9 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
     {
         if (paths.empty() || snapshot.busy) return;
         importing = true;
-        IconLibraryRequest request; request.action = "import"; request.paths = std::move(paths); request.groupId = groupId == "ungrouped" ? "" : groupId; Send(std::move(request));
+        IconLibraryRequest request; request.action = "import"; request.paths = std::move(paths);
+        if (std::any_of(snapshot.groups.begin(), snapshot.groups.end(), [&](const auto& group) { return group.id == groupId; })) request.groupId = groupId;
+        Send(std::move(request));
     }
     void Export(std::string format)
     {
@@ -647,7 +668,7 @@ void IconLibraryPagePresenter::Activate(std::wstring target)
                 request.target = target; request.session = session; if (!id.empty()) request.ids.push_back(std::move(id));
                 current->Send(std::move(request));
             }
-        });
+        }, self->snapshot.targetName);
     };
     if (impl_->root.XamlRoot()) open();
     else impl_->root.Loaded([open](auto&&, auto&&) { open(); });
@@ -677,10 +698,11 @@ void IconLibraryPagePresenter::RefreshLocalizedText()
     impl_->selectAll.Label(impl_->L("iconLibrary.selectFiltered"));
 }
 std::function<void()> IconLibraryPagePresenter::Impl::ShowDialog(x::XamlRoot root, IconLibraryPagePresenter::Localize localize,
-    IconLibraryAction action, std::string selected, std::function<void(std::string)> completed)
+    IconLibraryAction action, std::string selected, std::function<void(std::string)> completed, std::wstring targetName)
 {
     const auto view = std::make_shared<IconLibraryPagePresenter::Impl>();
-    view->localize = localize; view->action = std::move(action); view->picker = true; view->Build(); view->active = true;
+    view->localize = localize; view->action = std::move(action); view->picker = true;
+    view->targetName = std::move(targetName); view->Build(); view->active = true;
     c::ContentDialog dialog; dialog.XamlRoot(root); dialog.Title(winrt::box_value(localize("iconLibrary.choose")));
     if (const auto owner = root.Content().try_as<x::FrameworkElement>()) dialog.RequestedTheme(owner.ActualTheme());
     dialog.PrimaryButtonText(localize("iconLibrary.use")); dialog.CloseButtonText(localize("app.settings.cancel"));
@@ -713,9 +735,9 @@ winrt::fire_and_forget IconLibraryPagePresenter::Impl::AwaitDialog(std::shared_p
     if (completed) completed(std::move(result));
 }
 std::function<void()> IconLibraryPagePresenter::Pick(x::XamlRoot root, Localize localize, IconLibraryAction action,
-    std::string selected, std::function<void(std::string)> completed)
+    std::string selected, std::function<void(std::string)> completed, std::wstring targetName)
 {
     if (!root) { if (completed) completed({}); return {}; }
-    return Impl::ShowDialog(root, std::move(localize), std::move(action), std::move(selected), std::move(completed));
+    return Impl::ShowDialog(root, std::move(localize), std::move(action), std::move(selected), std::move(completed), std::move(targetName));
 }
 }

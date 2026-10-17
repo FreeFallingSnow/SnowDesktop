@@ -1,4 +1,5 @@
 #include "icons/icon_library.h"
+#include "icons/icon_library_match.h"
 #include "icons/icon_image_codec.h"
 #include "icons/icon_hbitmap_pixels.h"
 #include "icons/large_icon_config.h"
@@ -51,6 +52,29 @@ int RunIconLibraryTests()
     struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); } } cleanup{directory};
     int failures = 0;
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; } };
+    {
+        std::vector<IconLibraryEntry> candidates(8);
+        candidates[0].name = L"Frost Browser Beta";
+        candidates[1].name = L"Frost Browser";
+        candidates[2].name = L"Frst Browser";
+        candidates[3].name = L"asset-123"; candidates[3].groupNames.emplace("group-one", L"FrostBrowser");
+        candidates[3].groupNames.emplace("group-two", L"Frost Browser");
+        candidates[4].name = L"FrostBrowser"; candidates[4].missing = true;
+        candidates[5].name = L"Calculator";
+        candidates[6].name = L"Steam";
+        candidates[7].name = L"微信-图标"; // l10n-allow: multilingual filename matching fixture.
+        const auto matches = icon_library_match::Recommend(candidates, L"C:\\Desktop\\FROST-browser.lnk");
+        check(matches == std::vector<size_t>{1,3,0,2}, "recommend exact names and pack aliases before variants and spelling errors, without duplicating aliases or missing resources");
+        check(icon_library_match::Recommend(candidates, L"steam.exe") == std::vector<size_t>{6}, "recompute recommendations for a different target");
+        check(icon_library_match::Recommend(candidates, L"微信.url") == std::vector<size_t>{7}, "retain CJK characters when normalizing names"); // l10n-allow: multilingual filename matching fixture.
+        check(icon_library_match::Recommend(candidates, L"No matching application").empty(), "unrelated names yield no recommendations");
+        check(icon_library_match::Recommend(candidates, L"").empty() && icon_library_match::Recommend(candidates, L"ic_launcher.png").empty(), "empty and generic resource names do not recommend the entire library");
+        check(icon_library_match::Recommend(candidates, L"FB").empty(), "do not infer unrelated assets from short abbreviations");
+        check(candidates[3].name == L"asset-123" && candidates[3].groupNames.size() == 2, "recommendations preserve stored names and group membership");
+        candidates[0].name = std::wstring(10000, L'x');
+        check(icon_library_match::Recommend(candidates, std::wstring(10000, L'y')).empty(), "bound matching work for exceptionally long names");
+        check(icon_library_match::Recommend({}, L"Steam").empty(), "empty libraries have no recommendations");
+    }
     std::string error;
     for (const bool lossless : {false, true})
     {

@@ -2867,5 +2867,6 @@
   "iconWorkshop.titleTooLong": "共有タイトルが長すぎます。短くしてから再試行してください。",
   "iconWorkshop.descriptionTooLong": "共有の説明が長すぎます。短くしてから再試行してください。",
   "app.widget_preview.single_cell_component": "1マスウィジェット",
-  "app.settings.group_component_badges": "グループコンポーネントのバッジ"
+  "app.settings.group_component_badges": "グループコンポーネントのバッジ",
+  "iconLibrary.recommended": "おすすめの結果"
 }

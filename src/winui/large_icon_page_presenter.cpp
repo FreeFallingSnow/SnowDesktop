@@ -193,7 +193,7 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
                     self->dirty = false; self->Reload(); self->Sync();
                 }
                 self->timer.Start();
-            });
+            }, snapshot.name);
     }
     void Track(const x::FrameworkElement& element, Field field)
     {

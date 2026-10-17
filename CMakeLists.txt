@@ -313,6 +313,7 @@ set(SNOWDESKTOP_SOURCES
     src/icons/icon_workshop.h
     src/icons/icon_library.cpp
     src/icons/icon_library.h
+    src/icons/icon_library_match.h
     src/app/features/app_icon_library.cpp
     src/app/features/app_icon_appearance.cpp
     src/icons/large_icon_renderer.cpp

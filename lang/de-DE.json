@@ -2867,5 +2867,6 @@
   "iconWorkshop.titleTooLong": "Der Titel ist zu lang. Bitte kürzen und erneut versuchen.",
   "iconWorkshop.descriptionTooLong": "Die Beschreibung ist zu lang. Bitte kürzen und erneut versuchen.",
   "app.widget_preview.single_cell_component": "Einzellen-Widget",
-  "app.settings.group_component_badges": "Abzeichen für Gruppenkomponenten"
+  "app.settings.group_component_badges": "Abzeichen für Gruppenkomponenten",
+  "iconLibrary.recommended": "Empfohlen"
 }

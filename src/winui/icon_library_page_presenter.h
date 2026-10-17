@@ -18,7 +18,8 @@ public:
     void RefreshLocalizedText();
     void FitViewport(winrt::Microsoft::UI::Xaml::Controls::ScrollViewer viewport, double bottomInset);
     static std::function<void()> Pick(winrt::Microsoft::UI::Xaml::XamlRoot root, Localize localize,
-        IconLibraryAction action, std::string selected, std::function<void(std::string)> completed);
+        IconLibraryAction action, std::string selected, std::function<void(std::string)> completed,
+        std::wstring targetName = {});
 private:
     struct Impl;
     std::shared_ptr<Impl> impl_;

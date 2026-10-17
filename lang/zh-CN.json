@@ -2867,5 +2867,6 @@
   "iconWorkshop.titleTooLong": "分享标题过长，请缩短后重试。",
   "iconWorkshop.descriptionTooLong": "分享简介过长，请缩短后重试。",
   "app.widget_preview.single_cell_component": "单格组件",
-  "app.settings.group_component_badges": "组类组件角标"
+  "app.settings.group_component_badges": "组类组件角标",
+  "iconLibrary.recommended": "推荐结果"
 }
