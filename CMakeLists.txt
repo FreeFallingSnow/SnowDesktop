@@ -41,6 +41,7 @@ if (NOT CMAKE_GENERATOR MATCHES "^Visual Studio ")
 endif()
 
 include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.CompileParallelism.cmake")
+include("${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.VersionResources.cmake")
 
 file(READ "${CMAKE_SOURCE_DIR}/version.json" VERSION_JSON)
 string(JSON SNOWDESKTOP_VERSION GET "${VERSION_JSON}" "version")
@@ -1167,6 +1168,7 @@ add_executable(snowwidget
     src/widget/api/widget_view_contract.cpp
     src/widget/api/widget_view_contract_json.cpp)
 target_compile_features(snowwidget PRIVATE cxx_std_20)
+snowdesktop_add_executable_version_resource(snowwidget "SnowDesktop widget authoring tool")
 target_include_directories(snowwidget PRIVATE src)
 target_link_libraries(snowwidget PRIVATE SnowDesktopLua bcrypt ole32 pdh dxgi)
 target_compile_definitions(snowwidget PRIVATE

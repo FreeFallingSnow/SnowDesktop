@@ -464,6 +464,13 @@
 
 ## 构建与验证
 
+- 所有随软件分发的自有 EXE 必须包含完整 Windows `VERSIONINFO`：文件版本、产品版本、产品名称、
+  公司名称、用途明确的文件说明、内部名称及原始文件名。版本号只从根目录 `version.json` 读取，
+  不在辅助程序中另行维护。新增 EXE 使用 `cmake/SnowDesktop.VersionResources.cmake` 的
+  `snowdesktop_add_executable_version_resource(<target> "<用途说明>")` 复用现有资源模板；已有专用
+  版本资源可保留。主构建和独立辅助程序构建均接入同一模块，配置结束时检查所有自有发行 EXE，
+  缺失完整版本资源即报错。测试程序继续输出到 `tests/`，第三方程序保留上游身份，不填写本项目
+  的产品信息。交付时检查实际生成及整理后的 EXE 属性；版本资源不等于数字签名或误报已消除。
 - 仅修改 SnowDesktop Lua 组件包，且未修改宿主原生代码、公共组件 API、CMake 或构建脚本时，
   属于纯组件更新：无需运行 `scripts/build.bat` 编译宿主，也无需运行 `scripts/test.bat` 的宿主完整
   测试。应改用 `snowwidget lint`、组件测试、包校验和打包等组件级入口完成与改动相匹配的验证，
