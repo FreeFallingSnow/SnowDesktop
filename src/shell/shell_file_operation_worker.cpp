@@ -615,7 +615,15 @@ void ShellFileOperationWorker::Stop()
 
     cv_.notify_all();
     if (thread_.joinable())
+    {
+        // An unread marshaled source can be released as the last task leaves
+        // Run(). Its proxy may call back into this STA during unmarshal/release.
+        // A plain join would prevent that COM call from completing shutdown.
+        HANDLE finished = thread_.native_handle();
+        DWORD index = 0;
+        CoWaitForMultipleHandles(COWAIT_DEFAULT, INFINITE, 1, &finished, &index);
         thread_.join();
+    }
 }
 
 bool ShellFileOperationWorker::Enqueue(

@@ -55,8 +55,8 @@ public:
         if (f && m && f->cfFormat == RegisterClipboardFormatW(CFSTR_PERFORMEDDROPEFFECT) &&
             m->tymed == TYMED_HGLOBAL && GlobalSize(m->hGlobal) >= sizeof(DWORD))
         {
-            const auto* value = static_cast<const DWORD*>(GlobalLock(m->hGlobal));
-            if (value) { ++performed; performedEffect = *value; GlobalUnlock(m->hGlobal); }
+            const auto* storedEffect = static_cast<const DWORD*>(GlobalLock(m->hGlobal));
+            if (storedEffect) { ++performed; performedEffect = *storedEffect; GlobalUnlock(m->hGlobal); }
         }
         return shell->SetData(f, m, release);
     }
@@ -171,7 +171,8 @@ struct Batch
     std::shared_ptr<ShellFileOperationResult> result = std::make_shared<ShellFileOperationResult>();
     DWORD effect = DROPEFFECT_COPY;
     int commits = 0, completed = 0;
-    bool success = false, reject = false, correctWorker = false, correctCommitThread = false;
+    bool success = false, reject = false, notifyRejection = false;
+    bool correctWorker = false, correctCommitThread = false;
 };
 
 struct Harness
@@ -191,7 +192,11 @@ struct Harness
         };
         callbacks.commit = [&](const auto& content, auto finished, bool synchronously) {
             ++batch.commits; batch.correctCommitThread = GetCurrentThreadId() == owner;
-            if (batch.reject) return false;
+            if (batch.reject)
+            {
+                if (batch.notifyRejection) finished(false);
+                return false;
+            }
             auto request = file_backed_drop::BuildRequest(content.paths,
                 batch.destination.wstring(), batch.effect, batch.result);
             if (!request) return false;
@@ -296,14 +301,15 @@ inline void Run(const std::filesystem::path& root)
     }
     // Failure sequences use unchanged source bytes and an empty destination as
     // their independent oracle, never a production return value as expected IO.
-    for (int failure = 0; failure < 5; ++failure)
+    for (int failure = 0; failure < 6; ++failure)
     {
         const auto path = root / std::to_wstring(serial++);
         const auto selected = Seed(path, 1);
         Batch batch; batch.source = MakeSource(selected); batch.destination = path / L"target";
         Harness harness;
         batch.source->failRead = failure == 0;
-        batch.reject = failure == 1;
+        batch.reject = failure == 1 || failure == 5;
+        batch.notifyRejection = failure == 5;
         if (failure == 2) harness.reader.Stop();
         if (failure == 3) harness.stop.request_stop();
         batch.source->failStart = failure == 4;
@@ -317,7 +323,9 @@ inline void Run(const std::filesystem::path& root)
             "failed StartOperation is never ended; each started lease is cancelled once");
         Require(failure == 4 || (batch.source->outcome == E_ABORT && batch.source->endEffect == DROPEFFECT_NONE),
             "read, destination, enqueue and cancellation failures cancel the source operation");
-        Require(batch.commits == (failure == 1 ? 1 : 0) && std::filesystem::is_empty(batch.destination) &&
+        Require(batch.completed == (failure == 2 || failure == 4 ? 0 : 1),
+            "destination failure completes once even when commit both notifies failure and returns rejection");
+        Require(batch.commits == (failure == 1 || failure == 5 ? 1 : 0) && std::filesystem::is_empty(batch.destination) &&
             Bytes(selected.front()) == "alpha", "failure performs no unselected file operation");
     }
     // Reverse destination completions for two captured transfers. Reading is
