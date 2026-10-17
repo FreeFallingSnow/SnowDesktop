@@ -948,39 +948,8 @@ PendingLandingCache DesktopApp::BuildPendingLandingCache(const DragSourceList& s
     const DropPreviewList& preview, const std::unordered_set<std::wstring>& existingKeys,
     const std::unordered_map<size_t, std::wstring>* createdPathsBySource)
 {
-    PendingLandingCache cache;
-    cache.existingDesktopKeys = existingKeys;
-    cache.tick = GetTickCount();
-
-    for (const auto& landing : preview.landings)
-    {
-        if (landing.kind != DropLandingKind::DesktopCell &&
-            landing.kind != DropLandingKind::WidgetIndex)
-            continue;
-        auto it = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
-            [&](const DragSourceEntry& entry) { return entry.sourceIndex == landing.sourceIndex; });
-        if (it == sourceList.entries.end()) continue;
-
-        PendingLandingEntry entry;
-        entry.sourceIndex = it->sourceIndex;
-        entry.action = preview.action;
-        entry.kind = landing.kind;
-        entry.sourcePath = it->filePath;
-        entry.sourceName = !it->filePath.empty() ? FileNameFromPath(it->filePath) : it->displayName;
-        if (createdPathsBySource)
-        {
-            auto created = createdPathsBySource->find(it->sourceIndex);
-            if (created != createdPathsBySource->end())
-                entry.createdPath = created->second;
-        }
-        entry.cell = landing.kind == DropLandingKind::DesktopCell ? landing.cell : landing.cell;
-        entry.insertIndex = landing.insertIndex;
-        entry.widget = nullptr; // No UI pointers survive asynchronous completion.
-        entry.widgetId = landing.widgetId;
-        cache.entries.push_back(entry);
-    }
-    cache.active = !cache.entries.empty();
-    return cache;
+    return snowdesktop::pending_drop::BuildLanding(sourceList, preview, existingKeys,
+        GetTickCount(), FileNameFromPath, createdPathsBySource);
 }
 
 void DesktopApp::StorePendingLandingCache(const DragSourceList& sourceList,
@@ -996,40 +965,10 @@ PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
     size_t insertIndex,
     const DragSourceList* sourceList) const
 {
-    PendingFolderPlacement placement;
-    placement.sourceFolderPath = targetWidget.sourceFolderPath;
-    placement.insertIndex = insertIndex;
-    for (const auto& entry : targetWidget.folderEntries)
-    {
-        if (!entry.fullPath.empty())
-            placement.existingPaths.insert(
-                ToUpperInvariant(entry.fullPath));
-    }
-
-    if (targetWidget.id == kDockFolderPopupWidgetId)
-    {
-        placement.widgetId = dockFolderPopupMappingWidgetId_;
-        placement.popupSourceId = dockFolderPopupSourceId_;
-    }
-    else
-    {
-        placement.widgetId = targetWidget.id;
-    }
-
-    if (sourceList)
-    {
-        placement.sourceNames.reserve(sourceList->entries.size());
-        for (const auto& entry : sourceList->entries)
-        {
-            placement.sourcePaths.push_back(entry.filePath);
-            std::wstring name = !entry.filePath.empty()
-                ? FileNameFromPath(entry.filePath)
-                : entry.displayName;
-            if (!name.empty())
-                placement.sourceNames.push_back(std::move(name));
-        }
-    }
-    return placement;
+    const bool popup = targetWidget.id == kDockFolderPopupWidgetId;
+    return snowdesktop::pending_drop::BuildFolder(targetWidget, insertIndex, sourceList,
+        popup ? dockFolderPopupMappingWidgetId_ : targetWidget.id,
+        popup ? dockFolderPopupSourceId_ : std::wstring{}, ToUpperInvariant, FileNameFromPath);
 }
 
 void DesktopApp::ActivatePendingFolderPlacement(PendingFolderPlacement placement)

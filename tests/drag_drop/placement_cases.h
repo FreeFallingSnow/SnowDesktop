@@ -59,6 +59,33 @@ inline const Context contexts[]{
     {L"mapped-folder-dock", DesktopWidgetType::FolderMapping, L"__dock", false, true, true, false},
 };
 
+inline void CaptureTarget(Batch& batch, DesktopWidget& target, DropTargetKind kind,
+    size_t insertIndex, PendingLandingCache& snapshot,
+    std::unordered_set<std::wstring> existingKeys = {})
+{
+    external_file_destination::Destination destination;
+    destination.widgetId = target.id; destination.widgetType = target.type;
+    destination.folderPath = target.sourceFolderPath;
+    destination.preview.targetKind = kind;
+    destination.preview.insertIndex = insertIndex;
+    destination.preview.action = batch.effect == DROPEFFECT_MOVE ? DropAction::Move :
+        batch.effect == DROPEFFECT_LINK ? DropAction::Link : DropAction::Copy;
+    batch.captured = destination;
+    batch.resolveTarget = [&target](const auto& id, bool) { return target.id == id ? &target : nullptr; };
+    batch.capturePlan = [&, existingKeys](const DragSourceList& sources, const DropPreviewList& preview) {
+        if (preview.targetKind == DropTargetKind::FolderMapping)
+        {
+            snapshot = {};
+            snapshot.folderPlacements.push_back(pending_drop::BuildFolder(*preview.targetWidget,
+                preview.insertIndex, &sources, preview.targetWidget->id, {}, Key,
+                [](const auto& path) { return std::filesystem::path(path).filename().wstring(); }));
+        }
+        else
+            snapshot = pending_drop::BuildLanding(sources, preview, existingKeys, GetTickCount(),
+                [](const auto& path) { return std::filesystem::path(path).filename().wstring(); });
+    };
+}
+
 inline layout_storage::Document RoundTrip(const std::filesystem::path& file,
     const std::vector<DesktopWidget>& widgets)
 {
@@ -142,29 +169,17 @@ inline void Run(const std::filesystem::path& root)
         if (context.type == DesktopWidgetType::FolderMapping)
         {
             target.sourceFolderPath = batch.destination.wstring();
-            PendingFolderPlacement placement;
-            placement.widgetId = target.id;
-            placement.sourceFolderPath = target.sourceFolderPath;
-            placement.insertIndex = 1;
-            placement.existingPaths = {Key(oldA.wstring()), Key(oldB.wstring())};
-            for (const auto& source : selected) placement.sourcePaths.push_back(source.wstring());
-            snapshot.folderPlacements.push_back(placement);
-        }
-        else
-        {
-            snapshot.existingDesktopKeys = {L"K0", L"K1", L"UNRELATED"};
-            for (size_t index = 0; index < count; ++index)
+            for (const auto& file : {oldA, oldB})
             {
-                PendingLandingEntry entry;
-                entry.sourceIndex = index; entry.sourcePath = selected[index].wstring();
-                entry.sourceName = selected[index].filename().wstring();
-                entry.kind = DropLandingKind::WidgetIndex; entry.widgetId = target.id;
-                entry.insertIndex = 1 + index;
-                snapshot.entries.push_back(entry);
+                FolderEntry entry; entry.fullPath = file.wstring(); entry.name = file.filename().wstring();
+                target.folderEntries.push_back(std::move(entry));
             }
         }
+        CaptureTarget(batch, target, context.type == DesktopWidgetType::FolderMapping
+            ? DropTargetKind::FolderMapping : DropTargetKind::KeyedWidget, 1, snapshot,
+            {L"K0", L"K1", L"UNRELATED"});
         pending_drop::Queue queue;
-        batch.reconcile = [&, snapshot](const auto& outputs) {
+        batch.reconcile = [&](const auto& outputs) {
             auto reordered = outputs;
             std::reverse(reordered.outputs.begin(), reordered.outputs.end());
             pending_drop::Complete(queue, snapshot, reordered);
@@ -259,19 +274,19 @@ inline void Run(const std::filesystem::path& root)
         std::filesystem::create_directory(desktop);
         Batch a, b; a.source = MakeSource(aFiles); b.source = MakeSource(bFiles);
         a.destination = desktop; b.destination = desktop;
-        auto snapshot = [](const auto& file, const wchar_t* target, size_t index) {
-            PendingLandingCache cache;
-            PendingLandingEntry entry; entry.kind = DropLandingKind::WidgetIndex;
-            entry.sourcePath = file.wstring(); entry.sourceName = L"a.txt";
-            entry.widgetId = target; entry.insertIndex = index; cache.entries.push_back(entry);
-            return cache;
-        };
+        std::vector<DesktopWidget> widgets(3);
+        widgets[0].id = L"C1"; widgets[0].itemKeys = {L"A0", L"A1"}; widgets[0].gridCell = {L"page-c1", 2, 1};
+        widgets[1].id = L"C2"; widgets[1].itemKeys = {L"B0", L"B1"}; widgets[1].gridCell = {L"__dock", 0, 0};
+        widgets[2].id = L"auto"; widgets[2].itemKeys = {L"NEW-A", L"NEW-B"};
+        PendingLandingCache aSnapshot, bSnapshot;
+        CaptureTarget(a, widgets[0], DropTargetKind::KeyedWidget, 1, aSnapshot);
+        CaptureTarget(b, widgets[1], DropTargetKind::KeyedWidget, 0, bSnapshot);
         pending_drop::Queue queue;
-        a.reconcile = [&, cache = snapshot(aFiles.front(), L"C1", 1)](const auto& result) {
-            pending_drop::Complete(queue, cache, result);
+        a.reconcile = [&](const auto& result) {
+            pending_drop::Complete(queue, aSnapshot, result);
         };
-        b.reconcile = [&, cache = snapshot(bFiles.front(), L"C2", 0)](const auto& result) {
-            pending_drop::Complete(queue, cache, result);
+        b.reconcile = [&](const auto& result) {
+            pending_drop::Complete(queue, bSnapshot, result);
         };
         {
             Harness harness; harness.window.hold = true;
@@ -292,12 +307,8 @@ inline void Run(const std::filesystem::path& root)
             Bytes(b.result->outputs[0].destination) == "second source" &&
             a.result->outputs[0].destination != b.result->outputs[0].destination,
             "both same-name sources retain independent physical outputs after reverse completion");
-        pending_drop::Complete(queue, snapshot(aFiles.front(), L"failed-third", 0), {});
+        pending_drop::Complete(queue, aSnapshot, {});
         Require(queue.size() == 2, "a third failed transfer cannot consume either successful destination snapshot");
-        std::vector<DesktopWidget> widgets(3);
-        widgets[0].id = L"C1"; widgets[0].itemKeys = {L"A0", L"A1"}; widgets[0].gridCell = {L"page-c1", 2, 1};
-        widgets[1].id = L"C2"; widgets[1].itemKeys = {L"B0", L"B1"}; widgets[1].gridCell = {L"__dock", 0, 0};
-        widgets[2].id = L"auto"; widgets[2].itemKeys = {L"NEW-A", L"NEW-B"};
         std::vector<DesktopItem> items(2);
         items[0].layoutKey = L"NEW-A"; items[0].parsingName = a.result->outputs[0].destination;
         items[1].layoutKey = L"NEW-B"; items[1].parsingName = b.result->outputs[0].destination;

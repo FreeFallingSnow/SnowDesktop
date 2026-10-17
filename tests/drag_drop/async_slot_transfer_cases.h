@@ -2,6 +2,7 @@
 
 #include "drag_drop/external_slot_transfer.h"
 #include "drag_drop/external_drop_resources.h"
+#include "drag_drop/external_file_destination.h"
 #include "drag_drop/file_backed_drop_request.h"
 #include <wrl/implements.h>
 #include <algorithm>
@@ -175,6 +176,14 @@ struct Batch
     bool success = false, reject = false, notifyRejection = false;
     bool correctWorker = false, correctCommitThread = false;
     bool ownedContent = false;
+    bool copyOnly = false;
+    std::optional<external_file_destination::Destination> captured;
+    std::function<DesktopWidget*(const std::wstring&, bool)> resolveTarget;
+    std::function<void(const DragSourceList&, const DropPreviewList&)> capturePlan;
+    int executions = 0, pinSaves = 0;
+    bool existingDesktopPaths = false, dockCapacity = true, pinAccepted = true;
+    size_t pinnedIndex = static_cast<size_t>(-1);
+    std::vector<std::wstring> pinnedPaths;
     std::function<void(const ShellFileOperationResult&)> reconcile;
 };
 
@@ -192,7 +201,8 @@ struct Harness
             batch.correctWorker = !async || (download && GetCurrentThreadId() != owner &&
                 SUCCEEDED(CoGetApartmentType(&apt, &qualifier)) && apt == APTTYPE_STA);
             return external_drop_content::Content{
-                external_drop_content::ReadFilePaths(source), {}, batch.ownedContent, true};
+                external_drop_content::ReadFilePaths(source), {}, batch.ownedContent,
+                batch.ownedContent || batch.copyOnly};
         };
         callbacks.commit = [&](const auto& content, auto finished, bool synchronously) {
             ++batch.commits; batch.correctCommitThread = GetCurrentThreadId() == owner;
@@ -201,20 +211,65 @@ struct Harness
                 if (batch.notifyRejection) finished(false);
                 return false;
             }
-            auto request = file_backed_drop::BuildRequest(content.paths,
-                batch.destination.wstring(), batch.effect, batch.result);
-            if (!request) return false;
-            if (synchronously)
+            external_file_destination::Services services;
+            services.resolveTarget = [&](const auto& id, bool popup) {
+                return batch.resolveTarget ? batch.resolveTarget(id, popup) : nullptr;
+            };
+            services.desktopPreview = [](const GridCell& anchor, size_t count) {
+                DropPreviewList preview;
+                preview.targetKind = DropTargetKind::Desktop;
+                preview.anchorCell = anchor;
+                for (size_t index = 0; index < count; ++index)
+                {
+                    DropLanding landing; landing.kind = DropLandingKind::DesktopCell;
+                    landing.sourceIndex = index; landing.cell = anchor;
+                    landing.cell.row += static_cast<int>(index);
+                    preview.landings.push_back(landing);
+                }
+                return preview;
+            };
+            services.canPinExisting = [&](const auto&) { return batch.existingDesktopPaths; };
+            services.pinExisting = [&](const auto& paths, size_t index) {
+                if (!batch.pinAccepted) return false;
+                batch.pinnedPaths = paths; batch.pinnedIndex = index;
+                return true;
+            };
+            services.dockHasCapacity = [&](size_t) { return batch.dockCapacity; };
+            services.afterPin = [&] { ++batch.pinSaves; };
+            services.fileName = [](const auto& path) { return std::filesystem::path(path).filename().wstring(); };
+            services.execute = [&](const DragSourceList& sources, const DropPreviewList& preview,
+                auto done, bool sync, auto outputs) {
+                ++batch.executions;
+                if (batch.capturePlan) batch.capturePlan(sources, preview);
+                const DWORD effect = preview.action == DropAction::Move ? DROPEFFECT_MOVE :
+                    preview.action == DropAction::Link ? DROPEFFECT_LINK : DROPEFFECT_COPY;
+                const auto directory = preview.targetKind == DropTargetKind::FolderMapping && preview.targetWidget
+                    ? preview.targetWidget->sourceFolderPath : batch.destination.wstring();
+                auto request = file_backed_drop::BuildRequest(sources.FilePaths(), directory, effect, outputs);
+                if (!request) return false;
+                if (sync)
+                {
+                    const bool success = ShellFileOperationWorker::Execute(*request);
+                    done(success);
+                    return success;
+                }
+                return files.Enqueue(std::move(*request), [&, done](bool success) {
+                    auto completion = std::make_unique<ShellFileOperationUiCompletion>();
+                    completion->callback = done;
+                    PostShellFileOperationCompletion(window.hwnd, completedMessage, std::move(completion), success);
+                });
+            };
+            external_file_destination::Destination destination;
+            if (batch.captured) destination = *batch.captured;
+            else
             {
-                const bool success = ShellFileOperationWorker::Execute(*request);
-                finished(success);
-                return success;
+                destination.preview.targetKind = DropTargetKind::Desktop;
+                destination.preview.anchorCell = {L"test-page", 2, 1};
+                destination.preview.action = batch.effect == DROPEFFECT_MOVE ? DropAction::Move :
+                    batch.effect == DROPEFFECT_LINK ? DropAction::Link : DropAction::Copy;
             }
-            return files.Enqueue(std::move(*request), [&, finished](bool success) {
-                auto completion = std::make_unique<ShellFileOperationUiCompletion>();
-                completion->callback = finished;
-                PostShellFileOperationCompletion(window.hwnd, completedMessage, std::move(completion), success);
-            });
+            return external_file_destination::Commit(destination, content.paths, content.owned, content.copyOnly,
+                finished, synchronously, batch.result, services);
         };
         callbacks.completed = [&](bool success) {
             ++batch.completed; batch.success = success;
@@ -307,6 +362,12 @@ inline void Run(const std::filesystem::path& root)
         const auto selected = Seed(path, count);
         Batch batch; batch.source = MakeSource(selected); batch.destination = path / L"target"; batch.effect = effect;
         batch.source->async = asynchronous;
+        batch.capturePlan = [&](const DragSourceList& sources, const DropPreviewList& preview) {
+            Require(sources.entries.size() == count && preview.landings.size() == count &&
+                preview.anchorCell.pageId == L"test-page" && preview.anchorCell.column == 2 &&
+                preview.anchorCell.row == 1 && preview.fileBacked,
+                "delayed batch expansion preserves the captured desktop anchor and all selected files");
+        };
         Harness harness;
         const DWORD expectedReturn = !asynchronous && effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect;
         Require(harness.Submit(batch, asynchronous) == expectedReturn,
@@ -419,6 +480,87 @@ inline void Run(const std::filesystem::path& root)
             "owned-content lifetime and source completion agree with the actual outcome");
         Require(outcome == 0 ? Bytes(batch.destination / L"a.txt") == "alpha" : std::filesystem::is_empty(batch.destination),
             "rendered-file cleanup preserves successful outputs and creates nothing for cancellation");
+    }
+    // S04: the original destination changes while its external source is
+    // reading. Resume the real posted UI commit only after that mutation.
+    for (int mutation = 0; mutation < 5; ++mutation)
+    {
+        const auto path = root / std::to_wstring(serial++);
+        const auto selected = Seed(path, 2);
+        Batch batch; batch.source = MakeSource(selected); batch.destination = path / L"target";
+        batch.effect = DROPEFFECT_MOVE;
+        DesktopWidget widget; widget.id = L"captured-target"; widget.type = DesktopWidgetType::FolderMapping;
+        widget.sourceFolderPath = batch.destination.wstring(); widget.itemKeys = {L"existing-member"};
+        external_file_destination::Destination destination;
+        destination.widgetId = widget.id; destination.widgetType = widget.type;
+        destination.folderPath = widget.sourceFolderPath; destination.dockFolderPopup = mutation == 3;
+        destination.preview.targetKind = DropTargetKind::FolderMapping;
+        destination.preview.action = DropAction::Move;
+        batch.captured = destination;
+        bool exists = true, popupOpen = true;
+        batch.resolveTarget = [&](const auto& id, bool popup) -> DesktopWidget* {
+            return exists && (!popup || popupOpen) && id == L"captured-target" ? &widget : nullptr;
+        };
+        Harness harness; harness.window.hold = true;
+        Require(harness.Submit(batch) == DROPEFFECT_MOVE, "target mutation begins after admitting a real move");
+        PumpUntil([&] { return harness.window.pending.size() == 1; });
+        if (mutation == 0) exists = false;
+        if (mutation == 1) widget.type = DesktopWidgetType::Collection;
+        if (mutation == 2)
+        {
+            widget.sourceFolderPath = (path / L"different-folder").wstring();
+            std::filesystem::create_directory(widget.sourceFolderPath);
+        }
+        if (mutation == 3) popupOpen = false;
+        if (mutation == 4) widget.id = L"replacement-target";
+        harness.window.Deliver(0);
+        Require(batch.source->ends == 1 && batch.source->outcome == E_ABORT &&
+            batch.completed == 1 && !batch.success && batch.executions == 0 &&
+            batch.result->outputs.empty() && std::filesystem::is_empty(batch.destination) &&
+            Bytes(selected[0]) == "alpha" && Bytes(selected[1] / L"b.txt") == "beta" &&
+            widget.itemKeys == std::vector<std::wstring>{L"existing-member"},
+            "changed destination cancels before file execution and preserves both files and membership");
+    }
+    // Pinning an existing desktop identity must not produce another physical
+    // copy or shortcut. Pin persistence is an explicit host service boundary.
+    for (bool accepted : {true, false})
+    {
+        const auto path = root / std::to_wstring(serial++);
+        const auto selected = Seed(path, 2);
+        Batch batch; batch.source = MakeSource(selected); batch.destination = path / L"target";
+        batch.effect = DROPEFFECT_LINK; batch.existingDesktopPaths = true; batch.pinAccepted = accepted;
+        external_file_destination::Destination destination;
+        destination.preview.pinMaterializedItemsToDock = true;
+        destination.preview.dockInsertIndex = 2; destination.preview.action = DropAction::Link;
+        batch.captured = destination;
+        Harness harness;
+        Require(harness.Submit(batch) == DROPEFFECT_LINK, "existing desktop identity reaches captured Dock admission");
+        PumpUntil([&] { return batch.source->ends == 1; });
+        Require(batch.success == accepted && batch.completed == 1 && batch.executions == 0 &&
+            batch.pinSaves == (accepted ? 1 : 0) && batch.result->outputs.empty() &&
+            std::filesystem::is_empty(batch.destination) && Bytes(selected[0]) == "alpha" &&
+            Bytes(selected[1] / L"b.txt") == "beta",
+            "Dock identity pinning preserves original files and never performs a physical file operation");
+        if (accepted)
+            Require(batch.pinnedPaths == std::vector<std::wstring>{selected[0].wstring(), selected[1].wstring()} &&
+                batch.pinnedIndex == 2, "Dock identity pinning preserves the original selection and insertion boundary");
+    }
+    {
+        const auto path = root / std::to_wstring(serial++);
+        const auto selected = Seed(path, 2);
+        Batch batch; batch.source = MakeSource(selected); batch.destination = path / L"target";
+        batch.effect = DROPEFFECT_LINK; batch.dockCapacity = false;
+        external_file_destination::Destination destination;
+        destination.preview.pinMaterializedItemsToDock = true;
+        destination.preview.action = DropAction::Link;
+        batch.captured = destination;
+        Harness harness;
+        Require(harness.Submit(batch) == DROPEFFECT_LINK, "Dock capacity is rechecked after delayed reading");
+        PumpUntil([&] { return batch.source->ends == 1; });
+        Require(!batch.success && batch.completed == 1 && batch.executions == 0 &&
+            batch.source->outcome == E_ABORT && std::filesystem::is_empty(batch.destination) &&
+            Bytes(selected[0]) == "alpha" && Bytes(selected[1] / L"b.txt") == "beta",
+            "insufficient Dock capacity rejects before materializing files or modifying originals");
     }
     std::cout << "slot transfer protocol, IO, failure, ownership and reverse-completion cases passed\n";
 }

@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "drag_drop/external_drop_resources.h"
 #include "drag_drop/external_slot_transfer.h"
+#include "drag_drop/external_file_destination.h"
 #include "drag_drop/drop_staging.h"
 #include "widgets/lua_logical_slot.h"
 
@@ -154,86 +155,33 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         return false;
     }
 
-    DropPreviewList preview = destination.preview;
-    DesktopWidget* widget = nullptr;
-    if (!destination.widgetId.empty() || destination.dockFolderPopup)
-    {
-        if (destination.dockFolderPopup)
-        {
-            if (!dockFolderPopupOpen_ ||
-                dockFolderPopupWidget_.id != destination.widgetId) return false;
-            widget = &dockFolderPopupWidget_;
-        }
-        else
-        {
-            const size_t index = FindWidgetIndexById(destination.widgetId);
-            if (index >= widgets_.size()) return false;
-            widget = &widgets_[index];
-        }
-        if (widget->type != destination.widgetType ||
-            widget->sourceFolderPath != destination.folderPath) return false;
-        preview.targetWidget = widget;
-        preview.landings.clear();
-        for (size_t index = 0; index < paths.size(); ++index)
-        {
-            DropLanding landing;
-            landing.kind = preview.targetKind == DropTargetKind::FolderMapping
-                ? DropLandingKind::Folder : DropLandingKind::WidgetIndex;
-            landing.sourceIndex = index;
-            landing.widget = widget;
-            landing.widgetId = widget->id;
-            landing.insertIndex = preview.insertIndex + index;
-            landing.cell = widget->gridCell;
-            preview.landings.push_back(std::move(landing));
-        }
-    }
-    else if (preview.pinMaterializedItemsToDock)
-    {
-        // Native desktop files already have a Shell identity. Pin that identity
-        // without generating another .lnk or taking ownership of the original.
-        // This common commit boundary also handles asynchronous Explorer drops.
-        if (!owned && CanPinExistingDesktopPaths(paths))
-        {
-            if (!AddMaterializedItemsToDock(paths, preview.dockInsertIndex, true)) return false;
-            SaveLayoutSlots();
-            RequestShellRefresh();
-            if (completion) completion(true);
-            return true;
-        }
-        auto* dock = GetDockContainer();
-        if (!dock || !dock->HasCapacity(paths.size())) return false;
-        const auto action = preview.action;
-        const auto insertIndex = preview.dockInsertIndex;
-        preview = BuildExternalDesktopPreviewList(preview.anchorCell, paths.size());
-        preview.pinMaterializedItemsToDock = true;
-        preview.dockInsertIndex = insertIndex;
-        preview.action = action;
-    }
-    else if (preview.targetKind == DropTargetKind::Desktop)
-    {
-        // The delayed file batch can contain more entries than the hover
-        // probe knew about. Keep its captured anchor and negotiated verb.
-        const auto action = preview.action;
-        preview = BuildExternalDesktopPreviewList(preview.anchorCell, paths.size());
-        preview.action = action;
-    }
-    else return false;
-
-    DragSourceList sources;
-    sources.hasExternalFiles = true;
-    for (const auto& path : paths)
-    {
-        DragSourceEntry entry;
-        entry.kind = DropSourceKind::ExternalFile;
-        entry.sourceIndex = sources.entries.size();
-        entry.filePath = path;
-        entry.displayName = FileNameFromPath(path);
-        sources.entries.push_back(std::move(entry));
-    }
-    if (owned || (copyOnly && !preview.pinMaterializedItemsToDock))
-        preview.action = DropAction::Copy;
-    preview.fileBacked = true;
-    return ExecuteDropPipeline(sources, preview, std::move(completion), synchronously, std::move(result));
+    snowdesktop::external_file_destination::Services services;
+    services.resolveTarget = [this](const std::wstring& id, bool popup) -> DesktopWidget* {
+        if (popup)
+            return dockFolderPopupOpen_ && dockFolderPopupWidget_.id == id
+                ? &dockFolderPopupWidget_ : nullptr;
+        const size_t index = FindWidgetIndexById(id);
+        return index < widgets_.size() ? &widgets_[index] : nullptr;
+    };
+    services.desktopPreview = [this](const GridCell& anchor, size_t count) {
+        return BuildExternalDesktopPreviewList(anchor, count);
+    };
+    services.canPinExisting = [this](const auto& files) { return CanPinExistingDesktopPaths(files); };
+    services.pinExisting = [this](const auto& files, size_t index) {
+        return AddMaterializedItemsToDock(files, index, true);
+    };
+    services.dockHasCapacity = [this](size_t count) {
+        const auto* dock = GetDockContainer();
+        return dock && dock->HasCapacity(count);
+    };
+    services.afterPin = [this] { SaveLayoutSlots(); RequestShellRefresh(); };
+    services.fileName = FileNameFromPath;
+    services.execute = [this](const DragSourceList& sources, const DropPreviewList& preview,
+        FileOperationCompletion done, bool sync, auto outputs) {
+        return ExecuteDropPipeline(sources, preview, std::move(done), sync, std::move(outputs));
+    };
+    return snowdesktop::external_file_destination::Commit(destination, paths, owned, copyOnly,
+        std::move(completion), synchronously, std::move(result), services);
 }
 
 DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
