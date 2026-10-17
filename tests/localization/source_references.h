@@ -20,7 +20,7 @@ struct Token
 
 // Source references include keys passed through tables/IPC, not just the first
 // argument of _LW. Comments and standalone strings are never consumers.
-inline std::vector<Token> Lex(std::string_view text, bool lua = false)
+inline std::vector<Token> Lex(std::string_view text, bool lua = false, bool cmake = false)
 {
     std::vector<Token> tokens;
     std::size_t line = 1;
@@ -37,6 +37,11 @@ inline std::vector<Token> Lex(std::string_view text, bool lua = false)
     {
         const char c = text[index];
         if (std::isspace(static_cast<unsigned char>(c))) { advance(); continue; }
+        if (cmake && c == '#')
+        {
+            while (index < text.size() && text[index] != '\n') advance();
+            continue;
+        }
         const auto rest = text.substr(index);
         if ((!lua && rest.starts_with("//")) || (lua && rest.starts_with("--")))
         {
@@ -87,6 +92,10 @@ inline std::vector<Token> Lex(std::string_view text, bool lua = false)
                 }
             }
         }
+        if (!lua && c == '\'' && index > 0 && index + 1 < text.size() &&
+            std::isdigit(static_cast<unsigned char>(text[index - 1])) &&
+            std::isalnum(static_cast<unsigned char>(text[index + 1])))
+        { advance(); continue; } // C++ digit separator, not a character literal.
         if (c == '"' || c == '\'')
         {
             const char quote = c;
@@ -128,6 +137,19 @@ struct Source
     bool lua = false;
 };
 using References = std::map<std::string, std::vector<std::string>>;
+
+inline bool IsDirectKey(const std::vector<Token>& tokens, size_t call, size_t literal, bool lua)
+{
+    size_t first = call + 2;
+    while (first < literal && tokens[first].value == "(") ++first;
+    const auto& previous = tokens[literal - 1].value;
+    const bool branch = previous == "?" || previous == ":" ||
+        (lua && (previous == "and" || previous == "or"));
+    if (literal != first && !branch) return false;
+    return previous != "+" && previous != "." &&
+        (literal + 1 == tokens.size() ||
+            (tokens[literal + 1].value != "+" && tokens[literal + 1].value != "."));
+}
 
 inline std::vector<const Token*> LiveStrings(const Source& source,
     const std::map<std::string, std::size_t>& identifierUses)

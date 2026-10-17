@@ -496,9 +496,9 @@ References CollectReferences(
                 if (token.value == "(") ++depth;
                 if (token.value == ")") --depth;
                 if (token.kind != TokenKind::String) continue;
-                // A literal fragment next to concatenation is not a complete key.
-                if ((argument > 0 && (tokens[argument - 1].value == "+" || tokens[argument - 1].value == ".")) ||
-                    (argument + 1 < tokens.size() && (tokens[argument + 1].value == "+" || tokens[argument + 1].value == "."))) continue;
+                // Comparison values and nested function arguments are not
+                // translation keys. Literal branches of a key expression are.
+                if (!IsDirectKey(tokens, index, argument, lua)) continue;
                 const auto key = DecodeEscapedKey(token.value);
                 references[key].push_back(PathLabel(path, root) + ":" + std::to_string(token.line));
             }
@@ -548,6 +548,21 @@ void TestReferenceAuditContracts()
     const auto luaBindings = audit::CollectLiteralBindings(luaSources, keys);
     Check(luaBindings.contains("ui.direct") && luaBindings.contains("ui.table") && !luaBindings.contains("ui.dead"),
         "Lua tables retain consumers while unused assignments do not consume following statements");
+    const auto conditional = audit::Lex("_LW(state == \"status\" ? \"ui.direct\" : \"ui.table\")");
+    std::vector<std::string> branchKeys;
+    for (size_t at = 2; at < conditional.size(); ++at)
+        if (conditional[at].kind == audit::TokenKind::String && audit::IsDirectKey(conditional, 0, at, false))
+            branchKeys.push_back(conditional[at].value);
+    Check(branchKeys == std::vector<std::string>{"ui.direct", "ui.table"},
+        "conditional key branches exclude the non-key comparison value");
+    const std::vector<audit::Source> generated{{"CMakeLists.txt", audit::Lex(
+        "# launcher's ignored \"ui.dead\"\nstring(JSON message GET catalog \"ui.direct\")", false, true)}};
+    const auto generatedKeys = audit::CollectLiteralBindings(generated, keys);
+    Check(generatedKeys.contains("ui.direct") && !generatedKeys.contains("ui.dead"),
+        "CMake consumers retain generated keys without reading quoted comments");
+    const auto separators = audit::Lex("const int count = 1'024; _LW(\"ui.direct\");");
+    Check(std::any_of(separators.begin(), separators.end(), [](const auto& token) { return token.value == "ui.direct"; }),
+        "numeric digit separators never swallow later localization calls");
 }
 
 References CollectGlobalBindings(const std::vector<fs::path>& files,
@@ -566,7 +581,7 @@ References CollectGlobalBindings(const std::vector<fs::path>& files,
     auto bridgeFiles = SortedFiles(root / "steam_bridge" / "src", IsCppSource);
     for (const auto& path : bridgeFiles)
         sources.push_back({PathLabel(path, root), audit::Lex(ReadFile(path))});
-    sources.push_back({"CMakeLists.txt", audit::Lex(ReadFile(root / "CMakeLists.txt"))});
+    sources.push_back({"CMakeLists.txt", audit::Lex(ReadFile(root / "CMakeLists.txt"), false, true)});
     auto references = audit::CollectLiteralBindings(sources, keys);
     const auto add = [&](const std::string& key, const std::string& location) {
         references[key].push_back(location);
@@ -600,6 +615,10 @@ References CollectGlobalBindings(const std::vector<fs::path>& files,
         if (source.path == "src/winui/calendar_page_presenter.cpp" && strings.contains("settings.calendar.weekday."))
             for (int weekday = 1; weekday <= 7; ++weekday)
                 add("settings.calendar.weekday." + std::to_string(weekday), source.path + ":weekday[1,7]");
+        if (source.path == "src/system/panel/system_panel_model.cpp" && strings.contains("controlCenter.projection."))
+            for (const std::string mode : {"internal", "clone", "extend", "external"})
+                if (strings.contains(mode))
+                    add("controlCenter.projection." + mode, source.path + ":validated projection mode/" + mode);
     }
     // Workshop Manager resolves English UI values through its production
     // catalog adapter. Its source root and value-based calls are part of the

@@ -22,8 +22,8 @@ struct Gesture
     std::array<DWORD, 8> effects;
 };
 inline constexpr Gesture gestures[]{
-    {"Ctrl/copy", MK_CONTROL, {0, 1, 0, 1, 0, 1, 0, 1}},
     {"Shift/move", MK_SHIFT, {0, 0, 2, 2, 0, 0, 2, 2}},
+    {"Ctrl/copy", MK_CONTROL, {0, 1, 0, 1, 0, 1, 0, 1}},
     {"Alt/shortcut", MK_ALT, {0, 0, 0, 0, 4, 4, 4, 4}},
     {"Ctrl+Shift/shortcut", MK_CONTROL | MK_SHIFT, {0, 0, 0, 0, 4, 4, 4, 4}},
 };
@@ -62,11 +62,11 @@ public:
     HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
     HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override { return OLE_E_ADVISENOTSUPPORTED; }
     HRESULT STDMETHODCALLTYPE SetAsyncMode(BOOL) override { return E_NOTIMPL; }
-    HRESULT STDMETHODCALLTYPE GetAsyncMode(BOOL* value) override
-    { if (!value) return E_POINTER; *value = TRUE; return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetAsyncMode(BOOL* enabled) override
+    { if (!enabled) return E_POINTER; *enabled = TRUE; return S_OK; }
     HRESULT STDMETHODCALLTYPE StartOperation(IBindCtx*) override { return S_OK; }
-    HRESULT STDMETHODCALLTYPE InOperation(BOOL* value) override
-    { if (!value) return E_POINTER; *value = FALSE; return S_OK; }
+    HRESULT STDMETHODCALLTYPE InOperation(BOOL* active) override
+    { if (!active) return E_POINTER; *active = FALSE; return S_OK; }
     HRESULT STDMETHODCALLTYPE EndOperation(HRESULT, IBindCtx*, DWORD) override { return S_OK; }
 };
 
@@ -75,7 +75,7 @@ inline void Run(const std::filesystem::path& root)
     using namespace snowdesktop;
     size_t serial = 0;
     for (const auto& gesture : gestures)
-    for (DWORD allowed = 0; allowed < 8; ++allowed)
+    for (const DWORD allowed : {7u, 0u, 1u, 2u, 3u, 4u, 5u, 6u})
     for (const size_t count : {size_t{1}, size_t{2}})
     {
         const auto directory = root / (L"dispatch-" + std::to_wstring(serial++));
@@ -119,7 +119,13 @@ inline void Run(const std::filesystem::path& root)
                 Require(request && ShellFileOperationWorker::Execute(*request), "dispatched operation executes real Shell request");
                 return selected;
             });
-        Require(handled && *handled == expected, "desktop dispatch preserves the explicitly selected effect");
+        Require(handled.has_value(), "delayed file desktop drop is handled by its production dispatch route");
+        // Evaluate the user's original Shift+Explorer failure through real
+        // source/destination state before checking the reported effect.
+        for (size_t index = 0; index < count; ++index)
+            Require(std::filesystem::exists(paths[index]) == (expected != DROPEFFECT_MOVE),
+                "selected desktop move removes the original; copy/link/rejection preserve it");
+        Require(*handled == expected, "desktop dispatch preserves the explicitly selected effect");
         Require(submissions == (expected ? 1 : 0), "accepted batch submits once; rejected effects submit nothing");
         Require(result->outputs.size() == (expected ? count : 0), "outputs contain exactly the committed selection");
         if (!expected)
@@ -130,7 +136,11 @@ inline void Run(const std::filesystem::path& root)
             Require(std::filesystem::exists(paths[index]) == (expected != DROPEFFECT_MOVE),
                 "only a selected, offered move removes original files and directories");
             if (!expected) continue;
-            const auto& output = result->outputs[index];
+            const auto found = std::find_if(result->outputs.begin(), result->outputs.end(), [&](const auto& output) {
+                return _wcsicmp(output.source.c_str(), paths[index].c_str()) == 0;
+            });
+            Require(found != result->outputs.end(), "each selected source has its own actual output record");
+            const auto& output = *found;
             Require(std::filesystem::equivalent(std::filesystem::path(output.destination).parent_path(), to),
                 "all actual outputs remain in this operation's destination");
             if (expected == DROPEFFECT_LINK)
