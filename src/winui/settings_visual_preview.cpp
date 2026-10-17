@@ -684,7 +684,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             mode.SelectedIndex(2);
             appearanceFixture->globalSettings = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassDark);
             appearanceFixture->globalSettings.mode = 1;
-            auto globalChange = snapshot; globalChange.route = targetRoute; ++globalChange.revision; ++globalChange.domainRevisions.desktop;
+            auto globalChange = snapshot; globalChange.route = targetRoute; globalChange.revision = ++revision; ++globalChange.domainRevisions.desktop;
             globalChange.values.desktop.iconBeautify = appearanceFixture->globalSettings;
             if (!shell->ApplySnapshot(globalChange)) throw std::runtime_error("live global theme update rejected");
             Settle(editor);
