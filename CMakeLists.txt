@@ -2716,7 +2716,9 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopShellFileOperationWorkerTests --pipeline-decision-tests)
     add_test(NAME shell_group_membership_storage
         COMMAND SnowDesktopShellFileOperationWorkerTests --group-membership-tests)
-    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests shell_async_slot_transfers shell_drop_placement_storage shell_member_order_storage shell_right_drag_files shell_drop_pipeline_decisions shell_group_membership_storage PROPERTIES
+    add_test(NAME shell_group_release_storage
+        COMMAND SnowDesktopShellFileOperationWorkerTests --group-release-tests)
+    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests shell_async_slot_transfers shell_drop_placement_storage shell_member_order_storage shell_right_drag_files shell_drop_pipeline_decisions shell_group_membership_storage shell_group_release_storage PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
         TIMEOUT 90 LABELS "integration;shell;interaction;storage")
     add_test(NAME shell_file_operation_worker_network_preflight

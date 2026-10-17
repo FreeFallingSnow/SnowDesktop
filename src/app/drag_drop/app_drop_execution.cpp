@@ -157,26 +157,10 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         if (sourceList.hasCollectionGroupEntries ||
             sourceList.hasFileGroupEntries)
         {
-            bool changed = false;
-            for (const auto& landing : preview.landings)
-            {
-                auto it = std::find_if(sourceList.entries.begin(),
-                    sourceList.entries.end(),
-                    [&](const DragSourceEntry& entry) {
-                        return entry.sourceIndex == landing.sourceIndex;
-                    });
-                if (it == sourceList.entries.end() ||
-                    it->widgetId.empty())
-                    continue;
-                changed =
-                    (sourceList.hasCollectionGroupEntries
-                        ? ReleaseCollectionFromGroup(
-                            it->widgetId, landing.cell)
-                        : ReleaseWidgetFromFileGroup(
-                            it->widgetId, landing.cell)) ||
-                    changed;
-            }
-            return changed;
+            return snowdesktop::widget_group_drop::ReleasePlan(sourceList, preview,
+                [this](const auto& id, GridCell cell, bool collection) {
+                    return collection ? ReleaseCollectionFromGroup(id, cell) : ReleaseWidgetFromFileGroup(id, cell);
+                });
         }
         RemoveDesktopKeysFromWidgets(sourceList.DesktopKeys());
         bool changed = false;

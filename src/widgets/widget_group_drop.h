@@ -2,6 +2,7 @@
 
 #include "core/drop_model.h"
 #include "collection_group_rules.h"
+#include "layout/grid_occupancy.h"
 
 #include <unordered_set>
 
@@ -94,5 +95,95 @@ inline bool ApplyPlan(std::vector<DesktopWidget>& widgets, std::vector<DockEntry
         if (source.kind == (collections ? DropSourceKind::CollectionGroupEntry : DropSourceKind::FileGroupEntry) &&
             !source.widgetId.empty()) movingIds.push_back(source.widgetId);
     return Apply(widgets, dock, static_cast<size_t>(target - widgets.begin()), movingIds, preview.insertIndex);
+}
+
+struct ReleasePlacement
+{
+    GridCell cell;
+    GridSpan span;
+};
+
+// Page selection, clamping and collision decisions are shared with the host's
+// release preview. Native span limits and configured page order remain services.
+template<class ClampSpan, class FindFree>
+std::optional<ReleasePlacement> PlanRelease(const DesktopWidget& child, GridCell preferred,
+    const GridCell& fallback, const std::vector<GridPage>& pages, grid_occupancy::Slots& used,
+    bool allowSearch, ClampSpan clampSpan, FindFree findFree)
+{
+    const auto findPage = [&](const auto& id) -> const GridPage* {
+        const auto found = std::find_if(pages.begin(), pages.end(), [&](const auto& page) { return page.id == id; });
+        return found == pages.end() ? nullptr : &*found;
+    };
+    const GridPage* page = findPage(preferred.pageId);
+    if (!page) { preferred = fallback; page = findPage(preferred.pageId); }
+    if (!page) return std::nullopt;
+    const GridSpan span = clampSpan(child, child.gridSpan, page->columns, page->rows);
+    preferred.column = std::clamp(preferred.column, 0, std::max(0, page->columns - span.columns));
+    preferred.row = std::clamp(preferred.row, 0, std::max(0, page->rows - span.rows));
+    GridCell landing = preferred;
+    if (!grid_occupancy::Fits(*page, landing, span) || grid_occupancy::Occupied(used, landing, span))
+    {
+        const int start = preferred.column * std::max(1, page->rows) + preferred.row;
+        if (!allowSearch || (!findFree(span, used, landing, preferred.pageId, start) &&
+            !findFree(span, used, landing, L"", 0))) return std::nullopt;
+    }
+    grid_occupancy::Mark(used, landing, span);
+    return ReleasePlacement{std::move(landing), span};
+}
+
+// A rejected release is a no-op, including transient selection. Validate and
+// plan before detaching the child so failure needs no partial model rollback.
+template<class Plan>
+bool Release(std::vector<DesktopWidget>& widgets, const std::wstring& id,
+    DesktopWidgetType groupType, Plan plan)
+{
+    size_t childIndex = widgets.size(), ownerIndex = widgets.size(), membershipIndex = 0;
+    for (size_t index = 0; index < widgets.size(); ++index)
+    {
+        const auto& widget = widgets[index];
+        if (widget.id == id)
+        {
+            if (childIndex != widgets.size()) return false;
+            childIndex = index;
+        }
+        for (size_t member = 0; member < widget.childWidgetIds.size(); ++member)
+            if (widget.childWidgetIds[member] == id)
+            {
+                if (ownerIndex != widgets.size() || widget.type != groupType) return false;
+                ownerIndex = index; membershipIndex = member;
+            }
+    }
+    if (id.empty() || childIndex >= widgets.size() || ownerIndex >= widgets.size() ||
+        childIndex == ownerIndex || !AcceptsChild(groupType, widgets[childIndex].type)) return false;
+    if (widgets[ownerIndex].id.empty() || std::count_if(widgets.begin(), widgets.end(),
+        [&](const auto& widget) { return widget.id == widgets[ownerIndex].id; }) != 1) return false;
+    const auto placement = plan(childIndex, ownerIndex);
+    if (!placement) return false;
+    auto& group = widgets[ownerIndex];
+    auto& child = widgets[childIndex];
+    group.childWidgetIds.erase(group.childWidgetIds.begin() + static_cast<std::ptrdiff_t>(membershipIndex));
+    if (group.activeCategoryId == id)
+        group.activeCategoryId = group.childWidgetIds.empty() ? L"" :
+            group.childWidgetIds[std::min(membershipIndex, group.childWidgetIds.size() - 1)];
+    child.gridCell = placement->cell;
+    child.gridSpan = placement->span;
+    child.selected = false;
+    return true;
+}
+
+template<class ReleaseChild>
+bool ReleasePlan(const DragSourceList& sources, const DropPreviewList& preview, ReleaseChild release)
+{
+    if (preview.fileBacked || preview.targetKind != DropTargetKind::Desktop ||
+        (!sources.hasCollectionGroupEntries && !sources.hasFileGroupEntries)) return false;
+    bool changed = false;
+    for (const auto& landing : preview.landings)
+    {
+        const auto source = std::find_if(sources.entries.begin(), sources.entries.end(),
+            [&](const auto& entry) { return entry.sourceIndex == landing.sourceIndex; });
+        if (source == sources.entries.end() || source->widgetId.empty()) continue;
+        changed = release(source->widgetId, landing.cell, sources.hasCollectionGroupEntries) || changed;
+    }
+    return changed;
 }
 }
