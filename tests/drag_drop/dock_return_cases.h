@@ -145,19 +145,22 @@ inline void Run(const std::filesystem::path& root)
 
     // The Dock icon itself is ordinary, but the restored desktop object still
     // owns its large-icon footprint. Independent cell enumeration grades it.
+    for (bool blocked : {false, true})
     {
         World world(root / std::to_wstring(serial++));
         world.items[0].gridCell = {L"page", 0, 2}; world.items[0].gridSpan = {3, 3};
         world.items[0].largeIcon = LargeIconConfig{}; world.items[0].largeIcon->columns = 3; world.items[0].largeIcon->rows = 3;
         world.items[0].largeIcon->autoColor = false; world.items[0].largeIcon->manualColor = 0x123456;
         const auto appearance = *world.items[0].largeIcon;
-        world.items[1].gridCell = {L"page", 4, 4};
+        if (blocked) world.items[1].gridCell = {L"page", 4, 4};
         world.Legal();
         Require(dock_drop_model::Pin({world.dock, world.widgets}, {{DockEntryType::DesktopItem, world.items[0].layoutKey, false}}, 0, world.Services()),
             "seed a real exclusive pin of the large desktop identity");
         const auto before = world.Snapshot();
         const auto plan = world.Plan({0}, {L"page", 2, 2});
         const bool accepted = world.Apply(plan);
+        if (!blocked) Require(accepted && dock_model_cases::SameCell(world.items[0].gridCell, {L"page", 2, 2}),
+            "a fully available large-object return restores the specified desktop cell");
         if (!accepted) Require(world.Snapshot() == before, "rejected large Dock return leaves appearance, geometry and references unchanged");
         Require(world.items[0].gridSpan.columns == 3 && world.items[0].gridSpan.rows == 3 &&
             world.items[0].largeIcon && *world.items[0].largeIcon == appearance,

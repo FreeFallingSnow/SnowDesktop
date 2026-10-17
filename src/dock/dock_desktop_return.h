@@ -71,6 +71,7 @@ inline std::vector<Landing> Plan(State state, std::vector<size_t> indices, GridC
         const auto itemIndex = entry.type == DockEntryType::DesktopItem ? services.itemIndex(entry.reference) : state.items.size();
         Landing landing{index, entry.type, entry.reference, {target.pageId, 0, 0}, {1, 1}, false};
         if (widgetIndex < state.widgets.size()) landing.span = state.widgets[widgetIndex].gridSpan;
+        else if (itemIndex < state.items.size()) landing.span = state.items[itemIndex].gridSpan;
         landing.cell.column = std::clamp(slot / std::max(1, page->rows), 0, std::max(0, page->columns - std::max(1, landing.span.columns)));
         landing.cell.row = std::clamp(slot % std::max(1, page->rows), 0, std::max(0, page->rows - std::max(1, landing.span.rows)));
         if (grid_occupancy::Fits(*page, landing.cell, landing.span) && !grid_occupancy::Occupied(used, landing.cell, landing.span))

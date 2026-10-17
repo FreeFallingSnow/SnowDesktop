@@ -389,7 +389,6 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
     const std::vector<Item*>& sourceItems, Container* origin, int mods) const
 {
     (void)slot;
-    (void)sourceItems;
 
     if (!app_) return L"";
 
@@ -429,6 +428,13 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
 
     const DragSourceList& sourceList =
         app_->dragSession_.SourceList();
+    if (!ctrlDown && !altDown && dynamic_cast<DockContainer*>(origin) &&
+        std::any_of(sourceItems.begin(), sourceItems.end(), [](Item* item) { return dynamic_cast<DockEntryItem*>(item) != nullptr; }))
+    {
+        const auto plan = app_->PlanDockDesktopReturn(sourceItems, app_->ResolveDesktopRequestCell(sourceList, dragPoint));
+        return !plan.empty() && std::all_of(plan.begin(), plan.end(), [](const auto& landing) { return landing.accepted; })
+            ? _LW("core.drag.release_move_here") : _LW("core.drag.release_occupied");
+    }
     if (sourceList.hasCollectionGroupEntries ||
         sourceList.hasFileGroupEntries)
     {
@@ -536,17 +542,16 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
     const bool hasItemDrag = app_->dragSession_.IsActive() && !app_->dragSession_.Items().empty();
     POINT dragPoint = app_->dragSession_.CurrentPoint();
 
-    // Dock 中的集合不是普通桌面图标，通用预览不会为它生成 landing。
-    // 预览与最终提交共用同一份真实落点规划。
+    // Dock 组件及普通移动返回桌面的入口，预览与最终提交共用落点规划。
     if (hasItemDrag && dynamic_cast<DockContainer*>(app_->dragSession_.Source()))
     {
-        const bool hasWidgetEntry = std::any_of(app_->dragSession_.Items().begin(),
-            app_->dragSession_.Items().end(), [](Item* item) {
+        const bool hasReturnEntry = std::any_of(app_->dragSession_.Items().begin(),
+            app_->dragSession_.Items().end(), [&](Item* item) {
                 auto* dockItem = dynamic_cast<DockEntryItem*>(item);
                 return dockItem &&
-                    (IsWidgetDockEntryType(dockItem->GetEntryType()));
+                    (IsWidgetDockEntryType(dockItem->GetEntryType()) || app_->dragSession_.Action() == DropAction::Move);
         });
-        if (hasWidgetEntry)
+        if (hasReturnEntry)
         {
             GridCell requested = app_->ResolveDesktopRequestCell(
                 app_->dragSession_.SourceList(), dragPoint);
