@@ -41,9 +41,9 @@ public:
     HRESULT STDMETHODCALLTYPE DAdvise(FORMATETC*, DWORD, IAdviseSink*, DWORD*) override { return OLE_E_ADVISENOTSUPPORTED; }
     HRESULT STDMETHODCALLTYPE DUnadvise(DWORD) override { return OLE_E_ADVISENOTSUPPORTED; }
     HRESULT STDMETHODCALLTYPE EnumDAdvise(IEnumSTATDATA**) override { return OLE_E_ADVISENOTSUPPORTED; }
-    HRESULT STDMETHODCALLTYPE SetAsyncMode(BOOL value) override { asynchronous = value != FALSE; return S_OK; }
-    HRESULT STDMETHODCALLTYPE GetAsyncMode(BOOL* value) override
-    { if (!value) return E_POINTER; *value = asynchronous; return S_OK; }
+    HRESULT STDMETHODCALLTYPE SetAsyncMode(BOOL enabled) override { asynchronous = enabled != FALSE; return S_OK; }
+    HRESULT STDMETHODCALLTYPE GetAsyncMode(BOOL* enabled) override
+    { if (!enabled) return E_POINTER; *enabled = asynchronous; return S_OK; }
     HRESULT STDMETHODCALLTYPE StartOperation(IBindCtx*) override { CheckThread(); ++starts; return S_OK; }
     HRESULT STDMETHODCALLTYPE InOperation(BOOL* active) override
     { if (!active) return E_POINTER; *active = starts > ends; return S_OK; }

@@ -116,9 +116,10 @@ inline void Run(std::string_view action)
                     const auto saved = Read(Access::LayoutPath(app));
                     auto source = ole_file_source_fixture::Make(files, asynchronous);
                     const POINT point{secondary ? -650L : 150L, 150};
-                    Access::BeginExternal(app, count, point);
+                    const std::size_t summaryCount = asynchronous ? 1 : count;
+                    Access::BeginExternal(app, summaryCount, point);
                     const auto preview = Access::ObserveModelPreview(app, point);
-                    Require(Access::Target(app) == Access::Desktop(app) && preview.landings.size() == count,
+                    Require(Access::Target(app) == Access::Desktop(app) && preview.landings.size() == summaryCount,
                         "native OLE fixture must observe the actual accepted desktop landing preview");
                     DWORD returned = allowed;
                     Require(SUCCEEDED(Access::DropExternal(app, source.Get(), gesture->keys, point, returned)),
@@ -168,14 +169,19 @@ inline void Run(std::string_view action)
                         const auto& item = Find(app, ToUpperInvariant(output->wstring()));
                         const auto landing = std::find_if(preview.landings.begin(), preview.landings.end(),
                             [&](const auto& value) { return value.sourceIndex == i; });
-                        Require(landing != preview.landings.end() && item.gridCell.pageId == landing->cell.pageId &&
-                            item.gridCell.column == landing->cell.column && item.gridCell.row == landing->cell.row &&
-                            Access::HasVisibleIcon(app, item) && Access::HasMatchingRuntimeSlot(app, item),
-                            "native OLE physical output must fulfill its published landing in the rebuilt desktop model");
+                        if (i < summaryCount)
+                            Require(landing != preview.landings.end() && item.gridCell.pageId == landing->cell.pageId &&
+                                item.gridCell.column == landing->cell.column && item.gridCell.row == landing->cell.row,
+                                "native OLE physical output must fulfill its published landing in the rebuilt desktop model");
+                        Require(Access::HasVisibleIcon(app, item) && Access::HasMatchingRuntimeSlot(app, item),
+                            "every native OLE physical output must receive a valid visible runtime frame");
                         Require(occupied.insert(item.gridCell.pageId + L":" + std::to_wstring(item.gridCell.column) +
                             L"," + std::to_wstring(item.gridCell.row)).second,
                             "native OLE multi-file outputs cannot overlap on the desktop");
-                        published.emplace_back(item.layoutKey, landing->cell);
+                        // Delayed sources advertise one placeholder before
+                        // GetData. Later outputs need legal distinct cells;
+                        // their accepted final cells must survive disk reload.
+                        published.emplace_back(item.layoutKey, item.gridCell);
                     }
                     CheckOriginals(app, existing);
                     if (expected)
