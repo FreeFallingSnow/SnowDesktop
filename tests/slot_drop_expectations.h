@@ -3,6 +3,7 @@
 #include "../src/core/slot_contract.h"
 
 #include <array>
+#include <optional>
 
 // Independent, reviewable expected behavior. Do not derive these tables from
 // EvaluateSlotDrop, SurfaceEmits, or kSurfaceDescriptors: doing so lets a broken
@@ -14,6 +15,28 @@ using Surface = contract::SlotSurfaceKind;
 using Payload = contract::DragPayloadKind;
 using Relation = contract::DragRelation;
 using Route = contract::DropRoute;
+
+struct WidgetExpectation
+{
+    DesktopWidgetType type;
+    contract::WidgetContainerRole role;
+    std::optional<Surface> surface;
+    Payload nativeBodyPayload;
+};
+// Independent native-type classification. Lua file zones/logical slots are
+// declarative surfaces within a component, not the native component body.
+// No surface is prescribed for a body which is not a native slot container.
+inline constexpr std::array widgets{
+    WidgetExpectation{DesktopWidgetType::Collection, contract::WidgetContainerRole::SlotContainer, Surface::Collection, Payload::CollectionWidget},
+    WidgetExpectation{DesktopWidgetType::CollectionGroup, contract::WidgetContainerRole::SlotContainer, Surface::CollectionGroup, Payload::GroupWidget},
+    WidgetExpectation{DesktopWidgetType::FileGroup, contract::WidgetContainerRole::SlotContainer, Surface::FileGroup, Payload::GroupWidget},
+    WidgetExpectation{DesktopWidgetType::FileCategories, contract::WidgetContainerRole::SlotContainer, Surface::FileCategories, Payload::FileSourceWidget},
+    WidgetExpectation{DesktopWidgetType::FolderMapping, contract::WidgetContainerRole::SlotContainer, Surface::FolderMapping, Payload::FolderMappingWidget},
+    WidgetExpectation{DesktopWidgetType::LuaScript, contract::WidgetContainerRole::NonContainer, std::nullopt, Payload::OtherWidget},
+    WidgetExpectation{DesktopWidgetType::Guide, contract::WidgetContainerRole::NonSlotContainer, std::nullopt, Payload::OtherWidget},
+};
+static_assert(widgets.size() == contract::ToIndex(DesktopWidgetType::Count),
+    "New widget types need independent matrix expectations, not only a production registry entry");
 
 inline constexpr std::array surfaces{
     Surface::Desktop, Surface::Dock, Surface::Collection,

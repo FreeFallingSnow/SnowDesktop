@@ -1,5 +1,6 @@
 #include "../src/core/slot_contract.h"
 #include "slot_drop_expectations.h"
+#include "drag_drop/matrix_domain_review.h"
 
 #include <array>
 #include <cmath>
@@ -71,6 +72,24 @@ void TestEveryDirectedPairAndPayload()
         }
     }
     std::cout << cases << " explicit route expectations checked\n";
+}
+
+void TestNativeWidgetClassifications()
+{
+    namespace expected = slot_drop_expectations;
+    std::array<bool, static_cast<size_t>(DesktopWidgetType::Count)> seen{};
+    for (const auto& wanted : expected::widgets)
+    {
+        const auto index = contract::ToIndex(wanted.type);
+        Check(index < seen.size() && !seen[index], "native widget expectations must account for every type exactly once");
+        if (index >= seen.size()) continue;
+        seen[index] = true;
+        const auto& actual = contract::DescribeWidget(wanted.type);
+        Check(actual.role == wanted.role && actual.widgetPayload == wanted.nativeBodyPayload &&
+            (!wanted.surface || actual.surface == *wanted.surface),
+            "native widget role, surface and body payload match independently reviewed expectations: " + std::to_string(index));
+    }
+    for (bool registered : seen) Check(registered, "a native widget type has no independent expectation");
 }
 
 void TestSurfaceGeometryMatrix()
@@ -224,6 +243,7 @@ void TestPayloadClassificationIsExclusive()
 int main()
 {
     TestPayloadClassificationIsExclusive();
+    TestNativeWidgetClassifications();
     TestEveryDirectedPairAndPayload();
     TestSurfaceGeometryMatrix();
     if (failures != 0)
