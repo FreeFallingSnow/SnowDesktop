@@ -193,6 +193,7 @@ struct Batch
     std::optional<external_file_destination::Destination> captured;
     std::function<DesktopWidget*(const std::wstring&, bool)> resolveTarget;
     std::function<void(const DragSourceList&, const DropPreviewList&)> capturePlan;
+    std::function<DropPreviewList(const GridCell&, size_t)> desktopPreview;
     int executions = 0, pinSaves = 0;
     bool existingDesktopPaths = false, dockCapacity = true, pinAccepted = true;
     size_t pinnedIndex = static_cast<size_t>(-1);
@@ -343,7 +344,8 @@ struct Harness
             services.resolveTarget = [&](const auto& id, bool popup) {
                 return batch.resolveTarget ? batch.resolveTarget(id, popup) : nullptr;
             };
-            services.desktopPreview = [](const GridCell& anchor, size_t count) {
+            services.desktopPreview = [&](const GridCell& anchor, size_t count) {
+                if (batch.desktopPreview) return batch.desktopPreview(anchor, count);
                 DropPreviewList preview;
                 preview.targetKind = DropTargetKind::Desktop;
                 preview.anchorCell = anchor;

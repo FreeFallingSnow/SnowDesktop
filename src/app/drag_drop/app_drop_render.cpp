@@ -2,6 +2,7 @@
 #include "drag_drop/pending_drop_rules.h"
 #include "drag_drop/pending_drop_completion.h"
 #include "drag_drop/pending_drop_placement.h"
+#include "drag_drop/desktop_output_placement.h"
 #include "app/layout/new_item_placement.h"
 #include "shell/shell_new_item_capture.h"
 #include "icons/large_icon_renderer.h"
@@ -147,18 +148,9 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
     std::unordered_set<std::wstring>& claimed)
 {
     if (!cache.active) return false;
-    std::unordered_set<std::wstring> usedSlots;
-    for (const auto& w : widgets_)
-        if (!IsGroupedWidget(w))
-            MarkGridArea(usedSlots, w.gridCell, w.gridSpan);
-    for (const auto& item : items_)
-    {
-        std::wstring key = ToUpperInvariant(item.layoutKey);
-        if (!key.empty() && !claimed.contains(key) && !cache.existingDesktopKeys.contains(key))
-            continue;
-        if (!item.name.empty() && !IsItemInAnyWidget(item))
-            MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
-    }
+    auto usedSlots = snowdesktop::desktop_output_placement::Used(widgets_, items_, claimed, cache.existingDesktopKeys,
+        ToUpperInvariant, [this](const auto& widget) { return IsGroupedWidget(widget); },
+        [this](const auto& item) { return IsItemInAnyWidget(item); });
 
     auto findWidgetContainer = [&](const std::wstring& widgetId) -> WidgetContainer* {
         for (auto& container : containers_)
@@ -203,34 +195,18 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
             return !widget || landing.action == DropAction::Link || widget->AllowsDesktopKey(key);
         },
         [&](DesktopItem& item, const PendingLandingEntry& landing) {
-            GridCell cell = landing.cell;
-
-            // 预分配的新溢出页：若 pageId 不在 savedPageIds_ 里，先创建
-            if (!cell.pageId.empty() &&
-                std::find(savedPageIds_.begin(), savedPageIds_.end(), cell.pageId) == savedPageIds_.end())
-            {
-                RememberSavedPageId(cell.pageId);
-                // 参考末屏显示器的网格维度
+            snowdesktop::desktop_output_placement::Services services;
+            services.reference = [this]() -> const GridPage* {
                 auto monitorOrder = BuildMonitorRenderOrder();
-                const GridPage* refPage = !monitorOrder.empty()
+                return !monitorOrder.empty()
                     ? &gridPages_[monitorOrder.back()] : GetFirstPageGridPage();
-                if (!refPage) return false;
-                savedPageColumns_[cell.pageId] = std::max(1, refPage->columns);
-                savedPageRows_[cell.pageId] = std::max(1, refPage->rows);
-            }
-
-            return snowdesktop::pending_drop::PlaceDesktop(item, landing, usedSlots,
-                [&](const std::wstring& id) -> std::optional<GridPage> {
-                    if (const auto* page = FindGridPage(gridPages_, id)) return *page;
-                    const auto columns = savedPageColumns_.find(id), rows = savedPageRows_.find(id);
-                    if (columns == savedPageColumns_.end() || rows == savedPageRows_.end()) return std::nullopt;
-                    GridPage page; page.id = id; page.columns = columns->second; page.rows = rows->second;
-                    return page;
-                },
-                [&](GridSpan span, auto& used, GridCell& found, const auto& page, int slot) {
-                    return TryFindFreeCell(span, used, found, page, slot);
-                },
-                [&](const GridCell& cell) { return SlotFromCell(gridPages_, cell); });
+            };
+            services.findFree = [this](GridSpan span, auto& used, GridCell& found, const auto& page, int slot) {
+                return TryFindFreeCell(span, used, found, page, slot);
+            };
+            services.slot = [this](const auto& cell) { return SlotFromCell(gridPages_, cell); };
+            return snowdesktop::desktop_output_placement::Place(
+                {savedPageIds_, savedPageColumns_, savedPageRows_, gridPages_}, item, landing, usedSlots, services);
         },
         [&](const std::wstring& id) {
             RefreshCollectedKeysCache();
