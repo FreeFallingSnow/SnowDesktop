@@ -1390,6 +1390,52 @@ size_t TestWidgetManifests(
     return referenceCount;
 }
 
+void TestDefaultUnusedGate()
+{
+    // Exercise the same reporting functions as the normal CLI, with the
+    // legacy strict option explicitly disabled. A warning-only regression
+    // must fail this test even when the repository has no unused keys.
+    const auto requiresFailure = [](const std::function<void()>& run, const std::string& diagnostic) {
+        const int previousFailures = failures;
+        std::ostringstream output;
+        auto* previous = std::cerr.rdbuf(output.rdbuf());
+        run();
+        std::cerr.rdbuf(previous);
+        const int observed = failures - previousFailures;
+        failures = previousFailures;
+        Check(observed == 1 && output.str().find(diagnostic) != std::string::npos,
+            "default unused-key gate must reject its known unused sample: " + diagnostic);
+    };
+    const std::map<std::string, Catalog> global{{"en-US", {{"probe.unused", "Unused"}}}};
+    requiresFailure([&] { TestGlobalSourceContract(global, {}, false); },
+        "unused global translation key: probe.unused");
+
+    wchar_t temporary[MAX_PATH]{}, unique[MAX_PATH]{};
+    if (!GetTempPathW(MAX_PATH, temporary) || !GetTempFileNameW(temporary, L"sdl", 0, unique))
+    { Check(false, "allocate isolated widget locale fixture"); return; }
+    const fs::path root(unique);
+    std::error_code error;
+    fs::remove(root, error);
+    if (error || !fs::create_directory(root, error))
+    { Check(false, "create isolated widget locale directory"); return; }
+    struct Cleanup
+    {
+        fs::path root;
+        ~Cleanup() { std::error_code ignored; fs::remove_all(root, ignored); }
+    } cleanup{root};
+    const auto manifest = root / "widget.json";
+    const auto lua = root / "main.lua";
+    { std::ofstream source(lua); }
+    {
+        std::ofstream file(manifest);
+        file << R"({"entry":"main.lua","nameKey":"probe.name","descriptionKey":"probe.description",
+            "locales":{"en-US":{"probe.name":"Name","probe.description":"Description","probe.unused":"Unused"}}})";
+    }
+    requiresFailure([&] {
+        TestWidgetManifests({manifest}, {lua}, {}, {{"en-US", {}}}, root, false);
+    }, "unused widget locale key: probe.unused");
+}
+
 void TestRuntimeCatalogMatrix(
     const fs::path& languageDirectory,
     const std::map<std::string, Catalog>& catalogs)
@@ -1535,6 +1581,7 @@ int wmain(int argc, wchar_t* argv[])
     const bool strictUnused = argc == 3;
     CheckFormatSignatureRules();
     TestReferenceAuditContracts();
+    TestDefaultUnusedGate();
 
     const fs::path projectRoot = argv[1];
     const fs::path languageDirectory =
