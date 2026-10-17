@@ -4376,6 +4376,8 @@ private:
     HitRegion cachedDropPreviewRegion_ = HitRegion::None;
     bool cachedDropPreviewHasItems_ = false;
     size_t cachedDropPreviewSourceCount_ = static_cast<size_t>(-1);
+    std::uint64_t cachedDropPreviewSceneRevision_ = 0;
+    size_t cachedDropPreviewExternalCount_ = 0;
     /** @} */
 
     /** @name 部件拖拽/缩放状态 */

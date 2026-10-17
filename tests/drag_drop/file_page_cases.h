@@ -5,6 +5,8 @@
 #include "drag_drop/desktop_output_placement.h"
 #include "layout/item_location.h"
 #include "pointer_geometry.h"
+#include "preview_cache_state.h"
+#include "app/drag_drop/drag_drop_controller.h"
 
 namespace file_page_cases
 {
@@ -52,9 +54,10 @@ inline DropPreviewList Preview(World& world, const GridCell& request, size_t cou
 
 inline void Run(const std::filesystem::path& root, std::wstring_view section = L"all")
 {
-    Require(section == L"all" || section == L"files" || section == L"rejection" || section == L"pointer", "file page diagnostics select a known nonempty section");
+    Require(section == L"all" || section == L"files" || section == L"rejection" || section == L"pointer" || section == L"cache", "file page diagnostics select a known nonempty section");
+    const bool cached = section == L"cache";
     size_t serial = 0;
-    if (section == L"all" || section == L"files" || section == L"pointer")
+    if (section == L"all" || section == L"files" || section == L"pointer" || cached)
     for (bool pointer : {false, true})
     for (bool async : {false, true})
     for (DWORD effect : {DROPEFFECT_COPY, DROPEFFECT_MOVE, DROPEFFECT_LINK})
@@ -63,7 +66,7 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
     for (bool horizontal : {false, true})
     for (bool differentReference : {true, false})
     {
-        if (pointer != (section == L"pointer") || (pointer && (horizontal || differentReference))) continue;
+        if (pointer != (section == L"pointer" || cached) || (pointer && (horizontal || differentReference)) || (cached && count != 2)) continue;
         World world(root / std::to_wstring(serial++), 2, reverse);
         const GridSpan grid = pointer ? GridSpan{6, 5} : horizontal ? GridSpan{6, 1} : GridSpan{1, 5};
         const GridSpan reference = differentReference ? (horizontal ? GridSpan{1, 5} : GridSpan{6, 1}) : grid;
@@ -105,6 +108,30 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
         destination.preview.targetKind = DropTargetKind::Desktop; destination.preview.anchorCell = request;
         destination.preview.action = effect == DROPEFFECT_MOVE ? DropAction::Move : effect == DROPEFFECT_LINK ? DropAction::Link : DropAction::Copy;
         batch.captured = destination;
+        DropPreviewList shown;
+        if (cached)
+        {
+            preview_cache_test::Storage uiCache;
+            DragSession uiSession;
+            DragDropController uiController(uiSession);
+            const auto point = pointer_geometry::Center(world.pages[world.order.front()], 2, 2);
+            const auto present = [&]() -> DropPreviewList {
+                const auto summaryCount = static_cast<size_t>(std::max(1, uiController.ExternalSummary().fileCount));
+                return desktop_preview_cache::Read(uiCache.Ref(),
+                    {false, point, DropActionToMods(destination.preview.action), nullptr, nullptr, HitRegion::Empty, 0,
+                        uiSession.StaticSceneRevision(), summaryCount},
+                    []() -> DropPreviewList { throw std::runtime_error("external UI cache cannot select internal planner"); },
+                    [&] { return Preview(world, request, summaryCount); });
+            };
+            uiController.BeginExternalDrag({1, false, false});
+            uiSession.Begin(nullptr, {}, {}, point, point);
+            Require(present().landings.size() == 1, "an initial external summary starts with one real planned landing");
+            // Re-entering OLE may retain the empty interactive session while
+            // the controller receives a new source summary at the same point.
+            uiController.BeginExternalDrag({static_cast<int>(count), false, false});
+            uiSession.UpdatePoint(point);
+            shown = present();
+        }
         const auto before = world.Snapshot();
         batch.desktopPreview = [&](const auto& anchor, size_t size) { return Preview(world, anchor, size); };
         DropPreviewList captured;
@@ -168,6 +195,17 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
                 "completed file outputs fulfill each captured page cell despite reversed receipts");
         }
         world.Legal(); world.Save(); world.Reload();
+        if (cached)
+        {
+            const bool agrees = shown.landings.size() == captured.landings.size() &&
+                std::all_of(shown.landings.begin(), shown.landings.end(), [&](const auto& visible) {
+                    return std::any_of(captured.landings.begin(), captured.landings.end(), [&](const auto& committed) {
+                        return visible.sourceIndex == committed.sourceIndex && visible.cell.pageId == committed.cell.pageId &&
+                            visible.cell.column == committed.cell.column && visible.cell.row == committed.cell.row;
+                    });
+                });
+            Require(agrees, "external desktop preview cache refreshes file count to match actual committed outputs and stored cells");
+        }
     }
     if (section == L"all" || section == L"rejection")
     {

@@ -7,6 +7,7 @@
 #include "shell/shell_new_item_capture.h"
 #include "icons/large_icon_renderer.h"
 #include "desktop_preview_source.h"
+#include "desktop_preview_cache.h"
 
 // Desktop drop-preview rendering, caching and deferred placement.
 
@@ -75,44 +76,18 @@ const DropPreviewList& DesktopApp::GetCachedDesktopDropPreview(
     bool hasItemDrag, const DragSourceList& sourceList,
     Container* target, Slot* slot, HitRegion region, int mods, POINT dragPoint)
 {
-    const size_t sourceCount = sourceList.entries.size();
-    // 判断缓存是否有效：位置、动作、目标、源数量均未变
-    const bool cacheValid = !cachedDropPreview_.landings.empty() &&
-        cachedDropPreviewHasItems_ == hasItemDrag &&
-        cachedDropPreviewPoint_.x == dragPoint.x &&
-        cachedDropPreviewPoint_.y == dragPoint.y &&
-        cachedDropPreviewMods_ == mods &&
-        cachedDropPreviewTarget_ == target &&
-        cachedDropPreviewSlot_ == slot &&
-        cachedDropPreviewRegion_ == region &&
-        cachedDropPreviewSourceCount_ == sourceCount;
-
-    if (!cacheValid)
-    {
-        if (hasItemDrag)
-        {
-            cachedDropPreview_ = BuildDropPreviewList(sourceList, target, slot, region, mods, dragPoint);
-        }
-        else
-        {
+    const size_t externalCount = hasItemDrag ? 0 : static_cast<size_t>(std::max(1, dragDropController_.ExternalSummary().fileCount));
+    return snowdesktop::desktop_preview_cache::Read(
+        {cachedDropPreview_, cachedDropPreviewPoint_, cachedDropPreviewMods_, cachedDropPreviewTarget_, cachedDropPreviewSlot_,
+            cachedDropPreviewRegion_, cachedDropPreviewHasItems_, cachedDropPreviewSourceCount_,
+            cachedDropPreviewSceneRevision_, cachedDropPreviewExternalCount_},
+        {hasItemDrag, dragPoint, mods, target, slot, region, sourceList.entries.size(), dragSession_.StaticSceneRevision(), externalCount},
+        [&] { return BuildDropPreviewList(sourceList, target, slot, region, mods, dragPoint); },
+        [&]() -> DropPreviewList {
             GridCell targetCell = CellFromPoint(dragPoint);
-            if (targetCell.pageId.empty())
-                cachedDropPreview_ = {};
-            else
-                cachedDropPreview_ = BuildExternalDesktopPreviewList(targetCell,
-                    static_cast<size_t>(std::max(
-                        1, dragDropController_.
-                            ExternalSummary().fileCount)));
-        }
-        cachedDropPreviewPoint_ = dragPoint;
-        cachedDropPreviewMods_ = mods;
-        cachedDropPreviewTarget_ = target;
-        cachedDropPreviewSlot_ = slot;
-        cachedDropPreviewRegion_ = region;
-        cachedDropPreviewHasItems_ = hasItemDrag;
-        cachedDropPreviewSourceCount_ = sourceCount;
-    }
-    return cachedDropPreview_;
+            if (targetCell.pageId.empty()) return {};
+            return BuildExternalDesktopPreviewList(targetCell, externalCount);
+        });
 }
 
 /**
