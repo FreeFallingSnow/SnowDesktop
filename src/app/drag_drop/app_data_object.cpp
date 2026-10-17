@@ -4,30 +4,21 @@
 #include "drag_drop/desktop_landings.h"
 #include "layout/page_mapping.h"
 #include "layout/selected_desktop_move.h"
+#include "desktop_request.h"
 
 // OLE data-object construction and desktop landing bookkeeping.
 
 POINT DesktopApp::GetDragTargetPoint(POINT current) const
 {
-    // DeactivateForDrop only ends interactive rendering; the adjusted session
-    // coordinates remain authoritative until the drop plan has been committed.
-    if (dragSession_.HasContext())
-    {
-        return dragSession_.ResolveTargetPoint(
-            { dragGroupOriginX_, dragGroupOriginY_ }, current);
-    }
-    return {
-        dragGroupOriginX_ + (current.x - mouseDownPoint_.x),
-        dragGroupOriginY_ + (current.y - mouseDownPoint_.y)
-    };
+    return snowdesktop::desktop_request::TargetPoint(dragSession_,
+        {dragGroupOriginX_, dragGroupOriginY_}, mouseDownPoint_, current);
 }
 
 GridCell DesktopApp::ResolveDesktopRequestCell(
     const DragSourceList& sourceList, POINT current) const
 {
-    if (sourceList.UsesPointerDesktopPlacement() || dragSession_.IsPointerAnchored())
-        return CellFromPoint(current);
-    return CellFromDragOrigin(GetDragTargetPoint(current), current);
+    return snowdesktop::desktop_request::Resolve(gridPages_, sourceList, dragSession_,
+        {dragGroupOriginX_, dragGroupOriginY_}, mouseDownPoint_, current, GetFirstPageGridPage());
 }
 
 void DesktopApp::RefreshDragPresentationAnchor()

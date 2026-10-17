@@ -4,6 +4,7 @@
 #include "drag_drop/desktop_landings.h"
 #include "drag_drop/desktop_output_placement.h"
 #include "layout/item_location.h"
+#include "pointer_geometry.h"
 
 namespace file_page_cases
 {
@@ -51,9 +52,10 @@ inline DropPreviewList Preview(World& world, const GridCell& request, size_t cou
 
 inline void Run(const std::filesystem::path& root, std::wstring_view section = L"all")
 {
-    Require(section == L"all" || section == L"files" || section == L"rejection", "file page diagnostics select a known nonempty section");
+    Require(section == L"all" || section == L"files" || section == L"rejection" || section == L"pointer", "file page diagnostics select a known nonempty section");
     size_t serial = 0;
-    if (section == L"all" || section == L"files")
+    if (section == L"all" || section == L"files" || section == L"pointer")
+    for (bool pointer : {false, true})
     for (bool async : {false, true})
     for (DWORD effect : {DROPEFFECT_COPY, DROPEFFECT_MOVE, DROPEFFECT_LINK})
     for (size_t count : {size_t{2}, size_t{1}})
@@ -61,19 +63,33 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
     for (bool horizontal : {false, true})
     for (bool differentReference : {true, false})
     {
+        if (pointer != (section == L"pointer") || (pointer && (horizontal || differentReference))) continue;
         World world(root / std::to_wstring(serial++), 2, reverse);
-        const GridSpan grid = horizontal ? GridSpan{6, 1} : GridSpan{1, 5};
+        const GridSpan grid = pointer ? GridSpan{6, 5} : horizontal ? GridSpan{6, 1} : GridSpan{1, 5};
         const GridSpan reference = differentReference ? (horizontal ? GridSpan{1, 5} : GridSpan{6, 1}) : grid;
         world.columns[L"fixed"] = grid.columns; world.rows[L"fixed"] = grid.rows;
         world.columns[L"target"] = reference.columns; world.rows[L"target"] = reference.rows;
         for (const auto& id : {std::wstring(L"fixed"), std::wstring(L"target")})
         {
+            if (pointer) continue;
             DesktopWidget filler; filler.id = L"filler-" + id; filler.type = DesktopWidgetType::Collection;
             filler.gridCell = {id, 0, 0}; filler.gridSpan = {world.columns.at(id), world.rows.at(id)};
             world.widgets.push_back(std::move(filler));
         }
         world.Apply(); world.Legal();
-        const GridCell request{world.Named(L"Fixed"), 0, 0};
+        GridCell request{world.Named(L"Fixed"), 0, 0};
+        if (pointer)
+        {
+            pointer_geometry::Configure(world.pages);
+            const auto& page = world.pages[world.order.front()];
+            const auto point = pointer_geometry::Center(page, 2, 2);
+            DragSourceList source; source.hasExternalFiles = true; source.entries.push_back({});
+            source.entries.back().kind = DropSourceKind::ExternalFile;
+            DragSession session;
+            request = desktop_request::Resolve(world.pages, source, session, {-10000, -10000}, {10000, 10000}, point, &world.pages[world.order.back()]);
+            Require(request.pageId == world.Named(L"Fixed") && request.column == 2 && request.row == 2,
+                "external coordinate ingress selects the pointer cell without inheriting an internal group offset");
+        }
         std::filesystem::create_directories(world.root / L"input");
         std::vector<std::filesystem::path> paths{world.root / L"input" / L"A.txt"};
         std::ofstream(paths[0]) << "original A";
@@ -189,6 +205,7 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
             "an unfit planned output page is never published after rejection or fallback to an existing page");
         if (placed) world.Legal();
     }
-    std::cout << "real file completion, captured page cells, page registration and layout storage cases passed\n";
+    Require(section == L"rejection" || serial != 0, "file page integration executes a nonempty file scene matrix");
+    std::cout << serial << " real file completion, captured page cells, page registration and layout storage scenes passed\n";
 }
 }

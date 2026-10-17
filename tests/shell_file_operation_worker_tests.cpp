@@ -26,6 +26,7 @@
 #include "drag_drop/internal_desktop_cases.h"
 #include "drag_drop/file_page_cases.h"
 #include "drag_drop/selected_desktop_cases.h"
+#include "drag_drop/desktop_request_cases.h"
 #include <wincodec.h>
 
 #include <algorithm>
@@ -781,7 +782,7 @@ int wmain(int argc, wchar_t** argv)
         const std::wstring mode(argv[1]);
         if (mode == L"--async-slot-transfer-tests" || mode == L"--drop-placement-tests" ||
             mode == L"--member-order-tests" || mode == L"--right-drag-file-tests" || mode == L"--pipeline-decision-tests" ||
-            mode == L"--group-membership-tests" || mode == L"--group-release-tests" || mode == L"--widget-displacement-tests" || mode == L"--dock-model-tests" || mode == L"--dock-return-tests" || mode == L"--dock-file-action-tests" || mode == L"--page-mapping-tests" || mode == L"--internal-desktop-tests" || mode == L"--file-page-tests" || mode == L"--selected-desktop-tests")
+            mode == L"--group-membership-tests" || mode == L"--group-release-tests" || mode == L"--widget-displacement-tests" || mode == L"--dock-model-tests" || mode == L"--dock-return-tests" || mode == L"--dock-file-action-tests" || mode == L"--page-mapping-tests" || mode == L"--internal-desktop-tests" || mode == L"--file-page-tests" || mode == L"--selected-desktop-tests" || mode == L"--desktop-request-tests")
         {
             const HRESULT initialized = OleInitialize(nullptr);
             Expect(SUCCEEDED(initialized), "async transfer test owns an STA");
@@ -802,6 +803,7 @@ int wmain(int argc, wchar_t** argv)
                 else if (mode == L"--internal-desktop-tests") internal_desktop_cases::Run(root, argc > 2 ? std::wstring_view(argv[2]) : L"all");
                 else if (mode == L"--file-page-tests") file_page_cases::Run(root, argc > 2 ? std::wstring_view(argv[2]) : L"all");
                 else if (mode == L"--selected-desktop-tests") selected_desktop_cases::Run(root, argc > 2 ? std::wstring_view(argv[2]) : L"all");
+                else if (mode == L"--desktop-request-tests") desktop_request_cases::Run(root);
                 else async_slot_transfer_cases::Run(root);
             }
             catch (const std::exception& error)

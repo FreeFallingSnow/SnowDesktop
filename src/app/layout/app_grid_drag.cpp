@@ -286,19 +286,7 @@ extern inline int SlotFromCell(const std::vector<GridPage>& pages, const GridCel
  */
 int DesktopApp::GetGridAxisIndexFromPoint(const GridPage& page, int coordinate, bool horizontal)
 {
-    const int count = horizontal ? page.columns : page.rows;
-    if (count <= 1) return 0;
-    int bestIndex = 0;
-    int bestDistance = INT_MAX;
-    for (int i = 0; i < count; ++i)
-    {
-        const int left = (horizontal ? page.workArea.left : page.workArea.top) +
-            (horizontal ? page.marginX : page.marginY) + GetGridAxisOffset(page, i, horizontal);
-        const int center = left + (horizontal ? page.cellWidth : page.cellHeight) / 2;
-        const int distance = std::abs(coordinate - center);
-        if (distance < bestDistance) { bestDistance = distance; bestIndex = i; }
-    }
-    return bestIndex;
+    return GridPointAxisIndex(page, coordinate, horizontal);
 }
 
 /**
@@ -308,13 +296,7 @@ int DesktopApp::GetGridAxisIndexFromPoint(const GridPage& page, int coordinate, 
  */
 GridCell DesktopApp::CellFromPoint(POINT point) const
 {
-    const GridPage* page = GridPageFromPoint(point);
-    GridCell cell;
-    if (!page) return cell;
-    cell.pageId = page->id;
-    cell.column = GetGridAxisIndexFromPoint(*page, point.x, true);
-    cell.row = GetGridAxisIndexFromPoint(*page, point.y, false);
-    return cell;
+    return GridCellFromPoint(gridPages_, point, GetFirstPageGridPage());
 }
 
 /**
