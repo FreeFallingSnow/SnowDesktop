@@ -325,6 +325,17 @@ HRESULT DesktopApp::HandleOleDragEnter(
     const bool externalLogicalReference =
         dynamic_cast<LuaLogicalSlotContainer*>(targetContainer) != nullptr &&
         targetRegion != HitRegion::Blocked;
+    const DWORD targetEffect = ((desktopIconsHidden_ && !targetContainer) ||
+        targetRegion == HitRegion::Blocked)
+        ? DROPEFFECT_NONE
+        : (externalLogicalReference ? (*effect & DROPEFFECT_COPY)
+            : externalDockMapping
+                ? snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect)
+                : snowdesktop::ole_drag_rules::ChooseDropEffect(keyState, *effect,
+                    targetContainer == GetDesktopGrid() && targetRegion != HitRegion::Handoff
+                        ? DROPEFFECT_COPY : DROPEFFECT_MOVE));
+    if (!externalDockMapping && !externalLogicalReference && targetEffect != DROPEFFECT_NONE)
+        mods = static_cast<int>(snowdesktop::ole_drag_rules::ModifiersForDropEffect(targetEffect));
     if (externalDockMapping)
         dragSession_.UpdateActionFromMods(
             DropActionToMods(
@@ -335,15 +346,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
     else
         dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
-    *effect = ((desktopIconsHidden_ && !targetContainer) ||
-        targetRegion == HitRegion::Blocked)
-        ? DROPEFFECT_NONE
-        : (externalLogicalReference
-            ? (*effect & DROPEFFECT_COPY)
-            : externalDockMapping
-            ? snowdesktop::dock_drop_rules::
-                ChooseExternalMappingEffect(*effect)
-            : ChooseDropEffect(keyState, *effect));
+    *effect = targetEffect;
     std::wstring hint;
     if (*effect != DROPEFFECT_NONE && targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
@@ -448,6 +451,17 @@ HRESULT DesktopApp::HandleOleDragOver(
     const bool externalLogicalReference =
         dynamic_cast<LuaLogicalSlotContainer*>(targetContainer) != nullptr &&
         targetRegion != HitRegion::Blocked;
+    const DWORD targetEffect = ((desktopIconsHidden_ && !targetContainer) ||
+        targetRegion == HitRegion::Blocked)
+        ? DROPEFFECT_NONE
+        : (externalLogicalReference ? (*effect & DROPEFFECT_COPY)
+            : externalDockMapping
+                ? snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect)
+                : snowdesktop::ole_drag_rules::ChooseDropEffect(keyState, *effect,
+                    targetContainer == GetDesktopGrid() && targetRegion != HitRegion::Handoff
+                        ? DROPEFFECT_COPY : DROPEFFECT_MOVE));
+    if (!externalDockMapping && !externalLogicalReference && targetEffect != DROPEFFECT_NONE)
+        mods = static_cast<int>(snowdesktop::ole_drag_rules::ModifiersForDropEffect(targetEffect));
     if (externalDockMapping)
         dragSession_.UpdateActionFromMods(
             DropActionToMods(
@@ -458,15 +472,7 @@ HRESULT DesktopApp::HandleOleDragOver(
     else
         dragSession_.UpdateActionFromMods(mods, DropAction::Copy);
 
-    *effect = ((desktopIconsHidden_ && !targetContainer) ||
-        targetRegion == HitRegion::Blocked)
-        ? DROPEFFECT_NONE
-        : (externalLogicalReference
-            ? (*effect & DROPEFFECT_COPY)
-            : externalDockMapping
-            ? snowdesktop::dock_drop_rules::
-                ChooseExternalMappingEffect(*effect)
-            : ChooseDropEffect(keyState, *effect));
+    *effect = targetEffect;
     std::wstring hint;
     if (*effect != DROPEFFECT_NONE && targetContainer && targetRegion != HitRegion::None)
         hint = targetContainer->GetDragHint(targetSlot, targetRegion, {}, nullptr, mods);
@@ -924,6 +930,8 @@ HRESULT DesktopApp::HandleOleDrop(
     }
 
     // ── External drop ──────────────────────────────────────────
+    if ((keyState & (MK_CONTROL | MK_SHIFT)) == (MK_CONTROL | MK_SHIFT))
+        keyState = (keyState & ~(MK_CONTROL | MK_SHIFT)) | MK_ALT;
     DockContainer* externalDropDock =
         dynamic_cast<DockContainer*>(
             dragSession_.TargetContainer());
@@ -1432,6 +1440,30 @@ HRESULT DesktopApp::HandleOleDrop(
         !delayedFileTargetCell.pageId.empty() &&
         dragSession_.TargetRegion() != HitRegion::Handoff &&
         dragSession_.TargetRegion() != HitRegion::Blocked;
+
+    // Explorer advertises CF_HDROP before rendering its paths. Read that batch
+    // on the existing STA reader and execute the selected verb through the
+    // tracked file pipeline, rather than the copy-only browser/Shell fallback.
+    if (bareDesktopTarget && sourceUsesAsyncMode &&
+        snowdesktop::external_drop_content::ProbeFileSource(dataObject).available)
+    {
+        const DWORD selectedEffect = snowdesktop::ole_drag_rules::ChooseDropEffect(
+            keyState, *effect, DROPEFFECT_COPY);
+        if (selectedEffect == DROPEFFECT_NONE)
+        {
+            *effect = DROPEFFECT_NONE;
+            EndDragSession();
+            return S_OK;
+        }
+        ExternalSlotDestination destination;
+        destination.preview = BuildExternalDesktopPreviewList(delayedFileTargetCell, 1);
+        destination.preview.action = DropActionFromMods(static_cast<int>(
+            snowdesktop::ole_drag_rules::ModifiersForDropEffect(selectedEffect)));
+        *effect = DropExternalSlotContent(dataObject, destination,
+            selectedEffect, true, {});
+        EndDragSession();
+        return S_OK;
+    }
     const bool canCopyDrop = ((*effect & DROPEFFECT_COPY) != 0);
     const std::vector<std::wstring> bareDesktopUrls =
         dropPaths.empty() && dataObject && bareDesktopTarget
@@ -2146,6 +2178,20 @@ HRESULT DesktopApp::HandleOleDrop(
         if (keyState & MK_CONTROL) mods |= MK_CONTROL;
         if (keyState & MK_ALT)     mods |= MK_ALT;
         if (keyState & MK_SHIFT)   mods |= MK_SHIFT;
+
+        if (!forceCopyDrop && bareDesktopTarget)
+        {
+            const DWORD selectedEffect = snowdesktop::ole_drag_rules::ChooseDropEffect(
+                keyState, *effect, DROPEFFECT_COPY);
+            if (selectedEffect == DROPEFFECT_NONE)
+            {
+                *effect = DROPEFFECT_NONE;
+                EndDragSession();
+                return S_OK;
+            }
+            mods = static_cast<int>(
+                snowdesktop::ole_drag_rules::ModifiersForDropEffect(selectedEffect));
+        }
 
         DragSourceList sourceList = BuildDragSourceList(sourceItems, nullptr);
         Container* target = dragSession_.TargetContainer() ? dragSession_.TargetContainer() : GetDesktopGrid();

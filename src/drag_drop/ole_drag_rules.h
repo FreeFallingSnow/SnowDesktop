@@ -5,17 +5,36 @@
 
 namespace snowdesktop::ole_drag_rules
 {
-inline DWORD ChooseDropEffect(DWORD keyState, DWORD allowed) noexcept
+inline DWORD ChooseDropEffect(DWORD keyState, DWORD allowed,
+    DWORD preferred = DROPEFFECT_MOVE) noexcept
 {
     const DWORD available = allowed & (DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK);
     DWORD requested = DROPEFFECT_NONE;
-    if (keyState & MK_ALT) requested = DROPEFFECT_LINK;
+    if ((keyState & MK_ALT) ||
+        (keyState & (MK_CONTROL | MK_SHIFT)) == (MK_CONTROL | MK_SHIFT))
+        requested = DROPEFFECT_LINK;
     else if (keyState & MK_SHIFT) requested = DROPEFFECT_MOVE;
     else if (keyState & MK_CONTROL) requested = DROPEFFECT_COPY;
     if (requested != DROPEFFECT_NONE) return requested & available;
+    if (preferred == DROPEFFECT_COPY || preferred == DROPEFFECT_MOVE ||
+        preferred == DROPEFFECT_LINK)
+        if (available & preferred) return preferred;
     if (available & DROPEFFECT_MOVE) return DROPEFFECT_MOVE;
     if (available & DROPEFFECT_COPY) return DROPEFFECT_COPY;
     return available & DROPEFFECT_LINK;
+}
+
+// Canonical modifiers carry the negotiated OLE verb into native previews and
+// file requests, whose internal Ctrl+Shift gesture has a different meaning.
+inline DWORD ModifiersForDropEffect(DWORD effect) noexcept
+{
+    switch (effect)
+    {
+    case DROPEFFECT_COPY: return MK_CONTROL;
+    case DROPEFFECT_MOVE: return MK_SHIFT;
+    case DROPEFFECT_LINK: return MK_ALT;
+    default: return 0;
+    }
 }
 
 enum class DwellTargetRefreshRoute

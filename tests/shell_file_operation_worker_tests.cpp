@@ -685,12 +685,19 @@ int RunFileBackedDropRegression(bool links, bool effects)
         }
         if (effects)
         {
-            struct Case { DWORD allowed; DWORD keys; DWORD expected; };
+            struct Case { DWORD allowed; DWORD keys; DWORD expected; DWORD preferred = DROPEFFECT_MOVE; };
+            constexpr DWORD all = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
             const Case cases[]{{DROPEFFECT_COPY, MK_SHIFT, DROPEFFECT_NONE},
                 {DROPEFFECT_NONE, 0, DROPEFFECT_NONE}, {DROPEFFECT_MOVE, MK_CONTROL, DROPEFFECT_NONE},
                 {DROPEFFECT_COPY, MK_CONTROL, DROPEFFECT_COPY}, {DROPEFFECT_MOVE, MK_SHIFT, DROPEFFECT_MOVE},
                 {DROPEFFECT_LINK, MK_ALT, DROPEFFECT_LINK},
-                {DROPEFFECT_COPY | DROPEFFECT_MOVE, 0, DROPEFFECT_MOVE}};
+                {DROPEFFECT_COPY | DROPEFFECT_MOVE, 0, DROPEFFECT_MOVE},
+                {all, 0, DROPEFFECT_COPY, DROPEFFECT_COPY},
+                {all, MK_SHIFT, DROPEFFECT_MOVE, DROPEFFECT_COPY},
+                {all, MK_CONTROL, DROPEFFECT_COPY, DROPEFFECT_COPY},
+                {all, MK_ALT, DROPEFFECT_LINK, DROPEFFECT_COPY},
+                {all, MK_CONTROL | MK_SHIFT, DROPEFFECT_LINK, DROPEFFECT_COPY},
+                {DROPEFFECT_COPY | DROPEFFECT_MOVE, MK_CONTROL | MK_SHIFT, DROPEFFECT_NONE, DROPEFFECT_COPY}};
             int serial = 0;
             for (const auto& test : cases)
             {
@@ -698,8 +705,9 @@ int RunFileBackedDropRegression(bool links, bool effects)
                 const auto folder = root / (L"effect-target-" + std::to_wstring(serial++));
                 std::filesystem::create_directory(folder);
                 std::ofstream(source) << "source payload";
-                const DWORD effect = ole_drag_rules::ChooseDropEffect(test.keys, test.allowed);
-                const auto request = file_backed_drop::BuildRequest({source.wstring()}, folder.wstring(), effect);
+                const DWORD effect = ole_drag_rules::ChooseDropEffect(test.keys, test.allowed, test.preferred);
+                auto outputs = std::make_shared<ShellFileOperationResult>();
+                const auto request = file_backed_drop::BuildRequest({source.wstring()}, folder.wstring(), effect, outputs);
                 const bool executed = request && ShellFileOperationWorker::Execute(*request);
                 if (test.expected == DROPEFFECT_NONE)
                     require(!request && std::filesystem::is_empty(folder) && ReadContents(source) == "source payload",
@@ -714,6 +722,23 @@ int RunFileBackedDropRegression(bool links, bool effects)
                             static_cast<UINT>(test.expected == DROPEFFECT_MOVE ? FO_MOVE : FO_COPY) &&
                             ReadContents(folder / source.filename()) == "source payload",
                             "negotiated copy/move produces the matching request and destination contents");
+                    else
+                    {
+                        Microsoft::WRL::ComPtr<IShellLinkW> link;
+                        require(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER,
+                            IID_PPV_ARGS(&link))), "create shortcut reader");
+                        Microsoft::WRL::ComPtr<IPersistFile> persist;
+                        require(request->shortcuts.size() == 1 && SUCCEEDED(link.As(&persist)) &&
+                            SUCCEEDED(persist->Load(request->shortcuts[0].destination.c_str(), STGM_READ)),
+                            "the negotiated link creates a readable shortcut");
+                        std::array<wchar_t, 32768> target{};
+                        require(SUCCEEDED(link->GetPath(target.data(), static_cast<int>(target.size()), nullptr, SLGP_RAWPATH)) &&
+                            std::filesystem::path(target.data()) == source && ReadContents(source) == "source payload",
+                            "Alt and Ctrl+Shift shortcuts preserve the source and point to its actual path");
+                    }
+                    require(outputs->outputs.size() == 1 &&
+                        std::filesystem::exists(outputs->outputs[0].destination),
+                        "each negotiated verb reports its exact output for desktop placement");
                 }
             }
             constexpr std::array<DWORD, 5> modifiers{0, MK_SHIFT, MK_CONTROL, MK_ALT, MK_CONTROL | MK_SHIFT};

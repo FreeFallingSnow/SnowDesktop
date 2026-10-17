@@ -236,6 +236,14 @@ bool DesktopApp::CommitExternalSlotPaths(const ExternalSlotDestination& destinat
         preview.dockInsertIndex = insertIndex;
         preview.action = action;
     }
+    else if (preview.targetKind == DropTargetKind::Desktop)
+    {
+        // The delayed file batch can contain more entries than the hover
+        // probe knew about. Keep its captured anchor and negotiated verb.
+        const auto action = preview.action;
+        preview = BuildExternalDesktopPreviewList(preview.anchorCell, paths.size());
+        preview.action = action;
+    }
     else return false;
 
     DragSourceList sources;
@@ -334,7 +342,7 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     auto finished = [value,
         oleCompletion](bool succeeded) {
         if (!succeeded)
-            WriteDiagnosticLogEntry(L"External component drop failed during content reading or destination commit");
+            WriteDiagnosticLogEntry(L"External file drop failed during content reading or destination commit");
         if (oleCompletion) oleCompletion(succeeded);
     };
     if (!asynchronousSource && value->pendingUrls.empty())
