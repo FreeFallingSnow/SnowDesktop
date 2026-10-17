@@ -103,12 +103,25 @@ int RunIconWorkshopStorageTests(const std::filesystem::path& root)
         "renaming a saved local copy cannot rewrite the subscribed package name");
     IconLibrary reloaded(root/L"workshop-library");result=reloaded.Read();
     check(result.groups.size()==4&&result.entries.front().localOwned&&result.entries.front().groupNames.contains(sourceId),"v3 persistence retains ownership and per-group labels");
+    const auto savedCopy=std::find_if(result.groups.begin(),result.groups.end(),[&](const auto& g){return g.id==copyId;});
+    check(savedCopy!=result.groups.end()&&savedCopy->license==L"Permission notice with attribution"&&savedCopy->workshopItem.empty()&&savedCopy->accounts.empty(),
+        "reloading a saved local copy preserves the license while detaching subscription ownership");
     snapshot.downloads.clear();snapshot.subscribed.clear();result=reloaded.Reconcile(snapshot);
     check(result.groups.size()==2&&result.entries.size()==1&&result.entries.front().localOwned,"unsubscribe preserves local group and explicitly saved local copy");
     IconPackSubscriptions failed;failed.account="111";
     check(!reloaded.Reconcile(failed).succeeded&&reloaded.Read().groups.size()==2,"non-authoritative query never removes retained data");
     IconLibrary isolated(root/L"subscriptions-only");snapshot.subscribed={"101"};snapshot.downloads={{"101","301","Author A",std::string(64,'c'),package}};
     result=isolated.Reconcile(snapshot);check(result.groups.size()==1&&!result.entries.front().localOwned,"subscription imports do not create local ownership");
+    std::string revisedBytes;atomic_file::ReadAll(root/L"lossy.webp",revisedBytes);
+    auto revisedPackage=package;const auto revisedAsset=icon_package::Hash(revisedBytes)+".webp";
+    revisedPackage.images={{revisedAsset,"Replacement image",revisedBytes}};
+    snapshot.downloads={{"101","301","Author A",std::string(64,'f'),revisedPackage}};
+    result=isolated.Reconcile(snapshot);result=isolated.CollectRetired({asset});
+    std::string retainedBytes;atomic_file::ReadAll(IconAssetPath(root/L"subscriptions-only",asset),retainedBytes);
+    check(result.groups.size()==1&&result.entries.size()==2&&retainedBytes==bytes&&
+        std::any_of(result.entries.begin(),result.entries.end(),[&](const auto& e){return e.id==revisedAsset&&!e.groupIds.empty();})&&
+        std::any_of(result.entries.begin(),result.entries.end(),[&](const auto& e){return e.id==asset&&e.groupIds.empty();}),
+        "author replacement changes managed members while preserving the exact original still used by the host");
     snapshot.account="222";snapshot.subscribed.clear();snapshot.downloads.clear();result=isolated.Reconcile(snapshot);
     check(result.groups.size()==1,"a newly observed account cannot unsubscribe another account's pack");
     snapshot.account="111";result=isolated.Reconcile(snapshot);result=isolated.CollectRetired({asset});
