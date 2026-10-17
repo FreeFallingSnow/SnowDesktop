@@ -65,6 +65,9 @@ int RunIconLibraryTests()
         candidates[7].name = L"微信-图标"; // l10n-allow: multilingual filename matching fixture.
         const auto matches = icon_library_match::Recommend(candidates, L"C:\\Desktop\\FROST-browser.lnk");
         check(matches == std::vector<size_t>{1,3,0,2}, "recommend exact names and pack aliases before variants and spelling errors, without duplicating aliases or missing resources");
+        check(icon_library_match::AllWithRecommendations(candidates, L"FrostBrowser") == std::vector<size_t>{1,3,0,2,4,5,6,7}, "All puts recommendations first while retaining every asset exactly once and preserving the remaining order");
+        check(icon_library_match::AllWithRecommendations(candidates, L"No matching application") == std::vector<size_t>{0,1,2,3,4,5,6,7}, "All preserves its original order when there are no recommendations");
+        check(icon_library_match::AllWithRecommendations(candidates, L"") == std::vector<size_t>{0,1,2,3,4,5,6,7}, "All remains complete when the target has no name");
         check(icon_library_match::Recommend(candidates, L"steam.exe") == std::vector<size_t>{6}, "recompute recommendations for a different target");
         check(icon_library_match::Recommend(candidates, L"微信.url") == std::vector<size_t>{7}, "retain CJK characters when normalizing names"); // l10n-allow: multilingual filename matching fixture.
         check(icon_library_match::Recommend(candidates, L"No matching application").empty(), "unrelated names yield no recommendations");

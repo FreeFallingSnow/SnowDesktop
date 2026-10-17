@@ -238,6 +238,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
             grid.Items().Clear(); visible.clear();
             std::vector<size_t> indices;
             if (picker && groupId == "recommended") indices = icon_library_match::Recommend(snapshot.entries, targetName);
+            else if (picker && groupId.empty()) indices = icon_library_match::AllWithRecommendations(snapshot.entries, targetName);
             else for (size_t index = 0; index < snapshot.entries.size(); ++index) indices.push_back(index);
             for (const auto index : indices)
             {

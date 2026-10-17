@@ -877,6 +877,9 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             if (pickerGroups.SelectedIndex() != 0 || pickerGrid.Items().Size() != 7 ||
                 winrt::unbox_value<winrt::hstring>(pickerGroups.SelectedItem().as<c::ComboBoxItem>().Tag()) != L"")
                 throw std::runtime_error("fresh picker did not default to all icons");
+            if (winrt::unbox_value<winrt::hstring>(pickerGrid.Items().GetAt(0)) != winrt::to_hstring(entries[2].id) ||
+                winrt::unbox_value<winrt::hstring>(pickerGrid.SelectedItem()) != winrt::to_hstring(entries.front().id))
+                throw std::runtime_error("All did not prioritize recommendations or changed the selected asset identity");
             if (pickerDialog.ActualTheme() != shell->ActualTheme())
                 throw std::runtime_error("icon picker does not inherit its owner window theme");
             PumpUntil([&] { return pickerGrid.ContainerFromIndex(0) && pickerGrid.ContainerFromIndex(1) && pickerGrid.ContainerFromIndex(2); });
@@ -921,6 +924,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             if (!preview_png::Save(output / L"icon-picker-recommended.png", recommendedBitmap.PixelWidth(), recommendedBitmap.PixelHeight(),
                 {reinterpret_cast<const std::uint32_t*>(recommendedBytes), recommendedPixels.Length() / 4}, iconError)) throw std::runtime_error(iconError);
             pickerGroups.SelectedIndex(0); Settle(pickerDialog);
+            if(pickerGrid.Items().Size()!=7||winrt::unbox_value<winrt::hstring>(pickerGrid.Items().GetAt(0))!=winrt::to_hstring(entries[2].id))throw std::runtime_error("returning to All lost recommended-first ordering");
             pickerQuery.Text(L"Preview icon 3"); // l10n-allow: query matches the isolated preview fixture above.
             Settle(pickerDialog);
             if (pickerGrid.Items().Size() != 1) throw std::runtime_error("picker search lost its fixture resource");
@@ -1006,7 +1010,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                         if(const auto bitmap=image.Source().try_as<x::Media::Imaging::BitmapImage>();bitmap&&bitmap.PixelWidth()==96)++loaded;
                 });return currentGrid.Items().Size()==7&&loaded==6;
             });
-            std::ofstream(output / L"icon-library.tsv") << "stream-image-load\tgroup-filter\tstable-selection\tsearch\tempty-hint-removed\tdefault-all\trecommendations\treopen-all\ttarget-refresh\npassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\n";
+            std::ofstream(output / L"icon-library.tsv") << "stream-image-load\tgroup-filter\tstable-selection\tsearch\tempty-hint-removed\tdefault-all\trecommendations\treopen-all\ttarget-refresh\trecommended-first\npassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\n";
         }
         if (page == SettingsPage::WidgetBehavior && expanded)
         {

@@ -95,4 +95,15 @@ inline std::vector<size_t> Recommend(const std::vector<IconLibraryEntry>& entrie
     for (const auto& match : matches) result.push_back(match.index);
     return result;
 }
+
+inline std::vector<size_t> AllWithRecommendations(const std::vector<IconLibraryEntry>& entries, std::wstring_view targetName)
+{
+    auto result = Recommend(entries, targetName);
+    std::vector<bool> included(entries.size(), false);
+    for (const auto index : result) included[index] = true;
+    result.reserve(entries.size());
+    for (size_t index = 0; index < entries.size(); ++index)
+        if (!included[index]) result.push_back(index);
+    return result;
+}
 }
