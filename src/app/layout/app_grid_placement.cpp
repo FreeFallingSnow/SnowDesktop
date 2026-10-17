@@ -1,12 +1,11 @@
 #include "app/app.h"
+#include "layout/grid_occupancy.h"
 
 // Grid occupancy, free-cell search and displaced-item relayout.
 
 void DesktopApp::MarkGridArea(std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span)
 {
-    for (int c = cell.column; c < cell.column + span.columns; ++c)
-        for (int r = cell.row; r < cell.row + span.rows; ++r)
-            usedSlots.insert(cell.pageId + L":" + std::to_wstring(c) + L"," + std::to_wstring(r));
+    snowdesktop::grid_occupancy::Mark(usedSlots, cell, span);
 }
 
 /**
@@ -18,11 +17,7 @@ void DesktopApp::MarkGridArea(std::unordered_set<std::wstring>& usedSlots, const
  */
 bool DesktopApp::AreGridSlotsMarked(const std::unordered_set<std::wstring>& usedSlots, const GridCell& cell, GridSpan span)
 {
-    for (int c = cell.column; c < cell.column + span.columns; ++c)
-        for (int r = cell.row; r < cell.row + span.rows; ++r)
-            if (usedSlots.count(cell.pageId + L":" + std::to_wstring(c) + L"," + std::to_wstring(r)))
-                return true;
-    return false;
+    return snowdesktop::grid_occupancy::Occupied(usedSlots, cell, span);
 }
 
 /**
@@ -33,9 +28,7 @@ bool DesktopApp::AreGridSlotsMarked(const std::unordered_set<std::wstring>& used
  */
 bool DesktopApp::IsGridAreaValid(const GridCell& cell, GridSpan span)
 {
-    if (span.columns < 1 || span.rows < 1) return false;
-    if (cell.column < 0 || cell.row < 0) return false;
-    return true;
+    return snowdesktop::grid_occupancy::Valid(cell, span);
 }
 
 /**
@@ -51,62 +44,9 @@ bool DesktopApp::TryFindFreeCell(
     GridSpan span, std::unordered_set<std::wstring>& usedSlots, GridCell& result,
     const std::wstring& preferredPageId, int preferredStartSlot) const
 {
-    // Automatic placement follows the configured first-page monitor order,
-    // not the physical left-to-right monitor order.
-    std::vector<size_t> pageOrder = BuildMonitorRenderOrder();
-    if (pageOrder.empty())
-    {
-        pageOrder.reserve(gridPages_.size());
-        for (size_t i = 0; i < gridPages_.size(); ++i)
-            pageOrder.push_back(i);
-    }
-
-    auto tryPage = [&](const GridPage& page, int startSlot, GridCell& found) -> bool {
-        const int capacity = std::max(1, page.columns * page.rows);
-        for (int slot = std::clamp(startSlot, 0, capacity - 1); slot < capacity; ++slot)
-        {
-            GridCell candidate;
-            candidate.pageId = page.id;
-            candidate.column = slot / std::max(1, page.rows);
-            candidate.row = slot % std::max(1, page.rows);
-            if (GridAreaFitsPage(page, candidate, span) && !AreGridSlotsMarked(usedSlots, candidate, span))
-            {
-                found = candidate;
-                return true;
-            }
-        }
-        return false;
-    };
-
-    if (!preferredPageId.empty())
-    {
-        for (const auto& page : gridPages_)
-        {
-            if (page.id == preferredPageId && tryPage(page, preferredStartSlot, result))
-                return true;
-        }
-    }
-
-    for (size_t pageIndex : pageOrder)
-    {
-        if (pageIndex >= gridPages_.size()) continue;
-        const auto& page = gridPages_[pageIndex];
-        if (!preferredPageId.empty() && page.id == preferredPageId) continue;
-        if (tryPage(page, 0, result))
-            return true;
-    }
-
-    if (!preferredPageId.empty())
-    {
-        for (const auto& page : gridPages_)
-        {
-            if (page.id == preferredPageId && tryPage(page, 0, result))
-                return true;
-        }
-    }
-    return false;
+    return snowdesktop::grid_occupancy::FindFree(gridPages_, BuildMonitorRenderOrder(),
+        span, usedSlots, result, preferredPageId, preferredStartSlot);
 }
-
 /**
  * @brief 重新放置所有因页面尺寸变化而被移出边界的项目和组件。
  *

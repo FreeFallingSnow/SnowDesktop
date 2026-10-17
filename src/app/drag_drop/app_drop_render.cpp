@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "drag_drop/pending_drop_rules.h"
-#include "pending_drop_completion.h"
+#include "drag_drop/pending_drop_completion.h"
+#include "drag_drop/pending_drop_placement.h"
 #include "app/layout/new_item_placement.h"
 #include "shell/shell_new_item_capture.h"
 #include "icons/large_icon_renderer.h"
@@ -22,101 +23,9 @@ bool DesktopApp::ApplyPendingFolderPlacements(
     const std::wstring& widgetId,
     const std::wstring& popupSourceId)
 {
-    if (!cache.active ||
-        cache.folderPlacements.empty())
-        return false;
-    bool changed = false;
-    std::vector<PendingFolderPlacement> remaining;
-    remaining.reserve(
-        cache.folderPlacements.size());
-    for (auto& placement :
-        cache.folderPlacements)
-    {
-        const bool widgetMatches =
-            !widgetId.empty() &&
-            !placement.widgetId.empty() &&
-            placement.widgetId == widgetId;
-        const bool popupMatches =
-            !popupSourceId.empty() &&
-            !placement.popupSourceId.empty() &&
-            placement.popupSourceId == popupSourceId;
-        const bool pathMatches =
-            placement.sourceFolderPath.empty() ||
-            PathsEqualInsensitive(
-                placement.sourceFolderPath,
-                targetWidget.sourceFolderPath);
-        if ((!widgetMatches && !popupMatches) || !pathMatches)
-        {
-            remaining.push_back(std::move(placement));
-            continue;
-        }
-
-        std::vector<FolderEntry> inserted =
-            snowdesktop::pending_drop_rules::ExtractMatching(
-                targetWidget.folderEntries,
-                [&](const FolderEntry& entry) {
-                    if (placement.existingPaths.contains(ToUpperInvariant(entry.fullPath))) return false;
-                    if (!placement.createdPaths.empty())
-                        return std::any_of(placement.createdPaths.begin(), placement.createdPaths.end(),
-                            [&](const auto& path) { return snowdesktop::pending_drop::MatchesExactPath(entry.fullPath, path); });
-                    return placement.sourceNames.empty() ||
-                        std::any_of(placement.sourceNames.begin(), placement.sourceNames.end(),
-                            [&](const auto& name) { return MatchPendingName(entry.name, name); });
-                });
-
-        if ((!placement.createdPaths.empty() || !placement.sourceNames.empty()) &&
-            inserted.size() > 1)
-        {
-            std::vector<FolderEntry> ordered;
-            ordered.reserve(inserted.size());
-            for (const auto& sourceName :
-                (placement.createdPaths.empty() ? placement.sourceNames : placement.createdPaths))
-            {
-                auto match = std::find_if(
-                    inserted.begin(), inserted.end(),
-                    [&](const FolderEntry& entry) {
-                        return placement.createdPaths.empty() ? MatchPendingName(entry.name, sourceName) :
-                            snowdesktop::pending_drop::MatchesExactPath(entry.fullPath, sourceName);
-                    });
-                if (match == inserted.end())
-                    continue;
-                ordered.push_back(std::move(*match));
-                inserted.erase(match);
-            }
-            std::move(
-                inserted.begin(), inserted.end(),
-                std::back_inserter(ordered));
-            inserted = std::move(ordered);
-        }
-
-        if (!inserted.empty())
-        {
-            snowdesktop::pending_drop_rules::InsertAt(
-                targetWidget.folderEntries,
-                placement.insertIndex,
-                std::move(inserted));
-            snowdesktop::folder_sort_rules::RewriteOrderKeys(
-                targetWidget.folderEntries,
-                targetWidget.itemKeys);
-            targetWidget.folderSortMode =
-                snowdesktop::folder_sort_rules::kManual;
-            targetWidget.contentSortColumn =
-                snowdesktop::list_detail_rules::Column::None;
-            changed = true;
-        }
-        // A successful file operation gets exactly one reconciliation pass.
-        // If it overwrote an existing path there is no new member to move, and
-        // retaining this snapshot could capture an unrelated later file.
-    }
-
-    cache.folderPlacements =
-        std::move(remaining);
-    cache.active =
-        !cache.entries.empty() ||
-        !cache.folderPlacements.empty();
-    return changed;
+    return snowdesktop::pending_drop::ApplyFolder(cache, targetWidget, widgetId, popupSourceId,
+        MatchPendingName, ToUpperInvariant, PathsEqualInsensitive);
 }
-
 void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
     const DropPreviewList& preview)
 {
@@ -283,91 +192,51 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
         changed = ApplyPendingFolderPlacements(
             cache, widget, widget.id, {}) || changed;
     }
-    for (size_t e = 0; e < cache.entries.size(); ++e)
-    {
-        const auto& landing = cache.entries[e];
-        for (size_t itemIndex = 0; itemIndex < items_.size(); ++itemIndex)
-        {
-            auto& item = items_[itemIndex];
-            const std::wstring key = ToUpperInvariant(item.layoutKey);
-            if (key.empty() || claimed.contains(key) || cache.existingDesktopKeys.contains(key)) continue;
-            const bool matchesLanding = !landing.createdPath.empty()
-                ? snowdesktop::pending_drop::MatchesExactPath(item.parsingName, landing.createdPath)
-                : MatchPendingName(item.name, landing.sourceName) ||
-                    (!item.parsingName.empty() && MatchPendingName(FileNameFromPath(item.parsingName), landing.sourceName));
-            if (!matchesLanding) continue;
+    const bool entriesChanged = snowdesktop::pending_drop::ApplyEntries(cache, widgets_, items_, claimed,
+        ToUpperInvariant,
+        [](const DesktopItem& item, const std::wstring& sourceName) {
+            return MatchPendingName(item.name, sourceName) ||
+                (!item.parsingName.empty() && MatchPendingName(FileNameFromPath(item.parsingName), sourceName));
+        },
+        [&](const PendingLandingEntry& landing, const std::wstring& key) {
+            auto* widget = findWidgetContainer(landing.widgetId);
+            return !widget || landing.action == DropAction::Link || widget->AllowsDesktopKey(key);
+        },
+        [&](DesktopItem& item, const PendingLandingEntry& landing) {
+            GridCell cell = landing.cell;
 
-            if (landing.kind == DropLandingKind::WidgetIndex && !landing.widgetId.empty())
+            // 预分配的新溢出页：若 pageId 不在 savedPageIds_ 里，先创建
+            if (!cell.pageId.empty() &&
+                std::find(savedPageIds_.begin(), savedPageIds_.end(), cell.pageId) == savedPageIds_.end())
             {
-                WidgetContainer* widget = findWidgetContainer(landing.widgetId);
-                const size_t widgetIndex =
-                    FindWidgetIndexById(landing.widgetId);
-                DesktopWidget* widgetData =
-                    widgetIndex < widgets_.size()
-                        ? &widgets_[widgetIndex]
-                        : nullptr;
-                if (!widgetData) break;
-
-                item.gridCell = widgetData->gridCell;
-                bool allowKey = !widget || landing.action == DropAction::Link || widget->AllowsDesktopKey(key);
-                if (allowKey)
-                {
-                    // Auto-collect may already have appended this new key.
-                    // Remove every provisional owner, then restore the exact
-                    // preview boundary in the requested target.
-                    if (!snowdesktop::pending_drop::CommitKeyedLanding(widgets_, item, landing, key)) break;
-                    RefreshCollectedKeysCache();
-                    if (widget) widget->InvalidateSlots();
-                }
-            }
-            else if (landing.kind == DropLandingKind::DesktopCell)
-            {
-                GridSpan span = item.gridSpan;
-                span.columns = std::max(1, span.columns);
-                span.rows = std::max(1, span.rows);
-
-                GridCell cell = landing.cell;
-
-                // 预分配的新溢出页：若 pageId 不在 savedPageIds_ 里，先创建
-                if (!cell.pageId.empty() &&
-                    std::find(savedPageIds_.begin(), savedPageIds_.end(), cell.pageId) == savedPageIds_.end())
-                {
-                    RememberSavedPageId(cell.pageId);
-                    // 参考末屏显示器的网格维度
-                    auto monitorOrder = BuildMonitorRenderOrder();
-                    const GridPage* refPage = !monitorOrder.empty()
-                        ? &gridPages_[monitorOrder.back()] : GetFirstPageGridPage();
-                    if (!refPage) break;
-                    savedPageColumns_[cell.pageId] = std::max(1, refPage->columns);
-                    savedPageRows_[cell.pageId] = std::max(1, refPage->rows);
-                }
-
-                bool found = false;
-                if (IsGridAreaValid(cell, span) && !AreGridSlotsMarked(usedSlots, cell, span))
-                {
-                    found = true;
-                }
-                else
-                {
-                    found = TryFindFreeCell(span, usedSlots, cell, landing.cell.pageId,
-                        SlotFromCell(gridPages_, landing.cell));
-                }
-                if (!found) break;
-                item.gridCell = cell;
-                item.slot = SlotFromCell(gridPages_, cell);
-                item.selected = true;
-                MarkGridArea(usedSlots, cell, span);
+                RememberSavedPageId(cell.pageId);
+                // 参考末屏显示器的网格维度
+                auto monitorOrder = BuildMonitorRenderOrder();
+                const GridPage* refPage = !monitorOrder.empty()
+                    ? &gridPages_[monitorOrder.back()] : GetFirstPageGridPage();
+                if (!refPage) return false;
+                savedPageColumns_[cell.pageId] = std::max(1, refPage->columns);
+                savedPageRows_[cell.pageId] = std::max(1, refPage->rows);
             }
 
-            claimed.insert(key);
-            changed = true;
-            break;
-        }
-    }
-
-    cache.entries.clear();
-    cache.active = !cache.folderPlacements.empty();
-    return changed;
+            return snowdesktop::pending_drop::PlaceDesktop(item, landing, usedSlots,
+                [&](const std::wstring& id) -> std::optional<GridPage> {
+                    if (const auto* page = FindGridPage(gridPages_, id)) return *page;
+                    const auto columns = savedPageColumns_.find(id), rows = savedPageRows_.find(id);
+                    if (columns == savedPageColumns_.end() || rows == savedPageRows_.end()) return std::nullopt;
+                    GridPage page; page.id = id; page.columns = columns->second; page.rows = rows->second;
+                    return page;
+                },
+                [&](GridSpan span, auto& used, GridCell& found, const auto& page, int slot) {
+                    return TryFindFreeCell(span, used, found, page, slot);
+                },
+                [&](const GridCell& cell) { return SlotFromCell(gridPages_, cell); });
+        },
+        [&](const std::wstring& id) {
+            RefreshCollectedKeysCache();
+            if (auto* widget = findWidgetContainer(id)) widget->InvalidateSlots();
+        });
+    return entriesChanged || changed;
 }
 
 // ── 网格全局函数 ──────────────────────────────────────────

@@ -61,7 +61,9 @@ inline DWORD Transfer(IDataObject* source, DWORD effect, bool asynchronous,
         try { *value = callbacks.read(source, false, knownPaths); }
         catch (...) { return DROPEFFECT_NONE; }
     }
-    auto finished = [value, oleCompletion, completed = callbacks.completed](bool succeeded) {
+    const auto completedOnce = std::make_shared<std::atomic_bool>(false);
+    auto finished = [value, oleCompletion, completedOnce, completed = callbacks.completed](bool succeeded) {
+        if (completedOnce->exchange(true)) return;
         if (completed) completed(succeeded);
         if (oleCompletion) oleCompletion(succeeded);
     };

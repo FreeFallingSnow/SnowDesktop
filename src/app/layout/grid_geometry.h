@@ -4,6 +4,7 @@
 #include "common/utils.h"
 #include "ui/render/font_cu_rules.h"
 #include "layout/grid_spacing_rules.h"
+#include "layout/grid_occupancy.h"
 
 #include <algorithm>
 #include <cmath>
@@ -21,11 +22,7 @@
  */
 inline bool GridAreaFitsPage(const GridPage& page, const GridCell& cell, GridSpan span)
 {
-    if (span.columns < 1 || span.rows < 1) return false;
-    if (cell.pageId != page.id) return false;
-    if (cell.column < 0 || cell.row < 0) return false;
-    return cell.column + span.columns <= page.columns &&
-        cell.row + span.rows <= page.rows;
+    return snowdesktop::grid_occupancy::Fits(page, cell, span);
 }
 
 /**

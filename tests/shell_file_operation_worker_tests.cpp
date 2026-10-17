@@ -12,6 +12,7 @@
 #include "drag_drop/ole_drag_rules.h"
 #include "drag_drop/external_desktop_cases.h"
 #include "drag_drop/async_slot_transfer_cases.h"
+#include "drag_drop/placement_cases.h"
 #include <wincodec.h>
 
 #include <algorithm>
@@ -765,13 +766,16 @@ int wmain(int argc, wchar_t** argv)
     if (argc == 2)
     {
         const std::wstring mode(argv[1]);
-        if (mode == L"--async-slot-transfer-tests")
+        if (mode == L"--async-slot-transfer-tests" || mode == L"--drop-placement-tests")
         {
             const HRESULT initialized = OleInitialize(nullptr);
             Expect(SUCCEEDED(initialized), "async transfer test owns an STA");
             const auto root = CreateTemporaryDirectory();
             int result = 0;
-            try { async_slot_transfer_cases::Run(root); }
+            try {
+                if (mode == L"--drop-placement-tests") drop_placement_cases::Run(root);
+                else async_slot_transfer_cases::Run(root);
+            }
             catch (const std::exception& error)
             { std::cerr << "FAILED async slot transfer: " << error.what() << '\n'; result = 1; }
             std::filesystem::remove_all(root);

@@ -173,6 +173,7 @@ struct Batch
     int commits = 0, completed = 0;
     bool success = false, reject = false, notifyRejection = false;
     bool correctWorker = false, correctCommitThread = false;
+    std::function<void(const ShellFileOperationResult&)> reconcile;
 };
 
 struct Harness
@@ -212,7 +213,10 @@ struct Harness
                 PostShellFileOperationCompletion(window.hwnd, completedMessage, std::move(completion), success);
             });
         };
-        callbacks.completed = [&](bool success) { ++batch.completed; batch.success = success; };
+        callbacks.completed = [&](bool success) {
+            ++batch.completed; batch.success = success;
+            if (batch.reconcile) batch.reconcile(*batch.result);
+        };
         return external_slot_transfer::Transfer(batch.source.Get(), batch.effect, async, {},
             std::make_shared<external_drop_content::Content>(), reader, stop.get_token(),
             target ? target : window.hwnd, completedMessage, std::move(callbacks));

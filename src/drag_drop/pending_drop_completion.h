@@ -32,8 +32,18 @@ inline void Complete(Queue& queue, PendingLandingCache cache,
         return false;
     });
     for (auto& placement : cache.folderPlacements)
-        for (const auto& output : result.outputs)
-            placement.createdPaths.push_back(output.destination);
+    {
+        if (placement.sourcePaths.empty())
+        {
+            for (const auto& output : result.outputs)
+                placement.createdPaths.push_back(output.destination);
+        }
+        else
+            for (const auto& source : placement.sourcePaths)
+                for (const auto& output : result.outputs)
+                    if (_wcsicmp(source.c_str(), output.source.c_str()) == 0)
+                        placement.createdPaths.push_back(output.destination);
+    }
     std::erase_if(cache.folderPlacements, [](const auto& placement) { return placement.createdPaths.empty(); });
     Publish(queue, std::move(cache));
 }

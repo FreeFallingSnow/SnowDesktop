@@ -1,5 +1,5 @@
 #include "app/app.h"
-#include "pending_drop_completion.h"
+#include "drag_drop/pending_drop_completion.h"
 #include "widgets/collection_group_rules.h"
 #include "layout/folder_self_drop_rules.h"
 #include "layout/item_location.h"
@@ -1021,6 +1021,7 @@ PendingFolderPlacement DesktopApp::BuildPendingFolderPlacement(
         placement.sourceNames.reserve(sourceList->entries.size());
         for (const auto& entry : sourceList->entries)
         {
+            placement.sourcePaths.push_back(entry.filePath);
             std::wstring name = !entry.filePath.empty()
                 ? FileNameFromPath(entry.filePath)
                 : entry.displayName;

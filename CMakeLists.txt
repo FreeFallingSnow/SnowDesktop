@@ -2674,6 +2674,8 @@ if (BUILD_TESTING)
             src/layout/item_location.cpp
             src/shell/shell_file_operation_worker.cpp
             src/drag_drop/external_drop_content.cpp
+            src/data/layout_storage.cpp
+            src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 shlwapi uuid netapi32 windowscodecs
         LABELS integration shell interaction)
@@ -2685,7 +2687,9 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopShellFileOperationWorkerTests --allowed-effect-request-tests)
     add_test(NAME shell_async_slot_transfers
         COMMAND SnowDesktopShellFileOperationWorkerTests --async-slot-transfer-tests)
-    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests shell_async_slot_transfers PROPERTIES
+    add_test(NAME shell_drop_placement_storage
+        COMMAND SnowDesktopShellFileOperationWorkerTests --drop-placement-tests)
+    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests shell_async_slot_transfers shell_drop_placement_storage PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
         TIMEOUT 90 LABELS "integration;shell;interaction;storage")
     add_test(NAME shell_file_operation_worker_network_preflight

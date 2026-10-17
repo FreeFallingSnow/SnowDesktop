@@ -8,7 +8,7 @@
 #include "slot_drop_expectations.h"
 #include "drag_drop/external_drop_content.h"
 #include "../src/app/drag_drop/drag_drop_controller.h"
-#include "../src/app/drag_drop/pending_drop_completion.h"
+#include "drag_drop/pending_drop_completion.h"
 #include "../src/app/layout/new_item_placement.h"
 #include "shell/shell_new_item_capture.h"
 #include "../src/app/drag_drop/ole_drag_drop_adapter.h"
