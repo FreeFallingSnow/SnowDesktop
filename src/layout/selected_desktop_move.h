@@ -4,7 +4,9 @@
 #include "selected_grid_move.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "widgets/collection_group_rules.h"
+#include "desktop/desktop_membership_recovery.h"
 #include <functional>
+#include <map>
 
 namespace snowdesktop::selected_desktop_move
 {
@@ -20,13 +22,64 @@ struct Services
     std::function<bool(const DesktopWidget&)> grouped;
 };
 struct Move { size_t index; GridCell cell; bool widget; };
+struct Selection { std::vector<bool> items, widgets; };
 
-inline bool Occupied(State state, const GridCell& cell, GridSpan span, const Services& services)
+inline Selection Resolve(State state, const Services& services, const DragSourceList* sources)
+{
+    Selection result{std::vector<bool>(state.items.size()), std::vector<bool>(state.widgets.size())};
+    if (!sources)
+    {
+        for (size_t index = 0; index < state.items.size(); ++index)
+            result.items[index] = state.items[index].selected && !services.owned(state.items[index]);
+        for (size_t index = 0; index < state.widgets.size(); ++index)
+            result.widgets[index] = state.widgets[index].selected && single_cell_widget::IsIconMode(state.widgets[index]) &&
+                !services.grouped(state.widgets[index]);
+        return result;
+    }
+    std::map<std::wstring, size_t, desktop_membership_recovery::KeyLess> files;
+    std::unordered_map<std::wstring, size_t> widgets;
+    bool indexedFiles = false, indexedWidgets = false;
+    for (const auto& source : sources->entries)
+    {
+        if (source.desktopWidgetIcon)
+        {
+            if (source.widgetId.empty()) continue;
+            if (!indexedWidgets)
+            {
+                for (size_t index = 0; index < state.widgets.size(); ++index) widgets.try_emplace(state.widgets[index].id, index);
+                indexedWidgets = true;
+            }
+            const auto found = widgets.find(source.widgetId);
+            if (found != widgets.end() && single_cell_widget::IsIconMode(state.widgets[found->second]) && !services.grouped(state.widgets[found->second]))
+                result.widgets[found->second] = true;
+            continue;
+        }
+        if (source.kind != DropSourceKind::DesktopIcon || source.desktopKey.empty()) continue;
+        size_t index = source.desktopIndex;
+        // Keep the normal captured-index path cheap, but verify its identity.
+        if (index >= state.items.size() || CompareStringOrdinal(state.items[index].layoutKey.c_str(), -1, source.desktopKey.c_str(), -1, TRUE) != CSTR_EQUAL)
+        {
+            if (!indexedFiles)
+            {
+                for (size_t item = 0; item < state.items.size(); ++item) files.try_emplace(state.items[item].layoutKey, item);
+                indexedFiles = true;
+            }
+            const auto found = files.find(source.desktopKey);
+            if (found == files.end()) continue;
+            index = found->second;
+        }
+        if (!services.owned(state.items[index])) result.items[index] = true;
+    }
+    return result;
+}
+
+inline bool Occupied(State state, const GridCell& cell, GridSpan span, const Services& services, const Selection* ignored = nullptr)
 {
     const auto& items_ = state.items; const auto& widgets_ = state.widgets;
-    for (const auto& item : items_)
+    for (size_t index = 0; index < items_.size(); ++index)
     {
-        if (item.selected || item.name.empty()) continue;
+        const auto& item = items_[index];
+        if ((ignored ? ignored->items[index] : item.selected) || item.name.empty()) continue;
         if (item.gridCell.pageId != cell.pageId) continue;
         const int right1 = cell.column + std::max(1, span.columns);
         const int bottom1 = cell.row + std::max(1, span.rows);
@@ -39,9 +92,10 @@ inline bool Occupied(State state, const GridCell& cell, GridSpan span, const Ser
             if (!services.owned(item)) return true;
         }
     }
-    for (const auto& w : widgets_)
+    for (size_t index = 0; index < widgets_.size(); ++index)
     {
-        if (w.selected && snowdesktop::single_cell_widget::IsIconMode(w) &&
+        const auto& w = widgets_[index];
+        if (ignored ? ignored->widgets[index] : w.selected && snowdesktop::single_cell_widget::IsIconMode(w) &&
             !services.grouped(w)) continue;
         if (!snowdesktop::collection_group_rules::
                 ShouldOccupyDesktopGrid(
@@ -61,7 +115,7 @@ inline bool Occupied(State state, const GridCell& cell, GridSpan span, const Ser
 
 inline std::vector<Move> Build(State state, GridCell targetCell, const Services& services, const DragSourceList* sources = nullptr)
 {
-    (void)sources; // Initial extraction retains the host's live-selection behavior.
+    const auto selected = Resolve(state, services, sources);
     const auto& items_ = state.items; const auto& widgets_ = state.widgets; const auto& gridPages_ = state.pages;
     // The existing grid planner operates on geometry, so project both model
     // kinds into it and retain a stable mapping for the atomic commit.
@@ -71,7 +125,7 @@ inline std::vector<Move> Build(State state, GridCell targetCell, const Services&
     for (size_t index = 0; index < items_.size(); ++index)
     {
         const auto& item = items_[index];
-        if (!item.selected || services.owned(item)) continue;
+        if (!selected.items[index]) continue;
         DesktopItem value;
         value.selected = true;
         value.gridCell = item.gridCell;
@@ -83,8 +137,7 @@ inline std::vector<Move> Build(State state, GridCell targetCell, const Services&
     for (size_t index = 0; index < widgets_.size(); ++index)
     {
         const auto& widget = widgets_[index];
-        if (!widget.selected || !snowdesktop::single_cell_widget::IsIconMode(widget) ||
-            services.grouped(widget)) continue;
+        if (!selected.widgets[index]) continue;
         DesktopItem value;
         value.selected = true;
         value.gridCell = widget.gridCell;
@@ -93,7 +146,7 @@ inline std::vector<Move> Build(State state, GridCell targetCell, const Services&
         owners.push_back({index, true});
     }
     const auto plan = snowdesktop::selected_grid_move::Build(geometry, gridPages_, std::move(targetCell),
-        [&](const GridCell& cell, GridSpan span) { return Occupied(state, cell, span, services); });
+        [&](const GridCell& cell, GridSpan span) { return Occupied(state, cell, span, services, &selected); });
     std::vector<Move> moves;
     moves.reserve(plan.size());
     for (const auto& move : plan)
@@ -104,22 +157,35 @@ template<class Moves>
 std::vector<DropLanding> Landings(State state, const DragSourceList& sourceList, const Moves& moves)
 {
     std::vector<DropLanding> landings;
-        for (const auto& entry : sourceList.entries)
+    using Value = typename Moves::value_type;
+    std::map<std::wstring, const Value*, desktop_membership_recovery::KeyLess> files;
+    std::unordered_map<std::wstring, const Value*> widgets;
+    for (const auto& move : moves)
+    {
+        if (move.widget && move.index < state.widgets.size()) widgets.try_emplace(state.widgets[move.index].id, &move);
+        else if (!move.widget && move.index < state.items.size()) files.try_emplace(state.items[move.index].layoutKey, &move);
+    }
+    for (const auto& entry : sourceList.entries)
+    {
+        const Value* move = nullptr;
+        if (entry.desktopWidgetIcon)
         {
-            auto it = std::find_if(moves.begin(), moves.end(),
-                [&](const auto& move) {
-                    return entry.desktopWidgetIcon
-                        ? move.widget && move.index == static_cast<size_t>(std::find_if(state.widgets.begin(), state.widgets.end(), [&](const auto& widget) { return widget.id == entry.widgetId; }) - state.widgets.begin())
-                        : !move.widget && move.index == entry.desktopIndex;
-                });
-            if (it == moves.end()) continue;
-            DropLanding landing;
-            landing.kind = DropLandingKind::DesktopCell;
-            landing.sourceIndex = entry.sourceIndex;
-            landing.cell = it->cell;
-            landing.span = entry.originalSpan;
-            landings.push_back(landing);
+            const auto found = widgets.find(entry.widgetId);
+            if (found != widgets.end()) move = found->second;
         }
+        else if (entry.kind == DropSourceKind::DesktopIcon)
+        {
+            const auto found = files.find(entry.desktopKey);
+            if (found != files.end()) move = found->second;
+        }
+        if (!move) continue;
+        DropLanding landing;
+        landing.kind = DropLandingKind::DesktopCell;
+        landing.sourceIndex = entry.sourceIndex;
+        landing.cell = move->cell;
+        landing.span = move->widget ? state.widgets[move->index].gridSpan : state.items[move->index].gridSpan;
+        landings.push_back(std::move(landing));
+    }
     return landings;
 }
 }
