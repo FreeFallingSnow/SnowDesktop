@@ -2410,13 +2410,20 @@ if (BUILD_TESTING)
         lua_logical_slot_container
         SOURCES
             tests/lua_logical_slot_container_tests.cpp
+            tests/drag_drop/lua_ingress_cases.cpp
             src/widgets/lua_logical_slot.cpp
+            src/widget/runtime/widget_logical_slot.cpp
             src/core/slot.cpp
             src/core/container.cpp
             src/common/l10n.cpp
         INCLUDE_DIRECTORIES src src/core third_party/lua
         LINK_LIBRARIES d2d1 user32
         LABELS contract interaction lua slot widget)
+    add_test(NAME lua_file_ingress_matrix
+        COMMAND SnowDesktopLuaLogicalSlotContainerTests --file-ingress-tests)
+    set_tests_properties(lua_file_ingress_matrix PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopLuaLogicalSlotContainerTests>"
+        TIMEOUT 30 LABELS "integration;interaction;lua;slot;storage")
 
     snowdesktop_add_test(
         SnowDesktopFolderSelfDropRulesTests
@@ -2689,7 +2696,9 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopShellFileOperationWorkerTests --async-slot-transfer-tests)
     add_test(NAME shell_drop_placement_storage
         COMMAND SnowDesktopShellFileOperationWorkerTests --drop-placement-tests)
-    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests shell_async_slot_transfers shell_drop_placement_storage PROPERTIES
+    add_test(NAME shell_member_order_storage
+        COMMAND SnowDesktopShellFileOperationWorkerTests --member-order-tests)
+    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests shell_async_slot_transfers shell_drop_placement_storage shell_member_order_storage PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
         TIMEOUT 90 LABELS "integration;shell;interaction;storage")
     add_test(NAME shell_file_operation_worker_network_preflight

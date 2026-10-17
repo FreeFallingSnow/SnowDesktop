@@ -9,6 +9,7 @@
  */
 
 #include "core/widget.h"
+#include "folder_member_order.h"
 #include "layout/file_date_category.h"
 #include "layout/folder_mapping_rules.h"
 #include "core/slot.h"
@@ -781,29 +782,7 @@ std::vector<size_t> FolderMapping::GetSelectedMemberIndices() const
  */
 void FolderMapping::ReorderMembers(const std::vector<size_t>& indices, size_t insertBefore)
 {
-    if (!data_) return;
-    if (data_->dateHeaders) return;
-    std::vector<FolderEntry> moving;
-    for (auto it = indices.rbegin(); it != indices.rend(); ++it)
-    {
-        if (*it >= data_->folderEntries.size()) continue;
-        moving.push_back(std::move(data_->folderEntries[*it]));
-        data_->folderEntries.erase(data_->folderEntries.begin() + static_cast<std::ptrdiff_t>(*it));
-    }
-    size_t adjusted = insertBefore;
-    for (auto idx : indices)
-        if (idx < insertBefore) --adjusted;
-    if (adjusted > data_->folderEntries.size()) adjusted = data_->folderEntries.size();
-    for (auto it = moving.rbegin(); it != moving.rend(); ++it)
-        data_->folderEntries.insert(data_->folderEntries.begin() + static_cast<std::ptrdiff_t>(adjusted++), std::move(*it));
-    data_->itemKeys.clear();
-    data_->itemKeys.reserve(data_->folderEntries.size());
-    for (const auto& entry : data_->folderEntries)
-        data_->itemKeys.push_back(entry.fullPath);
-    data_->folderSortMode =
-        snowdesktop::folder_sort_rules::kManual;
-    data_->contentSortColumn =
-        snowdesktop::list_detail_rules::Column::None;
+    if (!data_ || !snowdesktop::folder_member_order::Reorder(*data_, indices, insertBefore)) return;
     InvalidateSlots();
 }
 

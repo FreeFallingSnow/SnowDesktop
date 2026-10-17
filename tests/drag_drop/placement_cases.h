@@ -89,10 +89,11 @@ inline void CheckRoundTrip(const std::filesystem::path& path, const std::vector<
     {
         const auto& before = widgets[index];
         const auto& saved = loaded.widgets[index];
-        DesktopWidget restored; restored.type = before.type;
+        DesktopWidget restored;
+        restored.type = widget_layout_codec::TypeFromName(Decode(saved.type), Key);
         widget_layout_codec::RestorePlacement(saved, restored, Decode);
         widget_layout_codec::RestoreMembers(saved, restored, Decode, Key);
-        Require(Decode(saved.id) == before.id && Decode(saved.type) == widget_layout_codec::TypeName(before.type) &&
+        Require(Decode(saved.id) == before.id && restored.type == before.type &&
             restored.gridCell.pageId == before.gridCell.pageId && restored.gridCell.column == before.gridCell.column &&
             restored.gridCell.row == before.gridCell.row && restored.itemKeys == before.itemKeys &&
             restored.gridSpan.columns == before.gridSpan.columns && restored.gridSpan.rows == before.gridSpan.rows &&

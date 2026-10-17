@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/folder_member_order.h"
 #include "app/shell/shell_icon_request.h"
 #include "layout/folder_mapping_rules.h"
 #include "widgets/file_category_auto_collect_rules.h"
@@ -137,38 +138,7 @@ void DesktopApp::EnumerateFolderMappingEntries(DesktopWidget& widget,
     for (const auto& oldEntry : previous)
         if (oldEntry.iconBitmap)
             EraseD2DIconCacheForBitmap(oldEntry.iconBitmap);
-    std::sort(widget.folderEntries.begin(), widget.folderEntries.end(),
-        [](const FolderEntry& a, const FolderEntry& b) {
-            if (a.isDirectory != b.isDirectory) return a.isDirectory > b.isDirectory;
-            return _wcsicmp(a.DisplayName().c_str(), b.DisplayName().c_str()) < 0;
-        });
-    if (snowdesktop::folder_sort_rules::
-            NormalizeMode(widget.folderSortMode) !=
-        snowdesktop::folder_sort_rules::kManual)
-    {
-        snowdesktop::folder_sort_rules::StableSort(
-            widget.folderEntries,
-            widget.folderSortMode,
-            widget.folderSortAscending);
-    }
-    else if (!widget.itemKeys.empty())
-    {
-        std::unordered_map<std::wstring, size_t> order;
-        for (size_t i = 0; i < widget.itemKeys.size(); ++i)
-            order[ToUpperInvariant(widget.itemKeys[i])] = i;
-        std::stable_sort(widget.folderEntries.begin(), widget.folderEntries.end(),
-            [&](const FolderEntry& a, const FolderEntry& b) {
-                auto ia = order.find(ToUpperInvariant(a.fullPath));
-                auto ib = order.find(ToUpperInvariant(b.fullPath));
-                bool ha = ia != order.end();
-                bool hb = ib != order.end();
-                if (ha != hb) return ha;
-                if (ha && hb) return ia->second < ib->second;
-                return false;
-            });
-    }
-    snowdesktop::folder_sort_rules::RewriteOrderKeys(
-        widget.folderEntries, widget.itemKeys);
+    snowdesktop::folder_member_order::Refresh(widget, ToUpperInvariant);
 }
 
 

@@ -31,6 +31,41 @@ inline void RestoreMembers(const layout_storage::WidgetRecord& saved,
     for (const auto& child : saved.childWidgets) widget.childWidgetIds.push_back(decode(child));
 }
 
+inline void RestoreSort(const layout_storage::WidgetRecord& saved, DesktopWidget& widget)
+{
+    widget.folderSortMode = snowdesktop::folder_sort_rules::NormalizeMode(
+        saved.folderSortMode);
+    widget.folderSortAscending = saved.folderSortAscending;
+    widget.contentSortColumn =
+        snowdesktop::list_detail_rules::FromString(
+            saved.contentSortColumn);
+    widget.contentSortAscending = saved.contentSortAscending;
+    if (widget.contentSortColumn ==
+            snowdesktop::list_detail_rules::Column::None &&
+        widget.type == DesktopWidgetType::FolderMapping &&
+        widget.folderSortMode >=
+            snowdesktop::folder_sort_rules::kName)
+    {
+        widget.contentSortColumn = snowdesktop::list_detail_rules::
+            FromLegacyFolderSortMode(widget.folderSortMode);
+        widget.contentSortAscending = widget.folderSortAscending;
+    }
+}
+
+template<class NormalizeKey>
+inline DesktopWidgetType TypeFromName(const std::wstring& type, NormalizeKey normalizeKey)
+{
+    std::wstring n = normalizeKey(type);
+    if (n == L"FILECATEGORIES" || n == L"FILE_CATEGORIES") return DesktopWidgetType::FileCategories;
+    if (n == L"FOLDERMAPPING" || n == L"FOLDER_MAPPING") return DesktopWidgetType::FolderMapping;
+    if (n == L"COLLECTIONGROUP" || n == L"COLLECTION_GROUP") return DesktopWidgetType::CollectionGroup;
+    if (n == L"FILEGROUP" || n == L"FILE_GROUP") return DesktopWidgetType::FileGroup;
+    if (n == L"LUA" || n == L"LUASCRIPT" || n == L"LUA_SCRIPT") return DesktopWidgetType::LuaScript;
+    if (n == L"GUIDE") return DesktopWidgetType::Guide;
+    if (n == L"COLLECTION") return DesktopWidgetType::Collection;
+    return DesktopWidgetType::Collection;
+}
+
 inline std::wstring TypeName(DesktopWidgetType type)
 {
     switch (type)
