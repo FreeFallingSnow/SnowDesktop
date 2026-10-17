@@ -527,8 +527,12 @@ void TestCodec()
         const auto copy = Unpack<snowdesktop::IconAppearanceSnapshot>(Pack(appearance));
         Check(copy.entries.size() == 1 && !copy.entries[0].settings.enabled && copy.entries[0].settings.mode == 1 &&
             copy.current.target == L"recycle-full:BIN" && copy.current.themeId == "saved-icon-theme" &&
-            copy.session == 9 && copy.revision == 11 && copy.previewPng == appearance.previewPng,
+            copy.session == 9 && copy.revision == 11 && copy.previewPng == appearance.previewPng && !copy.nativeControlSource,
             "per-icon settings IPC preserves explicit None, state identity, session guard and binary preview");
+        appearance.nativeControlSource = true; appearance.current.target = L"control:search";
+        const auto native = Unpack<snowdesktop::IconAppearanceSnapshot>(Pack(appearance));
+        Check(native.nativeControlSource && native.current.target == L"control:search",
+            "native source sizing metadata crosses the settings process without shrinking replacement images");
     }
     large.frameWidth = 436; large.frameHeight = 213; large.frameColumns = 4; large.frameRows = 2;
     large.unitScale = 1.5; large.durationScale = 2; large.frameLimit = 30; large.animations = false; large.neutral = 0x123456;

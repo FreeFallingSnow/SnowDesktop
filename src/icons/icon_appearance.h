@@ -37,6 +37,7 @@ struct IconAppearanceSnapshot
     IconAppearanceRecord current;
     std::uint64_t session = 0, revision = 0;
     bool succeeded = false, available = false, independent = false;
+    bool nativeControlSource = false;
     std::string error, previewPng;
 };
 using IconAppearanceAction = std::function<IconAppearanceSnapshot(IconAppearanceRequest)>;

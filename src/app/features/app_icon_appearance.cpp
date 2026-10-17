@@ -155,7 +155,10 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
             if (!image.pixels.empty()) (void)icon_image::PadSquare(image);
         }
         if (image.pixels.empty() && request.target.starts_with(L"control:"))
+        {
+            result.nativeControlSource = true;
             image = MakeDockControlIconSource(request.target, CurrentDockAppearance().contentTheme == 1);
+        }
         if (image.pixels.empty())
         {
             const auto key = request.target.substr(request.target.find(L':') + 1);

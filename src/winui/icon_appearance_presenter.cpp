@@ -3,6 +3,7 @@
 #include "desktop_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "icons/icon_image_codec.h"
+#include "icons/icon_control_source.h"
 #include "theme/theme_library_settings.h"
 #include <robuffer.h>
 #include <cwctype>
@@ -20,8 +21,9 @@ std::wstring Fold(std::wstring text)
     for (auto& ch : text) ch = static_cast<wchar_t>(std::towlower(ch));
     return text;
 }
-void SetPreview(const c::Image& image, const icon_image::Image& source, const IconBeautifySettings& style)
+void SetPreview(const c::Image& image, const icon_image::Image& source, const IconBeautifySettings& requested, bool native = false)
 {
+    const auto style = native ? icon_control::NativeGlyphStyle(requested) : requested;
     if (source.width <= 0 || source.height <= 0 || source.pixels.empty()) { image.Source(nullptr); return; }
     const auto edge = style.mode != 1 ? icon_beautify::DetectPlateFill(source.pixels, source.width, source.height) : std::nullopt;
     const auto pixels = icon_beautify::Render(source.pixels, source.width, source.height, style, edge);
@@ -113,7 +115,7 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
                 IconAppearanceRequest request; request.action = "preview"; request.target = target;
                 const auto preview = self->action(request);
                 icon_image::Image source; std::string error;
-                if (preview.succeeded && icon_image::DecodeBytes(preview.previewPng, 96, source, error)) SetPreview(image, source, style);
+                if (preview.succeeded && icon_image::DecodeBytes(preview.previewPng, 96, source, error)) SetPreview(image, source, style, preview.nativeControlSource);
             }
             args.Handled(true);
         });
@@ -187,13 +189,14 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
             c::Image preview;
             c::ComboBox sourceMode;
             c::InfoBar error;
-            bool ending = false;
+            bool ending = false, nativeControlSource = false;
         };
         const auto draft = std::make_shared<Draft>();
         draft->settings.initialized = draft->settings.sessionActive = true;
         draft->settings.generation = draft->settings.revision = 1; draft->settings.domainRevisions.desktop = 1;
         draft->settings.values.desktop.iconBeautify = captured.current.settings;
         draft->themeId = captured.current.themeId;
+        draft->nativeControlSource = captured.nativeControlSource;
         for (const auto& choice : captured.themes)
         {
             themes::Theme theme; theme.id = choice.id; theme.name = winrt::to_string(choice.name); theme.kind = themes::Kind::Icon; theme.icon = choice.settings;
@@ -207,7 +210,7 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
             if (draft->ending) return;
             ++draft->settings.revision; ++draft->settings.domainRevisions.desktop;
             draft->editor->ApplySnapshot(draft->settings);
-            SetPreview(draft->preview, draft->source, draft->settings.values.desktop.iconBeautify);
+            SetPreview(draft->preview, draft->source, draft->settings.values.desktop.iconBeautify, draft->nativeControlSource);
         };
         DesktopPageActions actions;
         actions.updateDesktop = [draft, sync](auto, auto, auto update) {
@@ -236,7 +239,7 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         draft->preview.Name(L"IconAppearancePreview"); x::Automation::AutomationProperties::SetAutomationId(draft->preview, L"IconAppearancePreview");
         draft->preview.Width(128); draft->preview.Height(128); draft->preview.Stretch(m::Stretch::Uniform);
         draft->preview.HorizontalAlignment(x::HorizontalAlignment::Center); body.Children().Append(draft->preview);
-        SetPreview(draft->preview, draft->source, captured.current.settings);
+        SetPreview(draft->preview, draft->source, captured.current.settings, draft->nativeControlSource);
         draft->sourceMode.Name(L"IconAppearanceSource"); x::Automation::AutomationProperties::SetAutomationId(draft->sourceMode, L"IconAppearanceSource");
         presenter_controls::SettingRow sourceRow; sourceRow.Initialize(draft->sourceMode, 220);
         sourceRow.SetText(L("iconAppearance.source")); presenter_controls::StyleSettingsCard(sourceRow.root);

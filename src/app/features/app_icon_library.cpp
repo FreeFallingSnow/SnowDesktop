@@ -348,7 +348,8 @@ ID2D1Bitmap* DesktopApp::GetSmallCustomIcon(ID2D1RenderTarget* context, std::wst
             source = std::make_shared<snowdesktop::BackgroundBitmap>();
             source->bitmap = snowdesktop::icon_image::CreateBitmap(snowdesktop::icon_control::MakeSource(target, light, edge));
         }
-        return GetStyledD2DBitmap(context, source->bitmap, ResolveIconAppearance(identity), true);
+        return GetStyledD2DBitmap(context, source->bitmap,
+            snowdesktop::icon_control::NativeGlyphStyle(ResolveIconAppearance(identity)), true);
     }
     return nullptr;
 }

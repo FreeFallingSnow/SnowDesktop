@@ -20,6 +20,15 @@ inline bool UsesBitmap(std::wstring_view identity, bool independent, const IconB
 {
     return (identity == L"control:start" || identity == L"control:search") && (independent || style.enabled);
 }
+// Generated control glyphs already contain deliberate optical margins. Keep
+// them when applying a theme instead of expanding their visible bounds to fill
+// the ordinary application-icon content area. Persisted/user image settings do
+// not change; this effective style is used only for our native sources.
+inline IconBeautifySettings NativeGlyphStyle(IconBeautifySettings style)
+{
+    style.mode = 2;
+    return style;
+}
 inline icon_image::Image MakeSource(std::wstring_view target, bool light, int edge = 128)
 {
     // Supersampled native glyphs, without an already-beautified Dock plate.

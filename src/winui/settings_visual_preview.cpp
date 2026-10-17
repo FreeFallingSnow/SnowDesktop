@@ -4,6 +4,7 @@
 #include "settings/settings_search_catalog.h"
 #include "SettingsShell.xaml.h"
 #include "icons/icon_appearance_rules.h"
+#include "icons/icon_control_source.h"
 #include "icons/icon_image_codec.h"
 #include "winui_runtime.h"
 #include "common/l10n.h"
@@ -426,7 +427,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         if (!icon_image::Decode(libraryFixture->entries[1].previewPath, 128, source, error) ||
             !icon_image::EncodePng(source, appearanceFixture->png, error)) throw std::runtime_error("appearance preview source failed");
     }
-    shell->SetIconAppearanceAction([appearanceFixture](IconAppearanceRequest request) {
+    shell->SetIconAppearanceAction([appearanceFixture, dark](IconAppearanceRequest request) {
         auto& state = *appearanceFixture; IconAppearanceSnapshot result;
         result.succeeded = true; result.available = true;
         if (request.action == "begin") { state.target = request.target; ++state.session; }
@@ -443,7 +444,15 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         result.current.settings = icon_beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
         for (const auto& entry : state.entries) if (entry.target == request.target) { result.current = entry; result.independent = true; }
         result.entries = state.entries; result.session = state.session; result.revision = state.revision;
-        result.previewPng = state.png; return result;
+        result.previewPng = state.png;
+        if (request.target == L"control:search")
+        {
+            std::string error;
+            result.nativeControlSource = true;
+            if (!icon_image::EncodePng(icon_control::MakeSource(request.target, !dark), result.previewPng, error))
+                throw std::runtime_error("native control preview source failed");
+        }
+        return result;
     });
     bool loaded = false;
     const auto token = shell->Loaded([&](const auto&, const auto&) { loaded = true; });
@@ -626,15 +635,21 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 }
             });
             if (!mode || !theme) throw std::runtime_error("shared processing mode/theme selectors are missing");
-            mode.SelectedIndex(2); theme.SelectedIndex(3); Settle(editor);
-            if (editor.ActualWidth() > shell->ActualWidth() || editor.ActualHeight() > shell->ActualHeight())
-                throw std::runtime_error("individual icon editor exceeds its settings window");
-            x::Media::Imaging::RenderTargetBitmap bitmap; Await(bitmap.RenderAsync(editor));
-            const auto pixels = Await(bitmap.GetPixelsAsync()); BYTE* bytes = nullptr;
-            winrt::check_hresult(pixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
-            std::string imageError;
-            if (!preview_png::Save(output / L"icon-appearance-editor.png", bitmap.PixelWidth(), bitmap.PixelHeight(),
-                {reinterpret_cast<const std::uint32_t*>(bytes), pixels.Length()/4}, imageError)) throw std::runtime_error(imageError);
+            const auto captureEditor = [&](const wchar_t* name) {
+                Settle(editor);
+                if (editor.ActualWidth() > shell->ActualWidth() || editor.ActualHeight() > shell->ActualHeight())
+                    throw std::runtime_error("individual icon editor exceeds its settings window");
+                x::Media::Imaging::RenderTargetBitmap bitmap; Await(bitmap.RenderAsync(editor));
+                const auto pixels = Await(bitmap.GetPixelsAsync()); BYTE* bytes = nullptr;
+                winrt::check_hresult(pixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
+                std::string imageError;
+                if (!preview_png::Save(output / name, bitmap.PixelWidth(), bitmap.PixelHeight(),
+                    {reinterpret_cast<const std::uint32_t*>(bytes), pixels.Length()/4}, imageError)) throw std::runtime_error(imageError);
+            };
+            mode.SelectedIndex(0); theme.SelectedIndex(3);
+            captureEditor(L"icon-appearance-native-smart.png");
+            mode.SelectedIndex(2);
+            captureEditor(L"icon-appearance-editor.png");
             c::Button apply{nullptr};
             Walk(editor, [&](const x::DependencyObject& node) { if (const auto button = node.try_as<c::Button>(); button && button.Name() == L"PrimaryButton") apply = button; });
             if (!apply) throw std::runtime_error("individual appearance Apply button is missing");

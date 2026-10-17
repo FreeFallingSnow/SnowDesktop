@@ -92,5 +92,32 @@ int RunIconAppearanceTests()
         check(icon_control::ReplacementSourcePixels(target, 48) == 256 && icon_control::ReplacementSourcePixels(target, 96) == 256,
             "replaced Start/Search use the same classification source at rest and under magnification");
     }
+    // Regression: ordinary beautification enlarged both built-in control glyphs
+    // to 68% even though their source canvas deliberately reserves more space.
+    const auto extent = [](const auto& pixels, int edge) {
+        int left = edge, right = -1;
+        for (int y = 0; y < edge; ++y) for (int x = 0; x < edge; ++x)
+            if ((pixels[static_cast<size_t>(y) * edge + x] >> 24) > 16) { left = std::min(left, x); right = std::max(right, x); }
+        return std::max(0, right - left + 1);
+    };
+    for (const auto target : {L"control:start", L"control:search"}) for (const int edge : {128, 256})
+    {
+        const auto source = icon_control::MakeSource(target, false, edge);
+        const int original = extent(source.pixels, edge);
+        check(original <= static_cast<int>(edge * (std::wstring_view(target) == L"control:start" ? .60 : .50)),
+            "native Start/Search sources retain their intended optical margins");
+        for (int mode : {0, 1, 2})
+        {
+            auto requested = noUpscale; requested.mode = mode;
+            const auto style = icon_control::NativeGlyphStyle(requested);
+            const auto rendered = icon_beautify::Render(source.pixels, edge, edge, style);
+            check(extent(rendered, edge) <= original + 1,
+                "themed default Start/Search never expand to ordinary application-icon bounds");
+            check(requested.mode == mode, "native rendering leaves the saved processing preference unchanged");
+        }
+        auto ordinary = noUpscale; ordinary.mode = 0;
+        check(extent(icon_beautify::Render(source.pixels, edge, edge, ordinary), edge) > original + 2,
+            "negative control reproduces default glyph enlargement through the ordinary image path");
+    }
     return failures;
 }
