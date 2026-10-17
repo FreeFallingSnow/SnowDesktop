@@ -236,7 +236,13 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 visible.emplace(entry.id, entry);
                 const auto item = winrt::box_value(winrt::to_hstring(entry.id));
                 grid.Items().Append(item);
-                if (entry.id == selectImported || std::find(selected.begin(), selected.end(), entry.id) != selected.end()) grid.SelectedItems().Append(item);
+                if (entry.id == selectImported || std::find(selected.begin(), selected.end(), entry.id) != selected.end())
+                {
+                    // SelectedItems is writable only for multi-selection.
+                    // A picker must restore its one stable asset via SelectedItem.
+                    if (grid.SelectionMode() == c::ListViewSelectionMode::Single) grid.SelectedItem(item);
+                    else grid.SelectedItems().Append(item);
+                }
             }
             rendering = false;
         }
