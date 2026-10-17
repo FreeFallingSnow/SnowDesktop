@@ -2448,7 +2448,6 @@
   "app.interact.auto_collect_off": "Desactivar la recopilación automática",
   "app.settings.scrolling_icon_spacing_y": "Espaciado vertical de íconos desplazables",
   "app.settings.list_row_spacing": "Espaciado entre filas de listas",
-  "app.settings.hotkey_edit": "Editar",
   "iconLibrary.title": "Biblioteca de íconos",
   "iconLibrary.animatedUnsupported": "Por ahora solo se admiten imágenes WebP estáticas.",
   "iconLibrary.change": "Cambiar ícono",
@@ -2482,6 +2481,7 @@
   "iconLibrary.recycleFull": "Papelera (llena)",
   "iconLibrary.startIcon": "Ícono del botón Inicio",
   "iconLibrary.searchIcon": "Ícono del botón Buscar",
+  "app.settings.hotkey_edit": "Editar",
   "iconLibrary.personalization": "Personalizar ícono",
   "iconLibrary.groups": "Grupos",
   "iconLibrary.allGroups": "Todos los íconos",
@@ -2538,11 +2538,11 @@
   "iconWorkshop.authorMismatch": "La cuenta actual no puede actualizar este artículo.",
   "iconWorkshop.titleTooLong": "El título es demasiado largo. Acórtalo e inténtalo de nuevo.",
   "iconWorkshop.descriptionTooLong": "La descripción es demasiado larga. Acórtala e inténtalo de nuevo.",
-  "app.widget_preview.single_cell_component": "Componente de una celda",
   "app.settings.group_component_badges": "Insignias de componentes de grupo",
-  "iconLibrary.recommended": "Recomendados",
+  "app.widget_preview.single_cell_component": "Componente de una celda",
   "app.widget_drop.merge_collections": "Combinar con esta colección",
   "app.widget_drop.merge_desktop_files": "Combinar con este widget de archivos del escritorio",
   "app.widget_drop.create_collection_group": "Crear grupo de colecciones",
-  "app.widget_drop.create_file_group": "Crear grupo de archivos"
+  "app.widget_drop.create_file_group": "Crear grupo de archivos",
+  "iconLibrary.recommended": "Recomendados"
 }

@@ -2448,7 +2448,6 @@
   "app.interact.auto_collect_off": "Turn Off Auto-Collection",
   "app.settings.scrolling_icon_spacing_y": "Scrolling icon vertical spacing",
   "app.settings.list_row_spacing": "List row spacing",
-  "app.settings.hotkey_edit": "Edit",
   "iconLibrary.title": "Icon library",
   "iconLibrary.animatedUnsupported": "Only static WebP images are currently supported.",
   "iconLibrary.change": "Change icon",
@@ -2482,6 +2481,7 @@
   "iconLibrary.recycleFull": "Recycle Bin (full)",
   "iconLibrary.startIcon": "Start button icon",
   "iconLibrary.searchIcon": "Search button icon",
+  "app.settings.hotkey_edit": "Edit",
   "iconLibrary.personalization": "Icon personalization",
   "iconLibrary.groups": "Groups",
   "iconLibrary.allGroups": "All icons",
@@ -2538,11 +2538,11 @@
   "iconWorkshop.authorMismatch": "The current account cannot update this Workshop item.",
   "iconWorkshop.titleTooLong": "The sharing title is too long. Shorten it and try again.",
   "iconWorkshop.descriptionTooLong": "The sharing description is too long. Shorten it and try again.",
-  "app.widget_preview.single_cell_component": "Single-cell widget",
   "app.settings.group_component_badges": "Group component badges",
-  "iconLibrary.recommended": "Recommended",
+  "app.widget_preview.single_cell_component": "Single-cell widget",
   "app.widget_drop.merge_collections": "Merge into this collection",
   "app.widget_drop.merge_desktop_files": "Merge into this desktop files widget",
   "app.widget_drop.create_collection_group": "Create collection group",
-  "app.widget_drop.create_file_group": "Create file group"
+  "app.widget_drop.create_file_group": "Create file group",
+  "iconLibrary.recommended": "Recommended"
 }

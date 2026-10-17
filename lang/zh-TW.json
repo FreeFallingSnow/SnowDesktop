@@ -2448,7 +2448,6 @@
   "app.interact.auto_collect_off": "關閉自動收納",
   "app.settings.scrolling_icon_spacing_y": "捲動圖示垂直間距",
   "app.settings.list_row_spacing": "清單列間距",
-  "app.settings.hotkey_edit": "編輯",
   "iconLibrary.title": "圖示庫",
   "iconLibrary.animatedUnsupported": "目前僅支援靜態 WebP 圖片。",
   "iconLibrary.change": "更換圖示",
@@ -2482,6 +2481,7 @@
   "iconLibrary.recycleFull": "資源回收筒（滿）",
   "iconLibrary.startIcon": "開始按鈕圖示",
   "iconLibrary.searchIcon": "搜尋按鈕圖示",
+  "app.settings.hotkey_edit": "編輯",
   "iconLibrary.personalization": "圖示個人化",
   "iconLibrary.groups": "群組",
   "iconLibrary.allGroups": "全部圖示",
@@ -2538,11 +2538,11 @@
   "iconWorkshop.authorMismatch": "目前帳號無法更新此工作坊作品。",
   "iconWorkshop.titleTooLong": "分享標題過長，請縮短後重試。",
   "iconWorkshop.descriptionTooLong": "分享簡介過長，請縮短後重試。",
-  "app.widget_preview.single_cell_component": "單格元件",
   "app.settings.group_component_badges": "群組類元件角標",
-  "iconLibrary.recommended": "推薦結果",
+  "app.widget_preview.single_cell_component": "單格元件",
   "app.widget_drop.merge_collections": "合併至此集合",
   "app.widget_drop.merge_desktop_files": "合併至此桌面檔案元件",
   "app.widget_drop.create_collection_group": "建立集合群組",
-  "app.widget_drop.create_file_group": "建立檔案群組"
+  "app.widget_drop.create_file_group": "建立檔案群組",
+  "iconLibrary.recommended": "推薦結果"
 }

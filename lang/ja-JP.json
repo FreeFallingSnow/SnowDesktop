@@ -2448,7 +2448,6 @@
   "app.interact.auto_collect_off": "自動収集をオフにする",
   "app.settings.scrolling_icon_spacing_y": "スクロール領域のアイコンの縦間隔",
   "app.settings.list_row_spacing": "リストの行間隔",
-  "app.settings.hotkey_edit": "編集",
   "iconLibrary.title": "アイコンライブラリ",
   "iconLibrary.animatedUnsupported": "現在は静止 WebP 画像のみ対応しています。",
   "iconLibrary.change": "アイコンを変更",
@@ -2482,6 +2481,7 @@
   "iconLibrary.recycleFull": "ごみ箱（いっぱい）",
   "iconLibrary.startIcon": "スタートボタンのアイコン",
   "iconLibrary.searchIcon": "検索ボタンのアイコン",
+  "app.settings.hotkey_edit": "編集",
   "iconLibrary.personalization": "アイコンのカスタマイズ",
   "iconLibrary.groups": "グループ",
   "iconLibrary.allGroups": "すべてのアイコン",
@@ -2538,11 +2538,11 @@
   "iconWorkshop.authorMismatch": "現在のアカウントではこの作品を更新できません。",
   "iconWorkshop.titleTooLong": "共有タイトルが長すぎます。短くしてから再試行してください。",
   "iconWorkshop.descriptionTooLong": "共有の説明が長すぎます。短くしてから再試行してください。",
-  "app.widget_preview.single_cell_component": "1マスウィジェット",
   "app.settings.group_component_badges": "グループコンポーネントのバッジ",
-  "iconLibrary.recommended": "おすすめの結果",
+  "app.widget_preview.single_cell_component": "1マスウィジェット",
   "app.widget_drop.merge_collections": "このコレクションに統合",
   "app.widget_drop.merge_desktop_files": "このデスクトップファイルウィジェットに統合",
   "app.widget_drop.create_collection_group": "コレクショングループを作成",
-  "app.widget_drop.create_file_group": "ファイルグループを作成"
+  "app.widget_drop.create_file_group": "ファイルグループを作成",
+  "iconLibrary.recommended": "おすすめの結果"
 }

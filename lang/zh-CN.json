@@ -2448,7 +2448,6 @@
   "app.interact.auto_collect_off": "关闭自动收纳",
   "app.settings.scrolling_icon_spacing_y": "滚动图标纵向间距",
   "app.settings.list_row_spacing": "列表行间距",
-  "app.settings.hotkey_edit": "编辑",
   "iconLibrary.title": "图标库",
   "iconLibrary.animatedUnsupported": "目前仅支持静态 WebP 图片。",
   "iconLibrary.change": "更换图标",
@@ -2482,6 +2481,7 @@
   "iconLibrary.recycleFull": "回收站（满）",
   "iconLibrary.startIcon": "开始按钮图标",
   "iconLibrary.searchIcon": "搜索按钮图标",
+  "app.settings.hotkey_edit": "编辑",
   "iconLibrary.personalization": "图标个性化",
   "iconLibrary.groups": "分组",
   "iconLibrary.allGroups": "全部图标",
@@ -2538,11 +2538,11 @@
   "iconWorkshop.authorMismatch": "当前账号无法更新此工坊作品。",
   "iconWorkshop.titleTooLong": "分享标题过长，请缩短后重试。",
   "iconWorkshop.descriptionTooLong": "分享简介过长，请缩短后重试。",
-  "app.widget_preview.single_cell_component": "单格组件",
   "app.settings.group_component_badges": "组类组件角标",
-  "iconLibrary.recommended": "推荐结果",
+  "app.widget_preview.single_cell_component": "单格组件",
   "app.widget_drop.merge_collections": "合并到此集合",
   "app.widget_drop.merge_desktop_files": "合并到此桌面文件组件",
   "app.widget_drop.create_collection_group": "创建集合组",
-  "app.widget_drop.create_file_group": "创建文件组"
+  "app.widget_drop.create_file_group": "创建文件组",
+  "iconLibrary.recommended": "推荐结果"
 }

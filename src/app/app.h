@@ -1,4 +1,4 @@
-﻿/**
+/**
  * @file app.h
  * @brief SnowDesktop 主应用程序类的声明头文件。
  *
