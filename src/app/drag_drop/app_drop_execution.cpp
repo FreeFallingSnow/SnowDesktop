@@ -168,12 +168,14 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         services.findWidget = [this](const auto& id) { return FindWidgetIndexById(id); };
         services.findItem = [this](const auto& key) { return FindItemIndexByKey(key); };
         services.slot = [this](const auto& cell) { return SlotFromCell(gridPages_, cell); };
-        services.mapPages = [this] { ApplyPageMapping(); };
-        services.committed = [this] {
+        services.prepareLayout = [this] {
             // Releasing existing items changes widget membership without a
             // Shell file event, so auto-collection must run at this boundary.
             ApplyAutoCollectFileCategoryWidgets();
             RefreshCollectedKeysCache();
+        };
+        services.mapPages = [this] { ApplyPageMapping(); };
+        services.committed = [this] {
             LayoutItems();
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);

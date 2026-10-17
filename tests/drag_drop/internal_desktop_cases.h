@@ -44,6 +44,7 @@ struct World : page_mapping_cases::World
             services.mapPages = [&] { Apply(); };
             // Auto-collection is disabled in these inputs. Full LayoutItems,
             // native containers and rendering remain host service boundaries.
+            services.prepareLayout = [] {};
             services.committed = [&] { ++commits; Save(); };
             return internal_desktop_drop::Execute(list, plan, items, widgets, services);
         };
@@ -68,6 +69,13 @@ inline DragSourceList Sources(const World& world, size_t count)
         source.originalCell = item.gridCell; source.originalSpan = item.gridSpan;
         result.entries.push_back(std::move(source));
     }
+    for (const auto& widget : world.widgets)
+        if (std::find(widget.itemKeys.begin(), widget.itemKeys.end(), result.entries.front().desktopKey) != widget.itemKeys.end())
+        {
+            result.hasOriginWidget = true; result.originWidgetId = widget.id; result.originWidgetType = widget.type;
+            for (auto& entry : result.entries) entry.widgetId = widget.id;
+            break;
+        }
     return result;
 }
 
