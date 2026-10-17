@@ -95,6 +95,7 @@ inline void CheckRoundTrip(const std::filesystem::path& path, const std::vector<
         Require(Decode(saved.id) == before.id && Decode(saved.type) == widget_layout_codec::TypeName(before.type) &&
             restored.gridCell.pageId == before.gridCell.pageId && restored.gridCell.column == before.gridCell.column &&
             restored.gridCell.row == before.gridCell.row && restored.itemKeys == before.itemKeys &&
+            restored.gridSpan.columns == before.gridSpan.columns && restored.gridSpan.rows == before.gridSpan.rows &&
             restored.childWidgetIds == before.childWidgetIds,
             "reload preserves component identity, page, exact position, member order and group children");
         Require(saved.singleCellIconMode == before.singleCellIconMode && saved.listMode == before.listMode &&
@@ -245,6 +246,105 @@ inline void Run(const std::filesystem::path& root)
                     items[index].gridCell.row == 2, "new members retain their requested component page and cell");
         }
         CheckRoundTrip(path / L"layout.json", widgets);
+    }
+    // S05/A07: two source files have the same basename and a common physical
+    // destination, but different logical targets. Deliver B's UI completions
+    // first; Shell collision-renaming, exact matching and persistence are real.
+    {
+        const auto directory = root / L"interleaved";
+        const auto aFiles = Seed(directory / L"a", 1), bFiles = Seed(directory / L"b", 1);
+        std::ofstream(bFiles.front()) << "second source";
+        const auto desktop = directory / L"desktop";
+        std::filesystem::create_directory(desktop);
+        Batch a, b; a.source = MakeSource(aFiles); b.source = MakeSource(bFiles);
+        a.destination = desktop; b.destination = desktop;
+        auto snapshot = [](const auto& file, const wchar_t* target, size_t index) {
+            PendingLandingCache cache;
+            PendingLandingEntry entry; entry.kind = DropLandingKind::WidgetIndex;
+            entry.sourcePath = file.wstring(); entry.sourceName = L"a.txt";
+            entry.widgetId = target; entry.insertIndex = index; cache.entries.push_back(entry);
+            return cache;
+        };
+        pending_drop::Queue queue;
+        a.reconcile = [&, cache = snapshot(aFiles.front(), L"C1", 1)](const auto& result) {
+            pending_drop::Complete(queue, cache, result);
+        };
+        b.reconcile = [&, cache = snapshot(bFiles.front(), L"C2", 0)](const auto& result) {
+            pending_drop::Complete(queue, cache, result);
+        };
+        {
+            Harness harness; harness.window.hold = true;
+            Require(harness.Submit(a) == DROPEFFECT_COPY && harness.Submit(b) == DROPEFFECT_COPY,
+                "interleaved model transfers are admitted independently");
+            PumpUntil([&] { return harness.window.pending.size() == 2; });
+            harness.window.Deliver(1);
+            PumpUntil([&] { return harness.window.pending.size() == 2; });
+            harness.window.Deliver(1);
+            Require(queue.size() == 1 && b.source->ends == 1 && a.source->ends == 0,
+                "B publishes its own output before A has committed");
+            harness.window.Deliver(0);
+            PumpUntil([&] { return harness.window.pending.size() == 1; });
+            harness.window.Deliver(0);
+        }
+        Require(queue.size() == 2 && a.result->outputs.size() == 1 && b.result->outputs.size() == 1 &&
+            Bytes(a.result->outputs[0].destination) == "alpha" &&
+            Bytes(b.result->outputs[0].destination) == "second source" &&
+            a.result->outputs[0].destination != b.result->outputs[0].destination,
+            "both same-name sources retain independent physical outputs after reverse completion");
+        pending_drop::Complete(queue, snapshot(aFiles.front(), L"failed-third", 0), {});
+        Require(queue.size() == 2, "a third failed transfer cannot consume either successful destination snapshot");
+        std::vector<DesktopWidget> widgets(3);
+        widgets[0].id = L"C1"; widgets[0].itemKeys = {L"A0", L"A1"}; widgets[0].gridCell = {L"page-c1", 2, 1};
+        widgets[1].id = L"C2"; widgets[1].itemKeys = {L"B0", L"B1"}; widgets[1].gridCell = {L"__dock", 0, 0};
+        widgets[2].id = L"auto"; widgets[2].itemKeys = {L"NEW-A", L"NEW-B"};
+        std::vector<DesktopItem> items(2);
+        items[0].layoutKey = L"NEW-A"; items[0].parsingName = a.result->outputs[0].destination;
+        items[1].layoutKey = L"NEW-B"; items[1].parsingName = b.result->outputs[0].destination;
+        std::unordered_set<std::wstring> claimed;
+        for (auto& cache : queue)
+            Require(pending_drop::ApplyEntries(cache, widgets, items, claimed, Key,
+                [](const auto&, const auto&) -> bool { throw std::runtime_error("interleaving must match actual output paths"); },
+                [](const auto&, const auto&) { return true; },
+                [](auto&, const auto&) -> bool { throw std::runtime_error("interleaving must retain logical targets"); },
+                [](const auto&) {}), "each reverse-completed cache reconciles its own file identity");
+        Require(widgets[0].itemKeys == std::vector<std::wstring>{L"A0", L"NEW-A", L"A1"} &&
+            widgets[1].itemKeys == std::vector<std::wstring>{L"NEW-B", L"B0", L"B1"} && widgets[2].itemKeys.empty(),
+            "A and B keep their original component and insertion boundary after colliding physical writes");
+        CheckRoundTrip(directory / L"layout.json", widgets);
+    }
+    // Real partial IO: the worker records one failed copy and one successful
+    // copy. Reconciliation must publish the actual success despite false for
+    // the batch, and compact the original insertion boundary without a gap.
+    {
+        const auto directory = root / L"partial";
+        const auto selected = Seed(directory, 1);
+        const auto missing = directory / L"source" / L"missing.txt";
+        const auto copied = directory / L"target" / L"a.txt";
+        auto outputs = std::make_shared<ShellFileOperationResult>();
+        ShellFileOperationRequest request; request.result = outputs;
+        request.exactFileCopies = {{missing.wstring(), (directory / L"target" / L"missing.txt").wstring()},
+            {selected.front().wstring(), copied.wstring()}};
+        Require(!ShellFileOperationWorker::Execute(request) && outputs->outputs.size() == 1 &&
+            Bytes(copied) == "alpha" && Bytes(selected.front()) == "alpha",
+            "partial file operation really fails one member and retains the other member's successful bytes");
+        PendingLandingCache snapshot;
+        for (size_t index = 0; index < 2; ++index)
+        {
+            PendingLandingEntry entry; entry.kind = DropLandingKind::WidgetIndex; entry.widgetId = L"partial-target";
+            entry.sourcePath = (index ? selected.front() : missing).wstring(); entry.insertIndex = 1 + index;
+            snapshot.entries.push_back(entry);
+        }
+        pending_drop::Queue queue; pending_drop::Complete(queue, snapshot, *outputs);
+        Require(queue.size() == 1 && queue[0].entries.size() == 1, "partial completion publishes only the actual successful member");
+        std::vector<DesktopWidget> widgets(1); widgets[0].id = L"partial-target"; widgets[0].itemKeys = {L"K0", L"K1"};
+        std::vector<DesktopItem> items(1); items[0].layoutKey = L"SUCCESS"; items[0].parsingName = copied.wstring();
+        std::unordered_set<std::wstring> claimed;
+        Require(pending_drop::ApplyEntries(queue.front(), widgets, items, claimed, Key,
+            [](const auto&, const auto&) { return false; }, [](const auto&, const auto&) { return true; },
+            [](auto&, const auto&) { return false; }, [](const auto&) {}) &&
+            widgets[0].itemKeys == std::vector<std::wstring>{L"K0", L"SUCCESS", L"K1"},
+            "partial failure preserves the requested insertion boundary without inserting or reserving a failed member");
+        CheckRoundTrip(directory / L"layout.json", widgets);
     }
     // Rejection is a valid matrix outcome: it must not move the item to the
     // target cell, claim its identity or remove any provisional owner.

@@ -10,15 +10,6 @@ namespace
 {
 namespace content = snowdesktop::external_drop_content;
 
-std::shared_ptr<content::Content> NewSlotContent(
-    const std::shared_ptr<snowdesktop::ShellFileOperationResult>& result)
-{
-    return {new content::Content, [result](content::Content* value) {
-        content::Cleanup(*value, *result);
-        delete value;
-    }};
-}
-
 content::Paths DownloadSlotUrls(const content::Paths& urls, std::stop_token stop)
 {
     for (const auto& url : urls)
@@ -258,7 +249,7 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     if ((effect & allowedEffects) == 0) return DROPEFFECT_NONE;
 
     auto result = std::make_shared<snowdesktop::ShellFileOperationResult>();
-    auto value = NewSlotContent(result);
+    auto value = content::MakeContent(result);
     const auto stop = externalSlotReadStopSource_.get_token();
     const auto downloadUrls = [stop](const content::Paths& urls) {
         return DownloadSlotUrls(urls, stop);

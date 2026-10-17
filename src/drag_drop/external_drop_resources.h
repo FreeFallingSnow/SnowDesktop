@@ -3,6 +3,7 @@
 #include "external_drop_content.h"
 #include "shell/shell_file_operation_worker.h"
 #include <algorithm>
+#include <memory>
 
 namespace snowdesktop::external_drop_content
 {
@@ -20,5 +21,13 @@ inline void Cleanup(const Content& content, const ShellFileOperationResult& resu
             });
         if (!referenced) DeleteFileW(path.c_str());
     }
+}
+
+inline std::shared_ptr<Content> MakeContent(const std::shared_ptr<ShellFileOperationResult>& result)
+{
+    return {new Content, [result](Content* value) {
+        Cleanup(*value, *result);
+        delete value;
+    }};
 }
 }

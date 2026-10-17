@@ -1,6 +1,7 @@
 #pragma once
 
 #include "drag_drop/external_slot_transfer.h"
+#include "drag_drop/external_drop_resources.h"
 #include "drag_drop/file_backed_drop_request.h"
 #include <wrl/implements.h>
 #include <algorithm>
@@ -173,6 +174,7 @@ struct Batch
     int commits = 0, completed = 0;
     bool success = false, reject = false, notifyRejection = false;
     bool correctWorker = false, correctCommitThread = false;
+    bool ownedContent = false;
     std::function<void(const ShellFileOperationResult&)> reconcile;
 };
 
@@ -189,7 +191,8 @@ struct Harness
             APTTYPE apt{}; APTTYPEQUALIFIER qualifier{};
             batch.correctWorker = !async || (download && GetCurrentThreadId() != owner &&
                 SUCCEEDED(CoGetApartmentType(&apt, &qualifier)) && apt == APTTYPE_STA);
-            return external_drop_content::Content{external_drop_content::ReadFilePaths(source), {}, false, true};
+            return external_drop_content::Content{
+                external_drop_content::ReadFilePaths(source), {}, batch.ownedContent, true};
         };
         callbacks.commit = [&](const auto& content, auto finished, bool synchronously) {
             ++batch.commits; batch.correctCommitThread = GetCurrentThreadId() == owner;
@@ -218,7 +221,7 @@ struct Harness
             if (batch.reconcile) batch.reconcile(*batch.result);
         };
         return external_slot_transfer::Transfer(batch.source.Get(), batch.effect, async, {},
-            std::make_shared<external_drop_content::Content>(), reader, stop.get_token(),
+            external_drop_content::MakeContent(batch.result), reader, stop.get_token(),
             target ? target : window.hwnd, completedMessage, std::move(callbacks));
     }
 };
@@ -246,18 +249,24 @@ inline std::vector<std::filesystem::path> Seed(const std::filesystem::path& root
     return result;
 }
 
-inline void AssertSuccess(const Batch& batch, const std::vector<std::filesystem::path>& paths)
+inline void AssertSuccess(const Batch& batch, const std::vector<std::filesystem::path>& paths, bool asynchronous = true)
 {
     Require(batch.commits == 1 && batch.completed == 1 && batch.success,
         "one accepted transfer commits and completes exactly once");
     Require(batch.correctWorker && batch.correctCommitThread && !batch.source->wrongApartment &&
         !batch.source->readBeforeStart, "decoder runs on worker STA, provider on source STA, commit on destination STA");
-    Require(batch.source->starts == 1 && batch.source->ends == 1 && batch.source->outcome == S_OK,
-        "source async operation ends successfully exactly once after commit");
-    Require(batch.source->endEffect == (batch.effect == DROPEFFECT_MOVE ? 0 : batch.effect),
-        "optimized move reports NONE; copy and link report their selected effect");
+    if (asynchronous)
+    {
+        Require(batch.source->starts == 1 && batch.source->ends == 1 && batch.source->outcome == S_OK,
+            "source async operation ends successfully exactly once after commit");
+        Require(batch.source->endEffect == (batch.effect == DROPEFFECT_MOVE ? 0 : batch.effect),
+            "optimized move reports NONE; copy and link report their selected effect");
+    }
+    else
+        Require(batch.source->starts == 0 && batch.source->ends == 0,
+            "synchronous transfer never starts an asynchronous source lease");
     Require(batch.result->outputs.size() == paths.size(), "real Shell outputs cover exactly the selection");
-    if (batch.effect == DROPEFFECT_MOVE)
+    if (asynchronous && batch.effect == DROPEFFECT_MOVE)
         Require(batch.source->performed == 1 && batch.source->performedEffect == DROPEFFECT_NONE,
             "target-side move prevents the original provider deleting sources twice");
     for (size_t index = 0; index < paths.size(); ++index)
@@ -292,16 +301,23 @@ inline void Run(const std::filesystem::path& root)
     size_t serial = 0;
     for (DWORD effect : {DROPEFFECT_COPY, DROPEFFECT_MOVE, DROPEFFECT_LINK})
     for (size_t count : {size_t{1}, size_t{2}})
+    for (bool asynchronous : {true, false})
     {
         const auto path = root / std::to_wstring(serial++);
         const auto selected = Seed(path, count);
         Batch batch; batch.source = MakeSource(selected); batch.destination = path / L"target"; batch.effect = effect;
+        batch.source->async = asynchronous;
         Harness harness;
-        Require(harness.Submit(batch) == effect, "async transfer accepts the selected effect without waiting for content");
-        Require(batch.source->reads == 0 && batch.commits == 0 && batch.source->starts == 1,
-            "Drop starts the source lease but does not read paths or commit on the caller");
-        PumpUntil([&] { return batch.source->ends == 1; });
-        AssertSuccess(batch, selected);
+        const DWORD expectedReturn = !asynchronous && effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect;
+        Require(harness.Submit(batch, asynchronous) == expectedReturn,
+            "transfer preserves the selected effect and optimized synchronous move reporting");
+        if (asynchronous)
+        {
+            Require(batch.source->reads == 0 && batch.commits == 0 && batch.source->starts == 1,
+                "Drop starts the source lease but does not read paths or commit on the caller");
+            PumpUntil([&] { return batch.source->ends == 1; });
+        }
+        AssertSuccess(batch, selected, asynchronous);
     }
     // Failure sequences use unchanged source bytes and an empty destination as
     // their independent oracle, never a production return value as expected IO.
@@ -380,6 +396,30 @@ inline void Run(const std::filesystem::path& root)
             Bytes(selected.front()) == "alpha" && std::filesystem::is_empty(batch.destination),
             "failed post or discarded completion cancels once and preserves both source and destination");
     }
-    std::cout << "async slot transfer protocol, IO, failure and reverse-completion cases passed\n";
+    for (int outcome = 0; outcome < 3; ++outcome)
+    {
+        const auto path = root / std::to_wstring(serial++);
+        const auto selected = Seed(path, 1);
+        Batch batch; batch.source = MakeSource(selected); batch.destination = path / L"target";
+        batch.ownedContent = true; batch.reject = outcome == 1;
+        {
+            Harness harness; harness.window.hold = outcome == 2;
+            Require(harness.Submit(batch) == DROPEFFECT_COPY, "owned rendered content starts a tracked transfer");
+            if (outcome == 2)
+            {
+                PumpUntil([&] { return harness.window.pending.size() == 1; });
+                harness.window.Drain();
+            }
+            else
+                PumpUntil([&] { return batch.source->ends == 1; });
+        }
+        Require(!std::filesystem::exists(selected.front()),
+            "owned rendered content is released after successful copy, rejection and discarded completion");
+        Require(batch.source->ends == 1 && batch.source->outcome == (outcome == 0 ? S_OK : E_ABORT),
+            "owned-content lifetime and source completion agree with the actual outcome");
+        Require(outcome == 0 ? Bytes(batch.destination / L"a.txt") == "alpha" : std::filesystem::is_empty(batch.destination),
+            "rendered-file cleanup preserves successful outputs and creates nothing for cancellation");
+    }
+    std::cout << "slot transfer protocol, IO, failure, ownership and reverse-completion cases passed\n";
 }
 }
