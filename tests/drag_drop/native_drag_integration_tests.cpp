@@ -19,16 +19,19 @@ struct NativeDragIntegrationAccess
     static inline std::exception_ptr asyncException;
     static inline std::uint64_t asyncReadMessages = 0;
     static inline std::uint64_t asyncShellTimers = 0;
+    static inline std::uint64_t fileCompletionMessages = 0;
 
     static LRESULT CALLBACK AsyncWindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
         if (asyncOwner && window == completionWindow &&
-            (message == kBackgroundShellReadyMessage || (message == WM_TIMER && wp == kShellChangeTimerId)))
+            (message == kBackgroundShellReadyMessage || message == kShellFileOperationCompletedMessage ||
+                (message == WM_TIMER && wp == kShellChangeTimerId)))
         {
             try
             {
                 if (message == kBackgroundShellReadyMessage) ++asyncReadMessages;
-                else ++asyncShellTimers;
+                else if (message == WM_TIMER) ++asyncShellTimers;
+                else ++fileCompletionMessages;
                 return asyncOwner->HandleMessage(window, message, wp, lp);
             }
             catch (...) { asyncException = std::current_exception(); return 0; }
@@ -52,6 +55,7 @@ struct NativeDragIntegrationAccess
         asyncException = {};
         asyncReadMessages = 0;
         asyncShellTimers = 0;
+        fileCompletionMessages = 0;
         previousWindowProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(completionWindow,
             GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&AsyncWindowProc)));
         if (!previousWindowProc) throw std::runtime_error("install the isolated native completion dispatcher");
@@ -73,6 +77,23 @@ struct NativeDragIntegrationAccess
             !app.readyShellRefresh_ && !app.layoutReload_.Pending();
     }
     static void EndActualGesture(DesktopApp& app) { app.EndDragSession(); }
+    static void BeginExternal(DesktopApp& app, std::size_t count, POINT point)
+    {
+        app.dragDropController_.BeginExternalDrag({static_cast<int>(count), false, false});
+        app.dragSession_.Begin(nullptr, {}, {}, point, point);
+    }
+    static HRESULT DropExternal(DesktopApp& app, IDataObject* source, DWORD keys, POINT point, DWORD& effect)
+    {
+        POINT screen = point;
+        if (!ClientToScreen(completionWindow, &screen)) throw std::runtime_error("convert fixture client point through its own message window");
+        ComPtr<OleDragDropAdapter> adapter;
+        adapter.Attach(new OleDragDropAdapter(&app));
+        return adapter->Drop(source, keys | MK_LBUTTON, {screen.x, screen.y}, &effect);
+    }
+    static bool FileDropIdle(const DesktopApp& app)
+    {
+        return AsyncIdle(app) && app.shellFileOperationInFlight_ == 0 && app.pendingLandingCaches_.empty();
+    }
     static void ThrowAsyncException() { if (asyncException) std::rethrow_exception(asyncException); }
     static DesktopApp& Scene(bool secondary)
     {
@@ -375,6 +396,7 @@ struct NativeDragIntegrationAccess
     }
     static void StopModel(DesktopApp& app)
     {
+        app.StopShellFileOperationWorker();
         UnbindAsync(app);
         app.folderNotifications_.Clear();
         app.StopIconLoader();
@@ -389,6 +411,7 @@ struct NativeDragIntegrationAccess
 #include "native_drag_commit_cases.h"
 #include "native_drag_reload_cases.h"
 #include "native_drag_async_reload_cases.h"
+#include "native_ole_file_cases.h"
 
 namespace
 {
@@ -448,6 +471,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--commit-storage") native_drag_commit_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--reload-storage") native_drag_reload_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--async-reload-storage") native_drag_async_reload_cases::Run();
+        else if (argc == 3 && std::string_view(argv[1]) == "--ole-files") native_ole_file_cases::Run(argv[2]);
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

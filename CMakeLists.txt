@@ -2641,6 +2641,13 @@ if (BUILD_TESTING)
     set_tests_properties(native_drag_async_reload PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+    foreach(GESTURE IN ITEMS copy move alt_link ctrl_shift_link)
+        add_test(NAME native_ole_files_${GESTURE}
+            COMMAND SnowDesktopNativeDragIntegrationTests --ole-files ${GESTURE})
+        set_tests_properties(native_ole_files_${GESTURE} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
+    endforeach()
 
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)
