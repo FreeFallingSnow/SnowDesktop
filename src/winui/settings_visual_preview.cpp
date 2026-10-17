@@ -408,8 +408,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     libraryFixture->entries[6].groupNames.emplace(sampleGroup.id, L"Frost Browser");
     libraryFixture->targetName = L"FrostBrowser.lnk";
     const auto pickerRequests=std::make_shared<std::vector<IconLibraryRequest>>();
-    shell->SetIconLibraryAction([libraryFixture,pickerRequests](IconLibraryRequest request) {
+    const auto libraryReads=std::make_shared<unsigned>(0);
+    shell->SetIconLibraryAction([libraryFixture,pickerRequests,libraryReads](IconLibraryRequest request) {
         if (request.action != "read" && request.action != "refresh" && request.action!="apply" && request.action!="cancel") throw std::runtime_error("preview library mutations are disabled");
+        if(request.action=="read"||request.action=="refresh")++*libraryReads;
         if(request.action=="apply"||request.action=="cancel")pickerRequests->push_back(request);
         auto result=*libraryFixture; result.target=request.target; result.session=1; return result;
     });
@@ -821,9 +823,11 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                     throw std::runtime_error("icon library images timed out: "+std::string(stage));
                 }
             };
-            // Library activation may choose the first pack. This scenario
-            // intentionally verifies all formats before testing group filters.
-            groups.SelectedIndex(0); Settle(shell.as<x::FrameworkElement>());
+            // Inspect the production page's default before touching its filter.
+            // Forcing All here would hide the first-group selection regression.
+            Settle(shell.as<x::FrameworkElement>());
+            if(groups.SelectedIndex()!=0||grid.Items().Size()!=7)
+                throw std::runtime_error("library page did not default to all icons on entry");
             waitForLibraryImages("initial page");
             const auto libraryViewer = shell->FindName(L"PageScrollViewer").as<c::ScrollViewer>();
             const auto librarySurface = shell->FindName(L"PageSurface").as<c::Border>();
@@ -836,6 +840,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             grid.SelectedIndex(0); groups.SelectedIndex(2); Settle(shell.as<x::FrameworkElement>());
             if (grid.Items().Size() != 4 || grid.SelectedItems().Size() != 1)
                 throw std::runtime_error("group filter lost a visible selected resource identity");
+            const auto readsBeforeRefresh=*libraryReads;
+            PumpUntil([&]{return *libraryReads>readsBeforeRefresh;});
+            if(groups.SelectedIndex()!=2||grid.Items().Size()!=4)
+                throw std::runtime_error("library polling reset a manually selected group");
             const auto selectFiltered=PreviewControl<c::AppBarButton>(cards,L"IconLibrarySelectFiltered");
             InvokePreview(selectFiltered);
             if(grid.SelectedItems().Size()!=4)throw std::runtime_error("select filtered icons omitted resources in the current group");
@@ -1010,7 +1018,17 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                         if(const auto bitmap=image.Source().try_as<x::Media::Imaging::BitmapImage>();bitmap&&bitmap.PixelWidth()==96)++loaded;
                 });return currentGrid.Items().Size()==7&&loaded==6;
             });
-            std::ofstream(output / L"icon-library.tsv") << "stream-image-load\tgroup-filter\tstable-selection\tsearch\tempty-hint-removed\tdefault-all\trecommendations\treopen-all\ttarget-refresh\trecommended-first\npassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\n";
+            const auto pageGroups=PreviewControl<c::ComboBox>(shell->FindName(L"PageCards").as<c::StackPanel>(),L"IconLibraryGroups");
+            pageGroups.SelectedIndex(2);Settle(shell.as<x::FrameworkElement>());
+            if(currentGrid.Items().Size()!=4)throw std::runtime_error("library reentry fixture did not select a partial group");
+            if(!shell->Navigate(SettingsRoute::ForPage(SettingsPage::General))||
+                !shell->Navigate(SettingsRoute::ForPage(SettingsPage::IconLibrary)))throw std::runtime_error("library leave/return route failed");
+            Settle(shell.as<x::FrameworkElement>());
+            const auto returnedCards=shell->FindName(L"PageCards").as<c::StackPanel>();
+            if(PreviewControl<c::ComboBox>(returnedCards,L"IconLibraryGroups").SelectedIndex()!=0||
+                PreviewControl<c::GridView>(returnedCards,L"IconLibraryGrid").Items().Size()!=7)
+                throw std::runtime_error("library page did not restore all icons after leaving and returning");
+            std::ofstream(output / L"icon-library.tsv") << "stream-image-load\tgroup-filter\tstable-selection\tsearch\tempty-hint-removed\tdefault-all\trecommendations\treopen-all\ttarget-refresh\trecommended-first\tpage-default-all\tpage-reentry-all\tpage-poll-retention\npassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\n";
         }
         if (page == SettingsPage::WidgetBehavior && expanded)
         {
