@@ -774,7 +774,7 @@ int RunFileBackedDropRegression(bool links, bool effects)
 int wmain(int argc, wchar_t** argv)
 {
     using namespace shell_network_preflight;
-    if (argc == 2)
+    if (argc == 2 || (argc == 3 && std::wstring_view(argv[1]) == L"--internal-desktop-tests"))
     {
         const std::wstring mode(argv[1]);
         if (mode == L"--async-slot-transfer-tests" || mode == L"--drop-placement-tests" ||

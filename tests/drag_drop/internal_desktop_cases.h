@@ -119,6 +119,8 @@ inline void Seed(World& world, size_t count, int owner, bool large)
 
 inline void Run(const std::filesystem::path& root, std::wstring_view section = L"all")
 {
+    Require(section == L"all" || section == L"pages" || section == L"identity" || section == L"rejection",
+        "internal desktop diagnostic section must select a nonempty known scenario group");
     size_t serial = 0;
     if (section == L"all" || section == L"pages")
     for (size_t monitors : {size_t{1}, size_t{2}})
