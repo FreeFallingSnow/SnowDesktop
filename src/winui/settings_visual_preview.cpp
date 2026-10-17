@@ -634,6 +634,21 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 if (!preview_png::Save(output / name, bitmap.PixelWidth(), bitmap.PixelHeight(),
                     {reinterpret_cast<const std::uint32_t*>(bytes), pixels.Length()/4}, imageError)) throw std::runtime_error(imageError);
             };
+            const auto applyAndClose = [&](const c::ContentDialog& opened, const c::Button& button, const char* stage) {
+                std::ofstream(output / L"icon-appearance-stage.txt") << stage;
+                const auto closed = std::make_shared<bool>(false);
+                const auto token = opened.Closed([closed](const auto&, const auto&) { *closed = true; });
+                try {
+                    if (!opened.IsLoaded()) throw std::runtime_error("icon appearance dialog closed before its Apply action");
+                    InvokePreview(button); PumpUntil([&] { return *closed; });
+                }
+                catch (...) {
+                    opened.Closed(token);
+                    try { captureAppearance(opened, L"icon-appearance-apply-failure.png"); } catch (...) {}
+                    throw;
+                }
+                opened.Closed(token); Settle(shell.as<x::FrameworkElement>());
+            };
             auto first = open();
             auto preview = PreviewControl<c::Image>(first, L"IconAppearancePreview");
             if (!preview.Source().try_as<x::Media::Imaging::WriteableBitmap>()) throw std::runtime_error("per-icon preview has no decoded pixels");
@@ -690,7 +705,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             c::Button apply{nullptr};
             Walk(editor, [&](const x::DependencyObject& node) { if (const auto button = node.try_as<c::Button>(); button && button.Name() == L"PrimaryButton") apply = button; });
             if (!apply) throw std::runtime_error("individual appearance Apply button is missing");
-            InvokePreview(apply); PumpUntil([&] { return appearanceFixture->entries.size() == 3; }); Settle(shell.as<x::FrameworkElement>());
+            applyAndClose(editor, apply, "apply-search");
+            if (appearanceFixture->entries.size() != 3) throw std::runtime_error("Search Apply did not save its independent record");
             if (appearanceFixture->entries.back().target != L"control:search" || appearanceFixture->entries.back().settings.mode != 2 ||
                 appearanceFixture->entries.back().settings.preset != IconBeautifyPreset::FrostedGlassDark)
                 throw std::runtime_error("Search mode/theme failed to reach the independent settings action");
@@ -706,7 +722,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 if (const auto button = node.try_as<c::Button>(); button && button.Name() == L"PrimaryButton") followApply = button;
             });
             if (!followApply) throw std::runtime_error("theme inheritance Apply is missing");
-            InvokePreview(followApply); Settle(shell.as<x::FrameworkElement>());
+            applyAndClose(followEditor, followApply, "apply-followed-theme");
             if (!appearanceFixture->entries.back().followGlobalTheme || appearanceFixture->entries.back().settings.mode != 2)
                 throw std::runtime_error("saving followed theme lost independent processing");
             list = PreviewControl<c::ListView>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceList");
