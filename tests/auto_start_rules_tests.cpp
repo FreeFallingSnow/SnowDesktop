@@ -1,5 +1,6 @@
 #include "platform/auto_start_rules.h"
 #include "platform/auto_start_elevation.h"
+#include "platform/auto_start_launch.h"
 #include "platform/deployment_context.h"
 
 #include <cstdlib>
@@ -7,6 +8,7 @@
 #include <string_view>
 
 int RunAutoStartManagerTests();
+int RunAutoStartLaunchProbe();
 
 namespace
 {
@@ -18,15 +20,102 @@ void Check(bool condition, const char* message)
     ++failures;
     std::cerr << "FAIL: " << message << '\n';
 }
+
+void CheckAutoStartLaunchRules()
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    struct Platform
+    {
+        launch::Identity current{{1, 2, 3}, 4, SECURITY_MANDATORY_HIGH_RID, true};
+        launch::Identity desktop{{1, 2, 3}, 4, SECURITY_MANDATORY_MEDIUM_RID, false};
+        int currentQueries = 0, desktopQueries = 0, launches = 0;
+        DWORD queryError = 0, launchError = 0;
+        std::wstring forwarded;
+        launch::Identity CurrentIdentity() { ++currentQueries; return current; }
+        launch::Identity DesktopIdentity()
+        {
+            ++desktopQueries;
+            if (queryError) throw launch::Failure{queryError, L"test desktop query"};
+            return desktop;
+        }
+        DWORD Relaunch(const launch::Identity&, std::wstring_view command)
+        {
+            ++launches;
+            forwarded = command;
+            if (launchError) throw launch::Failure{launchError, L"test process creation"};
+            return 123;
+        }
+    };
+    for (const auto owner : {L"portable", L"packaged", L"steam"})
+    {
+        Platform platform;
+        const std::wstring command = std::wstring(L"\"C:\\Snow Desktop\\host.exe\" ") +
+            L"--snowdesktop-autostart-owner=" + owner + L" --data-directory=\"D:\\用户数据\"";
+        const auto result = launch::Normalize(command, platform);
+        Check(result.handled && result.error == ERROR_SUCCESS && result.childProcessId == 123 &&
+            platform.launches == 1 && platform.forwarded == command,
+            "all deployment login tokens hand off elevated startup with arguments intact");
+    }
+    constexpr auto startup = L"host.exe --snowdesktop-autostart-owner=steam";
+    for (const auto command : {L"host.exe", L"host.exe --snowdesktop-startup-elevated=123",
+        L"host.exe --snowdesktop-autostart-owner=unknown",
+        L"host.exe --data-directory=--snowdesktop-autostart-owner=steam"})
+    {
+        Platform platform;
+        Check(!launch::Normalize(command, platform).handled && platform.currentQueries == 0,
+            "manual launches, privileged helpers and token substrings never opt into handoff");
+    }
+    {
+        Platform platform;
+        platform.current = platform.desktop;
+        Check(!launch::Normalize(startup, platform).handled && platform.desktopQueries == 0,
+            "ordinary login startup does not wait for or relaunch the shell");
+    }
+    for (const bool differentUser : {false, true})
+    {
+        Platform platform;
+        if (differentUser) platform.desktop.user = {9};
+        else ++platform.desktop.session;
+        const auto result = launch::Normalize(startup, platform);
+        Check(result.handled && result.error == ERROR_ACCESS_DENIED && platform.launches == 0,
+            "handoff cannot switch the data owner or interactive session");
+    }
+    {
+        Platform platform;
+        platform.desktop = platform.current;
+        Check(!launch::Normalize(startup, platform).handled && platform.launches == 0,
+            "a desktop already running elevated has no lower-to-higher mismatch to normalize");
+    }
+    {
+        Platform platform;
+        platform.desktop.integrity = SECURITY_MANDATORY_LOW_RID;
+        const auto result = launch::Normalize(startup, platform);
+        Check(result.handled && result.error == ERROR_ACCESS_DENIED && platform.launches == 0,
+            "an unexpectedly restricted shell token is not used for desktop startup");
+    }
+    for (const bool failQuery : {false, true})
+    {
+        Platform platform;
+        if (failQuery) platform.queryError = ERROR_TIMEOUT;
+        else platform.launchError = ERROR_PRIVILEGE_NOT_HELD;
+        const auto result = launch::Normalize(startup, platform);
+        Check(result.handled && result.error ==
+            static_cast<DWORD>(failQuery ? ERROR_TIMEOUT : ERROR_PRIVILEGE_NOT_HELD) && result.childProcessId == 0,
+            "shell and creation failures terminate startup instead of falling back to high integrity");
+    }
+}
 }
 
 int main(int argc, char** argv)
 {
+    if (argc > 1 && std::string_view(argv[1]) == "--autostart-permission-probe")
+        return RunAutoStartLaunchProbe();
     if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
     if (argc > 1 && std::string_view(argv[1]) == "--scheduler")
         return RunAutoStartManagerTests();
     // A test task must remain harmless if a logon happens during the test.
     if (argc > 1) return 0;
+    CheckAutoStartLaunchRules();
     using snowdesktop::BuildPortableAutoStartApprovalPayload;
     using snowdesktop::AutoStartOwnershipNotice;
     using snowdesktop::ClassifyAutoStartOwnershipNotice;

@@ -1,4 +1,5 @@
 #include "platform/auto_start_manager.h"
+#include "platform/auto_start_launch.h"
 #include "platform/deployment_context.h"
 #include "diagnostics/diagnostic_log.h"
 
@@ -8,6 +9,10 @@
 #include <wrl/client.h>
 
 #include <iostream>
+#include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <stdexcept>
 #include <thread>
 #include <vector>
@@ -66,6 +71,127 @@ using snowdesktop::UnifiedAutoStartTaskState;
 void Require(bool value, const char* message)
 {
     if (!value) throw std::runtime_error(message);
+}
+
+HWND permissionTestWindow = nullptr;
+HANDLE permissionTestChild = nullptr;
+snowdesktop::auto_start_launch::Identity creationToken;
+std::wstring creationCommand, creationDirectory;
+
+HWND WINAPI PermissionTestShellWindow() { return permissionTestWindow; }
+
+BOOL WINAPI CreatePermissionTestProcess(HANDLE token, DWORD, LPCWSTR application,
+    LPWSTR command, DWORD flags, LPVOID environment, LPCWSTR directory,
+    LPSTARTUPINFOW startup, LPPROCESS_INFORMATION process)
+{
+    creationToken = snowdesktop::auto_start_launch::ReadIdentity(token);
+    creationCommand = command;
+    creationDirectory = directory;
+    // Substitute only the privileged creation primitive. Real token duplication,
+    // suspended-child verification, resume and child observations remain intact.
+    const BOOL created = CreateProcessW(application, command, nullptr, nullptr,
+        FALSE, flags, environment, directory, startup, process);
+    if (created)
+    {
+        if (permissionTestChild) CloseHandle(permissionTestChild);
+        Require(DuplicateHandle(GetCurrentProcess(), process->hProcess, GetCurrentProcess(),
+            &permissionTestChild, 0, FALSE, DUPLICATE_SAME_ACCESS) != FALSE,
+            "retain isolated permission child until assertions finish");
+    }
+    return created;
+}
+
+void CheckAutoStartNativeHandoff(const std::wstring& executable)
+{
+    namespace launch = snowdesktop::auto_start_launch;
+    permissionTestWindow = CreateWindowExW(0, L"STATIC", L"SnowDesktop permission test shell",
+        0, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+    Require(permissionTestWindow != nullptr, "create hidden isolated shell-token fixture");
+    GUID guid{};
+    Require(SUCCEEDED(CoCreateGuid(&guid)), "create permission report identity");
+    wchar_t suffix[40]{};
+    StringFromGUID2(guid, suffix, 40);
+    const auto directory = std::filesystem::temp_directory_path() /
+        (L"SnowDesktop permission 测试 " + std::wstring(suffix));
+    Require(std::filesystem::create_directory(directory), "create isolated permission report directory");
+    struct Cleanup
+    {
+        std::filesystem::path directory;
+        ~Cleanup()
+        {
+            if (permissionTestChild) CloseHandle(permissionTestChild);
+            permissionTestChild = nullptr;
+            DestroyWindow(permissionTestWindow);
+            permissionTestWindow = nullptr;
+            std::error_code ignored;
+            std::filesystem::remove(directory / L"child report.txt", ignored);
+            std::filesystem::remove(directory, ignored);
+        }
+    } cleanup{directory};
+    struct Platform
+    {
+        launch::NativePlatform native{&CreatePermissionTestProcess, &PermissionTestShellWindow};
+        launch::Identity CurrentIdentity()
+        {
+            auto identity = native.CurrentIdentity();
+            // Supply the reported elevated starting state without showing UAC.
+            identity.elevated = true;
+            identity.integrity = SECURITY_MANDATORY_HIGH_RID;
+            return identity;
+        }
+        launch::Identity DesktopIdentity() { return native.DesktopIdentity(); }
+        DWORD Relaunch(const launch::Identity& desktop, std::wstring_view command)
+        {
+            return native.Relaunch(desktop, command);
+        }
+    } platform;
+    const auto desktop = platform.native.CurrentIdentity();
+    const auto report = directory / L"child report.txt";
+    const std::wstring command = L"\"" + executable + L"\" --autostart-permission-probe \"" +
+        report.wstring() + L"\" --snowdesktop-autostart-owner=steam \"保留 spaces\"";
+    const auto result = launch::Normalize(command, platform);
+    if (desktop.elevated || desktop.integrity >= SECURITY_MANDATORY_HIGH_RID)
+    {
+        Require(!result.handled && !permissionTestChild,
+            "an elevated isolated shell fixture is not mistaken for a normal desktop");
+        std::cout << "Native lower-token handoff unavailable in elevated test context; policy checks remain active\n";
+        return;
+    }
+    Require(result.handled && result.error == ERROR_SUCCESS && result.childProcessId != 0,
+        "reported elevated startup reaches the real token handoff and child resume");
+    Require(launch::SameDesktopUser(creationToken, desktop) &&
+        creationToken.integrity == desktop.integrity && !creationToken.elevated,
+        "creation uses the isolated desktop user's primary token");
+    Require(creationCommand == command && !creationDirectory.empty(),
+        "launch keeps the complete Unicode command and current directory");
+    Require(WaitForSingleObject(permissionTestChild, 10000) == WAIT_OBJECT_0,
+        "resumed isolated child completes");
+    DWORD exitCode = 1;
+    Require(GetExitCodeProcess(permissionTestChild, &exitCode) && exitCode == 0,
+        "resumed child writes its own observed startup inputs");
+    std::ifstream input(report, std::ios::binary);
+    const std::vector<char> bytes((std::istreambuf_iterator<char>(input)), {});
+    input.close();
+    Require(!bytes.empty() && bytes.size() % sizeof(wchar_t) == 0,
+        "child observation is present and complete");
+    std::wstring observed(bytes.size() / sizeof(wchar_t), L'\0');
+    std::memcpy(observed.data(), bytes.data(), bytes.size());
+    const std::wstring expected = command + L"\n" + creationDirectory + L"\n" +
+        std::to_wstring(desktop.session) + L"," + std::to_wstring(desktop.integrity) + L",0";
+    Require(observed == expected,
+        "child independently observes unchanged arguments/directory and normal desktop identity");
+
+    // An unexpected child token must be rejected while its primary thread is
+    // still suspended, before it can write the supplied report or start a host.
+    std::filesystem::remove(report);
+    launch::NativePlatform rejected(&CreatePermissionTestProcess, &PermissionTestShellWindow);
+    auto mismatch = rejected.DesktopIdentity();
+    mismatch.integrity = SECURITY_MANDATORY_HIGH_RID;
+    bool denied = false;
+    try { (void)rejected.Relaunch(mismatch, command); }
+    catch (const launch::Failure& failure) { denied = failure.code == ERROR_ACCESS_DENIED; }
+    Require(denied && WaitForSingleObject(permissionTestChild, 10000) == WAIT_OBJECT_0 &&
+        !std::filesystem::exists(report), "wrong-token child is never resumed and cannot commit side effects");
 }
 
 struct Bstr
@@ -208,6 +334,34 @@ struct DenyRegistryWrites
 };
 }
 
+int RunAutoStartLaunchProbe()
+{
+    int count = 0;
+    LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &count);
+    if (!arguments) return ERROR_INVALID_DATA;
+    struct Arguments
+    {
+        LPWSTR* value;
+        ~Arguments() { LocalFree(value); }
+    } cleanup{arguments};
+    if (count != 5) return ERROR_INVALID_DATA;
+    try
+    {
+        snowdesktop::auto_start_launch::NativePlatform platform;
+        const auto identity = platform.CurrentIdentity();
+        const std::wstring observed = std::wstring(GetCommandLineW()) + L"\n" +
+            std::filesystem::current_path().wstring() + L"\n" +
+            std::to_wstring(identity.session) + L"," + std::to_wstring(identity.integrity) +
+            L"," + std::to_wstring(identity.elevated ? 1 : 0);
+        std::ofstream output(std::filesystem::path(arguments[2]), std::ios::binary);
+        output.write(reinterpret_cast<const char*>(observed.data()),
+            static_cast<std::streamsize>(observed.size() * sizeof(wchar_t)));
+        output.close();
+        return output ? 0 : ERROR_WRITE_FAULT;
+    }
+    catch (...) { return ERROR_GEN_FAILURE; }
+}
+
 int RunAutoStartManagerTests()
 {
     try
@@ -218,6 +372,8 @@ int RunAutoStartManagerTests()
         Require(GetModuleFileNameW(nullptr, executable, 32768) != 0, "get test executable");
         target.executable = executable;
         target.arguments = L"--snowdesktop-autostart-owner=portable";
+
+        CheckAutoStartNativeHandoff(target.executable);
 
         bool failedWithDetails = false;
         std::thread uninitialized([&] {

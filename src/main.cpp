@@ -13,6 +13,7 @@
 
 #include "app/app.h"
 #include "platform/auto_start_elevation.h"
+#include "platform/auto_start_launch.h"
 #include "settings/settings_process.h"
 #include "shell/shell_launch_process.h"
 #include "shell/shell_extension_menu.h"
@@ -357,6 +358,18 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR commandLine, int showCo
 {
     if (const auto result = snowdesktop::taskbar_hook::TryRunTaskbarSymbolHelper()) return *result;
     if (const auto result = snowdesktop::winui::TryRunSettingsVisualPreview()) return *result;
+    // Normalize login-task privileges before the Steam startup channel, data
+    // discovery and the single-instance mutex acquire any process identity.
+    const auto autoStartLaunch = snowdesktop::auto_start_launch::Normalize();
+    if (autoStartLaunch.handled)
+    {
+        const std::wstring message = std::wstring(autoStartLaunch.operation) +
+            L" error=" + std::to_wstring(autoStartLaunch.error) +
+            L" childPid=" + std::to_wstring(autoStartLaunch.childProcessId);
+        WriteDiagnosticLogEntry(message.c_str(), autoStartLaunch.error
+            ? DiagnosticLogLevel::Error : DiagnosticLogLevel::Info);
+        return static_cast<int>(autoStartLaunch.error);
+    }
     snowdesktop::steam_runtime::startup::Begin();
     // Helpers and deployment discovery may access settings before Run.
     // Conservatively prohibit automatic downgrade from this boundary.
