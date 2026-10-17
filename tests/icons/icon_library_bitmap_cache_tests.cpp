@@ -52,6 +52,7 @@ int RunIconLibraryBitmapCacheTests()
     check(!cache.Read("broken", L"item:file"), "confirmed decode failure falls back instead of retaining a misleading source");
     cache.Reconcile({asset(a),asset(b)}, release);
     check(!cache.Contains("broken"), "explicit refresh permits failed sources to be retried");
+    check(cache.Read("b", L"item:file") == second, "display a real replacement before restoring default");
     cache.Forget(L"item:file");
     cache.Begin("new", a, L"item:file", {a,b}, release);
     check(!cache.Read("new", L"item:file"), "restoring default discards the previous replacement transition");
