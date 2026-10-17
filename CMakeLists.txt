@@ -860,6 +860,8 @@ if (MSVC)
     set_property(TARGET SnowDesktopSearchVisibility PROPERTY
         VS_PACKAGE_REFERENCES
             "Microsoft.Windows.CppWinRT_${SNOWDESKTOP_CPPWINRT_PACKAGE_VERSION}")
+    set_property(TARGET SnowDesktopSearchVisibility PROPERTY
+        VS_GLOBAL_MSBuildProjectExtensionsPath "$(ProjectDir)obj\\$(MSBuildProjectName)\\")
     set_property(TARGET SnowDesktopSearchVisibility PROPERTY VS_USER_PROPS
         "${CMAKE_SOURCE_DIR}/cmake/SnowDesktop.ShellView.props")
     set_property(TARGET SnowDesktopSearchVisibility PROPERTY
@@ -998,6 +1000,7 @@ set_property(TARGET SnowDesktop PROPERTY
     VS_WINDOWS_TARGET_PLATFORM_MIN_VERSION "10.0.19041.0")
 set_target_properties(SnowDesktop PROPERTIES
     VS_GLOBAL_ROOTNAMESPACE "SnowDesktop"
+    VS_GLOBAL_MSBuildProjectExtensionsPath "$(ProjectDir)obj\\$(MSBuildProjectName)\\"
     VS_GLOBAL_SnowDesktopSourceDirectory "${CMAKE_SOURCE_DIR}"
     VS_GLOBAL_SnowDesktopWindowsAppSdkPackageVersion
         "${SNOWDESKTOP_WINDOWSAPPSDK_PACKAGE_VERSION}"
@@ -2573,6 +2576,56 @@ if (BUILD_TESTING)
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES ole32 shell32 uuid windowscodecs d2d1 dwrite dxguid
         LABELS integration icon interaction rendering)
+
+    # Execute real native containers and DesktopApp routing without Run(),
+    # HWND creation or desktop automation. The virtual methods reference the
+    # host graph, so link its production sources rather than fake container
+    # methods. Keep XAML generation and runtime deployment in separate trees.
+    set(SNOWDESKTOP_NATIVE_DRAG_SOURCES ${SNOWDESKTOP_SOURCES})
+    list(REMOVE_ITEM SNOWDESKTOP_NATIVE_DRAG_SOURCES src/main.cpp)
+    snowdesktop_add_test(
+        SnowDesktopNativeDragIntegrationTests
+        native_drag_target_integration
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES
+            tests/drag_drop/native_drag_integration_tests.cpp
+            ${SNOWDESKTOP_NATIVE_DRAG_SOURCES}
+        LABELS integration interaction slot widget)
+    foreach(PROPERTY IN ITEMS
+            INCLUDE_DIRECTORIES COMPILE_DEFINITIONS COMPILE_OPTIONS
+            PRECOMPILE_HEADERS LINK_LIBRARIES LINK_OPTIONS
+            VS_PACKAGE_REFERENCES VS_USER_PROPS
+            VS_WINDOWS_TARGET_PLATFORM_MIN_VERSION
+            VS_GLOBAL_ROOTNAMESPACE VS_GLOBAL_SnowDesktopSourceDirectory
+            VS_GLOBAL_SnowDesktopWindowsAppSdkPackageVersion
+            VS_GLOBAL_SnowDesktopCppWinRtPackageVersion
+            VS_GLOBAL_AppContainerApplication VS_GLOBAL_AppxPackage
+            VS_GLOBAL_CppWinRTOptimized VS_GLOBAL_CppWinRTRootNamespaceAutoMerge
+            VS_GLOBAL_EnablePreviewMsixTooling
+            VS_GLOBAL_TargetPlatformMinVersion VS_GLOBAL_TargetPlatformVersion
+            VS_GLOBAL_UseCrtSDKReferenceStaticWarning VS_GLOBAL_UseWinUI
+            VS_GLOBAL_WindowsAppSDKSelfContained
+            VS_GLOBAL_WindowsAppSdkUndockedRegFreeWinRTInitialize
+            VS_GLOBAL_WindowsPackageType)
+        get_target_property(HOST_VALUE SnowDesktop ${PROPERTY})
+        if (NOT HOST_VALUE STREQUAL "HOST_VALUE-NOTFOUND")
+            string(REPLACE "generated/xaml/" "generated/native-drag-host/xaml/"
+                HOST_VALUE "${HOST_VALUE}")
+            set_property(TARGET SnowDesktopNativeDragIntegrationTests
+                PROPERTY ${PROPERTY} "${HOST_VALUE}")
+        endif()
+    endforeach()
+    set_target_properties(SnowDesktopNativeDragIntegrationTests PROPERTIES
+        VS_GLOBAL_MSBuildProjectExtensionsPath "$(ProjectDir)obj\\$(MSBuildProjectName)\\"
+        VS_GLOBAL_GeneratedFilesDir "generated\\native-drag-host\\winui\\$(Configuration)\\"
+        VS_GLOBAL_XamlGeneratedOutputPath
+            "$(ProjectDir)generated\\native-drag-host\\xaml\\$(Configuration)\\"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
+        ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
+        PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
+        COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host")
+    set_tests_properties(native_drag_target_integration PROPERTIES TIMEOUT 90)
 
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)

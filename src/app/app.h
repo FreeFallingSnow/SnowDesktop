@@ -583,6 +583,7 @@ public:
     friend class ScrollingItemWidget;
     friend class LuaScript;
     friend class GuideWidget;
+    friend struct NativeDragIntegrationAccess;
 
     /**
      * @brief 快速导航面板中的条目结构体。

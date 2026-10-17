@@ -16,7 +16,7 @@
     <XamlLanguage>CppWinRT</XamlLanguage>
     <ManagedAssembly>false</ManagedAssembly>
     <DefaultLanguageSourceExtension>.cpp</DefaultLanguageSourceExtension>
-    <XamlGeneratedOutputPath>$(ProjectDir)generated\xaml\$(Configuration)\</XamlGeneratedOutputPath>
+    <XamlGeneratedOutputPath Condition="'$(XamlGeneratedOutputPath)' == ''">$(ProjectDir)generated\xaml\$(Configuration)\</XamlGeneratedOutputPath>
     <SnowDesktopNuGetPackageRoot Condition="'$(NuGetPackageRoot)' != ''">$(NuGetPackageRoot)</SnowDesktopNuGetPackageRoot>
     <SnowDesktopNuGetPackageRoot Condition="'$(SnowDesktopNuGetPackageRoot)' == '' and '$(RestorePackagesPath)' != ''">$(RestorePackagesPath)</SnowDesktopNuGetPackageRoot>
     <SnowDesktopNuGetPackageRoot Condition="'$(SnowDesktopNuGetPackageRoot)' == '' and '$(NUGET_PACKAGES)' != ''">$(NUGET_PACKAGES)</SnowDesktopNuGetPackageRoot>
