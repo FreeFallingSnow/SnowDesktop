@@ -5,6 +5,7 @@
 #include "drag_drop/external_file_destination.h"
 #include "drag_drop/desktop_file_materialization.h"
 #include "drag_drop/file_drop_execution.h"
+#include "drag_drop/drop_pipeline.h"
 #include "drag_drop/file_backed_drop_request.h"
 #include <wrl/implements.h>
 #include <algorithm>
@@ -24,6 +25,12 @@ inline constexpr UINT completedMessage = WM_APP + 73;
 inline void Require(bool value, const char* message)
 {
     if (!value) throw std::runtime_error(message);
+}
+
+inline std::wstring Normalize(std::wstring value)
+{
+    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t c) { return static_cast<wchar_t>(towupper(c)); });
+    return value;
 }
 
 // Explorer is the external boundary. It remains apartment-bound: GetData and
@@ -191,6 +198,15 @@ struct Batch
     bool reverseOutputs = false;
     int refreshes = 0;
     std::vector<std::wstring> forgottenKeys;
+    std::vector<DesktopWidget> widgets;
+    std::vector<DockEntry> dock;
+    bool programsEnabled = false, confirmPrograms = false, confirmConversion = false;
+    bool programSaveAccepted = true, exiting = false, conversionPrograms = false;
+    int programPrompts = 0, conversionPrompts = 0, programSaveAttempts = 0;
+    int layoutSaves = 0, convertedLayouts = 0, viewsCreated = 0, viewsReleased = 0;
+    int dockChanges = 0, collectedRefreshes = 0;
+    std::function<void(bool)> onConfirmation;
+    std::function<void()> savePrograms;
 };
 
 struct Harness
@@ -244,7 +260,7 @@ struct Harness
             services.dockHasCapacity = [&](size_t) { return batch.dockCapacity; };
             services.afterPin = [&] { ++batch.pinSaves; };
             services.fileName = [](const auto& path) { return std::filesystem::path(path).filename().wstring(); };
-            services.execute = [&](const DragSourceList& sources, const DropPreviewList& preview,
+            auto executeFiles = [&, fileName = services.fileName, pin = services.pinExisting, afterPin = services.afterPin](const DragSourceList& sources, const DropPreviewList& preview,
                 auto done, bool sync, auto outputs) {
                 ++batch.executions;
                 if (batch.capturePlan) batch.capturePlan(sources, preview);
@@ -259,10 +275,7 @@ struct Harness
                 };
                 materialization.isStaging = [](const auto&) { return false; };
                 materialization.pathsEqual = [](const auto& a, const auto& b) { return _wcsicmp(a.c_str(), b.c_str()) == 0; };
-                materialization.normalize = [](std::wstring value) {
-                    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t c) { return static_cast<wchar_t>(towupper(c)); });
-                    return value;
-                };
+                materialization.normalize = Normalize;
                 materialization.copyName = [](const auto& stem, const auto& extension, int index) {
                     return stem + L" copy " + std::to_wstring(index) + extension;
                 };
@@ -274,7 +287,7 @@ struct Harness
                         normalize,
                         [](const auto& path) { return std::filesystem::path(path).filename().wstring(); });
                 };
-                execution.fileName = services.fileName;
+                execution.fileName = fileName;
                 execution.pathsEqual = materialization.pathsEqual;
                 execution.desktop = [&, materialization](const auto& list, DropAction action, bool duplicate,
                     auto finishedRequest, bool synchronous, auto result) {
@@ -286,12 +299,56 @@ struct Harness
                     return desktop_file_materialization::MaterializeFolder(list, directory, action, materialization,
                         std::move(finishedRequest), synchronous, std::move(result));
                 };
-                execution.pin = services.pinExisting;
-                execution.savePins = services.afterPin;
+                execution.pin = pin;
+                execution.savePins = afterPin;
                 execution.forgetMovedKeys = [&](const auto& keys) { batch.forgottenKeys = keys; };
                 execution.refresh = [&] { ++batch.refreshes; };
                 return file_drop_execution::Execute(sources, preview, *batch.placements,
                     std::move(execution), std::move(done), sync, std::move(outputs));
+            };
+            services.execute = [&, executeFiles](const auto& sources, const auto& preview, auto done, bool sync, auto outputs) {
+                drop_pipeline::Services pipeline;
+                pipeline.containsPrograms = [](const DragSourceList& list) {
+                    return drop_pipeline::ContainsPrograms(list, {}, [](const auto&) -> DesktopItem* { return nullptr; }, Normalize);
+                };
+                pipeline.confirmConversion = [&](bool programs) {
+                    ++batch.conversionPrompts; batch.conversionPrograms = programs;
+                    if (batch.onConfirmation) batch.onConfirmation(true);
+                    return batch.confirmConversion;
+                };
+                pipeline.confirmPrograms = [&] {
+                    ++batch.programPrompts;
+                    if (batch.onConfirmation) batch.onConfirmation(false);
+                    return batch.confirmPrograms;
+                };
+                pipeline.exiting = [&] { return batch.exiting; };
+                pipeline.runtimeLive = [](Container*) { return true; };
+                pipeline.createConvertedView = [&](DesktopWidget*) {
+                    ++batch.viewsCreated;
+                    std::shared_ptr<int> lifetime(new int(1), [&batch](int* value) { ++batch.viewsReleased; delete value; });
+                    return drop_pipeline::ConvertedView{lifetime, nullptr};
+                };
+                pipeline.saveLayout = [&] { ++batch.layoutSaves; };
+                pipeline.convertedLayout = [&] { ++batch.convertedLayouts; ++batch.layoutSaves; };
+                pipeline.programsEnabled = [&] { return batch.programsEnabled; };
+                pipeline.enablePrograms = [&] {
+                    ++batch.programSaveAttempts;
+                    if (!batch.programSaveAccepted) return false;
+                    if (batch.savePrograms) batch.savePrograms();
+                    batch.programsEnabled = true;
+                    return true;
+                };
+                pipeline.autoCollectSource = [&](const auto& list) { return drop_pipeline::AutoCollectSource(list, batch.widgets); };
+                pipeline.normalize = Normalize;
+                pipeline.refreshCollectedKeys = [&] { ++batch.collectedRefreshes; };
+                pipeline.dockChanged = [&] { ++batch.dockChanges; };
+                pipeline.files = executeFiles;
+                pipeline.internal = [](const auto&, const auto&) -> bool {
+                    throw std::runtime_error("external files cannot execute the internal-only model route");
+                };
+                pipeline.collectionTitle = L"Collection"; pipeline.filesTitle = L"Desktop files";
+                return drop_pipeline::Execute(sources, preview, batch.widgets, batch.dock, pipeline,
+                    std::move(done), sync, std::move(outputs));
             };
             external_file_destination::Destination destination;
             if (batch.captured) destination = *batch.captured;

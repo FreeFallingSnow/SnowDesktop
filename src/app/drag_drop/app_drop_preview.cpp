@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "drag_drop/drop_pipeline.h"
 #include "widgets/collection_group_rules.h"
 #include "drag_drop/empty_group_drop_rules.h"
 #include "widgets/single_cell_widget_rules.h"
@@ -348,15 +349,7 @@ bool DesktopApp::IsDropFileBacked(const DragSourceList& sourceList,
 bool DesktopApp::IsAutoCollectFileCategorySource(
     const DragSourceList& sourceList) const
 {
-    if (!sourceList.hasOriginWidget ||
-        sourceList.originWidgetType != DesktopWidgetType::FileCategories)
-        return false;
-
-    auto it = std::find_if(widgets_.begin(), widgets_.end(),
-        [&](const DesktopWidget& widget) {
-            return widget.id == sourceList.originWidgetId;
-        });
-    return it != widgets_.end() && it->autoCollect;
+    return snowdesktop::drop_pipeline::AutoCollectSource(sourceList, widgets_);
 }
 
 /**

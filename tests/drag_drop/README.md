@@ -7,11 +7,12 @@
 | 执行入口 | 已接入的生产行为 | 替换或尚未执行的边界 |
 | --- | --- | --- |
 | `external_desktop_cases.h` / `shell_allowed_effect_requests` | 生产 `delayed_desktop_file_drop::Dispatch`；四种显式修饰键、八种来源效果集合；单文件及文件加目录；真实 Shell 请求、内容、源保留和链接目标 | 来源异步能力与 DesktopApp 提交回调；未执行菜单、跨线程读取或布局 |
-| `async_slot_transfer_cases.h` / `shell_async_slot_transfers` | 宿主直接调用的 `external_slot_transfer::Transfer`、OLE 来源租约、真实 COM 封送、STA 读取、完成消息所有权、`external_file_destination::Commit`、`file_drop_execution::Execute`、`desktop_file_materialization` 的实际桌面/文件夹请求与 Shell 提交；成功、失败、停止、投递失败、取消、逆序完成、拥有内容的释放、目标变化、Dock 容量复核和生成文件后的固定失败 | Explorer 数据源、解码、桌面目录与预览几何、文案和 Dock 固定存储为服务输入；程序收纳/空组确认等 `ExecuteDropPipeline` 前置策略未串联；消息接收窗口为 message-only HWND，未执行整个 DesktopApp 消息分派和界面副作用 |
+| `async_slot_transfer_cases.h` / `shell_async_slot_transfers` | 宿主直接调用的 `external_slot_transfer::Transfer`、OLE 来源租约、真实 COM 封送、STA 读取、完成消息所有权、`external_file_destination::Commit`、`drop_pipeline::Execute`、`file_drop_execution::Execute`、`desktop_file_materialization` 的实际桌面/文件夹请求与 Shell 提交；成功、失败、停止、投递失败、取消、逆序完成、拥有内容的释放、目标变化、Dock 容量复核和生成文件后的固定失败 | Explorer 数据源、解码、桌面目录与预览几何、原生容器存活、文案和 Dock 固定存储为服务输入；消息接收窗口为 message-only HWND，未执行整个 DesktopApp 消息分派和界面副作用 |
 | `placement_cases.h` / `shell_drop_placement_storage` | 共用正常文件提交 → `file_drop_execution::Execute` 实际构造快照、安排物化并按真实输出发布 → 宿主共用的文件夹/逻辑归属与插入处理 → 实际组件布局写入、原子存储、解析及位置/成员恢复；同名冲突、逆序、部分成功、拒绝及越界分配 | 悬停目标情境与新枚举记录由夹具提供；接收策略是显式服务输入；未执行悬停捕获、命中、完整容器重建和整个 DesktopApp 重新加载 |
 | `right_drag_file_cases.h` / `shell_right_drag_files` | 宿主共用的 `right_drag_actions::Build/Select/SelectedKeys` → 延迟桌面文件分派 → 共用异步传输和正常文件提交 → 真实 Shell IO；三种动作、8 种允许效果、单选/文件加目录、取消和关闭 | 目标事实由夹具提供；命令来自可控的菜单选择；未执行实际菜单显示、鼠标消息、菜单期间重入、悬停命中和完整宿主适配 |
 | `member_order_cases.h` / `shell_member_order_storage` | 共用映射成员重排及刷新、实际文件元数据排序、`widget_pair_drop` 成组事务、组件布局原子存储及恢复；A04/A05 的独立字面顺序和文件不变性 | 来源索引、成组手势及目标模型由夹具提供；未执行拖动命中、标签重建与显示 |
 | `lua_ingress_cases.cpp` / `lua_file_ingress_matrix` | 实际 `LuaLogicalSlotContainer` 接收与最终提交限制、真实 `LogicalSlotModel` 的 Bind/Export/revision、实际源文件；A06 多文件拒绝及单项成功对照 | 文件项目包装和引擎 surface provider 为夹具；未执行外部 OLE 到 Lua 的整个宿主路由 |
+| `pipeline_decision_cases.h` / `shell_drop_pipeline_decisions` | 实际来源程序分类、宿主共用的转换/收纳决策顺序、确认后稳定目标重检、空组原地转换、临时视图生命周期和文件分派 → 真实文件结果、成员恢复及布局存储；确认/取消、已启用、设置保存失败和对话期间目标变化 | 对话框返回、设置保存结果、原生视图与容器存活为受控服务；未执行对话框 UI、设置控制器草稿重载或整个宿主容器重建 |
 
 `placement_cases.h` 的情境表将组件类型、页面/入口位置、图标/列表形态和分组关系分别登记。执行层验证已接收目标快照的文件后果和归属，不据此声称这些形态的命中或接收规则已验证。网格占用、分配及最终落点调用宿主共用实现；冲突回退只要求合法、不重叠，Q08 尚未定义的精确回退顺序不作为通过标准。
 
@@ -26,6 +27,8 @@
 A04 至 A06 另有定向对照：恢复空选择清除排序、反转移动成员顺序、忽略持久化手动顺序、成组重复一个子组件 ID、放开 Lua 最终多项提交，分别导致空拖不变性、`B,D,A,C`、重新加载顺序、子组件身份、原生最终拒绝断言失败。Lua 初次诊断预期较后的模型不变性断言，实际在更早的 A06 最终提交拒绝处失败；原始匹配失败记录保留，随后以同一二进制核对该实际业务失败。没有把编译错误或诊断脚本的匹配错误计作产品回归。
 
 Dock 文件后果与固定结果分别检查：同步/异步、单文件/文件加目录，先生成真实可解析的快捷方式，再由固定服务成功或拒绝。固定失败必须报告整次目标提交失败，保留原文件及已经生成的可用输出，并刷新这些输出；固定成功按捕获源顺序和插入边界提交，不能采用回执顺序。恢复原来忽略固定失败的完成分支后，该断言退出 1；候选异步模式退出 0。此证据覆盖共用文件计划和 OLE 完成，不代表实际 Dock 存储服务或整个宿主交互已验收。
+
+B15/B16 使用 U12/U13 的确认文案作为独立预期：两类空组遇到普通文件转换为桌面文件、遇到程序转换为集合，保留身份、位置、大小及独立设置；取消不得转换或提交文件。程序收纳仅在确认且设置保存成功后继续，已启用及普通文件不重复询问。同步/异步、单选/文件加目录均进入共用分派和真实文件提交，随后核对逻辑成员与布局存储。恢复程序确认后缺少组件类型复核的原风险、忽略转换取消、忽略收纳取消三个副本均在各自业务断言退出 1；候选决策模式退出 0。原生运行时容器存活仍为服务边界，不把模型目标检查扩称为全部容器生命周期验证。
 
 分析日期：2026-10-17。基线：`release/v1.0.11.0`，开始审阅时 HEAD `5dce86b061509aeabbe195678d4f263f49d2bb7f`，包含当前工作区未提交改动。审阅期间其他任务仍在开发；结束时提交、差异范围和相关文件指纹见原始审阅记录 `.codex-probes/drag-drop-matrix/source-evidence.json`（本地证据，不是测试输入）。
 
