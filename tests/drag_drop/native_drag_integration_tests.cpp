@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "app/shell/shell_refresh_snapshot.h"
 
 #include <cstdlib>
 #include <iostream>
@@ -10,6 +11,7 @@
 // destructor, whose global Shell shutdown is outside this windowless test.
 struct NativeDragIntegrationAccess
 {
+    static inline HWND completionWindow = nullptr;
     static DesktopApp& Scene(bool secondary)
     {
         auto& app = *new DesktopApp;
@@ -82,7 +84,7 @@ struct NativeDragIntegrationAccess
 
     static void Resolve(DesktopApp& app, POINT point)
     {
-        if (app.hwnd_ || app.inputHwnd_ || app.controlHwnd_)
+        if ((app.hwnd_ && app.hwnd_ != completionWindow) || app.inputHwnd_ || app.controlHwnd_)
             throw std::runtime_error("windowless native test must never initialize a host window");
         app.ResolveCurrentDragTargetAt(point);
     }
@@ -92,7 +94,157 @@ struct NativeDragIntegrationAccess
     static HitRegion Region(const DesktopApp& app) { return app.dragSession_.TargetRegion(); }
     static Container* Desktop(const DesktopApp& app) { return app.containers_.front().get(); }
     static void Hide(DesktopApp& app) { app.desktopIconsHidden_ = true; }
+
+    static void ConfigureModel(DesktopApp& app, const std::filesystem::path& layout)
+    {
+        app.items_oo_.clear(); app.containers_.clear(); app.items_.clear();
+        app.hwnd_ = completionWindow;
+        app.initializationExperimentDirectory_ = layout;
+        app.generalSettings_.dockEnabled = false;
+        app.generalSettings_.statusBar.enabled = false;
+        app.categorySettings_.collectProgramsEnabled = true;
+        app.gridPages_.front().id = L"__page:1";
+        app.savedPageIds_ = {L"__page:1"};
+        app.savedPageColumns_[L"__page:1"] = 4;
+        app.savedPageRows_[L"__page:1"] = 3;
+        app.savedPageNames_[L"__page:1"] = L"Model page";
+        app.lastMonitorPageId_.clear();
+    }
+
+    static DesktopItem FileItem(const std::filesystem::path& path)
+    {
+        DesktopItem item;
+        item.name = path.filename().wstring();
+        item.parsingName = path.wstring();
+        item.layoutKey = ToUpperInvariant(path.wstring());
+        item.gridSpan = {1, 1};
+        item.iconBitmap = CreateBitmap(512, 512, 1, 32, nullptr);
+        if (!item.iconBitmap) throw std::runtime_error("native fixture bitmap allocation failed");
+        item.iconBitmapSize = {512, 512};
+        item.iconState = IconState::FullQuality;
+        return item;
+    }
+
+    // source: 0 = free desktop, 1 = collection, 2 = manual desktop-files widget.
+    static void PopulateModel(DesktopApp& app, const std::vector<std::filesystem::path>& files, int source)
+    {
+        app.items_oo_.clear(); app.containers_.clear(); app.items_.clear();
+        for (std::size_t i = 0; i < files.size(); ++i)
+        {
+            auto item = FileItem(files[i]);
+            item.gridCell = {L"__page:1", static_cast<int>(i) * 2, 0};
+            item.selected = true;
+            app.items_.push_back(std::move(item));
+        }
+        if (source)
+        {
+            DesktopWidget widget;
+            widget.id = L"native-origin";
+            widget.type = source == 1 ? DesktopWidgetType::Collection : DesktopWidgetType::FileCategories;
+            widget.title = L"Origin";
+            widget.gridCell = {L"__page:1", 0, 0};
+            widget.gridSpan = {1, 1};
+            widget.autoCollect = false;
+            for (const auto& item : app.items_) widget.itemKeys.push_back(item.layoutKey);
+            app.widgets_.push_back(std::move(widget));
+        }
+        app.desktopItemsReady_ = true;
+        app.RefreshDesktopItemIndexCache();
+        app.LayoutItems();
+    }
+
+    static void BeginModel(DesktopApp& app, int source, std::size_t count)
+    {
+        for (std::size_t i = 0; i < app.items_.size(); ++i) app.items_[i].selected = i < count;
+        Container* origin = app.containers_.front().get();
+        if (source)
+            for (const auto& container : app.containers_)
+                if (auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+                    widget && widget->GetWidgetData()->id == L"native-origin") origin = widget;
+        auto items = origin->GetSelectedItems();
+        if (items.size() != count) throw std::runtime_error("native source must expose the selected real members");
+        auto captured = app.BuildDragSourceList(items, origin);
+        const LONG left = app.gridPages_.front().bounds.left;
+        app.dragGroupOriginX_ = left + 10;
+        app.dragGroupOriginY_ = 10;
+        app.mouseDownPoint_ = {left + 50, 50};
+        app.dragSession_.Begin(origin, std::move(items), std::move(captured), {left + 50, 50}, {left + 50, 50});
+    }
+
+    static DropPreviewList ObserveModelPreview(DesktopApp& app, POINT point)
+    {
+        Resolve(app, point);
+        return app.GetCachedDesktopDropPreview(true, app.dragSession_.SourceList(),
+            Target(app), TargetSlot(app), Region(app), 0, point);
+    }
+
+    static void DropModel(DesktopApp& app)
+    {
+        auto* target = Target(app);
+        auto* slot = TargetSlot(app);
+        auto* origin = app.dragSession_.Source();
+        const auto region = Region(app);
+        const auto items = app.dragSession_.Items();
+        if (!dynamic_cast<DesktopGrid*>(target) || region == HitRegion::Handoff)
+            throw std::runtime_error("model fixture must submit through the actual non-handoff desktop target");
+        app.dragSession_.DeactivateForDrop();
+        target->OnItemsDropped(items, origin, slot, region, 0);
+        app.dragSession_.End();
+    }
+
+    static bool Save(DesktopApp& app) { return app.SaveLayoutSlots(false); }
+    static bool GuardSave(DesktopApp& app, int guard)
+    {
+        const bool ready = app.desktopItemsReady_;
+        std::vector<GridPage> pages;
+        if (guard == 0) app.desktopItemsReady_ = false;
+        if (guard == 1) pages.swap(app.gridPages_);
+        if (guard == 2) app.layoutReload_.Request();
+        const bool result = Save(app);
+        app.desktopItemsReady_ = ready;
+        if (guard == 1) pages.swap(app.gridPages_);
+        if (guard == 2) app.layoutReload_ = {};
+        return result;
+    }
+    static void Load(DesktopApp& app) { app.LoadLayoutSlots(); }
+    static void ReadSnapshot(DesktopApp& app, const std::vector<std::filesystem::path>& files, bool complete)
+    {
+        snowdesktop::shell_refresh::Snapshot snapshot;
+        snapshot.desktopComplete = complete;
+        for (const auto& file : files) snapshot.desktopItems.push_back(FileItem(file));
+        app.LoadDesktopItems(&snapshot, true);
+        if (complete) app.LayoutItems();
+    }
+    static const auto& Items(const DesktopApp& app) { return app.items_; }
+    static const auto& Widgets(const DesktopApp& app) { return app.widgets_; }
+    static const auto& Pages(const DesktopApp& app) { return app.gridPages_; }
+    static std::wstring LayoutPath(const DesktopApp& app) { return app.GetLayoutPath(); }
+    static bool Ready(const DesktopApp& app) { return app.desktopItemsReady_; }
+    static RECT SlotFrame(DesktopApp& app, int column, int row)
+    {
+        const auto& slots = app.containers_.front()->GetSlots();
+        const auto index = static_cast<std::size_t>(column + row * 4);
+        if (index >= slots.size()) throw std::runtime_error("native committed cell must retain a real runtime slot");
+        return slots[index]->GetBounds();
+    }
+    static bool HasVisibleIcon(const DesktopApp& app, const DesktopItem& item)
+    {
+        return std::count_if(app.items_oo_.begin(), app.items_oo_.end(), [&](const auto& object) {
+            const auto* icon = dynamic_cast<const DesktopIcon*>(object.get());
+            return icon && icon->GetDesktopItem() == &item && icon->GetContainer() == app.containers_.front().get();
+        }) == 1;
+    }
+    static void StopModel(DesktopApp& app)
+    {
+        app.folderNotifications_.Clear();
+        app.StopIconLoader();
+        app.appIndexWork_.Stop();
+        app.items_oo_.clear(); app.containers_.clear(); app.items_.clear(); app.widgets_.clear();
+        app.hwnd_ = nullptr;
+    }
 };
+
+#include "native_drag_commit_cases.h"
 
 namespace
 {
@@ -144,11 +296,13 @@ void RunTargets()
 }
 }
 
-int main()
+int main(int argc, char** argv)
 {
     try
     {
-        RunTargets();
+        if (argc == 1) RunTargets();
+        else if (argc == 2 && std::string_view(argv[1]) == "--commit-storage") native_drag_commit_cases::Run();
+        else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }
     catch (const std::exception& error)

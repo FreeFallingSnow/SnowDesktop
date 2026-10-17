@@ -2626,6 +2626,11 @@ if (BUILD_TESTING)
         PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host"
         COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/$<CONFIG>/tests/native-host")
     set_tests_properties(native_drag_target_integration PROPERTIES TIMEOUT 90)
+    add_test(NAME native_drag_commit_storage
+        COMMAND SnowDesktopNativeDragIntegrationTests --commit-storage)
+    set_tests_properties(native_drag_commit_storage PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
 
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)
