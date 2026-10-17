@@ -75,37 +75,44 @@ int RunIconAppearanceTests()
     noUpscale.shape = IconBeautifyShape::ContinuousRounded; noUpscale.outlineEnabled = false; noUpscale.shadowStrength = 0;
     noUpscale.textureHighlightStrength = noUpscale.textureShadeStrength = noUpscale.textureEdgeHighlight = 0;
     noUpscale.edgeHighlightEnabled = false; noUpscale.filterEnabled = false;
-    // A padded, undersized source intentionally fails automatic plate detection.
-    // Forced fill must keep its offset mark at the same coordinates and use the
-    // contour background, even with custom/transparent theme backgrounds.
-    constexpr std::uint32_t green = 0xff208050, red = 0xffe04030;
-    std::vector<std::uint32_t> padded(64 * 64, 0x00ffffff);
+    // Distinguish explicit theme compositing from automatic plate recognition.
+    constexpr std::uint32_t green = 0xff208050, red = 0xffe04030, blue = 0xff0000ff;
+    std::vector<std::uint32_t> padded(64 * 64, 0);
     for (int y = 20; y < 44; ++y) for (int x = 24; x < 40; ++x) padded[y * 64 + x] = green;
     for (int y = 25; y < 29; ++y) for (int x = 27; x < 31; ++x) padded[y * 64 + x] = red;
-    check(!icon_beautify::DetectPlateFill(padded, 64, 64), "forced-fill regression source bypasses automatic plate recognition");
-    const auto forced = icon_beautify::Render(padded, 64, 64, noUpscale);
-    auto compactFill = noUpscale; compactFill.contentScale = .5f;
-    auto largeFill = noUpscale; largeFill.contentScale = .9f;
-    const auto redCount = std::count(forced.begin(), forced.end(), red);
-    check(forced[10 * 64 + 32] == green && forced[25 * 64 + 27] == red && redCount == 16 &&
-        forced == icon_beautify::Render(padded, 64, 64, compactFill) && forced == icon_beautify::Render(padded, 64, 64, largeFill),
-        "no-enlargement forces sampled fill while retaining original glyph size, offset and canvas");
-    auto smartFill = noUpscale; smartFill.mode = 0;
-    check(forced != icon_beautify::Render(padded, 64, 64, smartFill),
-        "negative control distinguishes forced sampled fill from ordinary smart normalization");
-    check(forced == icon_beautify::RenderPreview(padded, 64, 64, noUpscale, {}, 2),
-        "supersampled settings previews use the same force-fill composition");
-    std::vector<std::uint32_t> oversized(64 * 64, green);
-    oversized[32 * 64 + 4] = red;
-    check(icon_beautify::Render(oversized, 64, 64, noUpscale)[32 * 64 + 4] == red,
-        "no-enlargement also avoids shrinking oversized source content");
-    auto translucent = padded;
-    for (auto& pixel : translucent) if (pixel >> 24) pixel = 0x80104028;
-    check(icon_beautify::Render(translucent, 64, 64, noUpscale)[10 * 64 + 32] == green,
-        "sampled fill unpremultiplies translucent edge colors and ignores hidden transparent RGB");
-    auto disabledFill = noUpscale; disabledFill.enabled = false;
-    check(icon_beautify::Render(padded, 64, 64, disabledFill) == padded,
-        "explicit None preserves source pixels instead of forcing a fill");
+    auto themeOnly = noUpscale; themeOnly.backgroundOpacity = 1;
+    themeOnly.backgroundStartR = themeOnly.backgroundEndR = 0;
+    themeOnly.backgroundStartG = themeOnly.backgroundEndG = 0;
+    themeOnly.backgroundStartB = themeOnly.backgroundEndB = 1;
+    const auto unscaled = icon_beautify::Render(padded, 64, 64, themeOnly, icon_beautify::EdgeColor{32,128,80});
+    auto compactFill = themeOnly; compactFill.contentScale = .5f;
+    auto largeFill = themeOnly; largeFill.contentScale = .9f;
+    check(unscaled[10 * 64 + 32] == blue && unscaled[25 * 64 + 27] == red &&
+        std::count(unscaled.begin(), unscaled.end(), red) == 16 &&
+        unscaled == icon_beautify::Render(padded, 64, 64, compactFill) && unscaled == icon_beautify::Render(padded, 64, 64, largeFill),
+        "add-theme-background retains source canvas, glyph size and offset while ignoring automatic plate colors");
+    auto shrink = themeOnly; shrink.mode = 1;
+    const auto shrunk = icon_beautify::Render(padded, 64, 64, shrink, icon_beautify::EdgeColor{32,128,80});
+    const auto shrunkMark = std::count(shrunk.begin(), shrunk.end(), red);
+    check(shrunk[10 * 64 + 32] == blue && shrunkMark > 0 && shrunkMark < 16,
+        "add-theme-and-shrink scales the original canvas instead of enlarging a sparse visible glyph");
+    auto automatic = themeOnly; automatic.mode = 0;
+    check(icon_beautify::Render(padded, 64, 64, automatic, icon_beautify::EdgeColor{32,128,80})[10 * 64 + 32] == green,
+        "smart mode still uses a recognized original background rather than the selected theme color");
+    check(unscaled == icon_beautify::RenderPreview(padded, 64, 64, themeOnly, {}, 2),
+        "supersampled settings previews share unscaled theme compositing");
+    auto disabled = themeOnly; disabled.enabled = false;
+    check(icon_beautify::Render(padded, 64, 64, disabled) == padded, "explicit None preserves the original source");
+    check(icon_beautify::NormalizeGlobal(themeOnly).mode == 0 && icon_beautify::Normalize(themeOnly).mode == 2,
+        "legacy third global mode falls back to smart while per-icon add-background remains available");
+    auto inherited = own; inherited.followGlobalTheme = true; inherited.settings.mode = 2;
+    const auto inheritedStyle = rules::Resolve(global, &inherited, false, false);
+    auto globalChanged = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassLight); globalChanged.mode = 1;
+    const auto refreshed = rules::Resolve(globalChanged, &inherited, false, false);
+    check(inheritedStyle.mode == 2 && refreshed.mode == 2 && refreshed.preset == globalChanged.preset &&
+        refreshed.backgroundStartR == globalChanged.backgroundStartR &&
+        !rules::Resolve(disabledGlobal, &inherited, false, false).enabled,
+        "independent processing follows live global theme and enablement without following its processing mode");
     JsonValue local; IconBeautifySettings roundtrip;
     check(ParseJson(rules::EncodeStyle(noUpscale), local) && rules::DecodeStyle(local, roundtrip) && roundtrip.mode == 2,
         "no-enlargement survives layout persistence rather than becoming smart or shrink-all on restart");

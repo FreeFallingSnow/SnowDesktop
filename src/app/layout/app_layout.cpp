@@ -312,6 +312,7 @@ void DesktopApp::LoadLayoutSlots()
     if (document.iconBeautifyFilterMode) iconBeautifySettings_.filterMode = *document.iconBeautifyFilterMode;
     iconBeautifySettings_ = snowdesktop::icon_beautify::ResolvePersistedSettings(
         iconBeautifySettings_, document.iconBeautifyPreset.has_value());
+    iconBeautifySettings_ = snowdesktop::icon_beautify::NormalizeGlobal(iconBeautifySettings_);
 
     for (const auto& page : document.pages)
     {
@@ -1072,7 +1073,8 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
         appearances << "{\"target\":\"" << JsonEscapeUtf8(target)
             << "\",\"name\":\"" << JsonEscapeUtf8(record.name)
             << "\",\"themeId\":\"" << JsonEscapeUtf8(Utf8ToWide(record.themeId))
-            << "\",\"style\":" << snowdesktop::icon_appearance::EncodeStyle(record.settings) << "}";
+            << "\",\"followGlobalTheme\":" << (record.followGlobalTheme ? "true" : "false")
+            << ",\"style\":" << snowdesktop::icon_appearance::EncodeStyle(record.settings) << "}";
     }
     appearances << "]";
     std::ostringstream file;

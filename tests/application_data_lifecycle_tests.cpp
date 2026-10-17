@@ -537,6 +537,18 @@ void TestDockLayoutBackup(const std::filesystem::path& root)
             legacy.iconBeautifyOverrides[0].target == L"control:start" && !legacy.iconBeautifyOverrides[0].settings.enabled &&
             legacy.iconBeautifyOverrides[0].settings.mode == 1,
             "independent disabled Start appearance reloads without becoming global inheritance");
+        Expect(!legacy.iconBeautifyOverrides[0].followGlobalTheme,
+            "legacy per-icon styles retain explicit themes when the inheritance field is absent");
+        const auto inheritedDocument = std::string(R"({"iconBeautifyOverrides":[{"target":"control:search","name":"Search","themeId":"","followGlobalTheme":true,"style":)") +
+            snowdesktop::icon_appearance::EncodeStyle(style) + "}]}";
+        Expect(layout::ParseDocument(inheritedDocument, legacy) && legacy.iconBeautifyOverrides[0].followGlobalTheme &&
+            legacy.iconBeautifyOverrides[0].settings.mode == 1, "theme inheritance reloads independently of processing mode");
+        std::string inheritedCleared;
+        Expect(layout::BuildClearedDocument(inheritedDocument, inheritedCleared) && layout::ParseDocument(inheritedCleared, legacy) &&
+            legacy.iconBeautifyOverrides[0].followGlobalTheme, "placement reset preserves theme inheritance metadata");
+        auto malformedFollow = inheritedDocument; const auto followAt = malformedFollow.find("true");
+        malformedFollow.replace(followAt, 4, "1");
+        Expect(!layout::ParseDocument(malformedFollow, legacy), "non-boolean inheritance metadata is rejected");
         std::string cleared;
         Expect(layout::BuildClearedDocument(document, cleared) && layout::ParseDocument(cleared, legacy) &&
             legacy.iconBeautifyOverrides.size() == 1, "clearing placement preserves independent icon appearance");

@@ -693,6 +693,7 @@ struct DesktopPagePresenter::Impl
     std::uint64_t personalizationRevision = 0;
     bool hasSnapshot = false;
     bool beautifyEnabled = false;
+    bool iconEditorMode = false, followGlobalIconTheme = false;
     bool updatingControls = false;
     bool active = false;
     bool categoryPageActive = false;
@@ -1248,8 +1249,14 @@ struct DesktopPagePresenter::Impl
         beautifyPresetToken = beautifyPreset.SelectionChanged(
             [this](const auto&, const auto&) {
                 if (updatingControls || !active || !hasSnapshot || iconThemes->Synchronizing()) return;
-                if (iconThemes->ApplySelection()) { UpdateConditionalStates(); return; }
                 const int selection = beautifyPreset.SelectedIndex();
+                if (iconEditorMode && selection == 6)
+                {
+                    if (actions.iconThemeInheritanceChanged) actions.iconThemeInheritanceChanged(true);
+                    UpdateConditionalStates(); return;
+                }
+                if (iconEditorMode && actions.iconThemeInheritanceChanged) actions.iconThemeInheritanceChanged(false);
+                if (iconThemes->ApplySelection()) { UpdateConditionalStates(); return; }
                 if (selection < 0 ||
                     static_cast<std::size_t>(selection) >=
                         kBeautifyPresets.size())
@@ -1697,7 +1704,7 @@ struct DesktopPagePresenter::Impl
 
     void UpdateConditionalStates()
     {
-        SetDependentVisibility(beautifyModeRow.root, beautifyEnabled, beautifyPreset);
+        SetDependentVisibility(beautifyModeRow.root, beautifyEnabled || iconEditorMode, beautifyPreset);
         SetDependentVisibility(edgeLightEditor->Content(), edgeReflection.IsOn(), edgeReflection);
         SetDependentVisibility(glassBlurRadius->root, glassEnabled.IsOn(), glassEnabled);
         SetDependentVisibility(reflectionWidth->root, edgeReflection.IsOn(), edgeReflection);
@@ -1709,6 +1716,7 @@ struct DesktopPagePresenter::Impl
         SetDependentVisibility(filterDetails, filterEnabled.IsOn(), filterEnabled);
         SetDependentVisibility(outlineDetails, outlineEnabled.IsOn(), outlineEnabled);
         beautifySections.UpdateRows();
+        if (iconEditorMode && followGlobalIconTheme) beautifyAdvanced.Visibility(mux::Visibility::Collapsed);
         presenter_controls::UpdateSettingsSubrows(beautifyFinish, 0);
         presenter_controls::UpdateSettingsSubrows(filterDetails, 16);
         presenter_controls::UpdateSettingsSubrows(outlineDetails, 16);
@@ -1734,8 +1742,8 @@ struct DesktopPagePresenter::Impl
 
         const IconBeautifySettings& value = settings.iconBeautify;
         beautifyEnabled = value.enabled;
-        beautifyPreset.SelectedIndex(IndexOf(kBeautifyPresets, value.preset));
-        beautifyMode.SelectedIndex(std::clamp(value.mode, 0, 2));
+        beautifyPreset.SelectedIndex(iconEditorMode && followGlobalIconTheme ? 6 : IndexOf(kBeautifyPresets, value.preset));
+        beautifyMode.SelectedIndex(std::clamp(value.mode, 0, iconEditorMode ? 2 : 1));
         backgroundStart->SetColor(MakeColor(
             value.backgroundStartR,
             value.backgroundStartG,
@@ -1903,7 +1911,7 @@ struct DesktopPagePresenter::Impl
             {
                 PatchDesktop(snapshot.values.desktop);
                 iconThemes->SetGeneration(generation);
-                iconThemes->SyncSelection(IndexOf(kBeautifyPresets, snapshot.values.desktop.iconBeautify.preset), snapshot.values);
+                iconThemes->SyncSelection(iconEditorMode && followGlobalIconTheme ? 6 : IndexOf(kBeautifyPresets, snapshot.values.desktop.iconBeautify.preset), snapshot.values);
                 desktopRevision = snapshot.domainRevisions.desktop;
             }
         }
@@ -2012,24 +2020,41 @@ struct DesktopPagePresenter::Impl
             L("app.settings.icon_beautify", L"Icon beautification"));
         muxa::AutomationProperties::SetName(
             beautifyPreset, beautifyPresetRow.label.Text());
-        SetComboItems(beautifyPreset, {
-            L("app.settings.beautify_preset_none", L"None"),
-            L("app.settings.beautify_preset_default", L"Default"),
-            L("app.settings.transparent_glass", L"Transparent glass"),
-            L("app.settings.dark_glass", L"Dark glass"),
-            L("app.settings.light_glass", L"Light glass"),
-            L("app.settings.custom", L"Custom"),
-        }, std::clamp(iconThemes->NativeSelection(), 0, 5));
+        if (iconEditorMode)
+        {
+            SetComboItems(beautifyPreset, {
+                L("app.settings.beautify_preset_none", L"None"),
+                L("app.settings.beautify_preset_default", L"Default"),
+                L("app.settings.transparent_glass", L"Transparent glass"),
+                L("app.settings.dark_glass", L"Dark glass"),
+                L("app.settings.light_glass", L"Light glass"),
+                L("app.settings.custom", L"Custom"),
+                L("iconAppearance.follow", L"Follow global"),
+            }, std::clamp(iconThemes->NativeSelection(), 0, 6));
+        }
+        else
+        {
+            SetComboItems(beautifyPreset, {
+                L("app.settings.beautify_preset_none", L"None"),
+                L("app.settings.beautify_preset_default", L"Default"),
+                L("app.settings.transparent_glass", L"Transparent glass"),
+                L("app.settings.dark_glass", L"Dark glass"),
+                L("app.settings.light_glass", L"Light glass"),
+                L("app.settings.custom", L"Custom"),
+            }, std::clamp(iconThemes->NativeSelection(), 0, 5));
+        }
         iconThemes->LocalizeText();
         beautifyModeRow.SetText(
             L("iconStyle.strategy", L"Icon processing"));
         muxa::AutomationProperties::SetName(
             beautifyMode, beautifyModeRow.label.Text());
-        SetComboItems(beautifyMode, {
-            L("iconStyle.smart", L"Smart beautification"),
-            L("iconStyle.shrinkAll", L"Shrink all with theme background"),
-            L("iconStyle.noUpscale", L"Smart beautification without enlargement"),
-        }, std::max(0, beautifyMode.SelectedIndex()));
+        if (iconEditorMode)
+            SetComboItems(beautifyMode, {L("iconStyle.smart", L"Smart beautification"),
+                L("iconStyle.shrinkAll", L"Add theme background and shrink icon"),
+                L("iconStyle.noUpscale", L"Add theme background")}, std::clamp(beautifyMode.SelectedIndex(), 0, 2));
+        else
+            SetComboItems(beautifyMode, {L("iconStyle.smart", L"Smart beautification"),
+                L("iconStyle.shrinkAll", L"Add theme background and shrink icon")}, std::clamp(beautifyMode.SelectedIndex(), 0, 1));
         backgroundStart->SetLabel(
             L("app.settings.default_bg", L"Background color"),
             L("app.settings.cancel", L"Cancel"));
@@ -2318,11 +2343,22 @@ void DesktopPagePresenter::SetIconEditorMode()
 {
     if (impl_ && !impl_->closed)
     {
+        if (!impl_->iconEditorMode)
+        {
+            impl_->iconEditorMode = true;
+            impl_->iconThemes->SetNativeChoiceCount(7);
+            impl_->RefreshLocalizedText();
+        }
         impl_->iconThemes->SetAuthoringEnabled(false);
         // The shared setting row keeps its label beside a compact dialog editor.
         impl_->beautifyPresetRow.layout->controlWidth = 220;
         impl_->beautifyModeRow.layout->controlWidth = 220;
     }
+}
+
+void DesktopPagePresenter::SetIconThemeInheritance(bool followGlobalTheme)
+{
+    if (impl_ && !impl_->closed) impl_->followGlobalIconTheme = followGlobalTheme;
 }
 
 void DesktopPagePresenter::SetActions(DesktopPageActions actions)

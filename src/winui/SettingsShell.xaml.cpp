@@ -1665,6 +1665,7 @@ bool SettingsShell::ApplySnapshot(
             personalizationPage_->ApplySnapshot(snapshot);
         if (desktopPage_)
             desktopPage_->ApplySnapshot(snapshot);
+        if (iconAppearancePage_) iconAppearancePage_->ApplyGlobalStyle(snapshot.values.desktop.iconBeautify);
         if (dockPage_)
             dockPage_->ApplySnapshot(snapshot);
         if (statusBarPage_) statusBarPage_->ApplySnapshot(snapshot);

@@ -1254,7 +1254,7 @@ void DesktopApp::SetIconBeautifySettings(
     const snowdesktop::IconBeautifySettings& rawSettings,
     snowdesktop::IconBeautifyUpdateKind updateKind)
 {
-    const auto settings = snowdesktop::icon_beautify::Normalize(rawSettings);
+    const auto settings = snowdesktop::icon_beautify::NormalizeGlobal(rawSettings);
     if (snowdesktop::icon_beautify::Equal(settings, iconBeautifySettings_))
     {
         if (updateKind == snowdesktop::IconBeautifyUpdateKind::Commit)

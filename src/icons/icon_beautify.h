@@ -64,7 +64,7 @@ struct IconBeautifySettings
 {
     bool enabled = false;
     IconBeautifyPreset preset = IconBeautifyPreset::None;
-    // 0 smart; 1 normalize all; 2 keep the source canvas and force sampled background fill.
+    // 0 smart; 1 add theme background and shrink; 2 add theme background without resizing (per icon only).
     int mode = 0;
     float backgroundOpacity = 0.65f;
     bool glassEnabled = false;
@@ -124,6 +124,7 @@ struct ShapePoint
 };
 
 IconBeautifySettings Normalize(IconBeautifySettings settings);
+IconBeautifySettings NormalizeGlobal(IconBeautifySettings settings);
 PanelGradient BackgroundGradient(const IconBeautifySettings& settings);
 bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs);
 bool UsesLegacyGeometryDefaults(const IconBeautifySettings& settings);

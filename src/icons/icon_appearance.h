@@ -7,13 +7,14 @@
 
 namespace snowdesktop
 {
-// Absence of a record means inherit. An explicitly disabled style is a record.
+// No record follows both theme and processing. A record may follow only the theme; explicit None remains a record.
 struct IconAppearanceRecord
 {
     std::wstring target, name;
     IconBeautifySettings settings;
     std::string themeId;
     bool available = true;
+    bool followGlobalTheme = false;
 };
 struct IconAppearanceChoice
 {
@@ -29,12 +30,14 @@ struct IconAppearanceRequest
     IconBeautifySettings settings;
     std::string themeId;
     bool available = true;
+    bool followGlobalTheme = false;
 };
 struct IconAppearanceSnapshot
 {
     std::vector<IconAppearanceRecord> entries;
     std::vector<IconAppearanceChoice> themes;
     IconAppearanceRecord current;
+    IconBeautifySettings globalSettings;
     std::uint64_t session = 0, revision = 0;
     bool succeeded = false, available = false, independent = false;
     bool nativeControlSource = false;

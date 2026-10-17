@@ -15,6 +15,7 @@ public:
     winrt::Microsoft::UI::Xaml::Controls::StackPanel Content() const;
     void Activate(std::wstring target = {});
     void Deactivate();
+    void ApplyGlobalStyle(const IconBeautifySettings& global);
     void RefreshLocalizedText();
 private:
     struct Impl;

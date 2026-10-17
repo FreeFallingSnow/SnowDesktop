@@ -533,6 +533,18 @@ void TestCodec()
         const auto native = Unpack<snowdesktop::IconAppearanceSnapshot>(Pack(appearance));
         Check(native.nativeControlSource && native.current.target == L"control:search",
             "native source sizing metadata crosses the settings process without shrinking replacement images");
+        appearance.current.followGlobalTheme = true;
+        appearance.globalSettings.preset = snowdesktop::IconBeautifyPreset::FrostedGlassLight;
+        appearance.globalSettings.enabled = true;
+        appearance.globalSettings.backgroundStartR = 37;
+        const auto inherited = Unpack<snowdesktop::IconAppearanceSnapshot>(Pack(appearance));
+        Check(inherited.current.followGlobalTheme && inherited.globalSettings.preset == appearance.globalSettings.preset &&
+            inherited.globalSettings.enabled && inherited.globalSettings.backgroundStartR == 37,
+            "independent processing carries live global theme metadata across settings IPC");
+        snowdesktop::IconAppearanceRequest followRequest; followRequest.followGlobalTheme = true; followRequest.settings.mode = 2;
+        const auto followCopy = Unpack<snowdesktop::IconAppearanceRequest>(Pack(followRequest));
+        Check(followCopy.followGlobalTheme && followCopy.settings.mode == 2,
+            "applying theme inheritance preserves the separate processing strategy");
     }
     large.frameWidth = 436; large.frameHeight = 213; large.frameColumns = 4; large.frameRows = 2;
     large.unitScale = 1.5; large.durationScale = 2; large.frameLimit = 30; large.animations = false; large.neutral = 0x123456;

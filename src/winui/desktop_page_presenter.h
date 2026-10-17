@@ -19,6 +19,7 @@ namespace snowdesktop::winui
 /** Commands emitted by the cached Desktop settings presenter. */
 struct DesktopPageActions
 {
+    std::function<void(bool)> iconThemeInheritanceChanged;
     ThemeLibraryAction themeLibrary;
     ThemeLibraryAsyncAction themeAsync;
     using DesktopEdit = std::function<void(DesktopDisplaySettings&)>;
@@ -72,6 +73,7 @@ public:
 
     void SetActions(DesktopPageActions actions);
     void SetIconEditorMode();
+    void SetIconThemeInheritance(bool followGlobalTheme);
 
     [[nodiscard]] winrt::Microsoft::UI::Xaml::FrameworkElement
         Content() const noexcept;

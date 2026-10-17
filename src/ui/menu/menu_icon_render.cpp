@@ -1161,7 +1161,11 @@ bool DrawInlineAction(HDC dc, HFONT textFont, HFONT iconFont,
     // The flexible action keeps the ordinary menu's right-aligned status;
     // companion actions beside it retain their compact button presentation.
     if (style == InlineActionStyle::Plain && item.label && std::wcschr(item.label, L'\t'))
-        return DrawItem(dc, textFont, iconFont, item, bounds, itemState, palette, metrics);
+    {
+        auto inlineItem = item;
+        inlineItem.hasSubmenu = false; // Inline buttons open their submenu without an arrow.
+        return DrawItem(dc, textFont, iconFont, inlineItem, bounds, itemState, palette, metrics);
+    }
     if (!dc || bounds.right <= bounds.left || bounds.bottom <= bounds.top)
         return false;
 

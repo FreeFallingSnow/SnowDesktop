@@ -753,6 +753,13 @@ PanelGradient BackgroundGradient(const IconBeautifySettings& settings)
     return gradient;
 }
 
+IconBeautifySettings NormalizeGlobal(IconBeautifySettings settings)
+{
+    settings = Normalize(settings);
+    if (settings.mode == 2) settings.mode = 0;
+    return settings;
+}
+
 bool Equal(const IconBeautifySettings& lhs, const IconBeautifySettings& rhs)
 {
     const IconBeautifySettings a = Normalize(lhs);
@@ -981,47 +988,6 @@ std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,
     return pixels;
 }
 
-// Force-fill mode samples the visible contour without requiring the source
-// to pass smart plate recognition. Transparent RGB is never treated as color;
-// prefer reliable alpha so antialiasing does not pollute the sampled background.
-static std::optional<EdgeColor> ContourBackground(const std::vector<std::uint32_t>& source,
-    int width, int height)
-{
-    struct Bucket { std::uint64_t weight = 0, r = 0, g = 0, b = 0; };
-    std::array<Bucket, 512> buckets{};
-    const auto sample = [&](int start, int step, int count) {
-        int fallback = -1, fallbackStep = -1, selected = -1;
-        for (int n = 0, i = start; n < count; ++n, i += step)
-        {
-            const int alpha = PixelA(source[static_cast<size_t>(i)]);
-            if (alpha > 16 && fallback < 0) { fallback = i; fallbackStep = n; }
-            if (alpha >= 160) { selected = i; break; }
-            if (fallbackStep >= 0 && n >= fallbackStep + 2) break;
-        }
-        if (selected < 0) selected = fallback;
-        if (selected < 0) return;
-        const auto pixel = source[static_cast<size_t>(selected)];
-        const int alpha = PixelA(pixel);
-        const auto straight = [&](int shift) {
-            return std::min(255, (static_cast<int>((pixel >> shift) & 255) * 255 + alpha / 2) / alpha);
-        };
-        const int r = straight(16), g = straight(8), b = straight(0);
-        auto& bucket = buckets[(r >> 5) * 64 + (g >> 5) * 8 + (b >> 5)];
-        const auto weight = static_cast<std::uint64_t>(alpha);
-        bucket.weight += weight; bucket.r += r * weight; bucket.g += g * weight; bucket.b += b * weight;
-    };
-    for (int y = 0; y < height; ++y)
-    { sample(y * width, 1, width); sample(y * width + width - 1, -1, width); }
-    for (int x = 0; x < width; ++x)
-    { sample(x, width, height); sample((height - 1) * width + x, -width, height); }
-    const auto best = std::max_element(buckets.begin(), buckets.end(),
-        [](const auto& a, const auto& b) { return a.weight < b.weight; });
-    if (!best->weight) return std::nullopt;
-    return EdgeColor{static_cast<int>((best->r + best->weight / 2) / best->weight),
-        static_cast<int>((best->g + best->weight / 2) / best->weight),
-        static_cast<int>((best->b + best->weight / 2) / best->weight)};
-}
-
 static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& rawSettings,
     std::optional<EdgeColor> detectedEdgeFill, int rasterScale, SourceKind sourceKind)
@@ -1034,9 +1000,8 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
         return source;
     const Bounds bounds = VisibleBounds(source, width, height);
     if (!bounds.valid) return source;
-    if (settings.mode == 1) detectedEdgeFill.reset();
-    if (settings.mode == 2 && sourceKind == SourceKind::Image && !detectedEdgeFill)
-        detectedEdgeFill = ContourBackground(source, width, height);
+    const Bounds contentBounds = settings.mode == 1 ? Bounds{true, 0, 0, width - 1, height - 1} : bounds;
+    if (settings.mode != 0) detectedEdgeFill.reset();
     if (!detectedEdgeFill && settings.backgroundSource != 0)
     {
         auto seed = settings.backgroundSource == 1 ? DetectPlateFill(source, width, height) : std::nullopt;
@@ -1082,9 +1047,8 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
 
     if (detectedEdgeFill || settings.mode == 2)
     {
-        // Default native controls have no image background to sample. Preserve
-        // their optical canvas over the selected theme; image resources use the
-        // recognized or forced contour color, without normalization or fitting.
+        // Smart recognition fills a detected original plate. Explicit theme
+        // backgrounds retain the source canvas without overriding theme colors.
         std::uint32_t background = 0;
         if (detectedEdgeFill)
         {
@@ -1105,8 +1069,8 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
     }
 
     FillPlate(output, width, height, settings, legacyExact, rasterScale);
-    const int sourceW = std::max(1, bounds.right - bounds.left + 1);
-    const int sourceH = std::max(1, bounds.bottom - bounds.top + 1);
+    const int sourceW = std::max(1, contentBounds.right - contentBounds.left + 1);
+    const int sourceH = std::max(1, contentBounds.bottom - contentBounds.top + 1);
     int maxW = 0;
     int maxH = 0;
     if (legacyExact)
@@ -1137,9 +1101,9 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
     for (int y = 0; y < destH; ++y)
         for (int x = 0; x < destW; ++x)
         {
-            const float sx = bounds.left +
+            const float sx = contentBounds.left +
                 ((static_cast<float>(x) + 0.5f) / destW) * sourceW - 0.5f;
-            const float sy = bounds.top +
+            const float sy = contentBounds.top +
                 ((static_cast<float>(y) + 0.5f) / destH) * sourceH - 0.5f;
             const std::uint32_t sampled = SampleBilinear(source, width, height, sx, sy);
             if (PixelA(sampled) == 0) continue;
@@ -1162,9 +1126,9 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
     for (int y = 0; y < destH; ++y)
         for (int x = 0; x < destW; ++x)
         {
-            const float sx = bounds.left +
+            const float sx = contentBounds.left +
                 ((static_cast<float>(x) + 0.5f) / destW) * sourceW - 0.5f;
-            const float sy = bounds.top +
+            const float sy = contentBounds.top +
                 ((static_cast<float>(y) + 0.5f) / destH) * sourceH - 0.5f;
             const int ox = destLeft + x;
             const int oy = destTop + y;

@@ -279,6 +279,7 @@ public:
     { boundSaved_ = std::move(saved); boundCancel_ = std::move(cancel); boundBegin_ = std::move(begin); }
     void SetBindingChanged(std::function<void(const themes::Theme&)> changed) { bindingChanged_ = std::move(changed); }
     bool Synchronizing() const { return syncing_ || busy_; }
+    void SetNativeChoiceCount(int count) { modeCount_ = count; }
     int NativeSelection() const { return Selected() ? customIndex_ : choice_.SelectedIndex(); }
     // The controller values and last successful library reference are authoritative.
     void SyncSelection(int nativeIndex, const SettingsValues& values)

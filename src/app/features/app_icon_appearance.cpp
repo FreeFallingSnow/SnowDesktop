@@ -75,6 +75,7 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
         {
             if (!icon_appearance::ValidTarget(request.target) || !themes::ValidIconTheme(request.settings))
             { result.error = "iconLibrary.invalid"; return result; }
+            if (request.followGlobalTheme) request.themeId.clear();
             if (!request.themeId.empty())
             {
                 const auto theme = themes::Resolve(library.themes, request.themeId);
@@ -83,7 +84,7 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
                 request.settings.mode = mode; request.settings.preset = IconBeautifyPreset::Custom;
             }
             iconAppearanceOverrides_[request.target] = {request.target, IconOverrideTargetName(request.target),
-                icon_beautify::Normalize(request.settings), request.themeId};
+                icon_beautify::Normalize(request.settings), request.themeId, true, request.followGlobalTheme};
             changed = true;
         }
     }
@@ -126,6 +127,7 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
     if (request.action != "preview") for (const auto& [target, entry] : iconAppearanceOverrides_)
     {
         auto record = entry;
+        record.settings = icon_appearance::Resolve(iconBeautifySettings_, &entry, false, false);
         record.available = IsIconOverrideTarget(target);
         if (record.available) record.name = IconOverrideTargetName(target);
         result.entries.push_back(std::move(record));
@@ -135,9 +137,15 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
     result.available = IsIconOverrideTarget(request.target);
     result.current.target = request.target;
     result.current.name = result.available ? IconOverrideTargetName(request.target) : request.target;
+    result.globalSettings = iconBeautifySettings_;
     result.current.settings = iconBeautifySettings_;
+    result.current.followGlobalTheme = true;
     if (const auto found = iconAppearanceOverrides_.find(request.target); found != iconAppearanceOverrides_.end())
-    { result.current = found->second; result.independent = true; }
+    {
+        result.current = found->second;
+        result.current.settings = icon_appearance::Resolve(iconBeautifySettings_, &found->second, false, false);
+        result.independent = true;
+    }
     result.session = iconAppearanceSession_; result.revision = iconAppearanceRevision_;
     if (request.action == "begin" || request.action == "preview")
     {
@@ -282,7 +290,7 @@ bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntr
         }
         if (source.pixels.empty()) return false;
         const auto bitmap = snowdesktop::icon_image::CreateBitmap(source);
-        const auto style = found == iconAppearanceOverrides_.end() ? iconBeautifySettings_ : found->second.settings;
+        const auto style = ResolveIconAppearance(key);
         auto uploaded = CreateStyledD2DBitmap(bitmap, style, true); DeleteObject(bitmap);
         if (!uploaded) return false;
         iconGlassBackdrop_.erase(cached.bitmap.Get()); iconBitmapStyles_.erase(cached.bitmap.Get());

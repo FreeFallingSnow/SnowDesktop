@@ -506,7 +506,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
     if (style.enabled)
     {
         std::optional<snowdesktop::icon_beautify::EdgeColor> edgeFill;
-        if (style.mode != 1)
+        if (style.mode == 0)
         {
             IconBackgroundColor detected{};
             if (DetectSolidEdgeBackground(
@@ -516,7 +516,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
                     detected.r, detected.g, detected.b };
             }
         }
-        needsGlassBackdrop = style.enabled && style.glassEnabled && !edgeFill && (style.mode != 2 || nativeControlSource);
+        needsGlassBackdrop = style.enabled && style.glassEnabled && !edgeFill;
         buffer.pixels = snowdesktop::icon_beautify::Render(
             buffer.pixels, buffer.width, buffer.height,
             style, edgeFill, nativeControlSource ? snowdesktop::icon_beautify::SourceKind::NativeControl :

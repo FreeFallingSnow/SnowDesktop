@@ -898,6 +898,14 @@ int wmain(int argc, wchar_t** argv)
     Expect(std::equal(expectedDockStatus.begin(), expectedDockStatus.end(), pixels),
         "inline Dock status preserves the ordinary right-aligned status beside personalization");
 
+    auto inlinePersonalization = dockStatus; inlinePersonalization.hasSubmenu = true;
+    std::fill_n(pixels, kWidth * kHeight, 0u);
+    snowdesktop::menu_icon::DrawInlineAction(dc, font, fluentFont, inlinePersonalization,
+        inlineStatusBounds, 0, light, metrics96);
+    GdiFlush();
+    Expect(std::equal(expectedDockStatus.begin(), expectedDockStatus.end(), pixels) && inlinePersonalization.hasSubmenu,
+        "inline personalization hides its visual arrow without removing submenu semantics");
+
     const snowdesktop::menu_icon::ItemView checkedFilter{
         L"Installed 3", L"", false, false, true,
     };

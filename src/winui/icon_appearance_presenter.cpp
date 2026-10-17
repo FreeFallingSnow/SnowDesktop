@@ -25,7 +25,7 @@ void SetPreview(const c::Image& image, const icon_image::Image& source, const Ic
 {
     const auto& style = requested;
     if (source.width <= 0 || source.height <= 0 || source.pixels.empty()) { image.Source(nullptr); return; }
-    const auto edge = style.mode != 1 ? icon_beautify::DetectPlateFill(source.pixels, source.width, source.height) : std::nullopt;
+    const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(source.pixels, source.width, source.height) : std::nullopt;
     const auto pixels = icon_beautify::Render(source.pixels, source.width, source.height, style, edge,
         native ? icon_beautify::SourceKind::NativeControl : icon_beautify::SourceKind::Image);
     x::Media::Imaging::WriteableBitmap bitmap(source.width, source.height);
@@ -43,11 +43,13 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
     c::TextBlock title, empty;
     c::TextBox query;
     c::ListView list;
+    c::Grid listContent;
     c::Button edit, inherit;
     c::InfoBar feedback;
     IconAppearanceSnapshot snapshot;
     c::ContentDialog dialog{nullptr};
     std::function<void()> cancelEditor;
+    std::function<void(const IconBeautifySettings&)> globalStyleChanged;
     std::wstring pendingTarget, editingTarget;
     bool active = false, closed = false;
 
@@ -71,11 +73,12 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         list.IsItemClickEnabled(true); list.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
         list.ItemTemplate(x::Markup::XamlReader::Load(LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Grid Padding="8" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="48"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Image x:Name="Preview" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="48" Height="48" Stretch="Uniform"/><StackPanel Grid.Column="1" Spacing="4"><TextBlock x:Name="Name" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="Detail" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" FontSize="12" TextWrapping="Wrap" Opacity="0.7"/></StackPanel></Grid></DataTemplate>)").as<x::DataTemplate>());
         c::Border surface; presenter_controls::StyleSettingsCard(surface); surface.Padding({0,0,0,0});
-        c::Grid content; content.MinHeight(112); content.Children().Append(list);
+        listContent.Name(L"IconAppearanceListContent"); x::Automation::AutomationProperties::SetAutomationId(listContent, L"IconAppearanceListContent");
+        listContent.MinHeight(112); listContent.Children().Append(list);
         empty.Name(L"IconAppearanceEmpty"); x::Automation::AutomationProperties::SetAutomationId(empty, L"IconAppearanceEmpty");
         empty.Margin({16,16,16,16}); empty.HorizontalAlignment(x::HorizontalAlignment::Center);
         empty.VerticalAlignment(x::VerticalAlignment::Center); empty.TextAlignment(x::TextAlignment::Center);
-        empty.TextWrapping(x::TextWrapping::Wrap); content.Children().Append(empty); surface.Child(content);
+        empty.TextWrapping(x::TextWrapping::Wrap); listContent.Children().Append(empty); surface.Child(listContent);
         root.Children().Append(surface);
         feedback.IsOpen(false); presenter_controls::BindInfoBarVisibility(feedback); root.Children().Append(feedback);
         LocalizeText();
@@ -110,8 +113,9 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
             else for (const auto& theme : self->snapshot.themes) if (theme.id == found->themeId) { themeName = theme.name; break; }
             const auto location = found->target.starts_with(L"control:") || found->target.starts_with(L"widget:") ? self->L("settings.nav.dock") :
                 found->target.starts_with(L"recycle-") ? self->L("settings.contextMenu.desktop") : found->target.substr(found->target.find(L':') + 1);
+            if (found->followGlobalTheme) themeName = self->L("iconAppearance.follow");
             content.FindName(L"Detail").as<c::TextBlock>().Text(themeName +
-                (found->settings.enabled ? L" · " + self->L(found->settings.mode == 2 ? "iconStyle.noUpscale" : found->settings.mode == 1 ? "iconStyle.shrinkAll" : "iconStyle.smart") : L"") +
+                ((found->settings.enabled || found->followGlobalTheme) ? L" · " + self->L(found->settings.mode == 2 ? "iconStyle.noUpscale" : found->settings.mode == 1 ? "iconStyle.shrinkAll" : "iconStyle.smart") : L"") +
                 (found->available ? L"" : L" · " + self->L("iconAppearance.unavailable")) + L"\n" + location);
             const auto style = found->settings;
             auto image = content.FindName(L"Preview").as<c::Image>(); image.Source(nullptr);
@@ -157,6 +161,7 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         for (unsigned index = 0; index < list.Items().Size(); ++index)
             if (winrt::unbox_value<winrt::hstring>(list.Items().GetAt(index)) == selected) { list.SelectedIndex(static_cast<int>(index)); break; }
         const bool hasItems = list.Items().Size() != 0;
+        listContent.MinHeight(hasItems ? 0 : 112);
         list.Visibility(hasItems ? x::Visibility::Visible : x::Visibility::Collapsed);
         empty.Visibility(hasItems ? x::Visibility::Collapsed : x::Visibility::Visible); Buttons();
     }
@@ -196,13 +201,16 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
             c::Image preview;
             c::ComboBox sourceMode;
             c::InfoBar error;
-            bool ending = false, nativeControlSource = false;
+            bool ending = false, nativeControlSource = false, followGlobalTheme = true;
+            IconBeautifySettings globalSettings;
         };
         const auto draft = std::make_shared<Draft>();
         draft->settings.initialized = draft->settings.sessionActive = true;
         draft->settings.generation = draft->settings.revision = 1; draft->settings.domainRevisions.desktop = 1;
         draft->settings.values.desktop.iconBeautify = captured.current.settings;
         draft->themeId = captured.current.themeId;
+        draft->followGlobalTheme = captured.current.followGlobalTheme;
+        draft->globalSettings = captured.globalSettings;
         draft->nativeControlSource = captured.nativeControlSource;
         for (const auto& choice : captured.themes)
         {
@@ -216,10 +224,27 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         const auto sync = [draft] {
             if (draft->ending) return;
             ++draft->settings.revision; ++draft->settings.domainRevisions.desktop;
+            draft->editor->SetIconThemeInheritance(draft->followGlobalTheme);
             draft->editor->ApplySnapshot(draft->settings);
             SetPreview(draft->preview, draft->source, draft->settings.values.desktop.iconBeautify, draft->nativeControlSource);
         };
+        globalStyleChanged = [draft, sync](const IconBeautifySettings& global) {
+            draft->globalSettings = global;
+            if (draft->ending || !draft->followGlobalTheme) return;
+            const auto mode = draft->settings.values.desktop.iconBeautify.mode;
+            draft->settings.values.desktop.iconBeautify = global;
+            draft->settings.values.desktop.iconBeautify.mode = mode; sync();
+        };
         DesktopPageActions actions;
+        actions.iconThemeInheritanceChanged = [draft, sync](bool follow) {
+            draft->followGlobalTheme = follow;
+            draft->editor->SetIconThemeInheritance(follow);
+            if (!follow) return;
+            const auto mode = draft->settings.values.desktop.iconBeautify.mode;
+            draft->settings.values.desktop.iconBeautify = draft->globalSettings;
+            draft->settings.values.desktop.iconBeautify.mode = mode;
+            draft->themeId.clear(); themes::Detach(draft->library, "icon"); sync();
+        };
         actions.updateDesktop = [draft, sync](auto, auto, auto update) {
             const auto before = draft->settings.values.desktop.iconBeautify;
             update(draft->settings.values.desktop);
@@ -232,14 +257,20 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
             if (request.command == ThemeLibraryCommand::Apply)
             {
                 std::string error;
+                const auto processing = draft->settings.values.desktop.iconBeautify.mode;
                 result.succeeded = themes::ApplyTarget(draft->library, "icon", request.id, draft->settings.values, error) &&
                     themes::Select(draft->library, "icon", request.id, themes::Kind::Icon, themes::Components, error);
-                if (result.succeeded) { draft->themeId = request.id; sync(); }
+                if (result.succeeded)
+                {
+                    draft->settings.values.desktop.iconBeautify.mode = processing;
+                    draft->themeId = request.id; sync();
+                }
             }
             else if (request.command == ThemeLibraryCommand::Detach) { draft->themeId.clear(); themes::Detach(draft->library, "icon"); }
             else if (request.command != ThemeLibraryCommand::Refresh) result.succeeded = false;
             result.library = draft->library; return result;
         };
+        draft->editor->SetIconThemeInheritance(draft->followGlobalTheme);
         draft->editor->SetActions(std::move(actions)); draft->editor->ApplySnapshot(draft->settings); draft->editor->Activate();
         c::StackPanel body; body.Spacing(8);
         body.MinWidth(std::clamp(root.XamlRoot().Size().Width - 96., 280., 480.)); body.MaxWidth(640);
@@ -254,9 +285,9 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         draft->sourceMode.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         draft->sourceMode.Items().Append(winrt::box_value(L("iconAppearance.follow")));
         draft->sourceMode.Items().Append(winrt::box_value(L("iconAppearance.independent")));
-        draft->sourceMode.SelectedIndex(1); body.Children().Append(sourceRow.root);
+        draft->sourceMode.SelectedIndex(captured.independent ? 1 : 0); body.Children().Append(sourceRow.root);
         const auto editorContent = draft->editor->IconBeautificationContent(); body.Children().Append(editorContent);
-        editorContent.Visibility(x::Visibility::Visible);
+        editorContent.Visibility(captured.independent ? x::Visibility::Visible : x::Visibility::Collapsed);
         draft->sourceMode.SelectionChanged([weakDraft = std::weak_ptr<Draft>(draft), editorContent](const auto&, const auto&) {
             if (const auto value = weakDraft.lock()) editorContent.Visibility(value->sourceMode.SelectedIndex() == 1 ? x::Visibility::Visible : x::Visibility::Collapsed);
         });
@@ -273,6 +304,7 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
             IconAppearanceRequest request; request.action = draft->sourceMode.SelectedIndex() == 1 ? "apply" : "inherit";
             request.target = target; request.session = captured.session; request.revision = captured.revision;
             request.settings = draft->settings.values.desktop.iconBeautify; request.themeId = draft->themeId;
+            request.followGlobalTheme = draft->followGlobalTheme;
             const auto result = self->action(request);
             if (!result.succeeded) { args.Cancel(true); draft->error.Message(self->L(result.error)); draft->error.IsOpen(true); draft->editor->Activate(); }
         });
@@ -284,7 +316,7 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
             if (!self) return;
             IconAppearanceRequest cancel; cancel.action = "cancel"; cancel.target = target; cancel.session = captured.session;
             if (self->action) (void)self->action(cancel);
-            self->dialog = nullptr; self->editingTarget.clear(); self->cancelEditor = {}; self->Refresh();
+            self->dialog = nullptr; self->editingTarget.clear(); self->cancelEditor = {}; self->globalStyleChanged = {}; self->Refresh();
             const auto weakAgain = self->weak_from_this();
             self->root.DispatcherQueue().TryEnqueue([weakAgain] { if (const auto current = weakAgain.lock()) current->OpenPending(); });
         });
@@ -299,6 +331,17 @@ IconAppearancePresenter::~IconAppearancePresenter() { Deactivate(); impl_->close
 c::StackPanel IconAppearancePresenter::Content() const { return impl_->root; }
 void IconAppearancePresenter::Activate(std::wstring target)
 { impl_->active = true; impl_->Refresh(); if (!target.empty()) impl_->RequestEdit(std::move(target)); }
+void IconAppearancePresenter::ApplyGlobalStyle(const IconBeautifySettings& global)
+{
+    if (icon_beautify::Equal(impl_->snapshot.globalSettings, global)) return;
+    impl_->snapshot.globalSettings = global;
+    for (auto& record : impl_->snapshot.entries) if (record.followGlobalTheme)
+    {
+        const int mode = record.settings.mode; record.settings = global; record.settings.mode = mode;
+    }
+    if (impl_->globalStyleChanged) impl_->globalStyleChanged(global);
+    if (impl_->active) impl_->Filter();
+}
 void IconAppearancePresenter::Deactivate()
 { impl_->active = false; impl_->pendingTarget.clear(); if (impl_->cancelEditor) { auto cancel = impl_->cancelEditor; cancel(); } }
 void IconAppearancePresenter::RefreshLocalizedText() { impl_->LocalizeText(); impl_->Filter(); }

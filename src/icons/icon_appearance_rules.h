@@ -6,7 +6,8 @@ namespace snowdesktop::icon_appearance
 inline IconBeautifySettings Resolve(const IconBeautifySettings& global,
     const IconAppearanceRecord* independent, bool media, bool rawSource)
 {
-    auto style = independent ? independent->settings : global;
+    auto style = independent && !independent->followGlobalTheme ? independent->settings : global;
+    if (independent) style.mode = independent->settings.mode;
     if (rawSource || (media && !independent)) style.enabled = false;
     return style;
 }

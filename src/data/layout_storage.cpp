@@ -708,6 +708,10 @@ bool DecodeDocument(const JsonValue& root, Document& document,
         if (!ReadRequiredString(object, "target", "iconBeautifyOverrides.target", target, error) ||
             !ReadRequiredString(object, "name", "iconBeautifyOverrides.name", name, error) ||
             !ReadRequiredString(object, "themeId", "iconBeautifyOverrides.themeId", themeId, error)) return false;
+        std::optional<bool> followGlobalTheme;
+        if (!ReadOptionalBoolean(object, "followGlobalTheme", "iconBeautifyOverrides.followGlobalTheme", followGlobalTheme, error)) return false;
+        record.followGlobalTheme = followGlobalTheme.value_or(false);
+        if (record.followGlobalTheme && !themeId.empty()) return Fail(error, "iconBeautifyOverrides", "inherited theme cannot bind a library theme");
         const auto* style = object.Find("style");
         record.target = icon_appearance::ToWide(target); record.name = icon_appearance::ToWide(name); record.themeId = themeId;
         if (!icon_appearance::ValidTarget(record.target) || !appearanceTargets.insert(target).second ||

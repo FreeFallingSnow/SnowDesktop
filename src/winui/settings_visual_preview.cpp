@@ -413,6 +413,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     struct AppearanceFixture
     {
         std::vector<IconAppearanceRecord> entries;
+        IconBeautifySettings globalSettings;
         std::uint64_t revision = 1, session = 0;
         std::wstring target;
         std::string png;
@@ -436,14 +437,19 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             if ((request.action == "apply" || request.session) && !icon_appearance::CurrentEdit(request, state.target, state.session, state.revision))
             { result.succeeded = false; result.error = "iconLibrary.stale"; return result; }
             std::erase_if(state.entries, [&](const auto& record) { return record.target == request.target; });
-            if (request.action == "apply") state.entries.push_back({request.target, _LW("iconLibrary.searchIcon"), request.settings, request.themeId});
+            if (request.action == "apply") state.entries.push_back({request.target, _LW("iconLibrary.searchIcon"), request.settings, request.themeId, true, request.followGlobalTheme});
             ++state.revision;
         }
         result.current.target = request.target;
         result.current.name = request.target == L"control:search" ? _LW("iconLibrary.searchIcon") : _LW("iconLibrary.startIcon");
-        result.current.settings = icon_beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
+        result.globalSettings = state.globalSettings;
+        result.current.settings = state.globalSettings;
+        result.current.followGlobalTheme = true;
         for (const auto& entry : state.entries) if (entry.target == request.target) { result.current = entry; result.independent = true; }
-        result.entries = state.entries; result.session = state.session; result.revision = state.revision;
+        result.current.settings = icon_appearance::Resolve(state.globalSettings, result.independent ? &result.current : nullptr, false, false);
+        result.entries = state.entries;
+        for (auto& record : result.entries) record.settings = icon_appearance::Resolve(state.globalSettings, &record, false, false);
+        result.session = state.session; result.revision = state.revision;
         result.previewPng = state.png;
         if (request.target == L"control:search")
         {
@@ -527,6 +533,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         if (page == SettingsPage::WidgetSettings) snapshot.route = SettingsRoute::ForWidget(widgets.value.widgetId);
         if (page == SettingsPage::LargeIcon) snapshot.route.itemKey = L"settings-visual-example";
         snapshot.route.focusId = focusId;
+        appearanceFixture->globalSettings = snapshot.values.desktop.iconBeautify;
         if (!shell->ApplySnapshot(snapshot)) throw std::runtime_error("preview route refused: " + key);
         HomeAboutStatusPatch status; status.generation = 1; status.revision = revision;
         status.usageGuideExpanded = expanded; status.installedWidgetCount = 3;
@@ -616,7 +623,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 bool closed = false; const auto token = opened.Closed([&](const auto&, const auto&) { closed = true; });
                 opened.Hide(); PumpUntil([&] { return closed; }); opened.Closed(token); Settle(shell.as<x::FrameworkElement>());
             };
-            const auto captureAppearance = [&](const c::ContentDialog& opened, const wchar_t* name) {
+            const auto captureAppearance = [&](const x::FrameworkElement& opened, const wchar_t* name) {
                 Settle(opened);
                 if (opened.ActualWidth() > shell->ActualWidth() || opened.ActualHeight() > shell->ActualHeight())
                     throw std::runtime_error("individual icon editor exceeds its settings window");
@@ -644,6 +651,9 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             targetRoute.itemKey = L"control:search";
             if (!shell->Navigate(targetRoute)) throw std::runtime_error("Search appearance route rejected");
             auto editor = open();
+            const auto sourceMode = PreviewControl<c::ComboBox>(editor, L"IconAppearanceSource");
+            if (sourceMode.SelectedIndex() != 0) throw std::runtime_error("unconfigured icons must default to full inheritance");
+            sourceMode.SelectedIndex(1); Settle(editor);
             c::ComboBox mode{nullptr}, theme{nullptr};
             Walk(editor, [&](const x::DependencyObject& node) {
                 if (const auto combo = node.try_as<c::ComboBox>())
@@ -654,6 +664,24 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 }
             });
             if (!mode || !theme) throw std::runtime_error("shared processing mode/theme selectors are missing");
+            if (mode.Items().Size() != 3 || theme.SelectedIndex() != 6)
+                throw std::runtime_error("new per-icon editor must default to global theme with three independent strategies");
+            c::ComboBox globalMode{nullptr};
+            Walk(shell->FindName(L"PageCards").as<x::DependencyObject>(), [&](const x::DependencyObject& node) {
+                if (const auto combo = node.try_as<c::ComboBox>(); combo &&
+                    x::Automation::AutomationProperties::GetName(combo) == _LW("iconStyle.strategy")) globalMode = combo;
+            });
+            if (!globalMode || globalMode.Items().Size() != 2) throw std::runtime_error("global processing must expose exactly two strategies");
+            mode.SelectedIndex(2);
+            appearanceFixture->globalSettings = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassDark);
+            appearanceFixture->globalSettings.mode = 1;
+            auto globalChange = snapshot; globalChange.route = targetRoute; ++globalChange.revision; ++globalChange.domainRevisions.desktop;
+            globalChange.values.desktop.iconBeautify = appearanceFixture->globalSettings;
+            if (!shell->ApplySnapshot(globalChange)) throw std::runtime_error("live global theme update rejected");
+            Settle(editor);
+            if (theme.SelectedIndex() != 6 || mode.SelectedIndex() != 2)
+                throw std::runtime_error("global theme update overwrote independent processing or theme inheritance");
+            captureAppearance(editor, L"icon-appearance-follow-global.png");
             mode.SelectedIndex(0); theme.SelectedIndex(3);
             captureAppearance(editor, L"icon-appearance-native-smart.png");
             mode.SelectedIndex(2);
@@ -665,6 +693,21 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             if (appearanceFixture->entries.back().target != L"control:search" || appearanceFixture->entries.back().settings.mode != 2 ||
                 appearanceFixture->entries.back().settings.preset != IconBeautifyPreset::FrostedGlassDark)
                 throw std::runtime_error("Search mode/theme failed to reach the independent settings action");
+            auto followEditor = open(); c::ComboBox followTheme{nullptr};
+            Walk(followEditor, [&](const x::DependencyObject& node) {
+                if (const auto combo = node.try_as<c::ComboBox>(); combo &&
+                    x::Automation::AutomationProperties::GetName(combo) == _LW("app.settings.icon_beautify")) followTheme = combo;
+            });
+            if (!followTheme) throw std::runtime_error("per-icon theme selector is missing on reopen");
+            followTheme.SelectedIndex(6); Settle(followEditor);
+            c::Button followApply{nullptr};
+            Walk(followEditor, [&](const x::DependencyObject& node) {
+                if (const auto button = node.try_as<c::Button>(); button && button.Name() == L"PrimaryButton") followApply = button;
+            });
+            if (!followApply) throw std::runtime_error("theme inheritance Apply is missing");
+            InvokePreview(followApply); Settle(shell.as<x::FrameworkElement>());
+            if (!appearanceFixture->entries.back().followGlobalTheme || appearanceFixture->entries.back().settings.mode != 2)
+                throw std::runtime_error("saving followed theme lost independent processing");
             list = PreviewControl<c::ListView>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceList");
             auto filter = PreviewControl<c::TextBox>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceSearch");
             filter.Text(_LW("iconLibrary.searchIcon")); Settle(shell.as<x::FrameworkElement>());
@@ -677,6 +720,11 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             {
                 list.SelectedIndex(0);
                 InvokePreview(PreviewControl<c::Button>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceInherit"));
+                if (list.Items().Size() == 1)
+                {
+                    const auto single = PreviewControl<c::Grid>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceListContent");
+                    captureAppearance(single, L"icon-appearance-one-item.png");
+                }
             }
             Settle(shell.as<x::FrameworkElement>());
             const auto empty = PreviewControl<c::TextBlock>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceEmpty");
