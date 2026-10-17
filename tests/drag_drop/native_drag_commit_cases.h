@@ -110,7 +110,7 @@ inline void CheckModel(DesktopApp& app, const std::vector<std::wstring>& keys,
     if (count == 2)
         Require(items[0].gridCell.column != items[1].gridCell.column || items[0].gridCell.row != items[1].gridCell.row,
             "native multi-item commit and reload cannot overlap accepted ordinary file cells");
-    else
+    else if (!source)
         Require(items[1].gridCell.column == 2 && items[1].gridCell.row == 0,
             std::string("native single-item commit preserves the unrelated item's return position; actual=") +
                 std::to_string(items[1].gridCell.column) + "," + std::to_string(items[1].gridCell.row));
@@ -118,9 +118,13 @@ inline void CheckModel(DesktopApp& app, const std::vector<std::wstring>& keys,
     if (source)
     {
         Require(widgets.size() == 1 && widgets[0].id == L"native-origin" &&
-            widgets[0].itemKeys.size() == 2 - count && !widgets[0].autoCollect,
+            widgets[0].itemKeys.size() == 2 - count && !widgets[0].autoCollect &&
+            widgets[0].gridCell.pageId == L"__page:1" && widgets[0].gridCell.column == 0 && widgets[0].gridCell.row == 0 &&
+            widgets[0].gridSpan.columns == 1 && widgets[0].gridSpan.rows == 1,
             "native ownership removal and reload preserve the source widget and only untransferred members");
-        if (count == 1) Require(widgets[0].itemKeys[0] == keys[1], "native ownership removal must retain the untransferred identity");
+        if (count == 1)
+            Require(widgets[0].itemKeys[0] == keys[1] && !Access::HasVisibleIcon(app, items[1]),
+                "native ownership removal must retain the untransferred identity and order without exposing a desktop duplicate");
     }
     else Require(widgets.empty(), "native desktop translation must not create a component");
 }
