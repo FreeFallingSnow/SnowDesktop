@@ -75,6 +75,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
     c::TextBox search;
     c::GridView grid;
     c::InfoBar status;
+    std::wstring shareNoticeKey, dismissedShareNoticeKey;
     c::TextBlock empty;
     c::AppBarButton import, rename, remove, png, ico, retry, selectAll;
     std::function<void()> cancelPicker;
@@ -267,11 +268,17 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         empty.Visibility(!snapshot.entries.empty() && !grid.Items().Size() ? x::Visibility::Visible : x::Visibility::Collapsed);
         std::wstring message = snapshot.busy ? L("iconLibrary.working") : L(snapshot.error);
         if(snapshot.busy&&snapshot.progress)message=L(snapshot.progress==4?"iconWorkshop.sync":snapshot.progress==3?"iconWorkshop.share":"iconWorkshop.preview")+L" · "+message;
+        shareNoticeKey.clear();
         if(!snapshot.busy&&snapshot.succeeded&&snapshot.completedAction=="publishPrepared"&&!snapshot.publishedUrl.empty())
-        {message=L("iconWorkshop.openItem")+L": ";message+=winrt::to_hstring(snapshot.publishedUrl).c_str();}
+        {
+            message=L("iconWorkshop.openItem")+L": ";message+=winrt::to_hstring(snapshot.publishedUrl).c_str();
+            // Publishing an update reuses the URL but is a new notification.
+            shareNoticeKey=std::to_wstring(snapshot.operationId)+L"\n"+winrt::to_hstring(snapshot.publishedUrl).c_str();
+        }
         for (size_t i = 0; i < std::min<size_t>(snapshot.failures.size(), 12); ++i) message += L"\n" + snapshot.failures[i];
         if (snapshot.failures.size() > 12) message += L"\n… (" + std::to_wstring(snapshot.failures.size()) + L")";
-        status.Message(message); status.IsOpen(!message.empty());
+        status.Message(message);
+        status.IsOpen(!message.empty()&&(shareNoticeKey.empty()||shareNoticeKey!=dismissedShareNoticeKey));
         status.Severity(snapshot.error.empty() ? c::InfoBarSeverity::Informational : c::InfoBarSeverity::Error);
         retry.Visibility(snapshot.error.empty() ? x::Visibility::Collapsed : x::Visibility::Visible);
         retry.IsEnabled(!snapshot.busy);
@@ -556,6 +563,10 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         };
         const auto weak = weak_from_this();
 
+        status.CloseButtonClick([weak](auto&&,auto&&) {
+            if(const auto self=weak.lock();self&&!self->shareNoticeKey.empty())
+                self->dismissedShareNoticeKey=self->shareNoticeKey;
+        });
         groups.MinWidth(120);
         x::Automation::AutomationProperties::SetName(groups, L("iconLibrary.groups"));
         x::Automation::AutomationProperties::SetAutomationId(groups, L"IconLibraryGroups");
