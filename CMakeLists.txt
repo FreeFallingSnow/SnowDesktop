@@ -2636,6 +2636,11 @@ if (BUILD_TESTING)
     set_tests_properties(native_drag_reload_storage PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
+    add_test(NAME native_drag_async_reload
+        COMMAND SnowDesktopNativeDragIntegrationTests --async-reload-storage)
+    set_tests_properties(native_drag_async_reload PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
 
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)

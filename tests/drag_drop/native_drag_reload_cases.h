@@ -32,9 +32,9 @@ inline const DesktopItem& Find(const DesktopApp& app, const std::wstring& key)
 }
 
 inline void Check(DesktopApp& app, const std::vector<std::wstring>& keys,
-    const DropPreviewList& preview, int source, std::size_t count)
+    const DropPreviewList& preview, int source, std::size_t count, std::size_t itemCount = 2)
 {
-    Require(Access::Items(app).size() == 2, "native whole reload cannot delete an unobserved file from an incremental snapshot");
+    Require(Access::Items(app).size() == itemCount, "native whole reload cannot delete an unobserved file from an incremental snapshot");
     const auto page = std::find_if(Access::Pages(app).begin(), Access::Pages(app).end(),
         [](const auto& value) { return value.id == L"__page:1"; });
     Require(page != Access::Pages(app).end() && page->columns == 4 && page->rows == 3,

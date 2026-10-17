@@ -1,7 +1,9 @@
 #include "app/app.h"
 #include "app/shell/shell_refresh_snapshot.h"
+#include "desktop/desktop_namespace_registry.h"
 
 #include <cstdlib>
+#include <exception>
 #include <iostream>
 #include <stdexcept>
 
@@ -12,6 +14,66 @@
 struct NativeDragIntegrationAccess
 {
     static inline HWND completionWindow = nullptr;
+    static inline DesktopApp* asyncOwner = nullptr;
+    static inline WNDPROC previousWindowProc = nullptr;
+    static inline std::exception_ptr asyncException;
+    static inline std::uint64_t asyncReadMessages = 0;
+    static inline std::uint64_t asyncShellTimers = 0;
+
+    static LRESULT CALLBACK AsyncWindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+    {
+        if (asyncOwner && window == completionWindow &&
+            (message == kBackgroundShellReadyMessage || (message == WM_TIMER && wp == kShellChangeTimerId)))
+        {
+            try
+            {
+                if (message == kBackgroundShellReadyMessage) ++asyncReadMessages;
+                else ++asyncShellTimers;
+                return asyncOwner->HandleMessage(window, message, wp, lp);
+            }
+            catch (...) { asyncException = std::current_exception(); return 0; }
+        }
+        return previousWindowProc ? CallWindowProcW(previousWindowProc, window, message, wp, lp)
+            : DefWindowProcW(window, message, wp, lp);
+    }
+
+    static void BindAsync(DesktopApp& app)
+    {
+        if (asyncOwner || app.hwnd_ != completionWindow || !IsWindow(completionWindow))
+            throw std::runtime_error("async native fixture must exclusively own its message-only window");
+        // Keep real model reads, timers, delivery and reload. Pixel providers
+        // and global clipboard/cache services are outside this contract.
+        app.iconWork_.Stop();
+        for (const auto* clsid : {kDesktopIconClsidThisPC, kDesktopIconClsidUserFiles, kDesktopIconClsidNetwork,
+                kDesktopIconClsidControlPanel, kDesktopIconClsidRecycleBin, kDesktopIconClsidApplications})
+            app.settingsIconVisibility_[ToUpperInvariant(clsid)] = false;
+        for (const auto& entry : snowdesktop::LoadDesktopNamespaceRegistrations())
+            app.settingsIconVisibility_[ToUpperInvariant(entry.clsid)] = false;
+        asyncException = {};
+        asyncReadMessages = 0;
+        asyncShellTimers = 0;
+        previousWindowProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(completionWindow,
+            GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&AsyncWindowProc)));
+        if (!previousWindowProc) throw std::runtime_error("install the isolated native completion dispatcher");
+        asyncOwner = &app;
+    }
+    static void UnbindAsync(DesktopApp& app)
+    {
+        if (asyncOwner != &app) return;
+        KillTimer(completionWindow, kShellChangeTimerId);
+        SetWindowLongPtrW(completionWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousWindowProc));
+        previousWindowProc = nullptr;
+        asyncOwner = nullptr;
+    }
+    static void RequestAsync(DesktopApp& app, bool disk = false) { app.ReloadItems(disk); }
+    static bool AsyncRunning(const DesktopApp& app) { return app.shellRefreshRevision_.Running(); }
+    static bool AsyncIdle(const DesktopApp& app)
+    {
+        return app.desktopItemsReady_ && !app.shellReloadPending_ && !app.shellRefreshRevision_.Running() &&
+            !app.readyShellRefresh_ && !app.layoutReload_.Pending();
+    }
+    static void EndActualGesture(DesktopApp& app) { app.EndDragSession(); }
+    static void ThrowAsyncException() { if (asyncException) std::rethrow_exception(asyncException); }
     static DesktopApp& Scene(bool secondary)
     {
         auto& app = *new DesktopApp;
@@ -313,6 +375,7 @@ struct NativeDragIntegrationAccess
     }
     static void StopModel(DesktopApp& app)
     {
+        UnbindAsync(app);
         app.folderNotifications_.Clear();
         app.StopIconLoader();
         app.appIndexWork_.Stop();
@@ -325,6 +388,7 @@ struct NativeDragIntegrationAccess
 
 #include "native_drag_commit_cases.h"
 #include "native_drag_reload_cases.h"
+#include "native_drag_async_reload_cases.h"
 
 namespace
 {
@@ -383,6 +447,7 @@ int main(int argc, char** argv)
         if (argc == 1) RunTargets();
         else if (argc == 2 && std::string_view(argv[1]) == "--commit-storage") native_drag_commit_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--reload-storage") native_drag_reload_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--async-reload-storage") native_drag_async_reload_cases::Run();
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }
