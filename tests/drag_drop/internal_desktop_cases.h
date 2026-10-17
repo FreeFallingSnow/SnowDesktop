@@ -47,7 +47,7 @@ struct World : page_mapping_cases::World
             // native containers and rendering remain host service boundaries.
             services.prepareLayout = [] {};
             services.committed = [&] { ++commits; Save(); };
-            return internal_desktop_drop::Execute(list, plan, items, widgets, services);
+            return internal_desktop_drop::Execute(list, plan, items, widgets, {savedIds, columns, rows}, services);
         };
         bool notified = false;
         const bool result = drop_pipeline::Execute(sources, preview, widgets, dock, pipeline,
@@ -166,7 +166,10 @@ inline void RunLandings(const std::filesystem::path& root, bool previewOnly = fa
         services.findFree = [&](auto span, const auto& used, auto& cell, const auto& preferred, int slot) {
             return grid_occupancy::FindFree(world.pages, world.order, span, used, cell, preferred, slot);
         };
-        services.generateId = [&] { return page_mapping::GenerateId(world.savedIds); };
+        services.generateId = [&](const auto& reserved) {
+            auto ids = world.savedIds; ids.insert(ids.end(), reserved.begin(), reserved.end());
+            return page_mapping::GenerateId(ids);
+        };
         const GridCell request{target, smallGrid ? 0 : 1, smallGrid ? 0 : 1};
         const auto before = world.Snapshot(); const auto stored = Bytes(world.root / L"layout.json");
         const auto files = widget_displacement_cases::Files(world.root / L"sources");
@@ -277,6 +280,25 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
     }
     if (section == L"all" || section == L"landings") RunLandings(root);
     if (section == L"landing-preview") RunLandings(root, true);
+    if (section == L"all" || section == L"landings")
+    for (int invalid : {0, 1, 2, 3})
+    {
+        World world(root / (L"invalid-planned-page-" + std::to_wstring(invalid))); Seed(world, 1, 1, false);
+        world.Apply(); const auto source = Sources(world, 1); auto preview = Preview(source);
+        const auto id = page_mapping::GenerateId(world.savedIds);
+        auto& landing = preview.landings[0]; landing.cell = {id, 0, 0}; landing.plannedPageSize = GridSpan{2, 2};
+        if (invalid == 0)
+        {
+            world.savedIds.push_back(id); world.columns[id] = 2; world.rows[id] = 2; world.names[id] = L"Replacement";
+        }
+        else if (invalid == 1) landing.plannedPageSize = GridSpan{0, 0};
+        else if (invalid == 2) landing.cell.column = 2;
+        else landing.plannedPageSize.reset();
+        world.Save(); const auto before = world.Snapshot(); const auto stored = Bytes(world.root / L"layout.json");
+        Require(!world.Execute(source, preview) && world.Snapshot() == before && world.commits == 0 &&
+            Bytes(world.root / L"layout.json") == stored && world.Named(L"Replacement") == (invalid == 0 ? id : L""),
+            "invalid or replaced planned pages reject before page registration, ownership removal and persisted mutation");
+    }
     std::cout << "internal desktop file dispatch, identity, rejection, landing preview, page mapping and storage cases passed\n";
 }
 }

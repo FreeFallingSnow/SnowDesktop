@@ -12,7 +12,7 @@ struct Services
     std::function<bool(const DesktopItem&)> owned;
     std::function<std::wstring(const std::wstring&)> normalize;
     std::function<bool(GridSpan, grid_occupancy::Slots&, GridCell&, const std::wstring&, int)> findFree;
-    std::function<std::wstring()> generateId;
+    std::function<std::wstring(const std::vector<std::wstring>&)> generateId;
 };
 
 // Actual host planner for files entering the desktop grid. The separate
@@ -24,6 +24,9 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
 {
     std::vector<DropLanding> landings;
     const auto* page = &requestedPage;
+    auto pageColumnsById = savedPageColumns_, pageRowsById = savedPageRows_;
+    std::vector<std::wstring> reservedIds;
+    std::unordered_map<std::wstring, GridSpan> plannedPages;
     // 起始列：拖放目标列，换行时从该列另起一行而非从 0 开始
     const int startCol = std::clamp(targetCell.column, 0, std::max(0, page->columns - 1));
 
@@ -32,10 +35,10 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
         int cols = page->columns, rows = page->rows;
         if (cell.pageId != page->id)
         {
-            auto colIt = savedPageColumns_.find(cell.pageId);
-            auto rowIt = savedPageRows_.find(cell.pageId);
-            if (colIt != savedPageColumns_.end()) cols = colIt->second;
-            if (rowIt != savedPageRows_.end()) rows = rowIt->second;
+            auto colIt = pageColumnsById.find(cell.pageId);
+            auto rowIt = pageRowsById.find(cell.pageId);
+            if (colIt != pageColumnsById.end()) cols = colIt->second;
+            if (rowIt != pageRowsById.end()) rows = rowIt->second;
         }
         cell.column += std::max(1, span.columns);
         if (cell.column + span.columns > cols)
@@ -78,10 +81,10 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
         int pageCols = page->columns, pageRows = page->rows;
         if (fromCell.pageId != page->id)
         {
-            auto colIt = savedPageColumns_.find(fromCell.pageId);
-            auto rowIt = savedPageRows_.find(fromCell.pageId);
-            if (colIt != savedPageColumns_.end()) pageCols = colIt->second;
-            if (rowIt != savedPageRows_.end()) pageRows = rowIt->second;
+            auto colIt = pageColumnsById.find(fromCell.pageId);
+            auto rowIt = pageRowsById.find(fromCell.pageId);
+            if (colIt != pageColumnsById.end()) pageCols = colIt->second;
+            if (rowIt != pageRowsById.end()) pageRows = rowIt->second;
         }
 
         // 当前行从 fromCell.column 向右找
@@ -155,10 +158,10 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
         // 获取 cursor 所在页的维度（支持跨页后 cursor 切到新页）
         auto getPageSize = [&](const std::wstring& pid) -> std::pair<int,int> {
             if (pid == page->id) return { page->columns, page->rows };
-            auto colIt = savedPageColumns_.find(pid);
-            auto rowIt = savedPageRows_.find(pid);
-            int c = (colIt != savedPageColumns_.end()) ? colIt->second : page->columns;
-            int r = (rowIt != savedPageRows_.end()) ? rowIt->second : page->rows;
+            auto colIt = pageColumnsById.find(pid);
+            auto rowIt = pageRowsById.find(pid);
+            int c = (colIt != pageColumnsById.end()) ? colIt->second : page->columns;
+            int r = (rowIt != pageRowsById.end()) ? rowIt->second : page->rows;
             return { c, r };
         };
 
@@ -202,13 +205,15 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
         // 阶段 4：所有现有页都满了 → 预分配新溢出页
         if (!found)
         {
-            std::wstring newPageId = services.generateId();
-            // GeneratePageId 保证唯一，savedPageColumns_ 不会有该页
-            if (!savedPageColumns_.count(newPageId))
+            const auto newPageId = services.generateId(reservedIds);
+            if (!pageColumnsById.contains(newPageId) && !pageRowsById.contains(newPageId) && !newPageId.empty() &&
+                span.columns <= page->columns && span.rows <= page->rows)
             {
                 cell = { newPageId, 0, 0 };
                 found = true;
-                // 新页维度由 ApplyPendingPlacement 创建时参考末屏设置
+                reservedIds.push_back(newPageId);
+                pageColumnsById[newPageId] = page->columns; pageRowsById[newPageId] = page->rows;
+                plannedPages[newPageId] = {page->columns, page->rows};
             }
         }
 
@@ -219,6 +224,8 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
         landing.sourceIndex = entry.sourceIndex;
         landing.cell = cell;
         landing.span = span;
+        if (const auto planned = plannedPages.find(cell.pageId); planned != plannedPages.end())
+            landing.plannedPageSize = planned->second;
         landings.push_back(landing);
 
         grid_occupancy::Mark(usedSlots, cell, span);

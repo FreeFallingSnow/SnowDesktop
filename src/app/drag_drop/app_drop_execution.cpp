@@ -180,7 +180,8 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);
         };
-        return snowdesktop::internal_desktop_drop::Execute(sourceList, preview, items_, widgets_, services);
+        return snowdesktop::internal_desktop_drop::Execute(sourceList, preview, items_, widgets_,
+            {savedPageIds_, savedPageColumns_, savedPageRows_}, services);
     }
 
     if (preview.targetKind == DropTargetKind::KeyedWidget && preview.targetWidget)

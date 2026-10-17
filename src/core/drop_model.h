@@ -512,6 +512,9 @@ struct DropLanding
     size_t insertIndex = 0;
     DesktopWidget* widget = nullptr;
     std::wstring widgetId;
+    // Preview-local virtual page geometry. The page is registered only by a
+    // successful commit; hovering or cancelling never changes saved pages.
+    std::optional<GridSpan> plannedPageSize;
 };
 
 /**

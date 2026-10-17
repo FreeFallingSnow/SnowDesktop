@@ -2,6 +2,7 @@
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "desktop/desktop_membership_recovery.h"
 #include "drag_drop/desktop_landings.h"
+#include "layout/page_mapping.h"
 
 // OLE data-object construction and desktop landing bookkeeping.
 
@@ -302,7 +303,11 @@ std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
     services.findFree = [this](auto span, auto& used, auto& cell, const auto& preferred, int slot) {
         return TryFindFreeCell(span, used, cell, preferred, slot);
     };
-    services.generateId = [this] { return GeneratePageId(); };
+    services.generateId = [this](const auto& reserved) {
+        auto ids = savedPageIds_;
+        ids.insert(ids.end(), reserved.begin(), reserved.end());
+        return snowdesktop::page_mapping::GenerateId(ids);
+    };
     return snowdesktop::desktop_landings::Build(sourceList, std::move(targetCell), internalMove, *page,
         widgets_, items_, savedPageColumns_, savedPageRows_, services);
 }
