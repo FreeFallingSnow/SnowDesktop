@@ -163,8 +163,8 @@
         <SourcePackage>SnowDesktop</SourcePackage>
         <DeploymentKind>Generated</DeploymentKind>
       </_SnowDesktopDeploymentFile>
-      <_SnowDesktopDeploymentFile Include="$(TargetDir)SnowDesktop.pri">
-        <DeploymentPath>SnowDesktop.pri</DeploymentPath>
+      <_SnowDesktopDeploymentFile Include="$(TargetDir)$(TargetName).pri">
+        <DeploymentPath>$(TargetName).pri</DeploymentPath>
         <SourcePackage>SnowDesktop</SourcePackage>
         <DeploymentKind>Generated</DeploymentKind>
       </_SnowDesktopDeploymentFile>
