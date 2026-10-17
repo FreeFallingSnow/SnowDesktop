@@ -22,9 +22,13 @@ std::wstring DesktopApp::ResolveIconTarget(std::wstring_view identity) const
 
 snowdesktop::IconBeautifySettings DesktopApp::ResolveIconAppearance(std::wstring_view identity, bool media) const
 {
-    const auto found = iconAppearanceOverrides_.find(ResolveIconTarget(identity));
     return snowdesktop::icon_appearance::Resolve(iconBeautifySettings_,
-        found == iconAppearanceOverrides_.end() ? nullptr : &found->second, media, drawingIconAppearanceSource_);
+        FindIconAppearance(ResolveIconTarget(identity)), media, drawingIconAppearanceSource_);
+}
+const snowdesktop::IconAppearanceRecord* DesktopApp::FindIconAppearance(std::wstring_view target) const
+{
+    const auto found = iconAppearanceOverrides_.find(std::wstring(target));
+    return iconAppearancePreview_.Effective(target, found == iconAppearanceOverrides_.end() ? nullptr : &found->second);
 }
 
 void DesktopApp::OpenIconAppearance(const std::wstring& target)
@@ -39,11 +43,31 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
 {
     using namespace snowdesktop;
     IconAppearanceSnapshot result;
+    const auto repaint = [this](bool preview) {
+        ClearStyledIconCache();
+        dockFolderBitmapCache_.Retain([](const auto&) { return false; }); dockIconWork_.Cancel(L"dock-folder:");
+        InvalidateDragStaticScene(); InvalidateDockRects(TRUE);
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+        if (quickNavigationOpen_) InvalidateQuickNavigationWindow();
+        if (preview && hwnd_) { PresentDesktopPointerUpdate(); FlushPendingCompositionCommit(); }
+    };
+    // Teardown must discard the overlay even if the theme library is missing
+    // or damaged, including an unexpected exit of the settings process.
+    if (request.action == "close" || request.action == "cancel")
+    {
+        if (request.action == "close" || (request.session == iconAppearanceSession_ && request.target == iconAppearanceTarget_))
+        {
+            if (iconAppearancePreview_.Clear()) repaint(true);
+            iconAppearanceTarget_.clear(); ++iconAppearanceSession_;
+        }
+        result.succeeded = true; return result;
+    }
     themes::Library library; std::string error;
     if (!themes::Load(themes::LibraryPath(), library, error))
     { result.error = "iconLibrary.unavailable"; return result; }
     const auto previous = iconAppearanceOverrides_;
-    bool changed = false;
+    bool changed = false, previewChanged = false;
     if (request.action == "themes")
     {
         // Keep each processing strategy while updating a named theme. A
@@ -62,15 +86,23 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
     else if (request.action == "begin")
     {
         if (!IsIconOverrideTarget(request.target)) { result.error = "iconLibrary.stale"; return result; }
+        previewChanged = iconAppearancePreview_.Clear();
         iconAppearanceTarget_ = request.target; ++iconAppearanceSession_;
     }
-    else if (request.action == "apply" || request.action == "inherit")
+    else if (request.action == "apply" || request.action == "inherit" ||
+        request.action == "previewApply" || request.action == "previewInherit")
     {
-        const bool guarded = request.action == "apply" || request.session != 0;
+        const bool preview = request.action == "previewApply" || request.action == "previewInherit";
+        const bool independent = request.action == "apply" || request.action == "previewApply";
+        const bool guarded = preview || independent || request.session != 0;
         if ((guarded && !icon_appearance::CurrentEdit(request, iconAppearanceTarget_, iconAppearanceSession_, iconAppearanceRevision_)) ||
-            (request.action == "apply" && !IsIconOverrideTarget(request.target)))
+            ((preview || independent) && !IsIconOverrideTarget(request.target)))
         { result.error = "iconLibrary.stale"; return result; }
-        if (request.action == "inherit") changed = iconAppearanceOverrides_.erase(request.target) != 0;
+        if (!independent)
+        {
+            if (preview) previewChanged = iconAppearancePreview_.Update(request, iconAppearanceTarget_, iconAppearanceSession_, iconAppearanceRevision_, std::nullopt);
+            else changed = iconAppearanceOverrides_.erase(request.target) != 0;
+        }
         else
         {
             if (!icon_appearance::ValidTarget(request.target) || !themes::ValidIconTheme(request.settings))
@@ -83,15 +115,11 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
                 const int mode = request.settings.mode; request.settings = theme->icon;
                 request.settings.mode = mode; request.settings.preset = IconBeautifyPreset::Custom;
             }
-            iconAppearanceOverrides_[request.target] = {request.target, IconOverrideTargetName(request.target),
+            IconAppearanceRecord record{request.target, IconOverrideTargetName(request.target),
                 icon_beautify::Normalize(request.settings), request.themeId, true, request.followGlobalTheme};
-            changed = true;
+            if (preview) previewChanged = iconAppearancePreview_.Update(request, iconAppearanceTarget_, iconAppearanceSession_, iconAppearanceRevision_, std::move(record));
+            else { iconAppearanceOverrides_[request.target] = std::move(record); changed = true; }
         }
-    }
-    else if (request.action == "cancel")
-    {
-        if (request.session == iconAppearanceSession_ && request.target == iconAppearanceTarget_)
-        { iconAppearanceTarget_.clear(); ++iconAppearanceSession_; }
     }
     else if (request.action != "read" && request.action != "preview") { result.error = "iconLibrary.invalid"; return result; }
     if (changed)
@@ -116,14 +144,17 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
             iconAppearanceOverrides_ = previous; (void)SaveLayoutSlots();
             result.error = "iconLibrary.saveFailed"; return result;
         }
-        ++iconAppearanceRevision_; ClearStyledIconCache();
-        dockFolderBitmapCache_.Retain([](const auto&) { return false; }); dockIconWork_.Cancel(L"dock-folder:");
-        InvalidateDragStaticScene(); InvalidateDockRects();
-        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-        if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+        ++iconAppearanceRevision_;
     }
     if (request.action == "apply" || (request.action == "inherit" && request.session))
-    { iconAppearanceTarget_.clear(); ++iconAppearanceSession_; }
+    {
+        previewChanged = iconAppearancePreview_.Clear() || previewChanged;
+        iconAppearanceTarget_.clear(); ++iconAppearanceSession_;
+    }
+    if (changed || previewChanged)
+        repaint(previewChanged);
+    if (request.action == "previewApply" || request.action == "previewInherit")
+    { result.succeeded = true; result.session = iconAppearanceSession_; result.revision = iconAppearanceRevision_; return result; }
     if (request.action != "preview") for (const auto& [target, entry] : iconAppearanceOverrides_)
     {
         auto record = entry;
@@ -255,8 +286,7 @@ void DesktopApp::ClearDockAppearanceImages()
 bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT target, int state)
 {
     const auto key = L"widget:" + entry.reference;
-    const auto found = iconAppearanceOverrides_.find(key);
-    if (drawingIconAppearanceSource_ || (found == iconAppearanceOverrides_.end() &&
+    if (drawingIconAppearanceSource_ || (!FindIconAppearance(key) &&
         !(entry.type == DockEntryType::FolderMapping && iconBeautifySettings_.enabled))) return false;
     // Native preview sources share their Shell bitmap identities. A completed
     // async load changes the signature; a library-image completion clears it.

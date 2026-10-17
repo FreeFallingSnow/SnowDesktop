@@ -602,6 +602,7 @@ void DesktopApp::DrawDockRunningApp(ID2D1DeviceContext* ctx,
 
 void DesktopApp::DrawDockGroupBadge(ID2D1DeviceContext* ctx, RECT iconRect)
 {
+    if (!groupComponentBadges_) return;
     // Match the beautified shortcut badge's geometry and palette.
     const int iconHeight = std::max(1, static_cast<int>(iconRect.bottom - iconRect.top));
     const int iconWidth = std::max(1, static_cast<int>(iconRect.right - iconRect.left));

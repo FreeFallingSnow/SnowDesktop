@@ -367,6 +367,8 @@ constexpr StaticSearchDefinition kStaticSearchDefinitions[] = {
     {SettingsPage::AppearanceDesktopIcons, "desktop.shortcutArrow",
         "settings.desktop.shortcutArrow",
         "settings.desktop.shortcutArrow.description"},
+    {SettingsPage::AppearanceDesktopIcons, "desktop.groupComponentBadges",
+        "app.settings.group_component_badges", ""},
     {SettingsPage::AppearanceIconBeautification, "desktop.iconBeautify",
         "settings.desktop.iconBeautify",
         "settings.desktop.iconBeautify.description"},

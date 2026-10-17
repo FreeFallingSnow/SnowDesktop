@@ -157,6 +157,7 @@ struct Document
     // Legacy layout-wide migration input. New layouts persist the widget field.
     std::optional<bool> collectionLargeFolderTitleless;
     std::optional<int> shortcutArrowMode;
+    std::optional<bool> groupComponentBadges;
     std::optional<bool> iconBeautifyEnabled;
     std::optional<int> iconBeautifyPreset;
     std::optional<bool> iconBeautifyGlassEnabled;

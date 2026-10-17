@@ -775,6 +775,8 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.collectionLargeFolderTitleless, error) ||
         !ReadOptionalInteger(root, "shortcutArrowMode", "shortcutArrowMode",
             decoded.shortcutArrowMode, error) ||
+        !ReadOptionalRootBoolean(root, "groupComponentBadges",
+            decoded.groupComponentBadges, error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyEnabled",
             decoded.iconBeautifyEnabled, error) ||
         !ReadOptionalBoolean(root, "iconBeautifyGlassEnabled", "iconBeautifyGlassEnabled",

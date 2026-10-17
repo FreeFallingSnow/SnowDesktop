@@ -2866,5 +2866,6 @@
   "iconWorkshop.creationUncertain": "Das Ergebnis der letzten Erstellung ist unklar. Prüfe deine Workshop-Objekte, bevor du ein weiteres erstellst.",
   "iconWorkshop.titleTooLong": "Der Titel ist zu lang. Bitte kürzen und erneut versuchen.",
   "iconWorkshop.descriptionTooLong": "Die Beschreibung ist zu lang. Bitte kürzen und erneut versuchen.",
-  "app.widget_preview.single_cell_component": "Einzellen-Widget"
+  "app.widget_preview.single_cell_component": "Einzellen-Widget",
+  "app.settings.group_component_badges": "Abzeichen für Gruppenkomponenten"
 }

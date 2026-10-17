@@ -616,6 +616,8 @@ struct DesktopPagePresenter::Impl
     muxc::TextBlock shortcutArrowLabel{nullptr};
     muxc::ComboBox shortcutArrow{nullptr};
     SettingRow shortcutArrowRow;
+    muxc::ToggleSwitch groupComponentBadges{nullptr};
+    SettingRow groupComponentBadgesRow;
     std::array<muxc::ComboBox, 3> titleLineCombos;
     std::array<SettingRow, 3> titleLineRows;
     std::array<winrt::event_token, 3> titleLineTokens{};
@@ -700,6 +702,7 @@ struct DesktopPagePresenter::Impl
     bool closed = false;
 
     winrt::event_token shortcutArrowToken{};
+    winrt::event_token groupComponentBadgesToken{};
     winrt::event_token showCountsToken{};
     winrt::event_token collectProgramsToken{};
     winrt::event_token beautifyPresetToken{};
@@ -869,6 +872,12 @@ struct DesktopPagePresenter::Impl
         itemFontWeight->SetUnit(L"%");
         displayCard.content.Children().Append(iconSize->root);
         AppendCombo(displayCard, shortcutArrowRow, shortcutArrow);
+        groupComponentBadges = muxc::ToggleSwitch{};
+        groupComponentBadges.HorizontalAlignment(mux::HorizontalAlignment::Right);
+        groupComponentBadgesRow.Initialize(groupComponentBadges);
+        presenter_controls::StyleSettingsCard(groupComponentBadgesRow.root);
+        groupComponentBadgesRow.SetControlAlignment(mux::HorizontalAlignment::Right);
+        displayCard.content.Children().Append(groupComponentBadgesRow.root);
         InitializeCard(titleCard, cardStyle, desktopIconsRoot);
         for (const auto* editor : {
                  itemFontSize.get(), listFontSize.get(), fanTitleFontSize.get(), itemFontWeight.get()})
@@ -1225,6 +1234,14 @@ struct DesktopPagePresenter::Impl
                 UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
                     [selection](DesktopDisplaySettings& settings) {
                         settings.shortcutArrowMode = selection;
+                    });
+            });
+        groupComponentBadgesToken = groupComponentBadges.Toggled(
+            [this](const auto&, const auto&) {
+                const bool enabled = groupComponentBadges.IsOn();
+                UpdateDesktop(SettingsUpdateMode::PreviewAndCommit,
+                    [enabled](DesktopDisplaySettings& settings) {
+                        settings.groupComponentBadges = enabled;
                     });
             });
         showCountsToken = showCategoryTabCounts.Toggled(
@@ -1739,6 +1756,7 @@ struct DesktopPagePresenter::Impl
         itemFontWeight->SetValue(font_weight_rules::ToPercent(settings.itemFontWeight));
         shortcutArrow.SelectedIndex(
             std::clamp(settings.shortcutArrowMode, 0, 2));
+        groupComponentBadges.IsOn(settings.groupComponentBadges);
 
         const IconBeautifySettings& value = settings.iconBeautify;
         beautifyEnabled = value.enabled;
@@ -2001,6 +2019,10 @@ struct DesktopPagePresenter::Impl
             editor->SetResetText(
                 L("app.settings.restore_default", L"Restore Default"));
         }
+        groupComponentBadgesRow.SetText(
+            L("app.settings.group_component_badges", L"Group component badges"));
+        muxa::AutomationProperties::SetName(groupComponentBadges, groupComponentBadgesRow.label.Text());
+        muxa::AutomationProperties::SetAutomationId(groupComponentBadges, L"GroupComponentBadges");
         shortcutArrowRow.SetText(
             L("app.settings.shortcut_arrow", L"Shortcut arrow"));
         muxa::AutomationProperties::SetName(
@@ -2186,6 +2208,7 @@ struct DesktopPagePresenter::Impl
         if (id == "desktop.titleOverflow") return titleOverflow;
         if (id == "desktop.fontWeight") return itemFontWeight->number;
         if (id == "desktop.shortcutArrow") return shortcutArrow;
+        if (id == "desktop.groupComponentBadges") return groupComponentBadges;
         if (id == "desktop.categoryCounts") return showCategoryTabCounts;
         if (id == "desktop.collectPrograms") return collectPrograms;
         if (id == "desktop.iconBeautify" ||
@@ -2304,6 +2327,7 @@ struct DesktopPagePresenter::Impl
         try
         {
             shortcutArrow.SelectionChanged(shortcutArrowToken);
+            groupComponentBadges.Toggled(groupComponentBadgesToken);
             showCategoryTabCounts.Toggled(showCountsToken);
             collectPrograms.Toggled(collectProgramsToken);
             beautifyPreset.SelectionChanged(beautifyPresetToken);

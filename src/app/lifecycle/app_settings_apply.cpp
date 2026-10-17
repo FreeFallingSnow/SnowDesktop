@@ -757,6 +757,7 @@ bool DesktopApp::SynchronizeReloadedLayoutSettings()
     desktop.scrollingTitleLines = scrollingTitleLines_;
     desktop.titleEllipsis = titleEllipsis_;
     desktop.shortcutArrowMode = shortcutArrowMode_;
+    desktop.groupComponentBadges = groupComponentBadges_;
     desktop.iconBeautify = iconBeautifySettings_;
     const bool generalSynchronized =
         settingsController_->SynchronizeGeneral(generalSettings_);
@@ -1296,6 +1297,7 @@ public:
             app_.SetItemFontWeight(static_cast<DWRITE_FONT_WEIGHT>(
                 desktop.itemFontWeight));
             app_.SetShortcutArrowMode(desktop.shortcutArrowMode);
+            app_.SetGroupComponentBadges(desktop.groupComponentBadges);
             app_.SetIconBeautifySettings(
                 desktop.iconBeautify,
                 snowdesktop::IconBeautifyUpdateKind::Commit);
@@ -1308,6 +1310,11 @@ public:
     snowdesktop::SettingsActionResult OnSettingsRouteChanged(
         const snowdesktop::SettingsRoute& route) override
     {
+        if (!app_.iconAppearanceTarget_.empty() && route.page != snowdesktop::SettingsPage::AppearanceIconBeautification)
+        {
+            snowdesktop::IconAppearanceRequest close; close.action = "close";
+            (void)app_.EditIconAppearance(std::move(close));
+        }
         // Windows owns these taskbar values. Reconcile them whenever the
         // already-open settings window enters either route that exposes them;
         // reopening the window is not the only way to reveal those controls.

@@ -2395,6 +2395,7 @@ private:
     void PreviewItemFontWeight(DWRITE_FONT_WEIGHT weight);
     DWRITE_FONT_WEIGHT GetItemFontWeight() const;
     void SetShortcutArrowMode(int mode);
+    void SetGroupComponentBadges(bool enabled);
     bool ShouldDrawShortcutArrow(bool isShortcut, bool isApplicationShortcut) const;
     bool ShouldUseDemoIdentity(const DesktopItem& item) const;
     std::wstring GetDemoIdentityTitle(std::wstring_view identity) const;
@@ -3042,11 +3043,13 @@ private:
     ID2D1Bitmap* GetSmallCustomIcon(ID2D1RenderTarget* context, std::wstring_view identity, int pixels);
     std::unordered_map<std::wstring, std::string> iconOverrides_;
     std::map<std::wstring, snowdesktop::IconAppearanceRecord> iconAppearanceOverrides_;
+    snowdesktop::icon_appearance::EditPreview iconAppearancePreview_;
     std::uint64_t iconAppearanceRevision_ = 1, iconAppearanceSession_ = 0;
     std::wstring iconAppearanceTarget_;
     snowdesktop::IconAppearanceSnapshot EditIconAppearance(snowdesktop::IconAppearanceRequest request);
     void OpenIconAppearance(const std::wstring& target);
     std::wstring ResolveIconTarget(std::wstring_view identity) const;
+    const snowdesktop::IconAppearanceRecord* FindIconAppearance(std::wstring_view target) const;
     snowdesktop::IconBeautifySettings ResolveIconAppearance(std::wstring_view identity, bool media = false) const;
     ID2D1Bitmap* GetTargetIconBitmap(ID2D1RenderTarget* context, HBITMAP bitmap,
         std::wstring_view identity, bool media = false);
@@ -4035,6 +4038,7 @@ private:
     int scrollingTitleLines_ = 2;
     bool titleEllipsis_ = true;
     int shortcutArrowMode_ = 0;
+    bool groupComponentBadges_ = true;
     snowdesktop::IconBeautifySettings iconBeautifySettings_{};
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;   // 持久化：锁定显示首屏的显示器

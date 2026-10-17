@@ -6,11 +6,13 @@
 #include <winrt/Microsoft.UI.Xaml.Media.Imaging.h>
 #include <winrt/Microsoft.UI.Xaml.Markup.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
+#include <winrt/Microsoft.UI.Dispatching.h>
 #include <winrt/Windows.ApplicationModel.DataTransfer.h>
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cwctype>
 #include <utility>
 #include <unordered_map>
@@ -77,6 +79,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
     x::DispatcherTimer timer;
     bool active = false, picker = false, rendering = false, dockPickerStarted = false, importing = false;
     std::uint64_t pickerGeneration = 0;
+    std::uint64_t dropGeneration = 0;
     std::wstring signature;
     std::unordered_map<std::string, IconLibraryEntry> visible;
     std::function<void()> selectionChanged;
@@ -427,23 +430,80 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         }
         catch (...) { }
     }
-    winrt::fire_and_forget Drop(x::DragEventArgs args)
+    static winrt::fire_and_forget ReadDrop(std::shared_ptr<Impl> self,
+        x::DragEventArgs args, x::DragOperationDeferral deferral,
+        std::uint64_t generation, std::string group)
     {
-        const auto lifetime = shared_from_this();
-        const auto deferral = args.GetDeferral();
+        bool completed = false;
         try
         {
-            std::vector<std::wstring> paths;
-            const auto items = co_await args.DataView().GetStorageItemsAsync();
-            if (active)
+            if (!self->active || self->dropGeneration != generation ||
+                self->snapshot.busy || self->groupId != group)
             {
+                completed = true;
+                deferral.Complete();
+                co_return;
+            }
+            // Invoked by a queued callback after XAML's protected drag event
+            // has returned. Even DataView() may synchronously pump COM work.
+            const auto data = args.DataView();
+            std::vector<std::wstring> paths;
+            if (data.Contains(dt::StandardDataFormats::StorageItems()))
+            {
+                const auto items = co_await data.GetStorageItemsAsync();
                 for (const auto& item : items) if (item.IsOfType(winrt::Windows::Storage::StorageItemTypes::File)) paths.emplace_back(item.Path());
-                Import(std::move(paths));
+            }
+            const bool accepted = !paths.empty() && self->active &&
+                self->dropGeneration == generation && !self->snapshot.busy && self->groupId == group;
+            args.AcceptedOperation(accepted ? dt::DataPackageOperation::Copy : dt::DataPackageOperation::None);
+            completed = true;
+            deferral.Complete();
+            if (accepted)
+                self->root.DispatcherQueue().TryEnqueue([self, generation, group, paths = std::move(paths)]() mutable {
+                    try {
+                        if (self->active && self->dropGeneration == generation && self->groupId == group)
+                            self->Import(std::move(paths));
+                    } catch (...) { /* The settings island may be shutting down. */ }
+                });
+        }
+        catch (...)
+        {
+            if (!completed) try { deferral.Complete(); } catch (...) {}
+        }
+    }
+    void Drop(const x::DragEventArgs& args) noexcept
+    {
+        try
+        {
+            if (!active || snapshot.busy) return;
+            args.Handled(true);
+            args.AcceptedOperation(dt::DataPackageOperation::None);
+            const auto deferral = args.GetDeferral();
+            bool queued = false;
+            try {
+                queued = root.DispatcherQueue().TryEnqueue(
+                    [self = shared_from_this(), args, deferral, generation = dropGeneration, group = groupId] {
+                        ReadDrop(self, args, deferral, generation, group);
+                    });
+            } catch (...) { try { deferral.Complete(); } catch (...) {} return; }
+            if (!queued) deferral.Complete();
+        }
+        catch (...) { /* No exception may escape a routed drag callback. */ }
+    }
+    void DragOver(const x::DragEventArgs& args) noexcept
+    {
+        try
+        {
+            // Do not inspect DataView during DragOver: cross-process OLE can
+            // pump a nested XAML layout message before this callback returns.
+            // Copy is provisional; Drop validates actual file payloads.
+            if (active && !snapshot.busy)
+            {
                 args.AcceptedOperation(dt::DataPackageOperation::Copy);
+                args.Handled(true);
             }
         }
         catch (...) { }
-        deferral.Complete();
     }
     void Build()
     {
@@ -503,7 +563,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         workshopButton(packInfo,"iconWorkshop.info",[weak](auto&&,auto&&){if(const auto self=weak.lock())self->Info();});
         workshopButton(openPack,"iconWorkshop.openItem",[weak](auto&&,auto&&){if(const auto self=weak.lock()){IconLibraryRequest request;request.action="openPublished";request.groupId=self->groupId;self->Send(request);}});
         if (picker) { selectAll.Visibility(x::Visibility::Collapsed); newGroup.Visibility(x::Visibility::Collapsed); renameGroup.Visibility(x::Visibility::Collapsed); deleteGroup.Visibility(x::Visibility::Collapsed); moveGroup.Visibility(x::Visibility::Collapsed); rename.Visibility(x::Visibility::Collapsed); remove.Visibility(x::Visibility::Collapsed); png.Visibility(x::Visibility::Collapsed); ico.Visibility(x::Visibility::Collapsed); }
-        grid.Height(picker ? 340 : 460); grid.SelectionMode(picker ? c::ListViewSelectionMode::Single : c::ListViewSelectionMode::Multiple);
+        grid.Height(picker ? 340 : 120); grid.SelectionMode(picker ? c::ListViewSelectionMode::Single : c::ListViewSelectionMode::Multiple);
         // Let GridView own and recycle its containers. Mutating Content from
         // Loaded/Unloaded races dialog transitions and leaves empty cards.
         grid.ItemTemplate(x::Markup::XamlReader::Load(LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><ContentControl HorizontalContentAlignment="Stretch" IsTabStop="False"/></DataTemplate>)").as<x::DataTemplate>());
@@ -528,9 +588,9 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         search.TextChanged([weak](auto&&, auto&&) { if (auto self = weak.lock()) self->Render(); });
         root.Children().Append(status); root.Children().Append(empty); root.Children().Append(grid);
         root.AllowDrop(true);
+        root.Background(m::SolidColorBrush(winrt::Windows::UI::Color{0,0,0,0}));
         root.DragOver([weak](auto&&, const x::DragEventArgs& args) {
-            if (auto self = weak.lock(); self && !self->snapshot.busy && args.DataView().Contains(dt::StandardDataFormats::StorageItems()))
-                args.AcceptedOperation(dt::DataPackageOperation::Copy);
+            if (const auto self = weak.lock()) self->DragOver(args);
         });
         root.Drop([weak](auto&&, const x::DragEventArgs& args) { if (auto self = weak.lock()) self->Drop(args); });
         timer.Interval(std::chrono::milliseconds(500));
@@ -548,6 +608,13 @@ IconLibraryPagePresenter::IconLibraryPagePresenter(Localize localize, IconLibrar
 { impl_->localize = std::move(localize); impl_->action = std::move(action); impl_->Build(); }
 IconLibraryPagePresenter::~IconLibraryPagePresenter() { Deactivate(); }
 c::StackPanel IconLibraryPagePresenter::Content() const { return impl_->root; }
+void IconLibraryPagePresenter::FitViewport(c::ScrollViewer viewport, double bottomInset)
+{
+    if (!impl_->active || impl_->picker || viewport.ViewportHeight() <= 0 || !impl_->grid.XamlRoot()) return;
+    const auto top = impl_->grid.TransformToVisual(viewport).TransformPoint({0,0}).Y + viewport.VerticalOffset();
+    const double height = std::max(120., viewport.ViewportHeight() - top - bottomInset);
+    if (std::abs(impl_->grid.Height() - height) > .5) impl_->grid.Height(height);
+}
 void IconLibraryPagePresenter::Activate(std::wstring target)
 {
     if (!impl_->active)
@@ -581,6 +648,7 @@ void IconLibraryPagePresenter::Activate(std::wstring target)
 }
 void IconLibraryPagePresenter::Deactivate()
 {
+    ++impl_->dropGeneration;
     ++impl_->workshopGeneration;impl_->pendingOperation=0;
     if(impl_->workshopDialog){impl_->workshopDialog.Hide();impl_->workshopDialog=nullptr;}
     if(impl_->active&&impl_->action){IconLibraryRequest cancel;cancel.action="cancelWorkshop";try{impl_->action(cancel);}catch(...){}}
@@ -611,7 +679,8 @@ std::function<void()> IconLibraryPagePresenter::Impl::ShowDialog(x::XamlRoot roo
     dialog.PrimaryButtonText(localize("iconLibrary.use")); dialog.CloseButtonText(localize("app.settings.cancel"));
     dialog.IsPrimaryButtonEnabled(false); dialog.Content(view->root);
     const auto availableWidth = root ? root.Size().Width : 640.f;
-    view->root.Width(std::max(180., std::min(440., double(availableWidth) - 96)));
+    dialog.Resources().Insert(winrt::box_value(L"ContentDialogMaxWidth"), winrt::box_value(640.));
+    view->root.Width(std::max(180., std::min(520., double(availableWidth) - 96)));
     view->grid.Height(std::clamp(double(root.Size().Height) - 360., 120., 340.));
     view->selectionChanged = [weak = std::weak_ptr<IconLibraryPagePresenter::Impl>(view), dialog] {
         if (const auto self = weak.lock())
@@ -633,7 +702,7 @@ winrt::fire_and_forget IconLibraryPagePresenter::Impl::AwaitDialog(std::shared_p
     std::string result;
     try { if (co_await dialog.ShowAsync() == c::ContentDialogResult::Primary) { const auto ids = view->Selected(); if (ids.size() == 1) result = ids[0]; } }
     catch (...) { }
-    view->active = false; view->timer.Stop(); view->selectionChanged = {};
+    view->active = false; ++view->dropGeneration; view->timer.Stop(); view->selectionChanged = {};
     if (completed) completed(std::move(result));
 }
 std::function<void()> IconLibraryPagePresenter::Pick(x::XamlRoot root, Localize localize, IconLibraryAction action,

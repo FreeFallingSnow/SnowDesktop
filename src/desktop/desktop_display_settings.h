@@ -24,6 +24,7 @@ struct DesktopDisplaySettings
     int scrollingTitleLines = 2;
     bool titleEllipsis = true;
     int shortcutArrowMode = 0;
+    bool groupComponentBadges = true;
     IconBeautifySettings iconBeautify;
 };
 } // namespace snowdesktop

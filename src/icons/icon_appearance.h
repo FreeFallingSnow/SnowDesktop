@@ -24,7 +24,7 @@ struct IconAppearanceChoice
 };
 struct IconAppearanceRequest
 {
-    std::string action = "read"; // read, begin, apply, inherit, cancel, themes
+    std::string action = "read"; // read, begin, preview, previewApply, previewInherit, apply, inherit, cancel, close, themes
     std::wstring target;
     std::uint64_t session = 0, revision = 0;
     IconBeautifySettings settings;

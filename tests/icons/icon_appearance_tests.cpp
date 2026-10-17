@@ -18,6 +18,28 @@ int RunIconAppearanceTests()
     check(rules::Resolve(disabledGlobal, &own, false, false).enabled,
         "independent Start appearance remains enabled when global appearance is off");
     auto off = own; off.settings.enabled = false;
+    for (const auto target : {L"control:start", L"control:search", L"widget:group-1", L"recycle-empty:BIN", L"recycle-full:BIN", L"item:FILE"})
+    {
+        rules::EditPreview preview;
+        IconAppearanceRequest live; live.target = target; live.session = 7; live.revision = 3;
+        auto candidate = own; candidate.target = target; candidate.settings.mode = 2;
+        check(preview.Update(live, target, 7, 3, candidate) &&
+                preview.Effective(target, &off)->settings.mode == 2 &&
+                preview.Effective(L"widget:other", &off) == &off && !off.settings.enabled,
+            "live style replaces only its stable target while leaving saved appearance untouched");
+        auto stale = live; stale.session = 6;
+        check(!preview.Update(stale, target, 7, 3, std::nullopt) &&
+                preview.Effective(target, &off)->settings.mode == 2,
+            "a delayed previous editor cannot replace the current live preview");
+        stale = live; stale.revision = 2;
+        check(!preview.Update(stale, target, 7, 3, std::nullopt),
+            "a changed layout revision rejects the old editor preview");
+        check(preview.Update(live, target, 7, 3, std::nullopt) && !preview.Effective(target, &off) &&
+                icon_beautify::Equal(rules::Resolve(global, preview.Effective(target, &off), false, false), global),
+            "previewing global inheritance temporarily hides an existing saved override");
+        check(preview.Clear() && preview.Effective(target, &off) == &off && !preview.Clear(),
+            "cancel or window teardown removes the transient overlay and restores the saved style");
+    }
     check(!rules::Resolve(global, &off, false, false).enabled,
         "explicit per-icon None suppresses enabled global appearance");
     check(icon_beautify::Equal(rules::Resolve(global, nullptr, false, false), global),

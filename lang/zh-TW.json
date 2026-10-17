@@ -2866,5 +2866,6 @@
   "iconWorkshop.creationUncertain": "上次建立結果尚未確定，請先檢查工作坊作品，避免重複建立。",
   "iconWorkshop.titleTooLong": "分享標題過長，請縮短後重試。",
   "iconWorkshop.descriptionTooLong": "分享簡介過長，請縮短後重試。",
-  "app.widget_preview.single_cell_component": "單格元件"
+  "app.widget_preview.single_cell_component": "單格元件",
+  "app.settings.group_component_badges": "群組類元件角標"
 }

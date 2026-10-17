@@ -1215,6 +1215,16 @@ void DesktopApp::PreviewItemFontWeight(DWRITE_FONT_WEIGHT weight)
     InvalidateDockRects(TRUE);
 }
 
+void DesktopApp::SetGroupComponentBadges(bool enabled)
+{
+    if (enabled == groupComponentBadges_) return;
+    groupComponentBadges_ = enabled;
+    InvalidateDragStaticScene();
+    SaveLayoutSlots();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, TRUE);
+    InvalidateDockRects(TRUE);
+}
+
 void DesktopApp::SetShortcutArrowMode(int mode)
 {
     mode = std::clamp(mode, 0, 2);

@@ -471,6 +471,23 @@ void TestWidgetCatalogRediscovery(const std::filesystem::path& root)
 void TestDockLayoutBackup(const std::filesystem::path& root)
 {
     namespace layout = snowdesktop::layout_storage;
+    {
+        layout::Document saved;
+        Expect(layout::ParseDocument("{}", saved) && saved.groupComponentBadges.value_or(true),
+            "layouts predating the badge preference retain visible group-component badges");
+        const auto preference = root / L"group-badges" / L"layout.json";
+        const std::string disabled = R"({"groupComponentBadges":false})";
+        Expect(layout::SaveDocument(preference, disabled) &&
+                layout::LoadDocument(preference, saved).status == layout::LoadStatus::LoadedPrimary &&
+                saved.groupComponentBadges == false,
+            "disabled group-component badges survive an actual layout save and reload");
+        std::string cleared;
+        Expect(layout::BuildClearedDocument(disabled, cleared) && layout::ParseDocument(cleared, saved) &&
+                saved.groupComponentBadges == false,
+            "clearing desktop placements preserves the group badge appearance preference");
+        Expect(!layout::ParseDocument(R"({"groupComponentBadges":"false"})", saved),
+            "invalid badge preferences are rejected instead of silently enabling badges");
+    }
     for (const auto* type : {"collection", "fileCategories", "folderMapping", "collectionGroup", "fileGroup"})
     {
         const auto prefix = std::string("{\"widgets\":[{\"id\":\"single\",\"page\":\"p\",\"x\":0,\"y\":0,\"type\":\"") + type + "\",\"w\":1,\"h\":1";

@@ -2866,5 +2866,6 @@
   "iconWorkshop.creationUncertain": "Le résultat de la création précédente est incertain. Vérifiez vos objets avant d’en créer un autre.",
   "iconWorkshop.titleTooLong": "Le titre est trop long. Raccourcissez-le et réessayez.",
   "iconWorkshop.descriptionTooLong": "La description est trop longue. Raccourcissez-la et réessayez.",
-  "app.widget_preview.single_cell_component": "Widget à une case"
+  "app.widget_preview.single_cell_component": "Widget à une case",
+  "app.settings.group_component_badges": "Badges des composants de groupe"
 }

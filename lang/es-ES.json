@@ -2866,5 +2866,6 @@
   "iconWorkshop.creationUncertain": "El resultado de la creación anterior es incierto. Revisa tus artículos antes de crear otro.",
   "iconWorkshop.titleTooLong": "El título es demasiado largo. Acórtalo e inténtalo de nuevo.",
   "iconWorkshop.descriptionTooLong": "La descripción es demasiado larga. Acórtala e inténtalo de nuevo.",
-  "app.widget_preview.single_cell_component": "Componente de una celda"
+  "app.widget_preview.single_cell_component": "Componente de una celda",
+  "app.settings.group_component_badges": "Distintivos de componentes de grupo"
 }

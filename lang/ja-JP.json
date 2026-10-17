@@ -2866,5 +2866,6 @@
   "iconWorkshop.creationUncertain": "前回の作成結果が不明です。重複作成を避けるため、先に作品一覧を確認してください。",
   "iconWorkshop.titleTooLong": "共有タイトルが長すぎます。短くしてから再試行してください。",
   "iconWorkshop.descriptionTooLong": "共有の説明が長すぎます。短くしてから再試行してください。",
-  "app.widget_preview.single_cell_component": "1マスウィジェット"
+  "app.widget_preview.single_cell_component": "1マスウィジェット",
+  "app.settings.group_component_badges": "グループコンポーネントのバッジ"
 }

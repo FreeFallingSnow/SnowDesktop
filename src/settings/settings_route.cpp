@@ -56,7 +56,7 @@ bool IsDesktopIconAppearanceFocus(std::string_view focusId) noexcept
         focusId == "desktop.listFontSize" ||
         focusId == "desktop.fontWeight" ||
         focusId == "desktop.titleLines" || focusId == "desktop.largeFolderTitleLines" || focusId == "desktop.scrollingTitleLines" ||
-        focusId == "desktop.shortcutArrow";
+        focusId == "desktop.shortcutArrow" || focusId == "desktop.groupComponentBadges";
 }
 
 } // namespace

@@ -39,6 +39,12 @@ struct SettingsWindow::Impl
     {
         try
         {
+            if (options.iconAppearance)
+            { snowdesktop::IconAppearanceRequest request; request.action = "close"; options.iconAppearance(std::move(request)); }
+        }
+        catch (...) {}
+        try
+        {
             if(options.iconLibrary)
             {snowdesktop::IconLibraryRequest request;request.action="cancelWorkshop";options.iconLibrary(std::move(request));}
         }

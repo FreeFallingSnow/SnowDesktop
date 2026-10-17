@@ -2034,6 +2034,8 @@ void SettingsShell::HookEvents()
     });
     focusLayoutToken_ = PageContentGrid().LayoutUpdated([this](auto&&, auto&&) {
         if (closed_) return;
+        if (iconLibraryPage_ && renderedPageRoute_ && renderedPageRoute_->page == SettingsPage::IconLibrary)
+            iconLibraryPage_->FitViewport(PageScrollViewer(), PageSurface().Margin().Bottom);
         if (focusPendingLayout_) FocusPendingTarget();
         if (FocusPrerequisiteInfoBar().IsOpen()) RefreshFocusPrerequisite();
         UpdateFocusHighlight();

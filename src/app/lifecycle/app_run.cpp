@@ -548,6 +548,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktopSettings.scrollingTitleLines = scrollingTitleLines_;
         desktopSettings.titleEllipsis = titleEllipsis_;
         desktopSettings.shortcutArrowMode = shortcutArrowMode_;
+        desktopSettings.groupComponentBadges = groupComponentBadges_;
         desktopSettings.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(
             std::move(desktopSettings));
@@ -921,6 +922,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
         desktop.scrollingTitleLines = scrollingTitleLines_;
         desktop.titleEllipsis = titleEllipsis_;
         desktop.shortcutArrowMode = shortcutArrowMode_;
+        desktop.groupComponentBadges = groupComponentBadges_;
         desktop.iconBeautify = iconBeautifySettings_;
         (void)settingsController_->SynchronizeDesktop(std::move(desktop));
         SyncSystemTaskbarSettingsFromWindows();

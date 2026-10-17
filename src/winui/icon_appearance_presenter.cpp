@@ -8,6 +8,7 @@
 #include <robuffer.h>
 #include <cwctype>
 #include <utility>
+#include <winrt/Microsoft.UI.Dispatching.h>
 
 namespace snowdesktop::winui
 {
@@ -201,7 +202,7 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
             c::Image preview;
             c::ComboBox sourceMode;
             c::InfoBar error;
-            bool ending = false, nativeControlSource = false, followGlobalTheme = true;
+            bool ending = false, previewQueued = false, nativeControlSource = false, followGlobalTheme = true;
             IconBeautifySettings globalSettings;
         };
         const auto draft = std::make_shared<Draft>();
@@ -221,12 +222,33 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         if (!draft->themeId.empty()) (void)themes::Select(draft->library, "icon", draft->themeId, themes::Kind::Icon, themes::Components, error);
         (void)icon_image::DecodeBytes(captured.previewPng, 192, draft->source, error);
         draft->editor = std::make_unique<DesktopPagePresenter>(localize, x::Style{nullptr}); draft->editor->SetIconEditorMode();
-        const auto sync = [draft] {
+        const auto livePreview = [weak = weak_from_this(), weakDraft = std::weak_ptr<Draft>(draft), captured, target] {
+            const auto owner = weak.lock(); const auto editing = weakDraft.lock();
+            if (!owner || !editing || editing->ending || editing->previewQueued || editing->sourceMode.SelectedIndex() < 0) return;
+            editing->previewQueued = true;
+            owner->root.DispatcherQueue().TryEnqueue([weak, weakDraft, captured, target] {
+                const auto self = weak.lock(); const auto value = weakDraft.lock();
+                if (!value) return;
+                value->previewQueued = false;
+                if (!self || !self->active || self->closed || value->ending || self->editingTarget != target) return;
+                IconAppearanceRequest request;
+                request.action = value->sourceMode.SelectedIndex() == 1 ? "previewApply" : "previewInherit";
+                request.target = target; request.session = captured.session; request.revision = captured.revision;
+                request.settings = value->settings.values.desktop.iconBeautify; request.themeId = value->themeId;
+                request.followGlobalTheme = value->followGlobalTheme;
+                try {
+                    const auto result = self->action(std::move(request));
+                    value->error.Message(self->L(result.error)); value->error.IsOpen(!result.succeeded);
+                } catch (...) { /* Session shutdown cancels the host overlay. */ }
+            });
+        };
+        const auto sync = [draft, livePreview] {
             if (draft->ending) return;
             ++draft->settings.revision; ++draft->settings.domainRevisions.desktop;
             draft->editor->SetIconThemeInheritance(draft->followGlobalTheme);
             draft->editor->ApplySnapshot(draft->settings);
-            SetPreview(draft->preview, draft->source, draft->settings.values.desktop.iconBeautify, draft->nativeControlSource);
+            SetPreview(draft->preview, draft->source, draft->sourceMode.SelectedIndex() == 0 ? draft->globalSettings : draft->settings.values.desktop.iconBeautify, draft->nativeControlSource);
+            livePreview();
         };
         globalStyleChanged = [draft, sync](const IconBeautifySettings& global) {
             draft->globalSettings = global;
@@ -288,8 +310,12 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         draft->sourceMode.SelectedIndex(captured.independent ? 1 : 0); body.Children().Append(sourceRow.root);
         const auto editorContent = draft->editor->IconBeautificationContent(); body.Children().Append(editorContent);
         editorContent.Visibility(captured.independent ? x::Visibility::Visible : x::Visibility::Collapsed);
-        draft->sourceMode.SelectionChanged([weakDraft = std::weak_ptr<Draft>(draft), editorContent](const auto&, const auto&) {
-            if (const auto value = weakDraft.lock()) editorContent.Visibility(value->sourceMode.SelectedIndex() == 1 ? x::Visibility::Visible : x::Visibility::Collapsed);
+        draft->sourceMode.SelectionChanged([weakDraft = std::weak_ptr<Draft>(draft), editorContent, livePreview](const auto&, const auto&) {
+            if (const auto value = weakDraft.lock()) {
+                editorContent.Visibility(value->sourceMode.SelectedIndex() == 1 ? x::Visibility::Visible : x::Visibility::Collapsed);
+                SetPreview(value->preview, value->source, value->sourceMode.SelectedIndex() == 0 ? value->globalSettings : value->settings.values.desktop.iconBeautify, value->nativeControlSource);
+                livePreview();
+            }
         });
         draft->error.IsOpen(false); presenter_controls::BindInfoBarVisibility(draft->error); body.Children().Append(draft->error);
         c::ScrollViewer scroll; scroll.MaxHeight(540); scroll.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled); scroll.Content(body);
@@ -300,13 +326,14 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         const auto weak = weak_from_this();
         dialog.PrimaryButtonClick([weak, draft, captured, target](const auto&, const c::ContentDialogButtonClickEventArgs& args) {
             const auto self = weak.lock(); if (!self || !self->active || self->closed) { args.Cancel(true); return; }
+            draft->ending = true;
             draft->editor->Deactivate();
             IconAppearanceRequest request; request.action = draft->sourceMode.SelectedIndex() == 1 ? "apply" : "inherit";
             request.target = target; request.session = captured.session; request.revision = captured.revision;
             request.settings = draft->settings.values.desktop.iconBeautify; request.themeId = draft->themeId;
             request.followGlobalTheme = draft->followGlobalTheme;
             const auto result = self->action(request);
-            if (!result.succeeded) { args.Cancel(true); draft->error.Message(self->L(result.error)); draft->error.IsOpen(true); draft->editor->Activate(); }
+            if (!result.succeeded) { args.Cancel(true); draft->ending = false; draft->error.Message(self->L(result.error)); draft->error.IsOpen(true); draft->editor->Activate(); }
         });
         dialog.Closed([weak, draft, captured, target](const auto&, const auto&) {
             const auto self = weak.lock();

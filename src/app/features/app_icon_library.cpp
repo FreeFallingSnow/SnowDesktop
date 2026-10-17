@@ -398,7 +398,7 @@ ID2D1Bitmap* DesktopApp::GetSmallCustomIcon(ID2D1RenderTarget* context, std::wst
     const auto found = iconOverrides_.find(target);
     if (found != iconOverrides_.end())
         if (auto* custom = GetDockCustomIcon(context, found->second, pixels, identity)) return custom;
-    if (snowdesktop::icon_control::UsesBitmap(identity, iconAppearanceOverrides_.contains(target), ResolveIconAppearance(identity)))
+    if (snowdesktop::icon_control::UsesBitmap(identity, FindIconAppearance(target) != nullptr, ResolveIconAppearance(identity)))
     {
         const bool light = CurrentDockAppearance().contentTheme == 1;
         const int edge = std::max(128, snowdesktop::icon_render_rules::SourcePixelsForTarget(pixels));

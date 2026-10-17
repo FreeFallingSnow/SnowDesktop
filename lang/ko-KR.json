@@ -2866,5 +2866,6 @@
   "iconWorkshop.creationUncertain": "이전 생성 결과를 확인할 수 없습니다. 중복 생성을 피하려면 먼저 창작마당 항목을 확인하세요.",
   "iconWorkshop.titleTooLong": "공유 제목이 너무 깁니다. 줄인 후 다시 시도하세요.",
   "iconWorkshop.descriptionTooLong": "공유 설명이 너무 깁니다. 줄인 후 다시 시도하세요.",
-  "app.widget_preview.single_cell_component": "한 칸 위젯"
+  "app.widget_preview.single_cell_component": "한 칸 위젯",
+  "app.settings.group_component_badges": "그룹 구성 요소 배지"
 }

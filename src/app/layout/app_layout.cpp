@@ -149,6 +149,7 @@ void DesktopApp::LoadLayoutSlots()
     if (document.lastPageMonitor)
         lastPageMonitorId_ = Utf8ToWide(*document.lastPageMonitor);
 
+    iconAppearancePreview_.Clear(); iconAppearanceTarget_.clear(); ++iconAppearanceSession_;
     iconAppearanceOverrides_.clear();
     for (const auto& record : document.iconBeautifyOverrides)
         iconAppearanceOverrides_[record.target] = record;
@@ -203,6 +204,7 @@ void DesktopApp::LoadLayoutSlots()
     if (document.shortcutArrowMode)
         shortcutArrowMode_ = std::clamp(
             *document.shortcutArrowMode, 0, 2);
+    groupComponentBadges_ = document.groupComponentBadges.value_or(true);
 
     // Missing beautification fields are the compatibility path for old layouts.
     iconBeautifySettings_ = document.iconBeautifyPreset
@@ -1101,6 +1103,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"listRowSpacing\": " << listRowSpacingScale_
          << ",\n  \"iconSizeScale\": " << itemIconSizeScale_
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
+         << ",\n  \"groupComponentBadges\": " << (groupComponentBadges_ ? "true" : "false")
          << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
          << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)
          << ",\n  \"iconBeautifyGlassEnabled\": " << (iconBeautifySettings_.glassEnabled ? "true" : "false")

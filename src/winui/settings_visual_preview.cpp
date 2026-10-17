@@ -414,6 +414,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     {
         std::vector<IconAppearanceRecord> entries;
         IconBeautifySettings globalSettings;
+        icon_appearance::EditPreview preview;
+        unsigned liveUpdates = 0;
         std::uint64_t revision = 1, session = 0;
         std::wstring target;
         std::string png;
@@ -431,14 +433,25 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     shell->SetIconAppearanceAction([appearanceFixture, dark](IconAppearanceRequest request) {
         auto& state = *appearanceFixture; IconAppearanceSnapshot result;
         result.succeeded = true; result.available = true;
-        if (request.action == "begin") { state.target = request.target; ++state.session; }
+        if (request.action == "begin") { state.preview.Clear(); state.target = request.target; ++state.session; }
+        if (request.action == "previewApply" || request.action == "previewInherit")
+        {
+            std::optional<IconAppearanceRecord> value;
+            if (request.action == "previewApply") value = IconAppearanceRecord{request.target, {}, request.settings, request.themeId, true, request.followGlobalTheme};
+            result.succeeded = state.preview.Update(request, state.target, state.session, state.revision, std::move(value));
+            if (result.succeeded) ++state.liveUpdates;
+            else result.error = "iconLibrary.stale";
+            return result;
+        }
+        if (request.action == "close" || (request.action == "cancel" && request.target == state.target && request.session == state.session))
+        { state.preview.Clear(); state.target.clear(); ++state.session; }
         if (request.action == "apply" || request.action == "inherit")
         {
             if ((request.action == "apply" || request.session) && !icon_appearance::CurrentEdit(request, state.target, state.session, state.revision))
             { result.succeeded = false; result.error = "iconLibrary.stale"; return result; }
             std::erase_if(state.entries, [&](const auto& record) { return record.target == request.target; });
             if (request.action == "apply") state.entries.push_back({request.target, _LW("iconLibrary.searchIcon"), request.settings, request.themeId, true, request.followGlobalTheme});
-            ++state.revision;
+            ++state.revision; state.preview.Clear(); state.target.clear(); ++state.session;
         }
         result.current.target = request.target;
         result.current.name = request.target == L"control:search" ? _LW("iconLibrary.searchIcon") : _LW("iconLibrary.startIcon");
@@ -659,8 +672,14 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             });
             if (!imageMode) throw std::runtime_error("image no-enlargement selector is missing");
             imageMode.SelectedIndex(2);
+            PumpUntil([&] { return appearanceFixture->liveUpdates > 0; });
+            const auto liveStart = appearanceFixture->preview.Effective(L"control:start", nullptr);
+            if (!liveStart || liveStart->settings.mode != 2 || appearanceFixture->entries.front().settings.mode != 1)
+                throw std::runtime_error("live independent preview was not sent or changed the saved style before Apply");
             captureAppearance(first, L"icon-appearance-image-no-upscale.png");
             close(first);
+            if (appearanceFixture->preview.Effective(L"control:start", nullptr))
+                throw std::runtime_error("cancel left a live independent appearance active");
             auto second = open(); close(second);
             if (appearanceFixture->entries.size() != 2) throw std::runtime_error("cancel or reopening unexpectedly saved an icon override");
             targetRoute.itemKey = L"control:search";
@@ -688,6 +707,9 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             globalChange.values.desktop.iconBeautify = appearanceFixture->globalSettings;
             if (!shell->ApplySnapshot(globalChange)) throw std::runtime_error("live global theme update rejected");
             Settle(editor);
+            const auto liveSearch = appearanceFixture->preview.Effective(L"control:search", nullptr);
+            if (!liveSearch || !liveSearch->followGlobalTheme || liveSearch->settings.mode != 2 || appearanceFixture->entries.size() != 2)
+                throw std::runtime_error("Start/Search live processing preview failed to retain global theme without saving");
             // Enabling the global theme first realizes its dependent strategy control.
             c::ComboBox globalMode{nullptr};
             Walk(shell->FindName(L"PageCards").as<x::DependencyObject>(), [&](const x::DependencyObject& node) {
@@ -760,8 +782,6 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             const auto grid = PreviewControl<c::GridView>(cards, L"IconLibraryGrid");
             const auto query = PreviewControl<c::TextBox>(cards, L"IconLibrarySearch");
             const auto groups = PreviewControl<c::ComboBox>(cards, L"IconLibraryGroups");
-            if (query.Header() || grid.Items().Size() != 7 || groups.Items().Size() != 3)
-                throw std::runtime_error("library tiles, groups or removed search heading are incorrect");
             const auto loadedImages = [&] {
                 unsigned count = 0; bool complete = true;
                 Walk(grid, [&](const x::DependencyObject& node) {
@@ -798,7 +818,18 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                     throw std::runtime_error("icon library images timed out: "+std::string(stage));
                 }
             };
+            // Library activation may choose the first pack. This scenario
+            // intentionally verifies all formats before testing group filters.
+            groups.SelectedIndex(0); Settle(shell.as<x::FrameworkElement>());
             waitForLibraryImages("initial page");
+            const auto libraryViewer = shell->FindName(L"PageScrollViewer").as<c::ScrollViewer>();
+            const auto librarySurface = shell->FindName(L"PageSurface").as<c::Border>();
+            const auto gridBottom = grid.TransformToVisual(libraryViewer).TransformPoint({0,static_cast<float>(grid.ActualHeight())}).Y;
+            if (std::abs(gridBottom - (libraryViewer.ViewportHeight() - librarySurface.Margin().Bottom)) > 2.)
+                throw std::runtime_error("library scroll list does not fill the remaining page viewport");
+            if (query.Header() || grid.Items().Size() != 7 || groups.Items().Size() != 3)
+                throw std::runtime_error("library tiles/groups/header mismatch: tiles=" + std::to_string(grid.Items().Size()) +
+                    " groups=" + std::to_string(groups.Items().Size()) + " header=" + std::to_string(query.Header() ? 1 : 0));
             grid.SelectedIndex(0); groups.SelectedIndex(2); Settle(shell.as<x::FrameworkElement>());
             if (grid.Items().Size() != 4 || grid.SelectedItems().Size() != 1)
                 throw std::runtime_error("group filter lost a visible selected resource identity");
@@ -836,6 +867,24 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             });
             const auto pickerGrid = PreviewControl<c::GridView>(pickerDialog, L"IconLibraryGrid");
             const auto pickerQuery = PreviewControl<c::TextBox>(pickerDialog, L"IconLibrarySearch");
+            const auto pickerGroups = PreviewControl<c::ComboBox>(pickerDialog, L"IconLibraryGroups");
+            pickerGroups.SelectedIndex(0); Settle(pickerDialog);
+            PumpUntil([&] { return pickerGrid.ContainerFromIndex(0) && pickerGrid.ContainerFromIndex(1) && pickerGrid.ContainerFromIndex(2); });
+            const auto firstTile = pickerGrid.ContainerFromIndex(0).as<x::FrameworkElement>().TransformToVisual(pickerGrid).TransformPoint({0,0});
+            const auto secondTile = pickerGrid.ContainerFromIndex(1).as<x::FrameworkElement>().TransformToVisual(pickerGrid).TransformPoint({0,0});
+            const auto thirdTile = pickerGrid.ContainerFromIndex(2).as<x::FrameworkElement>().TransformToVisual(pickerGrid).TransformPoint({0,0});
+            const int firstRowColumns = 1 + (std::abs(firstTile.Y - secondTile.Y) <= 1 ? 1 : 0) +
+                (std::abs(firstTile.Y - thirdTile.Y) <= 1 ? 1 : 0);
+            if (pickerDialog.Content().as<x::FrameworkElement>().ActualWidth() >= 500. &&
+                (std::abs(firstTile.Y - secondTile.Y) > 1 || std::abs(firstTile.Y - thirdTile.Y) > 1 || firstTile.X >= secondTile.X || secondTile.X >= thirdTile.X))
+                throw std::runtime_error("default icon picker does not show three columns");
+            std::ofstream(output / L"icon-library-layout.tsv") << "gridHeight\tviewportHeight\tpickerWidth\tfirstRowColumns\n" <<
+                grid.ActualHeight() << '\t' << libraryViewer.ViewportHeight() << '\t' << pickerDialog.Content().as<x::FrameworkElement>().ActualWidth() << '\t' << firstRowColumns << '\n';
+            x::Media::Imaging::RenderTargetBitmap columnsBitmap; Await(columnsBitmap.RenderAsync(pickerDialog));
+            const auto columnsPixels = Await(columnsBitmap.GetPixelsAsync()); BYTE* columnsBytes = nullptr;
+            winrt::check_hresult(columnsPixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&columnsBytes));
+            if (!preview_png::Save(output / L"icon-picker-columns.png", columnsBitmap.PixelWidth(), columnsBitmap.PixelHeight(),
+                {reinterpret_cast<const std::uint32_t*>(columnsBytes), columnsPixels.Length() / 4}, iconError)) throw std::runtime_error(iconError);
             pickerQuery.Text(L"Preview icon 3"); // l10n-allow: query matches the isolated preview fixture above.
             Settle(pickerDialog);
             if (pickerGrid.Items().Size() != 1) throw std::runtime_error("picker search lost its fixture resource");
@@ -880,6 +929,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             };
             const auto waitForAllPickerTiles=[&](const c::ContentDialog& opened) {
                 const auto currentGrid=PreviewControl<c::GridView>(opened,L"IconLibraryGrid");
+                PreviewControl<c::ComboBox>(opened,L"IconLibraryGroups").SelectedIndex(0);
                 PumpUntil([&] {
                     unsigned loaded=0;
                     Walk(currentGrid,[&](const x::DependencyObject& node) {
