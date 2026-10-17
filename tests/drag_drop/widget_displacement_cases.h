@@ -4,6 +4,8 @@
 #include "layout/widget_displacement.h"
 #include "data/layout_geometry_codec.h"
 #include <map>
+#include <set>
+#include <tuple>
 
 namespace widget_displacement_cases
 {
@@ -84,6 +86,12 @@ struct World
         }
         return stream.str();
     }
+    std::vector<std::optional<LargeIconConfig>> LargeConfigs() const
+    {
+        std::vector<std::optional<LargeIconConfig>> result;
+        for (const auto& item : items) result.push_back(item.largeIcon);
+        return result;
+    }
     std::string Snapshot() const
     {
         std::ostringstream stream;
@@ -107,12 +115,19 @@ struct World
     void Legal() const
     {
         const auto all = AllPages();
-        grid_occupancy::Slots occupied;
+        std::set<std::tuple<std::wstring, int, int>> occupied;
         const auto add = [&](const GridCell& cell, GridSpan span) {
-            const auto* page = widget_displacement::FindPage(all, cell.pageId);
-            Require(page && grid_occupancy::Fits(*page, cell, span) && !grid_occupancy::Occupied(occupied, cell, span),
+            const auto page = std::find_if(all.begin(), all.end(), [&](const auto& value) { return value.id == cell.pageId; });
+            Require(page != all.end() && span.columns > 0 && span.rows > 0,
                 "successful component placement keeps every visible object within persisted pages without overlap");
-            grid_occupancy::Mark(occupied, cell, span);
+            // Independent occupancy oracle: enumerate cells, rather than ask
+            // the production Fits/Occupied helpers to grade their own output.
+            for (int column = 0; column < span.columns; ++column)
+                for (int row = 0; row < span.rows; ++row)
+                    Require(cell.column + column >= 0 && cell.column + column < page->columns &&
+                        cell.row + row >= 0 && cell.row + row < page->rows &&
+                        occupied.emplace(cell.pageId, cell.column + column, cell.row + row).second,
+                        "successful component placement keeps every visible object within persisted pages without overlap");
         };
         for (const auto& widget : widgets) if (!Grouped(widget)) add(widget.gridCell, widget.gridSpan);
         for (const auto& item : items) if (!item.name.empty() && !Owned(item)) add(item.gridCell, item.gridSpan);
@@ -177,7 +192,7 @@ struct World
                 restored.cell.row == item.gridCell.row && restored.span.columns == item.gridSpan.columns && restored.span.rows == item.gridSpan.rows &&
                 restored.largeIcon.has_value() == item.largeIcon.has_value(),
                 "desktop item page, exact cell, footprint and large-icon state survive reload");
-            if (item.largeIcon) Require(EncodeLargeIconConfig(*restored.largeIcon) == EncodeLargeIconConfig(*item.largeIcon),
+            if (item.largeIcon) Require(*restored.largeIcon == *item.largeIcon,
                 "component displacement does not rewrite large-icon configuration during storage");
         }
         Require(document.items.size() == expectedItems, "reload neither duplicates nor loses desktop item identities");
@@ -234,6 +249,9 @@ inline void Seed(World& world, DesktopWidgetType type, bool icon, const std::wst
         owner.itemKeys.clear(); world.widgets.push_back(std::move(child));
     }
     world.items[0].largeIcon = LargeIconConfig{};
+    world.items[0].largeIcon->autoColor = false;
+    world.items[0].largeIcon->manualColor = 0x123456;
+    world.items[0].largeIcon->radius = 17;
 }
 
 inline void Run(const std::filesystem::path& root)
@@ -249,8 +267,10 @@ inline void Run(const std::filesystem::path& root)
         World world(root / (L"move-" + std::to_wstring(serial++)));
         Seed(world, type, icon, page, count); world.reverseItems = serial % 2 == 0;
         const auto originals = Files(world.root / L"sources");
+        world.Legal();
         const auto before = world.widgets;
         const auto metadata = world.Metadata();
+        const auto largeConfigs = world.LargeConfigs();
         const auto span = before[0].gridSpan;
         std::vector<GridCell> oldCells;
         for (const auto& item : world.items) oldCells.push_back(item.gridCell);
@@ -259,7 +279,7 @@ inline void Run(const std::filesystem::path& root)
             world.widgets[0].gridSpan.columns == span.columns && world.widgets[0].gridSpan.rows == span.rows,
             "an admitted component move publishes its captured page, exact cell and footprint once");
         auto normalized = world.widgets; normalized[0].gridCell = before[0].gridCell; normalized[0].gridSpan = before[0].gridSpan;
-        Require(Widgets(normalized) == Widgets(before) && world.Metadata() == metadata && Files(world.root / L"sources") == originals,
+        Require(Widgets(normalized) == Widgets(before) && world.Metadata() == metadata && world.LargeConfigs() == largeConfigs && Files(world.root / L"sources") == originals,
             "component movement preserves every original identity, configuration, logical member and file byte");
         for (size_t index = count; index < world.items.size(); ++index)
             Require(world.items[index].gridCell.pageId == oldCells[index].pageId && world.items[index].gridCell.column == oldCells[index].column &&
@@ -291,12 +311,16 @@ inline void Run(const std::filesystem::path& root)
         world.widgets[1].id = L"blocker"; world.widgets[1].gridCell = {L"right", 0, 0}; world.widgets[1].gridSpan = {2, 2};
         if (resize) world.Item(L"small.txt", {L"left", 0, 0});
         world.Item(L"large.txt", {L"left", 1, 1}, {3, 3}); world.items.back().largeIcon = LargeIconConfig{};
+        world.items.back().largeIcon->columns = 3; world.items.back().largeIcon->rows = 3;
+        world.Legal();
         const auto before = world.Snapshot(); const auto files = Files(world.root / L"sources");
+        const auto largeConfigs = world.LargeConfigs();
         const bool placed = world.Place(resize ? GridCell{L"left", 0, 0} : GridCell{L"left", 2, 2}, resize ? GridSpan{5, 5} : GridSpan{1, 1}, !resize);
         if (placed) world.Legal();
         else Require(world.Snapshot() == before && world.commits == 0,
             "failed component displacement leaves the component, earlier item plans and saved page records unchanged");
         Require(Files(world.root / L"sources") == files, "failed or successful displacement preserves all physical original files");
+        Require(world.LargeConfigs() == largeConfigs, "component displacement preserves the original declared large-icon footprint and configuration");
     }
     for (bool saved : {false, true})
     {
