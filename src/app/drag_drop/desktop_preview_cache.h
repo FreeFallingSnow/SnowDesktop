@@ -37,12 +37,13 @@ const DropPreviewList& Read(State state, const Key& key, Internal&& internal, Ex
 {
     const bool valid = !state.preview.landings.empty() && state.hasItems == key.hasItems &&
         state.point.x == key.point.x && state.point.y == key.point.y && state.mods == key.mods &&
-        state.target == key.target && state.slot == key.slot && state.region == key.region && state.sourceCount == key.sourceCount;
+        state.target == key.target && state.slot == key.slot && state.region == key.region && state.sourceCount == key.sourceCount && state.sceneRevision == key.sceneRevision && state.externalCount == key.externalCount;
     if (!valid)
     {
         state.preview = key.hasItems ? internal() : external();
         state.point = key.point; state.mods = key.mods; state.target = key.target; state.slot = key.slot;
         state.region = key.region; state.hasItems = key.hasItems; state.sourceCount = key.sourceCount;
+        state.sceneRevision = key.sceneRevision; state.externalCount = key.externalCount;
     }
     return state.preview;
 }
