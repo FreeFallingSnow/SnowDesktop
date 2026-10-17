@@ -4,6 +4,7 @@
 #include "steam/steam_app_identity.h"
 #include "drag_drop/desktop_widget_icon_drop_rules.h"
 #include "widgets/widget_group_drop.h"
+#include "layout/widget_displacement.h"
 
 #include <commctrl.h>
 #include <objbase.h>
@@ -333,30 +334,7 @@ void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
 GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
     int availableColumns, int availableRows) const
 {
-    // A resize pointer can pass the fixed top-left cell. Normalize that
-    // overshoot before choosing the compact preset, rather than applying
-    // the larger scrolling panel's two-cell minimum to a zero/negative span.
-    span.columns = std::max(1, span.columns);
-    span.rows = std::max(1, span.rows);
-    if (span.columns == 1 && span.rows == 1 &&
-        IsWidgetDockEntryType(DockEntryTypeForWidget(widget.type))) return span;
-
-    const int pageMaxColumns = std::max(1, availableColumns);
-    const int pageMaxRows = std::max(1, availableRows);
-    const int maxColumns = widget.maxGridSpan.columns > 0
-        ? std::min(pageMaxColumns, widget.maxGridSpan.columns)
-        : pageMaxColumns;
-    const int maxRows = widget.maxGridSpan.rows > 0
-        ? std::min(pageMaxRows, widget.maxGridSpan.rows)
-        : pageMaxRows;
-    const int minColumns = std::min(
-        maxColumns, std::max(1, widget.minGridSpan.columns));
-    const int minRows = std::min(
-        maxRows, std::max(1, widget.minGridSpan.rows));
-
-    span.columns = std::clamp(span.columns, minColumns, maxColumns);
-    span.rows = std::clamp(span.rows, minRows, maxRows);
-    return span;
+    return snowdesktop::widget_displacement::ClampSpan(widget, span, availableColumns, availableRows);
 }
 
 /**

@@ -12,6 +12,7 @@
 
 #include "data/layout_storage.h"
 #include "data/widget_layout_codec.h"
+#include "data/layout_geometry_codec.h"
 #include "data/full_data_backup.h"
 
 // ── 布局持久化 ──────────────────────────────────────────────
@@ -340,19 +341,9 @@ void DesktopApp::LoadLayoutSlots()
             std::filesystem::path(Utf8ToWide(item.key)).is_absolute() &&
             (!item.page || Utf8ToWide(*item.page) != kDockPageId)) continue;
 
-        LayoutRecord record;
-        record.largeIcon = item.largeIcon;
-        if (item.page && item.column && item.row)
-        {
-            record.cell.pageId = Utf8ToWide(*item.page);
-            record.cell.column = *item.column;
-            record.cell.row = *item.row;
-            RememberSavedPageId(record.cell.pageId);
-            record.span.columns = std::max(1, item.width);
-            record.span.rows = std::max(1, item.height);
-            record.hasGrid = true;
-            record.legacySlot = SlotFromCell(gridPages_, record.cell);
-        }
+        const auto record = snowdesktop::layout_geometry_codec::RestoreItem(item, Utf8ToWide,
+            [&](const GridCell& cell) { return SlotFromCell(gridPages_, cell); });
+        if (record.hasGrid) RememberSavedPageId(record.cell.pageId);
         layoutRecords_[ToUpperInvariant(Utf8ToWide(item.key))] = record;
     }
 
@@ -1119,8 +1110,6 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     for (size_t i = 0; i < pagesToWrite.size(); ++i)
     {
         const GridPage* page = FindGridPage(gridPages_, pagesToWrite[i]);
-        file << "    { \"id\": \"" << JsonEscapeUtf8(pagesToWrite[i]) << "\", \"monitor\": \"";
-        file << JsonEscapeUtf8(page != nullptr ? page->monitorId : L"");
         int columns = page != nullptr ? page->columns : 0;
         int rows = page != nullptr ? page->rows : 0;
         if (page == nullptr)
@@ -1130,11 +1119,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
             if (colIt != savedPageColumns_.end()) columns = colIt->second;
             if (rowIt != savedPageRows_.end()) rows = rowIt->second;
         }
-        file << "\"";
-        if (const auto name = savedPageNames_.find(pagesToWrite[i]); name != savedPageNames_.end())
-            file << ", \"name\": \"" << JsonEscapeUtf8(name->second) << "\"";
-        file << ", \"columns\": " << std::max(1, columns) <<
-            ", \"rows\": " << std::max(1, rows) << " }";
+        const auto name = savedPageNames_.find(pagesToWrite[i]);
+        snowdesktop::layout_geometry_codec::WritePage(file, pagesToWrite[i], page ? page->monitorId : L"",
+            columns, rows, name == savedPageNames_.end() ? nullptr : &name->second, JsonEscapeUtf8);
         file << (i + 1 == pagesToWrite.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"items\": [\n";
@@ -1156,16 +1143,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
         if (widgetOwnedKeys.count(ToUpperInvariant(it->layoutKey))) continue;
         if (!firstItem) file << ",\n";
         firstItem = false;
-        file << "    { \"key\": \"" << JsonEscapeUtf8(it->layoutKey)
-             << "\", \"page\": \"" << JsonEscapeUtf8(it->gridCell.pageId)
-             << "\", \"x\": " << it->gridCell.column
-             << ", \"y\": " << it->gridCell.row
-             << ", \"w\": " << std::max(1, it->gridSpan.columns)
-             << ", \"h\": " << std::max(1, it->gridSpan.rows)
-             << ", \"slot\": " << it->slot;
-        if (it->largeIcon)
-            file << ", \"largeIcon\": " << snowdesktop::EncodeLargeIconConfig(*it->largeIcon);
-        file << " }";
+        snowdesktop::layout_geometry_codec::WriteItem(file, *it, JsonEscapeUtf8);
     }
     if (!firstItem) file << "\n";
     file << "  ],\n  \"widgets\": [\n";
