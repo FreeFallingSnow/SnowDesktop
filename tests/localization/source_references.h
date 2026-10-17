@@ -10,7 +10,7 @@
 
 namespace snowdesktop::localization_audit
 {
-enum class TokenKind { Identifier, String, Punctuation };
+enum class TokenKind { Identifier, String, Character, Punctuation };
 struct Token
 {
     TokenKind kind;
@@ -114,7 +114,7 @@ inline std::vector<Token> Lex(std::string_view text, bool lua = false, bool cmak
                 else { value += text[index]; advance(); }
             }
             if (index < text.size()) advance();
-            tokens.push_back({lua || quote == '"' ? TokenKind::String : TokenKind::Punctuation, std::move(value), tokenLine});
+            tokens.push_back({lua || quote == '"' ? TokenKind::String : TokenKind::Character, std::move(value), tokenLine});
             continue;
         }
         if (std::isalpha(static_cast<unsigned char>(c)) || c == '_')
@@ -156,11 +156,32 @@ inline std::vector<const Token*> LiveStrings(const Source& source,
 {
     const auto& tokens = source.tokens;
     std::set<std::size_t> discarded;
+    const size_t outside = tokens.size();
+    std::vector<size_t> parent(tokens.size(), outside), scopeEnd(tokens.size(), outside), stack;
+    for (size_t at = 0; at < tokens.size(); ++at)
+    {
+        const auto& token = tokens[at];
+        const bool keyword = source.lua && token.kind == TokenKind::Identifier;
+        if (keyword && (token.value == "else" || token.value == "elseif"))
+        {
+            if (!stack.empty()) { scopeEnd[stack.back()] = at; stack.pop_back(); }
+        }
+        parent[at] = stack.empty() ? outside : stack.back();
+        const bool opening = source.lua
+            ? keyword && (token.value == "function" || token.value == "then" || token.value == "do" || token.value == "repeat" || token.value == "else")
+            : token.kind == TokenKind::Punctuation && token.value == "{";
+        const bool closing = source.lua
+            ? keyword && (token.value == "end" || token.value == "until")
+            : token.kind == TokenKind::Punctuation && token.value == "}";
+        if (opening) stack.push_back(at);
+        else if (closing && !stack.empty()) { scopeEnd[stack.back()] = at; stack.pop_back(); }
+    }
     // A constant with no source consumer must not keep a dead translation
     // alive. Count across translation units so shared header tables work.
     for (std::size_t index = 0; index < tokens.size(); ++index)
     {
-        if (tokens[index].value != "=" && tokens[index].value != "{") continue;
+        if (tokens[index].kind != TokenKind::Punctuation ||
+            (tokens[index].value != "=" && tokens[index].value != "{")) continue;
         if (index == 0) continue;
         std::size_t name = index - 1;
         if (tokens[name].value == "]")
@@ -186,8 +207,20 @@ inline std::vector<const Token*> LiveStrings(const Source& source,
             }
             if (!declaration) continue;
         }
-        const auto found = identifierUses.find(tokens[name].value);
-        if (found == identifierUses.end() || found->second != 1) continue;
+        size_t uses = 0;
+        const auto enclosing = parent[name];
+        if (enclosing != outside || source.lua)
+        {
+            const auto begin = enclosing == outside ? size_t{0} : enclosing + 1;
+            const auto end = enclosing == outside ? tokens.size() : scopeEnd[enclosing];
+            for (size_t at = begin; at < end; ++at)
+                if (tokens[at].kind == TokenKind::Identifier && tokens[at].value == tokens[name].value) ++uses;
+            // Header members may be consumed by out-of-line definitions.
+            if (!source.lua && (source.path.ends_with(".h") || source.path.ends_with(".hpp")))
+                if (const auto found = identifierUses.find(tokens[name].value); found != identifierUses.end()) uses = found->second;
+        }
+        else if (const auto found = identifierUses.find(tokens[name].value); found != identifierUses.end()) uses = found->second;
+        if (uses != 1) continue;
         if (index + 1 >= tokens.size() ||
             (tokens[index + 1].kind != TokenKind::String && tokens[index + 1].value != "{" && tokens[index].value != "{")) continue;
         std::size_t end = index + 1;
@@ -196,9 +229,12 @@ inline std::vector<const Token*> LiveStrings(const Source& source,
         {
             if (source.lua && braces <= 0 && end > index + 1 &&
                 tokens[end].line > tokens[end - 1].line) break;
-            if (tokens[end].value == "{") ++braces;
-            if (tokens[end].value == "}") --braces;
-            if (tokens[end].value == ";" && braces <= 0) break;
+            if (tokens[end].kind == TokenKind::Punctuation)
+            {
+                if (tokens[end].value == "{") ++braces;
+                if (tokens[end].value == "}") --braces;
+                if (tokens[end].value == ";" && braces <= 0) break;
+            }
             if (tokens[end].kind == TokenKind::String) discarded.insert(end);
         }
     }

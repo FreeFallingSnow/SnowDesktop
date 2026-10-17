@@ -553,6 +553,18 @@ void TestReferenceAuditContracts()
     const auto fieldBindings = audit::CollectLiteralBindings(luaFields, keys);
     Check(fieldBindings.contains("ui.direct") && fieldBindings.contains("ui.table"),
         "consumed Lua tables keep their named-field translation values");
+    const std::vector<audit::Source> scopedCpp{{"fixture.cpp", audit::Lex(
+        "void Used(){ const char* same = \"ui.direct\"; Render(same); } "
+        "void Dead(){ const char* same = \"ui.dead\"; }")}};
+    const auto scopedCppKeys = audit::CollectLiteralBindings(scopedCpp, keys);
+    Check(scopedCppKeys.contains("ui.direct") && !scopedCppKeys.contains("ui.dead"),
+        "a used same-named variable in another C++ function cannot preserve a dead key");
+    const std::vector<audit::Source> scopedLua{{"fixture.lua", audit::Lex(
+        "function used()\nlocal same = 'ui.direct'\nrender(same)\nend\n"
+        "function dead()\nlocal same = 'ui.dead'\nend", true), true}};
+    const auto scopedLuaKeys = audit::CollectLiteralBindings(scopedLua, keys);
+    Check(scopedLuaKeys.contains("ui.direct") && !scopedLuaKeys.contains("ui.dead"),
+        "a used same-named local in another Lua function cannot preserve a dead key");
     const auto conditional = audit::Lex("_LW(state == \"status\" ? \"ui.direct\" : \"ui.table\")");
     std::vector<std::string> branchKeys;
     for (size_t at = 2; at < conditional.size(); ++at)
