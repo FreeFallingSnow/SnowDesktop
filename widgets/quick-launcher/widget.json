@@ -33,8 +33,7 @@
       "lua_widget.quick_launcher.preview_query": "旅行",
       "lua_widget.quick_launcher.preview_result": "旅行日志",
       "lua_widget.common.font_scale": "字体缩放",
-      "lua_widget.common.text_color": "文字颜色",
-      "lua_widget.common.untitled": "（未命名）"
+      "lua_widget.common.text_color": "文字颜色"
     },
     "en-US": {
       "lua_widget.quick_launcher.name": "Quick Launcher",
@@ -55,8 +54,7 @@
       "lua_widget.quick_launcher.preview_query": "Travel",
       "lua_widget.quick_launcher.preview_result": "Travel Journal",
       "lua_widget.common.font_scale": "Font Scale",
-      "lua_widget.common.text_color": "Text Color",
-      "lua_widget.common.untitled": "(Untitled)"
+      "lua_widget.common.text_color": "Text Color"
     },
     "zh-TW": {
       "lua_widget.quick_launcher.name": "快速啟動",
@@ -77,8 +75,7 @@
       "lua_widget.quick_launcher.preview_query": "旅行",
       "lua_widget.quick_launcher.preview_result": "旅行日誌",
       "lua_widget.common.font_scale": "字型縮放",
-      "lua_widget.common.text_color": "文字顏色",
-      "lua_widget.common.untitled": "（未命名）"
+      "lua_widget.common.text_color": "文字顏色"
     },
     "ja-JP": {
       "lua_widget.quick_launcher.name": "クイックランチャー",
@@ -99,8 +96,7 @@
       "lua_widget.quick_launcher.preview_query": "トラベル",
       "lua_widget.quick_launcher.preview_result": "旅の記録",
       "lua_widget.common.font_scale": "フォント倍率",
-      "lua_widget.common.text_color": "文字色",
-      "lua_widget.common.untitled": "(無題)"
+      "lua_widget.common.text_color": "文字色"
     },
     "ko-KR": {
       "lua_widget.quick_launcher.name": "빠른 실행기",
@@ -121,8 +117,7 @@
       "lua_widget.quick_launcher.preview_query": "여행",
       "lua_widget.quick_launcher.preview_result": "여행 일지",
       "lua_widget.common.font_scale": "글꼴 배율",
-      "lua_widget.common.text_color": "텍스트 색상",
-      "lua_widget.common.untitled": "(제목 없음)"
+      "lua_widget.common.text_color": "텍스트 색상"
     },
     "de-DE": {
       "lua_widget.quick_launcher.name": "Schnellstarter",
@@ -143,8 +138,7 @@
       "lua_widget.quick_launcher.preview_query": "Reisen",
       "lua_widget.quick_launcher.preview_result": "Reisetagebuch",
       "lua_widget.common.font_scale": "Schrift-Skalierung",
-      "lua_widget.common.text_color": "Textfarbe",
-      "lua_widget.common.untitled": "(Ohne Titel)"
+      "lua_widget.common.text_color": "Textfarbe"
     },
     "fr-FR": {
       "lua_widget.quick_launcher.name": "Lanceur rapide",
@@ -165,8 +159,7 @@
       "lua_widget.quick_launcher.preview_query": "Voyage",
       "lua_widget.quick_launcher.preview_result": "Carnet de voyage",
       "lua_widget.common.font_scale": "Échelle de police",
-      "lua_widget.common.text_color": "Couleur du texte",
-      "lua_widget.common.untitled": "(Sans titre)"
+      "lua_widget.common.text_color": "Couleur du texte"
     },
     "es-ES": {
       "lua_widget.quick_launcher.name": "Lanzador rápido",
@@ -187,8 +180,7 @@
       "lua_widget.quick_launcher.preview_query": "Viajes",
       "lua_widget.quick_launcher.preview_result": "Diario de viaje",
       "lua_widget.common.font_scale": "Escala de fuente",
-      "lua_widget.common.text_color": "Color del texto",
-      "lua_widget.common.untitled": "(Sin título)"
+      "lua_widget.common.text_color": "Color del texto"
     },
     "es-419": {
       "lua_widget.quick_launcher.name": "Lanzador rápido",
@@ -209,8 +201,7 @@
       "lua_widget.quick_launcher.preview_query": "Viajes",
       "lua_widget.quick_launcher.preview_result": "Diario de viaje",
       "lua_widget.common.font_scale": "Escala de fuente",
-      "lua_widget.common.text_color": "Color del texto",
-      "lua_widget.common.untitled": "(Sin título)"
+      "lua_widget.common.text_color": "Color del texto"
     },
     "pt-BR": {
     "lua_widget.quick_launcher.name": "Iniciador rápido",
@@ -231,8 +222,7 @@
       "lua_widget.quick_launcher.preview_query": "Viagem",
       "lua_widget.quick_launcher.preview_result": "Diário de viagem",
       "lua_widget.common.font_scale": "Escala da fonte",
-      "lua_widget.common.text_color": "Cor do texto",
-      "lua_widget.common.untitled": "(Sem título)"
+      "lua_widget.common.text_color": "Cor do texto"
     }
   },
   "defaultSize": {
