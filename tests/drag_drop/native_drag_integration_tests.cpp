@@ -254,11 +254,12 @@ struct NativeDragIntegrationAccess
         app.dragSession_.Begin(origin, std::move(items), std::move(captured), {left + 50, 50}, {left + 50, 50});
     }
 
-    static DropPreviewList ObserveModelPreview(DesktopApp& app, POINT point)
+    static DropPreviewList ObserveModelPreview(DesktopApp& app, POINT point, int mods = 0)
     {
         Resolve(app, point);
-        return app.GetCachedDesktopDropPreview(true, app.dragSession_.SourceList(),
-            Target(app), TargetSlot(app), Region(app), 0, point);
+        const bool hasItemDrag = app.dragSession_.IsActive() && !app.dragSession_.Items().empty();
+        return app.GetCachedDesktopDropPreview(hasItemDrag, app.dragSession_.SourceList(),
+            Target(app), TargetSlot(app), Region(app), mods, point);
     }
 
     static void DropModel(DesktopApp& app)

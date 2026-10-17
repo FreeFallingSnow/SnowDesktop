@@ -118,7 +118,7 @@ inline void Run(std::string_view action)
                     const POINT point{secondary ? -650L : 150L, 150};
                     const std::size_t summaryCount = asynchronous ? 1 : count;
                     Access::BeginExternal(app, summaryCount, point);
-                    const auto preview = Access::ObserveModelPreview(app, point);
+                    const auto preview = Access::ObserveModelPreview(app, point, static_cast<int>(gesture->keys));
                     Require(Access::Target(app) == Access::Desktop(app) && preview.landings.size() == summaryCount,
                         "native OLE fixture must observe the actual accepted desktop landing preview");
                     DWORD returned = allowed;
