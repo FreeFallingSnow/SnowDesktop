@@ -113,6 +113,8 @@ inline void Run()
                 Access::BeginDesktopGesture(app, keys[0]);
                 const auto* runtime = Access::Desktop(app);
                 auto deferred = Snapshot(files);
+                for (auto& item : deferred.desktopItems)
+                    item.fileSize = fs::file_size(fs::path(item.parsingName));
                 Access::Reload(app, deferred, false);
                 Require(Access::ShellReloadPending(app) && deferred.desktopItems.size() == 2 &&
                     Access::Desktop(app) == runtime && Read(Access::LayoutPath(app)) == savedBeforeDrag,
@@ -121,7 +123,9 @@ inline void Run()
                 // snapshot through the real reload entry after its lifetime.
                 Access::EndGesture(app);
                 Access::Reload(app, deferred, false);
-                Require(!Access::ShellReloadPending(app), "native deferred refresh must drain after drag ownership ends");
+                const auto& refreshed = Find(app, keys[0]);
+                Require(Access::Ready(app) && refreshed.fileSize && *refreshed.fileSize == fs::file_size(files[0]),
+                    "native deferred refresh must apply accepted file metadata after drag ownership ends");
                 Check(app, keys, preview, source, count);
 
                 context = scenario + " phase=incremental-refresh";

@@ -55,13 +55,17 @@ inline Microsoft::WRL::ComPtr<Source> Make(const std::vector<std::filesystem::pa
 {
     auto source = Microsoft::WRL::Make<Source>();
     source->asynchronous = asynchronous;
-    Pidl parent(ILCreateFromPathW(files.front().parent_path().c_str()));
+    auto nativeParent = files.front().parent_path();
+    nativeParent.make_preferred();
+    Pidl parent(ILCreateFromPathW(nativeParent.c_str()));
     if (!parent.get()) throw std::runtime_error("native OLE fixture source parent PIDL is missing");
     std::vector<Pidl> absolute;
     std::vector<PCUITEMID_CHILD> children;
     for (const auto& file : files)
     {
-        absolute.emplace_back(ILCreateFromPathW(file.c_str()));
+        auto native = file;
+        native.make_preferred();
+        absolute.emplace_back(ILCreateFromPathW(native.c_str()));
         if (!absolute.back().get()) throw std::runtime_error("native OLE fixture selected file PIDL is missing");
         children.push_back(ILFindLastID(absolute.back().get()));
     }
