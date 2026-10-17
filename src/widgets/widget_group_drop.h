@@ -14,7 +14,7 @@ constexpr bool AcceptsChild(DesktopWidgetType group, DesktopWidgetType child)
             (child == DesktopWidgetType::FileCategories || child == DesktopWidgetType::FolderMapping);
 }
 
-// One model transaction shared by desktop entrances, handles, Dock entries and
+// One model transaction shared by desktop entrances, Dock entries and
 // group labels. Validate the entire membership change before detaching anything.
 inline bool Apply(std::vector<DesktopWidget>& widgets, std::vector<DockEntry>& dock,
     size_t groupIndex, const std::vector<std::wstring>& requested, size_t insertIndex)

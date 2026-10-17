@@ -1816,6 +1816,58 @@ void TestWidgetRightDragMenuActions()
     }
 }
 
+void TestRightDragIconSourcesAfterMenu()
+{
+    namespace menu = snowdesktop::widget_right_drag;
+    using Type = DesktopWidgetType;
+    for (const auto type : {Type::Collection, Type::FileCategories, Type::FolderMapping, Type::CollectionGroup, Type::FileGroup})
+    {
+        DesktopWidget widget;
+        widget.id = L"captured-icon";
+        widget.type = type;
+        widget.gridCell = {L"desktop", 2, 3};
+        widget.gridSpan = {1, 1};
+        widget.singleCellIconMode = true;
+        DragSourceList source;
+        source.hasWidgets = source.hasOriginSurface = true;
+        source.originSurface = snowdesktop::slot_contract::SlotSurfaceKind::Desktop;
+        DragSourceEntry entry;
+        entry.desktopWidgetIcon = true;
+        entry.kind = DropSourceKind::Widget;
+        entry.widgetId = widget.id;
+        entry.widgetType = type;
+        entry.originalCell = widget.gridCell;
+        entry.originalSpan = widget.gridSpan;
+        source.entries.push_back(entry);
+        std::vector<DesktopWidget> widgets = {widget};
+        Check(menu::CapturedIconsCurrent(source, widgets),
+            "right-menu continuation uses captured identities even without any surviving runtime Item");
+        widgets.insert(widgets.begin(), DesktopWidget{});
+        Check(menu::CapturedIconsCurrent(source, widgets),
+            "runtime rebuilds and model reordering preserve the captured native source");
+        auto changed = widgets;
+        changed.back().gridCell.column++;
+        Check(!menu::CapturedIconsCurrent(source, changed), "menu cannot move an entrance whose position changed while open");
+        changed = widgets;
+        changed.back().singleCellIconMode = false;
+        Check(!menu::CapturedIconsCurrent(source, changed), "menu cannot resume after an entrance changes presentation");
+        changed = widgets;
+        changed.front().childWidgetIds = {widget.id};
+        Check(!menu::CapturedIconsCurrent(source, changed), "menu cannot steal a source acquired by another group");
+        changed = widgets;
+        changed.push_back(widget);
+        Check(!menu::CapturedIconsCurrent(source, changed), "duplicate source identities cancel rather than picking an arbitrary component");
+        changed.pop_back();
+        changed.pop_back();
+        Check(!menu::CapturedIconsCurrent(source, changed), "removed sources cancel menu continuation");
+        DragSourceEntry file;
+        file.kind = DropSourceKind::DesktopIcon;
+        source.entries.push_back(file);
+        source.hasDesktopIcons = true;
+        Check(menu::CapturedIconsCurrent(source, widgets), "mixed file and component selections retain native source validation");
+    }
+}
+
 void TestWidgetGroupMembershipMatrix()
 {
     namespace groups = snowdesktop::widget_group_drop;
@@ -2478,6 +2530,7 @@ int main()
     TestDesktopIconModePairDrops();
     TestDesktopIconSourceVacatesItsHitBlock();
     TestWidgetRightDragMenuActions();
+    TestRightDragIconSourcesAfterMenu();
     TestWidgetGroupMembershipMatrix();
     TestDockComponentInsertionHints();
     TestPairGroupsDissolveAndDockOwnership();

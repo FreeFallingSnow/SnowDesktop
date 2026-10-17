@@ -385,6 +385,8 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
     namespace pair = snowdesktop::widget_pair_drop;
     const bool handleDrag = !externalSource && widgetAction_ == WidgetAction::Move &&
         mouseDownWidgetIndex_ < widgets_.size();
+    const bool nativeIconDrag = !externalSource && !handleDrag &&
+        dragSession_.SourceList().HasDesktopWidgetIcons();
     const auto source = handleDrag
         ? snowdesktop::widget_pair_drag::Source{mouseDownWidgetIndex_, {}}
         : !externalSource ? GetWidgetPairDragSource() : snowdesktop::widget_pair_drag::Source{};
@@ -596,7 +598,18 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
                     return false;
             }
         }
-        else if (!dragSession_.ResumeAfterDropDecision()) return false;
+        else
+        {
+            if (nativeIconDrag && !snowdesktop::widget_right_drag::CapturedIconsCurrent(
+                    dragSession_.SourceList(), widgets_)) return false;
+            if (!dragSession_.ResumeAfterDropDecision()) return false;
+            if (nativeIconDrag)
+            {
+                RebindDragSourceAfterRebuild();
+                if (!dragSession_.IsActive()) return false;
+                ResolveCurrentDragTargetAt(point);
+            }
+        }
         if (choice.pairAction != pair::Action::None)
         {
             const auto rebound = handleDrag

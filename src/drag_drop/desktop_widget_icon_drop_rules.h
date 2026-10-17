@@ -14,7 +14,7 @@ inline bool Accepts(const DragSourceEntry& entry, slot_contract::SlotSurfaceKind
         *entry.widgetType != DesktopWidgetType::FolderMapping && !IsGroupWidgetType(*entry.widgetType)) return false;
     return slot_contract::AcceptsSlotDrop(slot_contract::SlotSurfaceKind::Desktop,
         slot_contract::PayloadForWidgetType(*entry.widgetType), target,
-        slot_contract::DragRelation::CrossSurface);
+        slot_contract::ClassifyRelation(slot_contract::SlotSurfaceKind::Desktop, target, false));
 }
 
 // Native entrances are identities, not copyable filesystem objects. Unsupported
