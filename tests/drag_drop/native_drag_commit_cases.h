@@ -9,10 +9,11 @@ namespace native_drag_commit_cases
 {
 namespace fs = std::filesystem;
 using Access = NativeDragIntegrationAccess;
+inline std::string context;
 
-inline void Require(bool value, const char* message)
+inline void Require(bool value, const std::string& message)
 {
-    if (!value) throw std::runtime_error(message);
+    if (!value) throw std::runtime_error(message + " [" + context + "]");
 }
 inline std::string Read(const fs::path& file)
 {
@@ -111,7 +112,8 @@ inline void CheckModel(DesktopApp& app, const std::vector<std::wstring>& keys,
             "native multi-item commit and reload cannot overlap accepted ordinary file cells");
     else
         Require(items[1].gridCell.column == 2 && items[1].gridCell.row == 0,
-            "native single-item commit preserves the unrelated item's return position");
+            std::string("native single-item commit preserves the unrelated item's return position; actual=") +
+                std::to_string(items[1].gridCell.column) + "," + std::to_string(items[1].gridCell.row));
     const auto& widgets = Access::Widgets(app);
     if (source)
     {
@@ -131,6 +133,9 @@ inline void Run()
         for (const int source : {0, 1, 2})
             for (const std::size_t count : {1u, 2u})
             {
+                const auto scenario = "source=" + std::to_string(source) + " count=" + std::to_string(count) +
+                    " secondary=" + std::to_string(secondary);
+                context = scenario + " phase=initial";
                 const auto directory = profile.root / (L"case-" + std::to_wstring(cases++));
                 fs::create_directories(directory);
                 const auto sourceDirectory = snowdesktop::debug_profile::Current().configuration.desktop;
@@ -147,6 +152,7 @@ inline void Run()
                 Require(Access::Target(app) == Access::Desktop(app) && observed.targetKind == DropTargetKind::Desktop,
                     "actual native model must resolve and plan the requested desktop target");
                 Access::DropModel(app);
+                context = scenario + " phase=committed";
                 CheckModel(app, keys, observed, source, count);
                 const auto saved = Read(Access::LayoutPath(app));
                 for (const int guard : {0, 1, 2})
@@ -155,6 +161,7 @@ inline void Run()
                         "actual host save guard must preserve the existing layout during incomplete or pending reload state");
                 }
                 auto& loaded = profile.Model(secondary, directory / L"layout");
+                context = scenario + " phase=restore";
                 Access::Load(loaded);
                 Require(!Access::Ready(loaded) && !Access::Save(loaded) && Read(Access::LayoutPath(loaded)) == saved,
                     "loading disk records alone must not allow an incomplete native model to overwrite the saved layout");
