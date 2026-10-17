@@ -2654,6 +2654,12 @@ if (BUILD_TESTING)
             TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
     endforeach()
 
+    add_test(NAME native_ole_leave_lifecycle
+        COMMAND SnowDesktopNativeDragIntegrationTests --ole-leave-lifecycle)
+    set_tests_properties(native_ole_leave_lifecycle PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
+
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)
     set_tests_properties(icon_bitmap_rendering PROPERTIES

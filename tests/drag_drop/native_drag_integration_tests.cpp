@@ -20,16 +20,18 @@ struct NativeDragIntegrationAccess
     static inline std::uint64_t asyncReadMessages = 0;
     static inline std::uint64_t asyncShellTimers = 0;
     static inline std::uint64_t fileCompletionMessages = 0;
+    static inline std::uint64_t graceTimerMessages = 0;
 
     static LRESULT CALLBACK AsyncWindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
         if (asyncOwner && window == completionWindow &&
             (message == kBackgroundShellReadyMessage || message == kShellFileOperationCompletedMessage ||
-                (message == WM_TIMER && wp == kShellChangeTimerId)))
+                (message == WM_TIMER && (wp == kShellChangeTimerId || wp == kExternalOleDragLeaveGraceTimerId))))
         {
             try
             {
                 if (message == kBackgroundShellReadyMessage) ++asyncReadMessages;
+                else if (message == WM_TIMER && wp == kExternalOleDragLeaveGraceTimerId) ++graceTimerMessages;
                 else if (message == WM_TIMER) ++asyncShellTimers;
                 else ++fileCompletionMessages;
                 return asyncOwner->HandleMessage(window, message, wp, lp);
@@ -56,6 +58,7 @@ struct NativeDragIntegrationAccess
         asyncReadMessages = 0;
         asyncShellTimers = 0;
         fileCompletionMessages = 0;
+        graceTimerMessages = 0;
         previousWindowProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(completionWindow,
             GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&AsyncWindowProc)));
         if (!previousWindowProc) throw std::runtime_error("install the isolated native completion dispatcher");
@@ -65,6 +68,7 @@ struct NativeDragIntegrationAccess
     {
         if (asyncOwner != &app) return;
         KillTimer(completionWindow, kShellChangeTimerId);
+        KillTimer(completionWindow, kExternalOleDragLeaveGraceTimerId);
         SetWindowLongPtrW(completionWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousWindowProc));
         previousWindowProc = nullptr;
         asyncOwner = nullptr;
@@ -120,6 +124,15 @@ struct NativeDragIntegrationAccess
         // Observe the target chosen by Enter/Over; do not repair it by resolving again.
         return app.GetCachedDesktopDropPreview(false, app.dragSession_.SourceList(),
             Target(app), TargetSlot(app), Region(app), mods, point);
+    }
+    static HRESULT ExternalLeave(DesktopApp& app, bool pointerOnSurface)
+    { return app.HandleExternalOleDragLeave(pointerOnSurface); }
+    static bool LeavePending(const DesktopApp& app) { return app.externalOleDragLeavePending_; }
+    static bool LeaveCleared(const DesktopApp& app)
+    {
+        return !app.externalOleDragLeavePending_ && !app.dragDropController_.IsExternalDragActive() &&
+            app.dragDropController_.ExternalSummary().fileCount == 0 && !app.dragSession_.IsActive() &&
+            !app.dragSession_.HasContext() && !app.dragSession_.TargetContainer() && app.cachedDropPreview_.landings.empty();
     }
     static bool FileDropIdle(const DesktopApp& app)
     {
@@ -444,6 +457,7 @@ struct NativeDragIntegrationAccess
 #include "native_drag_reload_cases.h"
 #include "native_drag_async_reload_cases.h"
 #include "native_ole_file_cases.h"
+#include "native_ole_leave_cases.h"
 
 namespace
 {
@@ -505,6 +519,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--async-reload-storage") native_drag_async_reload_cases::Run();
         else if (argc == 3 && std::string_view(argv[1]) == "--ole-files") native_ole_file_cases::Run(argv[2]);
         else if (argc == 3 && std::string_view(argv[1]) == "--ole-gesture-files") native_ole_file_cases::Run(argv[2], true);
+        else if (argc == 2 && std::string_view(argv[1]) == "--ole-leave-lifecycle") native_ole_leave_cases::Run();
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

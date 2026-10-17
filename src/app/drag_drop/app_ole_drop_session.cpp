@@ -516,8 +516,15 @@ HRESULT DesktopApp::HandleOleDragLeave()
     }
 
     POINT hoverPoint{};
+    return HandleExternalOleDragLeave(
+        dragDropController_.IsExternalDragActive() &&
+        TryGetDesktopHoverPointFromCursor(hoverPoint));
+}
+
+HRESULT DesktopApp::HandleExternalOleDragLeave(bool pointerOnDesktopSurface)
+{
     if (dragDropController_.IsExternalDragActive() &&
-        TryGetDesktopHoverPointFromCursor(hoverPoint) &&
+        pointerOnDesktopSurface &&
         hwnd_ && IsWindow(hwnd_))
     {
         externalOleDragLeavePending_ =

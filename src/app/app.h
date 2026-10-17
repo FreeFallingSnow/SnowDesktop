@@ -4437,6 +4437,7 @@ private:
     OleDragDropAdapter* EnsureOleDragDropAdapter();
     void CancelPendingExternalOleDragLeave();
     void FinalizePendingExternalOleDragLeave();
+    HRESULT HandleExternalOleDragLeave(bool pointerOnDesktopSurface);
     size_t HitTestLuaFileDropTarget(POINT point) const;
     bool DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>& paths);
     bool externalLuaFileDropAvailable_ = false;
