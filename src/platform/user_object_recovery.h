@@ -2,7 +2,7 @@
 
 #include <windows.h>
 
-#include <cstdint>
+#include <new>
 
 namespace snowdesktop::user_object_recovery
 {
@@ -62,6 +62,7 @@ enum class Event
     RestartLimited,
     Restarting,
     RestartFailed,
+    CallbackFailed,
 };
 
 // Runs on the host's existing maintenance timer. It creates no USER objects,
@@ -80,9 +81,13 @@ public:
         lastSample_ = now;
         const DWORD count = query();
         if (quota < 200 || quota > 18000) quota = kDefaultQuota;
+        const auto emit = [&](Event event, LSTATUS error) noexcept {
+            try { report(event, count, quota, error); }
+            catch (...) { /* Diagnostic allocation cannot abort recovery. */ }
+        };
         const bool pressure = count >= quota * 80 / 100;
         if (pressure && !pressureReported_)
-            report(Event::Pressure, count, quota, ERROR_SUCCESS);
+            emit(Event::Pressure, ERROR_SUCCESS);
         pressureReported_ = pressure;
         if (count < quota * 95 / 100)
         {
@@ -103,22 +108,33 @@ public:
         attempted_ = true;
         lastAttempt_ = now;
         retryInterval_ = kRetryIntervalMs;
-        if (!checkpoint())
+        try
         {
-            report(Event::CheckpointFailed, count, quota, ERROR_WRITE_FAULT);
-            return false;
-        }
-        const auto error = reserve(now);
-        if (error != ERROR_SUCCESS)
-        {
+            if (!checkpoint())
+            {
+                emit(Event::CheckpointFailed, ERROR_CANCELLED);
+                return false;
+            }
+            const auto error = reserve(now);
+            if (error != ERROR_SUCCESS)
+            {
+                retryInterval_ = kRestartIntervalMs;
+                emit(Event::RestartLimited, error);
+                return false;
+            }
             retryInterval_ = kRestartIntervalMs;
-            report(Event::RestartLimited, count, quota, error);
-            return false;
+            emit(Event::Restarting, ERROR_SUCCESS);
+            if (restart()) return true;
+            emit(Event::RestartFailed, ERROR_GEN_FAILURE);
         }
-        retryInterval_ = kRestartIntervalMs;
-        report(Event::Restarting, count, quota, ERROR_SUCCESS);
-        if (restart()) return true;
-        report(Event::RestartFailed, count, quota, ERROR_GEN_FAILURE);
+        catch (const std::bad_alloc&)
+        {
+            emit(Event::CallbackFailed, ERROR_NOT_ENOUGH_MEMORY);
+        }
+        catch (...)
+        {
+            emit(Event::CallbackFailed, ERROR_UNHANDLED_EXCEPTION);
+        }
         return false;
     }
 

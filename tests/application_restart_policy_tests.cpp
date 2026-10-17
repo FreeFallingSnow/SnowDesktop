@@ -319,7 +319,9 @@ void TestUserObjectRecovery()
         recovery::Monitor monitor;
         DWORD count = 10000, quota = 10000;
         bool safe = true, saved = true, launched = true, reenter = false;
+        bool throwCheckpoint = false, throwRestart = false, throwReport = false;
         LSTATUS reservation = ERROR_SUCCESS;
+        LSTATUS lastError = ERROR_SUCCESS;
         int queries = 0, checkpoints = 0, reservations = 0, restarts = 0;
         std::vector<recovery::Event> events;
         bool Poll(ULONGLONG now)
@@ -328,6 +330,7 @@ void TestUserObjectRecovery()
                 [&] { ++queries; return count; },
                 [&] {
                     ++checkpoints;
+                    if (throwCheckpoint) throw std::bad_alloc{};
                     if (reenter)
                     {
                         reenter = false;
@@ -338,8 +341,10 @@ void TestUserObjectRecovery()
                     return saved;
                 },
                 [&](ULONGLONG) { ++reservations; return reservation; },
-                [&] { ++restarts; return launched; },
-                [&](recovery::Event event, DWORD objects, DWORD limit, LSTATUS) {
+                [&] { ++restarts; if (throwRestart) throw 1; return launched; },
+                [&](recovery::Event event, DWORD objects, DWORD limit, LSTATUS error) {
+                    if (throwReport) throw std::bad_alloc{};
+                    lastError = error;
                     Expect(objects == count && limit == quota,
                         "recovery diagnostics retain the triggering resource sample");
                     events.push_back(event);
@@ -413,6 +418,30 @@ void TestUserObjectRecovery()
     customQuota.count = 17100;
     Expect(!customQuota.Poll(5000) && customQuota.Poll(8000),
         "a configured process quota determines the sustained recovery threshold");
+
+    Fixture allocationFailure;
+    allocationFailure.throwCheckpoint = true;
+    allocationFailure.Poll(0);
+    bool escaped = false;
+    try { allocationFailure.Poll(3000); } catch (...) { escaped = true; }
+    Expect(!escaped && allocationFailure.reservations == 0 && allocationFailure.restarts == 0 &&
+            allocationFailure.lastError == ERROR_NOT_ENOUGH_MEMORY,
+        "low-memory checkpoint exceptions keep the old host without escaping its timer handler");
+    allocationFailure.throwCheckpoint = false;
+    Expect(allocationFailure.Poll(33000),
+        "exception recovery releases its reentrancy guard for a later bounded attempt");
+    Fixture launchException;
+    launchException.throwRestart = true;
+    launchException.Poll(0);
+    try { launchException.Poll(3000); } catch (...) { escaped = true; }
+    Expect(!escaped && launchException.lastError == ERROR_UNHANDLED_EXCEPTION &&
+            !launchException.Poll(33000) && launchException.restarts == 1,
+        "a throwing restart endpoint retains the persistent cooldown and cannot crash the timer");
+    Fixture diagnosticFailure;
+    diagnosticFailure.throwReport = true;
+    diagnosticFailure.Poll(0);
+    Expect(diagnosticFailure.Poll(3000) && diagnosticFailure.restarts == 1,
+        "a diagnostic allocation failure cannot interrupt a saved and budgeted recovery");
 }
 
 void TestUserObjectRestartBudget()

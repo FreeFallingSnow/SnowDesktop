@@ -581,8 +581,9 @@ void DesktopApp::OnTimer(WPARAM timerId)
                     DWORD count, DWORD quota, LSTATUS error) {
                     using Event = snowdesktop::user_object_recovery::Event;
                     const wchar_t* phase = event == Event::Pressure ? L"pressure" :
-                        event == Event::CheckpointFailed ? L"layout-save-failed" :
+                        event == Event::CheckpointFailed ? L"checkpoint-declined" :
                         event == Event::RestartLimited ? L"restart-limited" :
+                        event == Event::CallbackFailed ? L"callback-failed" :
                         event == Event::Restarting ? L"restarting" : L"restart-failed";
                     wchar_t message[256]{};
                     swprintf_s(message,
