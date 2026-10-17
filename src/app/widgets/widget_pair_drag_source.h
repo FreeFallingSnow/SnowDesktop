@@ -2,6 +2,7 @@
 
 #include "core/drop_model.h"
 #include "widgets/widget_pair_drop.h"
+#include "widgets/single_cell_widget_rules.h"
 
 namespace snowdesktop::widget_pair_drag
 {
@@ -23,6 +24,17 @@ inline Source ResolveSource(const DragSourceList& list,
             [&](const auto& widget) { return widget.id == id; });
         return static_cast<size_t>(std::distance(widgets.begin(), found));
     };
+    if (entry.desktopWidgetIcon)
+    {
+        const size_t index = findWidget(entry.widgetId);
+        if (entry.fromDock || entry.kind != DropSourceKind::Widget || !list.hasWidgets ||
+            list.hasOriginWidget || list.SourceSurfaceKind() != slot_contract::SlotSurfaceKind::Desktop ||
+            index >= widgets.size() || entry.widgetType != widgets[index].type ||
+            !single_cell_widget::IsIconMode(widgets[index]) ||
+            !widget_pair_drop::CanUseSource(widgets, index))
+            return {};
+        return {index, {}};
+    }
     if (entry.fromDock && entry.kind == DropSourceKind::Widget)
     {
         const size_t index = findWidget(entry.dockReference);

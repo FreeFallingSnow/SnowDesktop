@@ -697,6 +697,7 @@ bool DesktopApp::CommitWidgetPairDrop(size_t sourceIndex, size_t targetIndex,
     group.showTitle = true;
     group.gridCell = widgets_[targetIndex].gridCell;
     group.gridSpan = widgets_[targetIndex].gridSpan;
+    group.singleCellIconMode = widgets_[targetIndex].singleCellIconMode;
     group.keepWhenDesktopHidden = widgets_[targetIndex].keepWhenDesktopHidden;
     ConfigureWidgetGridLimits(group);
     if (action != pair::Action::Merge)

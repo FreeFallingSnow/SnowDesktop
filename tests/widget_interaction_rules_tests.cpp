@@ -1703,6 +1703,105 @@ void TestGroupedLabelPairDrops()
         "stale Dock widget entries must not arm a pair drop");
 }
 
+void TestDesktopIconModePairDrops()
+{
+    namespace pair = snowdesktop::widget_pair_drop;
+    namespace drag = snowdesktop::widget_pair_drag;
+    using Type = DesktopWidgetType;
+    using Action = pair::Action;
+    // The real desktop drag payload enters the same source resolver and model
+    // transaction as Dock/label drags. Runtime Item wrappers are not required.
+    struct Case { Type source, target; Action shift, control; };
+    const Case cases[] = {
+        {Type::Collection, Type::Collection, Action::Merge, Action::CreateCollectionGroup},
+        {Type::FileCategories, Type::FileCategories, Action::Merge, Action::CreateFileGroup},
+        {Type::FileCategories, Type::FolderMapping, Action::None, Action::CreateFileGroup},
+        {Type::FolderMapping, Type::FileCategories, Action::None, Action::CreateFileGroup},
+        {Type::FolderMapping, Type::FolderMapping, Action::None, Action::CreateFileGroup},
+        {Type::CollectionGroup, Type::Collection, Action::None, Action::None},
+        {Type::FileGroup, Type::FileCategories, Action::None, Action::None},
+    };
+    for (const auto& test : cases)
+        for (const bool control : {false, true})
+        {
+            std::vector<DesktopWidget> widgets(2);
+            widgets[0].id = L"source";
+            widgets[0].type = test.source;
+            widgets[0].gridCell = {L"page", 1, 2};
+            widgets[0].gridSpan = {1, 1};
+            widgets[0].singleCellIconMode = true;
+            widgets[0].itemKeys = {L"shared", L"source-only"};
+            widgets[0].sourceFolderPath = L"C:\\mapped-source";
+            widgets[1].id = L"target";
+            widgets[1].type = test.target;
+            widgets[1].gridCell = {L"page", 3, 2};
+            widgets[1].itemKeys = {L"target-first", L"shared"};
+            DragSourceList list;
+            list.hasWidgets = list.hasOriginSurface = true;
+            list.originSurface = snowdesktop::slot_contract::SlotSurfaceKind::Desktop;
+            DragSourceEntry entry;
+            entry.kind = DropSourceKind::Widget;
+            entry.widgetId = L"source";
+            entry.widgetType = test.source;
+            entry.desktopWidgetIcon = true;
+            list.entries.push_back(entry);
+            std::vector<DockEntry> dock;
+            const auto source = drag::ResolveSource(list, widgets, dock);
+            Check(source.widgetIndex == 0 && source.groupId.empty(),
+                "a single desktop icon-mode component resolves by captured identity");
+            std::swap(widgets[0], widgets[1]);
+            Check(drag::ResolveSource(list, widgets, dock).widgetIndex == 1,
+                "container rebuilds must resolve the captured entrance ID rather than its old index");
+            std::swap(widgets[0], widgets[1]);
+            widgets[0].singleCellIconMode = false;
+            Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+                "a mode change during drag must not consume a stale icon-mode entrance");
+            widgets[0].singleCellIconMode = true;
+
+            // Check mixed-selection rejection while the source is still valid,
+            // so this cannot pass merely because a prior transaction removed it.
+            list.entries.push_back(entry);
+            Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+                "multiple selected entrances cannot arm a two-component pair transaction");
+            list.entries.back().kind = DropSourceKind::DesktopIcon;
+            list.entries.back().desktopWidgetIcon = false;
+            Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+                "a mixed file/entrance selection cannot arm a partial merge or group");
+            list.entries.resize(1);
+            const auto options = pair::GetOptions(test.source, test.target);
+            const auto action = pair::ResolveAction(options, control, !control, false);
+            Check(action == (control ? test.control : test.shift) &&
+                    pair::ResolveAction(options, false, false, false) == Action::None &&
+                    pair::ResolveAction(options, true, true, false) == Action::None &&
+                    pair::ResolveAction(options, control, !control, true) == Action::None,
+                "icon-mode sources use existing Shift merge and Ctrl group rules, including cancellation keys");
+            DesktopWidget group;
+            group.id = L"new-group";
+            Check(pair::Apply(widgets, dock, source.widgetIndex, 1, action, group,
+                    [](const std::wstring& key) { return key; }) == (action != Action::None),
+                "only a compatible armed icon-mode pair commits an ownership transaction");
+            if (action == Action::None)
+                Check(widgets.size() == 2 && widgets[0].itemKeys.size() == 2 &&
+                        widgets[0].gridCell.column == 1 && widgets[0].sourceFolderPath == L"C:\\mapped-source",
+                    "unsupported or unarmed pairs retain both source content and placement");
+            else if (action == Action::Merge)
+                Check(widgets.size() == 1 && widgets.front().id == L"target" &&
+                        widgets.front().itemKeys == std::vector<std::wstring>{L"target-first", L"shared", L"source-only"},
+                    "Shift transfers and deduplicates source contents once before removing its entrance");
+            else
+                Check(widgets.size() == 3 && widgets.back().childWidgetIds ==
+                        std::vector<std::wstring>{L"target", L"source"} &&
+                        widgets.back().type == (control && test.control == Action::CreateCollectionGroup
+                            ? Type::CollectionGroup : Type::FileGroup) &&
+                        widgets[0].sourceFolderPath == L"C:\\mapped-source",
+                    "Ctrl creates the matching group and retains each child and its mapping settings");
+            if (action != Action::None)
+                Check(drag::ResolveSource(list, widgets, dock).widgetIndex >= widgets.size(),
+                    "a consumed or newly grouped desktop entrance cannot commit the captured pair twice");
+
+        }
+}
+
 void TestDockComponentInsertionHints()
 {
     for (const bool control : {false, true})
@@ -2200,6 +2299,7 @@ int main()
     TestDragHintPlacementRules();
     TestWidgetPairDrops();
     TestGroupedLabelPairDrops();
+    TestDesktopIconModePairDrops();
     TestDockComponentInsertionHints();
     TestPairGroupsDissolveAndDockOwnership();
     TestGroupRestorationPublishesOnlyTheFinalFrame();
