@@ -5,6 +5,7 @@
 #include "widgets/single_cell_widget_rules.h"
 #include "widgets/collection_group_rules.h"
 #include "desktop/desktop_membership_recovery.h"
+#include "desktop/desktop_drop_search.h"
 #include <functional>
 #include <map>
 
@@ -153,6 +154,34 @@ inline std::vector<Move> Build(State state, GridCell targetCell, const Services&
         moves.push_back({owners[move.index].first, move.cell, owners[move.index].second});
     return moves;
 }
+
+struct SearchContext
+{
+    bool desktopOrigin = true;
+    bool cacheActive = false;
+    POINT current{};
+    POINT mouseDown{};
+    std::uint64_t sceneRevision = 0;
+};
+
+inline GridCell FindBest(State state, const Services& services, const DragSourceList& sources,
+    GridCell target, desktop_drop_cache::BestCellEntry& cache, const SearchContext& context)
+{
+    const bool exactPlacement = context.desktopOrigin &&
+        std::any_of(sources.entries.begin(), sources.entries.end(), [&](const DragSourceEntry& entry) {
+            return entry.kind == DropSourceKind::DesktopIcon && !entry.fromDock &&
+                entry.desktopIndex < state.items.size() && state.items[entry.desktopIndex].largeIcon.has_value();
+        });
+    const auto direction = desktop_drop_cache::ResolveSearchDirection(
+        static_cast<long long>(context.current.x) - context.mouseDown.x,
+        static_cast<long long>(context.current.y) - context.mouseDown.y);
+    const desktop_drop_cache::BestCellKey key{target, direction, context.sceneRevision};
+    const auto page = std::find_if(state.pages.begin(), state.pages.end(), [&](const auto& value) { return value.id == target.pageId; });
+    return desktop_drop_cache::FindBestCell(cache, context.cacheActive, key, exactPlacement,
+        page == state.pages.end() ? 0 : page->columns, page == state.pages.end() ? 0 : page->rows,
+        [&](const GridCell& cell) { return !Build(state, cell, services, &sources).empty(); });
+}
+
 template<class Moves>
 std::vector<DropLanding> Landings(State state, const DragSourceList& sourceList, const Moves& moves)
 {

@@ -388,32 +388,11 @@ std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell 
  */
 GridCell DesktopApp::FindBestDropCell(const DragSourceList& sourceList, GridCell targetCell) const
 {
-    const bool exactPlacement = !containers_.empty() &&
-        sourceList.origin == containers_.front().get() &&
-        std::any_of(sourceList.entries.begin(), sourceList.entries.end(),
-            [&](const DragSourceEntry& entry) {
-                return entry.kind == DropSourceKind::DesktopIcon && !entry.fromDock &&
-                    entry.desktopIndex < items_.size() &&
-                    items_[entry.desktopIndex].largeIcon.has_value();
-            });
-    const POINT current = dragSession_.CurrentPoint();
-    const POINT mouseDown = dragSession_.MouseDownPoint();
-    const auto direction =
-        snowdesktop::desktop_drop_cache::
-            ResolveSearchDirection(
-                static_cast<long long>(current.x) -
-                    mouseDown.x,
-                static_cast<long long>(current.y) -
-                    mouseDown.y);
-    const snowdesktop::desktop_drop_cache::BestCellKey cacheKey{
-        targetCell,
-        direction,
-        dragSession_.StaticSceneRevision() };
-    const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
-    return snowdesktop::desktop_drop_cache::FindBestCell(
-        bestDropCellCache_, dragSession_.IsActive(), cacheKey,
-        exactPlacement, page ? page->columns : 0, page ? page->rows : 0,
-        [this, &sourceList](const GridCell& cell) { return !BuildSelectedMove(cell, &sourceList).empty(); });
+    return snowdesktop::selected_desktop_move::FindBest({items_, widgets_, gridPages_},
+        {[this](const auto& item) { return IsItemInAnyWidget(item); }, [this](const auto& widget) { return IsGroupedWidget(widget); }},
+        sourceList, std::move(targetCell), bestDropCellCache_,
+        {!containers_.empty() && sourceList.origin == containers_.front().get(), dragSession_.IsActive(),
+            dragSession_.CurrentPoint(), dragSession_.MouseDownPoint(), dragSession_.StaticSceneRevision()});
 }
 
 /**

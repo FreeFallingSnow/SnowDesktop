@@ -2,21 +2,38 @@
 
 #include "internal_desktop_cases.h"
 #include "layout/selected_desktop_move.h"
+#include "core/drag_session.h"
 
 namespace selected_desktop_cases
 {
 using namespace drop_placement_cases;
 using World = internal_desktop_cases::World;
 
-inline DropPreviewList Preview(const World& world, const DragSourceList& sources, GridCell target)
+inline DropPreviewList Preview(const World& world, const DragSourceList& sources, GridCell target,
+    desktop_drop_cache::BestCellEntry* retainedCache = nullptr, selected_desktop_move::SearchContext context = {})
 {
     const selected_desktop_move::State state{world.items, world.widgets, world.pages};
     const selected_desktop_move::Services services{
         [&](const auto& item) { return world.Owned(item); }, [&](const auto& widget) { return world.Grouped(widget); }};
+    desktop_drop_cache::BestCellEntry temporaryCache;
+    target = selected_desktop_move::FindBest(state, services, sources, std::move(target),
+        retainedCache ? *retainedCache : temporaryCache, context);
     const auto planned = selected_desktop_move::Build(state, target, services, &sources);
     DropPreviewList preview; preview.targetKind = DropTargetKind::Desktop; preview.action = DropAction::Move; preview.anchorCell = target;
     preview.landings = selected_desktop_move::Landings(state, sources, planned);
     return preview;
+}
+
+inline bool Equivalent(const DropPreviewList& left, const DropPreviewList& right)
+{
+    if (!desktop_drop_cache::SameCell(left.anchorCell, right.anchorCell) || left.landings.size() != right.landings.size()) return false;
+    for (size_t index = 0; index < left.landings.size(); ++index)
+    {
+        const auto& a = left.landings[index]; const auto& b = right.landings[index];
+        if (a.sourceIndex != b.sourceIndex || a.kind != b.kind || !desktop_drop_cache::SameCell(a.cell, b.cell) ||
+            a.span.columns != b.span.columns || a.span.rows != b.span.rows) return false;
+    }
+    return true;
 }
 
 inline DragSourceList WidgetSource(const World& world)
@@ -65,7 +82,7 @@ inline void CheckCommit(World& world, const DragSourceList& sources, const DropP
 
 inline void Run(const std::filesystem::path& root, std::wstring_view section = L"all")
 {
-    Require(section == L"all" || section == L"cases" || section == L"selection" || section == L"occupied" || section == L"identity" || section == L"footprint",
+    Require(section == L"all" || section == L"cases" || section == L"selection" || section == L"occupied" || section == L"identity" || section == L"footprint" || section == L"search" || section == L"search-cache",
         "selected desktop diagnostics select a known nonempty section");
     size_t serial = 0;
     if (section == L"all" || section == L"cases")
@@ -176,6 +193,64 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
             CheckCommit(world, source, preview);
         }
     }
-    std::cout << "selected desktop projection, occupancy, captured identity, actual commit and storage cases passed\n";
+    if (section == L"all" || section == L"search")
+    for (bool large : {false, true})
+    for (bool active : {false, true})
+    for (POINT direction : {POINT{20, 5}, POINT{-20, 5}, POINT{5, 20}, POINT{5, -20}, POINT{0, 0}})
+    {
+        World world(root / (L"search-" + std::to_wstring(serial++)));
+        internal_desktop_cases::Seed(world, 1, 0, large);
+        world.items[0].selected = true; world.items[1].selected = false;
+        world.items[1].gridCell = {L"target", 1, 1};
+        if (!large)
+        {
+            world.items[1].gridSpan = {2, 2}; world.items[1].largeIcon.emplace();
+            world.items[1].largeIcon->columns = 2; world.items[1].largeIcon->rows = 2;
+        }
+        const auto& blocker = world.items[1];
+        world.records.at(blocker.layoutKey) = {blocker.gridCell, blocker.gridSpan, blocker.largeIcon, true, blocker.slot};
+        world.Apply(); world.Legal();
+        const auto source = internal_desktop_cases::Sources(world, 1);
+        DragSession session; session.Begin(nullptr, {}, source, {}, direction);
+        if (!active) session.DeactivateForDrop();
+        const selected_desktop_move::SearchContext context{true, session.IsActive(), session.CurrentPoint(), session.MouseDownPoint(), session.StaticSceneRevision()};
+        desktop_drop_cache::BestCellEntry cache;
+        const GridCell requested{world.Named(L"Destination"), 1, 1};
+        const auto before = world.Snapshot(); const auto original = Preview(world, source, requested, &cache, context);
+        Require(world.Snapshot() == before, "actual desktop best-cell search leaves source and occupancy models unchanged");
+        std::swap(world.items[0], world.items[1]);
+        const auto reordered = world.Snapshot(); const auto changed = Preview(world, source, requested, &cache, context);
+        const auto cold = Preview(world, source, requested, nullptr, context);
+        Require(Equivalent(original, changed) && Equivalent(changed, cold),
+            "unchanged desktop identities and geometry retain the same search and preview after enumeration reorders");
+        Require(world.Snapshot() == reordered, "warm and cold best-cell searches never mutate the reordered source model");
+        if (!changed.Empty()) CheckCommit(world, source, changed);
+    }
+    if (section == L"all" || section == L"search-cache")
+    for (POINT direction : {POINT{20, 5}, POINT{-20, 5}, POINT{5, 20}, POINT{5, -20}})
+    {
+        World world(root / (L"search-cache-" + std::to_wstring(serial++)));
+        internal_desktop_cases::Seed(world, 1, 0, false);
+        world.items[0].selected = true; world.items[1].selected = false;
+        world.items[1].gridCell = {L"target", 1, 1};
+        world.records.at(world.items[1].layoutKey).cell = world.items[1].gridCell;
+        world.Apply(); world.Legal(); const auto source = internal_desktop_cases::Sources(world, 1);
+        DragSession session; session.Begin(nullptr, {}, source, {}, direction);
+        const auto context = [&] { return selected_desktop_move::SearchContext{true, session.IsActive(),
+            session.CurrentPoint(), session.MouseDownPoint(), session.StaticSceneRevision()}; };
+        desktop_drop_cache::BestCellEntry cache;
+        const GridCell requested{world.Named(L"Destination"), 1, 1};
+        const auto blocked = Preview(world, source, requested, &cache, context());
+        Require(Equivalent(blocked, Preview(world, source, requested, &cache, context())), "unchanged scene cache hits preserve the actual desktop preview");
+        world.items[1].gridCell = {world.Named(L"Destination"), 4, 4};
+        world.records.at(world.items[1].layoutKey).cell = world.items[1].gridCell;
+        session.InvalidateStaticScene();
+        const auto released = Preview(world, source, requested, &cache, context());
+        Require(released.landings.size() == 1 && desktop_drop_cache::SameCell(released.landings[0].cell, requested) &&
+            Equivalent(released, Preview(world, source, requested, nullptr, context())),
+            "a revised desktop scene drops the cached fallback and previews the now-free requested cell");
+        CheckCommit(world, source, released);
+    }
+    std::cout << "selected desktop search, projection, occupancy, captured identity, actual commit and storage cases passed\n";
 }
 }
