@@ -572,6 +572,7 @@ struct PendingLandingEntry
     size_t insertIndex = 0;
     DesktopWidget* widget = nullptr;
     std::wstring widgetId;
+    std::optional<GridSpan> plannedPageSize;
 };
 
 /**

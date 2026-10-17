@@ -42,22 +42,43 @@ inline bool Place(State state, DesktopItem& item, const PendingLandingEntry& lan
     grid_occupancy::Slots& used, const Services& services)
 {
     const auto& id = landing.cell.pageId;
-    if (!id.empty() && std::find(state.ids.begin(), state.ids.end(), id) == state.ids.end())
+    std::optional<GridPage> planned;
+    if (!id.empty() && id != kDockPageId && std::find(state.ids.begin(), state.ids.end(), id) == state.ids.end())
     {
-        // Preserve the original mutation order for the initial regression.
-        if (id != kDockPageId) state.ids.push_back(id);
-        const auto* reference = services.reference();
-        if (!reference) return false;
-        state.columns[id] = std::max(1, reference->columns);
-        state.rows[id] = std::max(1, reference->rows);
+        GridSpan dimensions;
+        if (landing.plannedPageSize)
+        {
+            dimensions = *landing.plannedPageSize;
+            if (dimensions.columns < 1 || dimensions.rows < 1) return false;
+        }
+        else
+        {
+            // Older/non-grid pending entries have no captured virtual-page
+            // geometry. Retain their reference-monitor fallback without an
+            // early mutation when the reference is unavailable.
+            const auto* reference = services.reference();
+            if (!reference) return false;
+            dimensions = {std::max(1, reference->columns), std::max(1, reference->rows)};
+        }
+        planned.emplace(); planned->id = id;
+        planned->columns = dimensions.columns; planned->rows = dimensions.rows;
     }
-    return pending_drop::PlaceDesktop(item, landing, used,
+    const bool placed = pending_drop::PlaceDesktop(item, landing, used,
         [&](const auto& pageId) -> std::optional<GridPage> {
+            if (planned && planned->id == pageId) return planned;
             for (const auto& page : state.pages) if (page.id == pageId) return page;
             const auto columns = state.columns.find(pageId), rows = state.rows.find(pageId);
             if (columns == state.columns.end() || rows == state.rows.end()) return std::nullopt;
             GridPage page; page.id = pageId; page.columns = columns->second; page.rows = rows->second;
             return page;
         }, services.findFree, services.slot);
+    // Failed placement or a legal fallback to an existing page must not
+    // publish an unused virtual page merely because one was previewed.
+    if (placed && planned && item.gridCell.pageId == planned->id)
+    {
+        state.ids.push_back(id);
+        state.columns[id] = planned->columns; state.rows[id] = planned->rows;
+    }
+    return placed;
 }
 }

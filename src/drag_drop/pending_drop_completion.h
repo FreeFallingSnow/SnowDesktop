@@ -38,6 +38,7 @@ PendingLandingCache BuildLanding(const DragSourceList& sources, const DropPrevie
             if (created != createdPathsBySource->end()) entry.createdPath = created->second;
         }
         entry.cell = landing.cell;
+        entry.plannedPageSize = landing.plannedPageSize;
         entry.insertIndex = landing.insertIndex;
         entry.widgetId = landing.widgetId;
         cache.entries.push_back(std::move(entry));

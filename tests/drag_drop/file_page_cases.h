@@ -165,6 +165,30 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
             world.Snapshot() == before && used.empty() && widget_displacement_cases::Files(world.root / L"sources") == files,
             "unavailable page geometry rejects output placement without publishing an incomplete page or changing the real output");
     }
+    if (section == L"all" || section == L"rejection")
+    for (bool occupied : {false, true})
+    {
+        World world(root / (occupied ? L"unfit-full" : L"unfit-free"), 1, false); world.Apply();
+        world.Item(L"large-output.txt", {world.pages[0].id, 0, 0}, {2, 2});
+        world.items[0].largeIcon.emplace(); world.items[0].largeIcon->columns = 2; world.items[0].largeIcon->rows = 2;
+        if (occupied)
+        {
+            DesktopWidget filler; filler.id = L"full"; filler.type = DesktopWidgetType::Collection;
+            filler.gridCell = {world.pages[0].id, 0, 0}; filler.gridSpan = {world.pages[0].columns, world.pages[0].rows};
+            world.widgets.push_back(std::move(filler));
+        }
+        PendingLandingEntry landing; landing.kind = DropLandingKind::DesktopCell;
+        landing.cell = {page_mapping::GenerateId(world.savedIds), 0, 0}; landing.plannedPageSize = GridSpan{1, 1};
+        const auto before = world.Snapshot(); const auto files = widget_displacement_cases::Files(world.root / L"sources");
+        auto used = desktop_output_placement::Used(world.widgets, world.items, {}, {}, Key,
+            [&](const auto& widget) { return world.Grouped(widget); }, [&](const auto& item) { return world.Owned(item); });
+        const bool placed = desktop_output_placement::Place({world.savedIds, world.columns, world.rows, world.pages}, world.items[0], landing, used, Services(world));
+        Require(std::find(world.savedIds.begin(), world.savedIds.end(), landing.cell.pageId) == world.savedIds.end() &&
+            !world.columns.contains(landing.cell.pageId) && !world.rows.contains(landing.cell.pageId) &&
+            widget_displacement_cases::Files(world.root / L"sources") == files && (placed || world.Snapshot() == before),
+            "an unfit planned output page is never published after rejection or fallback to an existing page");
+        if (placed) world.Legal();
+    }
     std::cout << "real file completion, captured page cells, page registration and layout storage cases passed\n";
 }
 }
