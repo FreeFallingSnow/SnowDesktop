@@ -25,7 +25,7 @@ struct Services
 struct Move { size_t index; GridCell cell; bool widget; };
 struct Selection { std::vector<bool> items, widgets; };
 
-inline Selection Resolve(State state, const Services& services, const DragSourceList* sources)
+inline Selection Resolve(State state, const Services& services, const DragSourceList* sources, bool excludeDockFiles = false)
 {
     Selection result{std::vector<bool>(state.items.size()), std::vector<bool>(state.widgets.size())};
     if (!sources)
@@ -55,7 +55,7 @@ inline Selection Resolve(State state, const Services& services, const DragSource
                 result.widgets[found->second] = true;
             continue;
         }
-        if (source.kind != DropSourceKind::DesktopIcon || source.desktopKey.empty()) continue;
+        if (source.kind != DropSourceKind::DesktopIcon || source.desktopKey.empty() || (excludeDockFiles && source.fromDock)) continue;
         size_t index = source.desktopIndex;
         // Keep the normal captured-index path cheap, but verify its identity.
         if (index >= state.items.size() || CompareStringOrdinal(state.items[index].layoutKey.c_str(), -1, source.desktopKey.c_str(), -1, TRUE) != CSTR_EQUAL)
@@ -167,11 +167,14 @@ struct SearchContext
 inline GridCell FindBest(State state, const Services& services, const DragSourceList& sources,
     GridCell target, desktop_drop_cache::BestCellEntry& cache, const SearchContext& context)
 {
-    const bool exactPlacement = context.desktopOrigin &&
-        std::any_of(sources.entries.begin(), sources.entries.end(), [&](const DragSourceEntry& entry) {
-            return entry.kind == DropSourceKind::DesktopIcon && !entry.fromDock &&
-                entry.desktopIndex < state.items.size() && state.items[entry.desktopIndex].largeIcon.has_value();
-        });
+    const bool exactPlacement = context.desktopOrigin && [&] {
+        // Search policy and the actual planner must identify the same objects;
+        // a captured array position is only an identity-checked lookup hint.
+        const auto selected = Resolve(state, services, &sources, true);
+        for (size_t index = 0; index < state.items.size(); ++index)
+            if (selected.items[index] && state.items[index].largeIcon) return true;
+        return false;
+    }();
     const auto direction = desktop_drop_cache::ResolveSearchDirection(
         static_cast<long long>(context.current.x) - context.mouseDown.x,
         static_cast<long long>(context.current.y) - context.mouseDown.y);
