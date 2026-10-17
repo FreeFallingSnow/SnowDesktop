@@ -2,6 +2,7 @@
 
 #include "page_mapping_cases.h"
 #include "drag_drop/internal_desktop_drop.h"
+#include "drag_drop/desktop_landings.h"
 #include "desktop/desktop_membership_recovery.h"
 
 namespace internal_desktop_cases
@@ -125,9 +126,94 @@ inline void Seed(World& world, size_t count, int owner, bool large)
     for (const auto& item : world.items) world.records[item.layoutKey] = {item.gridCell, item.gridSpan, item.largeIcon, true, item.slot};
 }
 
+inline void RunLandings(const std::filesystem::path& root, bool previewOnly = false)
+{
+    size_t serial = 0;
+    for (size_t monitors : {size_t{1}, size_t{2}})
+    for (bool reverse : {false, true})
+    for (size_t count : {size_t{1}, size_t{2}})
+    for (int owner : {1, 2, 3, 4})
+    for (bool smallGrid : {false, true})
+    for (bool full : {false, true})
+    {
+        if ((monitors == 1 && reverse) || (smallGrid && !full)) continue;
+        World world(root / (L"landings-" + std::to_wstring(serial++)), monitors, reverse);
+        Seed(world, count, owner, false);
+        // Keep a complete, valid enumerated model. The nonselected file stays
+        // in its original logical owner while selected files leave it.
+        world.widgets.back().itemKeys.push_back(world.items.back().layoutKey);
+        world.names[L"source"] = L"Source";
+        if (smallGrid) { world.columns[L"target"] = 1; world.rows[L"target"] = 1; }
+        const auto fill = [&](const std::wstring& id) {
+            DesktopWidget widget; widget.id = L"filler-" + id; widget.type = DesktopWidgetType::Collection;
+            widget.gridCell = {id, 0, 0}; widget.gridSpan = {world.columns.at(id), world.rows.at(id)};
+            widget.singleCellIconMode = widget.gridSpan.columns == 1 && widget.gridSpan.rows == 1;
+            world.widgets.push_back(std::move(widget));
+        };
+        if (full) fill(L"target");
+        if (monitors > 1) fill(L"fixed");
+        // Start from the host's canonical committed page identities. This
+        // prevents fixture-only opaque IDs from aliasing a newly planned ID.
+        world.Apply(); world.Legal(); world.Save();
+        const auto source = Sources(world, count);
+        const auto target = world.Named(L"Destination");
+        const auto* page = widget_displacement::FindPage(world.pages, target);
+        Require(page != nullptr, "the requested landing page is displayed by the configured monitor mapping");
+        desktop_landings::Services services;
+        services.grouped = [&](const auto& widget) { return world.Grouped(widget); };
+        services.owned = [&](const auto& item) { return world.Owned(item); };
+        services.normalize = Key;
+        services.findFree = [&](auto span, const auto& used, auto& cell, const auto& preferred, int slot) {
+            return grid_occupancy::FindFree(world.pages, world.order, span, used, cell, preferred, slot);
+        };
+        services.generateId = [&] { return page_mapping::GenerateId(world.savedIds); };
+        const GridCell request{target, smallGrid ? 0 : 1, smallGrid ? 0 : 1};
+        const auto before = world.Snapshot(); const auto stored = Bytes(world.root / L"layout.json");
+        const auto files = widget_displacement_cases::Files(world.root / L"sources");
+        const auto metadata = world.Metadata();
+        auto preview = Preview(source);
+        preview.anchorCell = request;
+        preview.landings = desktop_landings::Build(source, request, true, *page, world.widgets, world.items,
+            world.columns, world.rows, services);
+        Require(world.Snapshot() == before && Bytes(world.root / L"layout.json") == stored && world.commits == 0,
+            "desktop landing preview never changes source ownership, page records or persisted layout");
+        std::set<std::tuple<std::wstring, int, int>> previewCells;
+        for (const auto& landing : preview.landings)
+            for (int column = 0; column < landing.span.columns; ++column)
+                for (int row = 0; row < landing.span.rows; ++row)
+                    Require(landing.span.columns > 0 && landing.span.rows > 0 && landing.cell.column + column >= 0 &&
+                        landing.cell.row + row >= 0 && previewCells.emplace(landing.cell.pageId, landing.cell.column + column, landing.cell.row + row).second,
+                        "desktop preview publishes nonoverlapping legal landings for accepted sources");
+        if (previewOnly) continue;
+        // Q08 does not prescribe a full-page fallback. A declined plan may
+        // preserve the model; every plan that does commit must remain legal.
+        if (preview.Empty()) continue;
+        Require(world.Execute(source, preview), "an unchanged accepted desktop landing plan commits its captured sources");
+        for (const auto& landing : preview.landings)
+        {
+            const auto entry = std::find_if(source.entries.begin(), source.entries.end(),
+                [&](const auto& value) { return value.sourceIndex == landing.sourceIndex; });
+            Require(entry != source.entries.end(), "each published landing identifies an original selected file");
+            const auto index = world.ItemIndex(entry->desktopKey);
+            const auto& item = world.items.at(index);
+            Require(!world.Owned(item) && std::find(world.savedIds.begin(), world.savedIds.end(), item.gridCell.pageId) != world.savedIds.end() &&
+                world.columns.contains(item.gridCell.pageId) && world.rows.contains(item.gridCell.pageId),
+                "accepted internal overflow landings remain accessible on retained pages after commit and reload");
+            Require(item.gridCell.column == landing.cell.column && item.gridCell.row == landing.cell.row,
+                "accepted desktop landings retain their captured cell coordinates");
+            if (!full && count == 1)
+                Require(item.gridCell.pageId == world.Named(L"Destination") && item.gridCell.column == 1 && item.gridCell.row == 1,
+                    "a free single-file target fulfills the visible requested destination cell");
+        }
+        Require(world.Metadata() == metadata && widget_displacement_cases::Files(world.root / L"sources") == files,
+            "planning and committing internal landings preserve original file identities, metadata and bytes");
+        world.Legal(); world.Reload();
+    }
+}
+
 inline void Run(const std::filesystem::path& root, std::wstring_view section = L"all")
 {
-    Require(section == L"all" || section == L"pages" || section == L"identity" || section == L"rejection",
+    Require(section == L"all" || section == L"pages" || section == L"identity" || section == L"rejection" || section == L"landings" || section == L"landing-preview",
         "internal desktop diagnostic section must select a nonempty known scenario group");
     size_t serial = 0;
     if (section == L"all" || section == L"pages")
@@ -189,6 +275,8 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
         Require(!world.Execute(sources, preview) && world.Snapshot() == before && world.commits == 0 && Bytes(world.root / L"layout.json") == saved,
             "an unmatched landing rejects without revoking source ownership or changing memory and saved layout");
     }
-    std::cout << "internal desktop file dispatch, identity, rejection, page mapping and storage cases passed\n";
+    if (section == L"all" || section == L"landings") RunLandings(root);
+    if (section == L"landing-preview") RunLandings(root, true);
+    std::cout << "internal desktop file dispatch, identity, rejection, landing preview, page mapping and storage cases passed\n";
 }
 }
