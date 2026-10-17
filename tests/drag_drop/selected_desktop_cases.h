@@ -65,7 +65,7 @@ inline void CheckCommit(World& world, const DragSourceList& sources, const DropP
 
 inline void Run(const std::filesystem::path& root, std::wstring_view section = L"all")
 {
-    Require(section == L"all" || section == L"cases" || section == L"selection" || section == L"occupied" || section == L"identity",
+    Require(section == L"all" || section == L"cases" || section == L"selection" || section == L"occupied" || section == L"identity" || section == L"footprint",
         "selected desktop diagnostics select a known nonempty section");
     size_t serial = 0;
     if (section == L"all" || section == L"cases")
@@ -155,6 +155,26 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
         const auto preview = Preview(world, source, {world.Named(L"Destination"), 1, 1});
         Require(preview.landings.size() == 1, "a captured desktop identity remains planned after source enumeration reorders");
         CheckCommit(world, source, preview);
+    }
+    if (section == L"all" || section == L"footprint")
+    {
+        World world(root / L"footprint"); internal_desktop_cases::Seed(world, 1, 0, false);
+        world.items[0].selected = true; world.items[1].selected = false; world.Apply();
+        const auto source = internal_desktop_cases::Sources(world, 1);
+        world.items[0].gridSpan = {2, 2}; world.items[0].largeIcon.emplace();
+        world.items[0].largeIcon->columns = 2; world.items[0].largeIcon->rows = 2;
+        world.records.at(world.items[0].layoutKey) = {world.items[0].gridCell, world.items[0].gridSpan, world.items[0].largeIcon, true, world.items[0].slot};
+        world.Legal(); const auto before = world.Snapshot();
+        const auto preview = Preview(world, source, {world.Named(L"Destination"), 1, 1});
+        Require(world.Snapshot() == before, "source-footprint changes do not make desktop preview mutate model state");
+        // Q11 may cancel a changed source. If the plan remains accepted, its
+        // visible footprint must represent the same complete object as commit.
+        if (!preview.Empty())
+        {
+            Require(preview.landings.size() == 1 && preview.landings[0].span.columns == 2 && preview.landings[0].span.rows == 2,
+                "an accepted selected desktop preview represents the current complete footprint of its source");
+            CheckCommit(world, source, preview);
+        }
     }
     std::cout << "selected desktop projection, occupancy, captured identity, actual commit and storage cases passed\n";
 }
