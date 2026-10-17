@@ -42,6 +42,38 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             items_.push_back(std::move(item));
         }
         widgets_.push_back(std::move(widget)); RefreshDesktopItemIndexCache();
+        if (request.component == "popup-group")
+        {
+            DesktopWidget group = widgets_.front();
+            group.type = DesktopWidgetType::FileGroup;
+            group.title = _LW("app.menu.file_group");
+            group.itemKeys.clear();
+            group.gridSpan = {3, 3};
+            group.showSearchBox = group.showFileCategories = true;
+            group.childWidgetIds = {L"theme-preview-folder", L"theme-preview-files"};
+            group.activeCategoryId = group.childWidgetIds.front();
+            DesktopWidget folder;
+            folder.id = group.childWidgetIds[0];
+            folder.type = DesktopWidgetType::FolderMapping;
+            folder.title = _LW("app.widget_preview.folder");
+            folder.gridCell.pageId = page.id;
+            folder.gridSpan = {3, 3};
+            DesktopWidget files;
+            files.id = group.childWidgetIds[1];
+            files.type = DesktopWidgetType::FileCategories;
+            files.title = _LW("app.menu.file_categories");
+            files.gridCell.pageId = page.id;
+            files.gridSpan = {3, 3};
+            files.itemKeys = widgets_.front().itemKeys;
+            widgets_.clear();
+            widgets_.reserve(3);
+            widgets_.push_back(std::move(group));
+            widgets_.push_back(std::move(folder));
+            widgets_.push_back(std::move(files));
+            containers_.push_back(std::make_unique<FileGroup>(&widgets_[0], this));
+            containers_.push_back(std::make_unique<FolderMapping>(&widgets_[1], this));
+            containers_.push_back(std::make_unique<FileCategories>(&widgets_[2], this));
+        }
         ComPtr<ID2D1DeviceContext> context; require(d2dDevice_->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &context));
         const auto size = D2D1::SizeU(request.canvasWidth, request.canvasHeight);
         const auto format = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
@@ -87,7 +119,7 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
                 false, 0, &fill, false, 0, 1);
             DrawStatusBarEdge(context.Get(), frame, appearance, 1, position);
         };
-        if (request.component == "popup")
+        if (request.component == "popup" || request.component == "popup-group")
         {
             popupWidgetIndex_ = 0; popupHasAnchor_ = popupAnchoredToDock_ = false;
             collectionPopupAppearance_ = appearance; collectionPopupLightTheme_ = light;
@@ -183,7 +215,8 @@ snowdesktop::native_component_preview::Result DesktopApp::ExportThemeSurfacePrev
             mapped.bits + static_cast<std::size_t>(y) * mapped.pitch, static_cast<std::size_t>(request.canvasWidth) * 4);
         readback->Unmap(); const auto path = request.outputDirectory / (request.component + ".png");
         if (!preview_png::Save(path, request.canvasWidth, request.canvasHeight, pixels, result.error)) return result;
-        result.outputs.push_back({request.component, "theme", path, false, false, false, false, false, false,
+        const bool groupControls = request.component == "popup-group";
+        result.outputs.push_back({request.component, "theme", path, false, false, false, false, groupControls, groupControls,
             static_cast<int>(appearance.cornerRadius), bounds.right - bounds.left, bounds.bottom - bounds.top, bounds.left, bounds.top});
         result.ok = true; result.stage = "complete";
     }

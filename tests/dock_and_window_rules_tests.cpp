@@ -1978,9 +1978,11 @@ int main(int argc, char** argv)
         Check(!single::IsDesktopSingleCell(dockPopup),
             "the internal Dock directory popup is never treated as a compact desktop entrance");
         const auto arc = single::ResolveArc({0, 0, 64, 64}, 1.0f);
-        Check(single::HitArc(arc, {60, 57}) && !single::HitArc(arc, {32, 32}) &&
-            !single::HitArc(arc, {50, 50}),
-            "the corner arc moves the whole container without capturing its center or hollow corner");
+        Check(arc.centerX == 64 && arc.centerY == 64 && arc.radius == 8 &&
+            single::HitArc(arc, {72, 64}) && single::HitArc(arc, {70, 70}) &&
+            !single::HitArc(arc, {63, 63}) && !single::HitArc(arc, {64, 64}) &&
+            !single::HitArc(arc, {32, 32}),
+            "the resize arc stays outside the icon without capturing the icon or its hollow corner");
         const RECT first = single::ThumbnailCell({0, 0, 100, 100}, 0, 6);
         const RECT fourth = single::ThumbnailCell({0, 0, 100, 100}, 3, 6);
         Check(first.left == 6 && first.top == 6 && first.right == 50 && first.bottom == 50 &&
@@ -3557,6 +3559,13 @@ int main(int argc, char** argv)
         "popup scrollbar tracks must remain inside the panel when the content viewport extends beyond it");
     RECT emptyScrollbar = snowdesktop::popup_scrollbar_layout::Viewport(RECT{0, 0, 360, 640}, RECT{});
     Check(IsRectEmpty(&emptyScrollbar), "empty popup content must not create a scrollbar hit target");
+    const RECT controlsFrame{0, 0, 360, 640};
+    const RECT contentBeforeGutter{4, 80, 356, 620};
+    const RECT contentWithGutter = snowdesktop::popup_scrollbar_layout::ReserveContent(
+        controlsFrame, contentBeforeGutter, 14);
+    Check(contentWithGutter.left == 4 && contentWithGutter.right == 346 &&
+            contentWithGutter.top == 80 && contentWithGutter.bottom == 620 && controlsFrame.right == 360,
+        "group popup scrollbar space belongs only to the item viewport, preserving the full symmetric control frame");
     Check(
         standardPopupMetrics.cellWidth == 92 &&
             standardPopupMetrics.cellHeight == 116 &&

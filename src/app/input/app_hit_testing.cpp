@@ -114,7 +114,11 @@ RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
         const RECT title = GetItemTextRect(widget.bounds, widget.selected);
         RECT frame{};
         UnionRect(&frame, &widget.bounds, &title);
-        return frame;
+        const RECT handle = snowdesktop::single_cell_widget::ArcBounds(
+            snowdesktop::single_cell_widget::ResolveArc(GetItemIconRect(widget.bounds), GetWidgetCellScale(widget)), true);
+        RECT withHandle{};
+        UnionRect(&withHandle, &frame, &handle);
+        return withHandle;
     }
     return snowdesktop::storage_title_bar::VisibleFrame(
         GetExpandedWidgetFrameRect(widget), IsWidgetCollapsed(widget),

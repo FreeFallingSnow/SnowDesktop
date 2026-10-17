@@ -5,6 +5,13 @@
 
 namespace snowdesktop::popup_scrollbar_layout
 {
+inline RECT ReserveContent(RECT panel, RECT content, int trailingInset) noexcept
+{
+    content.right = std::max(content.left, std::min(content.right,
+        std::max(panel.left, panel.right - std::max(0, trailingInset))));
+    return content;
+}
+
 // Keep the content's vertical scroll range, but anchor the scrollbar to the
 // panel edge. Content padding belongs to the icon/label layout, not the track.
 inline RECT Viewport(const RECT& panel, const RECT& content) noexcept

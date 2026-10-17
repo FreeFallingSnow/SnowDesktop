@@ -1100,11 +1100,14 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             }
         }
         const bool invoke = buttonOwner &&
+            (pendingAction != WidgetHit::CollectionOpenBtn || widgetAction_ == WidgetAction::PendingMove) &&
             buttonOwner->HitTestWidget(upPoint) == pendingAction;
         const RECT widgetBounds = widgetIndex < widgets_.size()
             ? widgets_[widgetIndex].bounds : RECT{};
 
         pendingWidgetButtonAction_ = WidgetHit::None;
+        if (pendingAction == WidgetHit::CollectionOpenBtn)
+            widgetAction_ = WidgetAction::None;
         mouseDown_ = false;
         mouseDownHit_ = nullptr;
         mouseDownWidgetIndex_ = static_cast<size_t>(-1);
@@ -1116,6 +1119,11 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
 
         if (!invoke)
             return;
+        if (pendingAction == WidgetHit::CollectionOpenBtn)
+        {
+            OpenCollectionPopupAt(widgetIndex, upPoint, L"");
+            return;
+        }
         if (pendingAction == WidgetHit::CollapseToggleBtn)
         {
             ToggleWidgetCollapsed(widgetIndex);

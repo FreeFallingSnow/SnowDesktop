@@ -2584,13 +2584,42 @@ int wmain(int argc, wchar_t** argv) try
             L"file-categories-list.png",
             L"folder-mapping-grid.png",
             L"folder-mapping-list.png",
+            L"collection-icon.png",
+            L"collection-icon-hover.png",
+            L"collection-group-icon.png",
+            L"collection-group-icon-hover.png",
+            L"collection-group-compact.png",
+            L"file-group-icon.png",
+            L"file-group-icon-hover.png",
+            L"file-group-compact.png",
+            L"file-categories-icon.png",
+            L"file-categories-icon-hover.png",
+            L"file-categories-compact.png",
+            L"folder-mapping-icon.png",
+            L"folder-mapping-icon-hover.png",
+            L"folder-mapping-compact.png",
         };
         for (const wchar_t* filename : transparentFilenames)
             CheckPng(transparentOutputDirectory / filename);
         Check(std::distance(
                   std::filesystem::directory_iterator(transparentOutputDirectory),
-                  std::filesystem::directory_iterator{}) == 57,
+                  std::filesystem::directory_iterator{}) == 71,
             "native all export covers every supported property combination");
+        for (const wchar_t* component : {L"collection", L"collection-group", L"file-group", L"file-categories", L"folder-mapping"})
+        {
+            const auto idle = ReadPng(transparentOutputDirectory / (std::wstring(component) + L"-icon.png"));
+            const auto hovered = ReadPng(transparentOutputDirectory / (std::wstring(component) + L"-icon-hover.png"));
+            Check(idle.width == hovered.width && idle.height == hovered.height && idle.pixels != hovered.pixels,
+                "the production icon preview reveals its external resize arc only in the hover state");
+        }
+
+        const auto groupPopupOutput = temporary.path / L"native-group-popup";
+        const auto groupPopup = Run(host, {
+            L"--native-component-preview", L"popup-group", groupPopupOutput.wstring(),
+            L"96", L"en-US", L"dark", L"", L"640", L"640", L"32", L"0", L"0",
+            (temporary.path / L"native-group-popup-result.json").wstring()});
+        Check(groupPopup.first == 0, "the isolated native renderer can inspect group popup control alignment");
+        CheckPng(groupPopupOutput / L"popup-group.png");
         CheckPng(transparentOutputDirectory /
             L"collection-group-grid-search.png");
         CheckPng(transparentOutputDirectory /

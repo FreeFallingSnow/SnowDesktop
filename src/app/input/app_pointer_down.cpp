@@ -1145,6 +1145,25 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         else if (wh == WidgetHit::CollectionOpenBtn)
         {
             SelectWidgetOnly(wi);
+            if (wc->IsSingleCellIconMode())
+            {
+                // Match desktop icons: drag the entrance to move it; release
+                // a click to open it. The separate corner arc owns resizing.
+                pendingWidgetButtonAction_ = collectionPopupClosedByPointerDown
+                    ? WidgetHit::None : WidgetHit::CollectionOpenBtn;
+                widgetAction_ = WidgetAction::PendingMove;
+                InvalidateDragStaticScene();
+                widgetDragOriginalCell_ = widgets_[wi].gridCell;
+                widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
+                widgetPreviewCell_ = widgetDragOriginalCell_;
+                widgetPreviewSpan_ = widgetDragOriginalSpan_;
+                widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[wi].bounds, pt);
+                mouseDownWidgetIndex_ = wi;
+                mouseDownHit_ = nullptr;
+                SetCapture(hwnd_);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
             OpenCollectionPopupAt(
                 wi, pt, L"",
                 collectionPopupClosedByPointerDown);

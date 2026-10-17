@@ -151,7 +151,7 @@ bool IsSupportedComponent(std::string_view component)
         component == "collection-group" ||
         component == "file-group" ||
         component == "file-categories" ||
-        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "all";
+        component == "folder-mapping" || component == "calendar-panel" || component == "control-panel" || component == "tray-panel" || component == "resource-panel" || component == "status-bar" || component == "quick-navigation" || component == "dock" || component == "taskbar" || component == "popup" || component == "popup-group" || component == "all";
 }
 
 void WriteResultFile(const std::filesystem::path& path,
@@ -331,7 +331,7 @@ DesktopApp::ExportNativeComponentPreviews(
             });
 
     if (request.component == "quick-navigation") return ExportQuickNavigationPreviews(request);
-    if (request.component == "dock" || request.component == "taskbar" || request.component == "popup")
+    if (request.component == "dock" || request.component == "taskbar" || request.component == "popup" || request.component == "popup-group")
         return ExportThemeSurfacePreview(request);
 
     const float scale = static_cast<float>(request.dpi) /
@@ -406,6 +406,7 @@ DesktopApp::ExportNativeComponentPreviews(
         std::optional<bool> showFileCategories;
         std::optional<bool> showSearchBox;
         std::optional<bool> largeFolderTitleless;
+        bool hovered = false;
     };
     struct ComponentDefinition
     {
@@ -434,6 +435,9 @@ DesktopApp::ExportNativeComponentPreviews(
     const auto buildVariants = [&](std::string_view component) {
         std::vector<Variant> variants;
         variants.push_back({ "icon", filename(component, "icon"), 2 });
+        Variant hoveredIcon{ "icon-hover", filename(component, "icon-hover"), 2 };
+        hoveredIcon.hovered = true;
+        variants.push_back(std::move(hoveredIcon));
         if (component != "collection")
             variants.push_back({ "compact", filename(component, "compact"), 1 });
         if (component == "collection")
@@ -564,7 +568,7 @@ DesktopApp::ExportNativeComponentPreviews(
                 sourceWallpaper ? &*sourceWallpaper : nullptr,
                 request.transparent || request.contentOnly };
             component_preview::Bitmap rendered = card.render(
-                width, height, request.dpi, placement, settings, false);
+                width, height, request.dpi, placement, settings, variant.hovered);
             if (rendered.width != width || rendered.height != height ||
                 rendered.pixels.size() !=
                     static_cast<std::size_t>(width) * height)

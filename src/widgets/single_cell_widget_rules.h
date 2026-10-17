@@ -40,11 +40,22 @@ inline ArcHandle ResolveArc(RECT icon, float scale) noexcept
     const float edge = static_cast<float>(std::max<LONG>(0,
         std::min(icon.right - icon.left, icon.bottom - icon.top)));
     scale = std::max(0.1f, scale);
-    const float radius = std::min(edge * 0.28f, 12.0f * scale);
-    const float inset = std::min(edge * 0.06f, 2.0f * scale);
-    return {static_cast<float>(icon.right) - inset - radius, static_cast<float>(icon.bottom) - inset - radius,
+    // The quarter circle sits outside the icon; its radius leaves a visible
+    // gap even at the rounded ends of the stroke.
+    const float radius = std::min(edge * 0.25f, 8.0f * scale);
+    return {static_cast<float>(icon.right), static_cast<float>(icon.bottom),
         radius, std::min(edge * 0.09f, 2.5f * scale),
         std::min(edge * 0.18f, 6.0f * scale)};
+}
+
+inline RECT ArcBounds(const ArcHandle& arc, bool hitTarget = false) noexcept
+{
+    if (arc.radius <= 0) return {};
+    const float margin = hitTarget ? arc.hitWidth : arc.stroke * 0.5f + 1.0f;
+    return {static_cast<LONG>(std::floor(arc.centerX - margin)),
+        static_cast<LONG>(std::floor(arc.centerY - margin)),
+        static_cast<LONG>(std::ceil(arc.centerX + arc.radius + margin)),
+        static_cast<LONG>(std::ceil(arc.centerY + arc.radius + margin))};
 }
 
 inline bool HitArc(const ArcHandle& arc, POINT point) noexcept
@@ -52,7 +63,7 @@ inline bool HitArc(const ArcHandle& arc, POINT point) noexcept
     if (arc.radius <= 0) return false;
     const float dx = static_cast<float>(point.x) - arc.centerX;
     const float dy = static_cast<float>(point.y) - arc.centerY;
-    return dx >= -arc.hitWidth && dy >= -arc.hitWidth &&
+    return (dx > 0 || dy > 0) && dx >= -arc.hitWidth && dy >= -arc.hitWidth &&
         std::fabs(std::hypot(dx, dy) - arc.radius) <= arc.hitWidth;
 }
 

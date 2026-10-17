@@ -726,7 +726,11 @@ void DesktopApp::OnMouseMoveAt(
             std::abs(current.y - mouseDownPoint_.y) > 3))
     {
         if (widgetAction_ == WidgetAction::PendingMove)
+        {
             widgetAction_ = WidgetAction::Move;
+            if (pendingWidgetButtonAction_ == WidgetHit::CollectionOpenBtn)
+                pendingWidgetButtonAction_ = WidgetHit::None;
+        }
         else if (widgetAction_ == WidgetAction::PendingResize)
             widgetAction_ = WidgetAction::Resize;
         if (widgetAction_ == WidgetAction::Move)
@@ -1460,11 +1464,13 @@ void DesktopApp::OnMouseMoveAt(
                 auto* widget = dynamic_cast<WidgetContainer*>(it->get());
                 if (!widget)
                     continue;
-                RECT frame = widget->GetFrameRect();
+                DesktopWidget* widgetData = widget->GetWidgetData();
+                RECT frame = widgetData && widget->IsSingleCellIconMode()
+                    ? GetStandaloneWidgetFrameRect(*widgetData)
+                    : widget->GetFrameRect();
                 if (IsRectEmptyRect(frame) || !PtInRect(&frame, point))
                     continue;
 
-                DesktopWidget* widgetData = widget->GetWidgetData();
                 const WidgetHit hit = widget->HitTestWidget(point);
                 if (hit == WidgetHit::Content)
                 {

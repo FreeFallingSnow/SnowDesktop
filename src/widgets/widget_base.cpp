@@ -644,17 +644,7 @@ snowdesktop::PageItemVisualMetrics WidgetContainer::GetItemVisualMetrics() const
  */
 RECT WidgetContainer::GetBodyRect() const
 {
-    if (popupFrameActive_)
-    {
-        RECT body = hostedFrame_;
-        const auto* popup = app_ ? app_->GetOpenPopupWidget() : nullptr;
-        // Group popups and their hosted sources otherwise fill the frame.
-        // Leave the edge scrollbar's 12-CU hit area outside their item layout.
-        if ((data_ && IsGroupWidgetType(data_->type)) ||
-            (popup && IsGroupWidgetType(popup->type)))
-            body.right = std::max<LONG>(body.left, body.right - Cu(14.0f));
-        return body;
-    }
+    if (popupFrameActive_) return hostedFrame_;
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).body;
 }
@@ -675,7 +665,9 @@ RECT WidgetContainer::GetMoveHandleRect() const
  */
 RECT WidgetContainer::GetResizeHandleRect() const
 {
-    if (IsSingleCellIconMode()) return {};
+    if (IsSingleCellIconMode())
+        return snowdesktop::single_cell_widget::ArcBounds(
+            snowdesktop::single_cell_widget::ResolveArc(GetSingleCellIconRect(), GetCellScale()), true);
     if (IsCollapsed()) return {};
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).resize;
@@ -742,6 +734,9 @@ RECT WidgetContainer::GetTitleRect() const
  */
 bool WidgetContainer::HitResizeHandle(POINT pt) const
 {
+    if (IsSingleCellIconMode())
+        return snowdesktop::single_cell_widget::HitArc(
+            snowdesktop::single_cell_widget::ResolveArc(GetSingleCellIconRect(), GetCellScale()), pt);
     RECT r = GetResizeHandleRect();
     return PtInRect(&r, pt) != FALSE;
 }
@@ -760,12 +755,12 @@ WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
         return self->HitTestWidget(pt);
     }
     RECT frame = GetFrameRect();
-    if (!PtInRect(&frame, pt)) return WidgetHit::None;
-
+    if (IsRectEmpty(&frame)) return WidgetHit::None;
     if (IsSingleCellIconMode())
-        return snowdesktop::single_cell_widget::HitArc(
-            snowdesktop::single_cell_widget::ResolveArc(GetSingleCellIconRect(), GetCellScale()), pt)
-            ? WidgetHit::MoveHandle : WidgetHit::CollectionOpenBtn;
+        return HitResizeHandle(pt) ? WidgetHit::ResizeHandle
+            : PtInRect(&frame, pt) ? WidgetHit::CollectionOpenBtn : WidgetHit::None;
+
+    if (!PtInRect(&frame, pt)) return WidgetHit::None;
 
     if (IsPopupHosted()) return WidgetHit::Content;
 
@@ -1078,7 +1073,9 @@ RECT ScrollingItemWidget::GetCategorizedSearchBoxRect(
         categorizedTabRowOffset_ > 0)
         body.top += Cu(GetCategorizedTabRowPitch());
     if (IsRectEmptyRect(body)) return {};
-    if (!IsPopupHosted()) InflateRect(&body, -Cu(2.0f), 0);
+    // Tab segments also inset their visible outline by 2 CU. Keep the search
+    // outline aligned with those segments in both desktop and popup frames.
+    InflateRect(&body, -Cu(2.0f), 0);
     if (IsRectEmptyRect(body)) return {};
     const LONG bottom = std::min<LONG>(
         body.bottom, body.top + Cu(GetCategorizedSearchBoxHeight()));
@@ -2161,11 +2158,16 @@ bool ScrollingItemWidget::IsDetailsVisible() const
 RECT ScrollingItemWidget::ApplyDetailsHeaderToViewport(
     RECT viewport) const
 {
-    if (!IsDetailsVisible() || IsRectEmptyRect(viewport))
+    if (IsRectEmptyRect(viewport))
         return viewport;
-    viewport.top = std::min<LONG>(
-        viewport.bottom,
-        viewport.top + GetDetailsHeaderHeight());
+    const auto* popup = app_ ? app_->GetOpenPopupWidget() : nullptr;
+    if (IsPopupHosted() && ((data_ && IsGroupWidgetType(data_->type)) ||
+            (popup && IsGroupWidgetType(popup->type))))
+        viewport = snowdesktop::popup_scrollbar_layout::ReserveContent(
+            GetFrameRect(), viewport, Cu(14.0f));
+    if (IsDetailsVisible())
+        viewport.top = std::min<LONG>(
+            viewport.bottom, viewport.top + GetDetailsHeaderHeight());
     return viewport;
 }
 
@@ -2868,6 +2870,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
             app_->IsLightContentTheme());
 
         const auto arc = snowdesktop::single_cell_widget::ResolveArc(icon, GetCellScale());
+        const bool handleHovered = PtInRect(&frame, mousePt) ||
+            snowdesktop::single_cell_widget::HitArc(arc, mousePt);
+        if (!handleHovered) return;
         Microsoft::WRL::ComPtr<ID2D1PathGeometry> path;
         Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
         auto* factory = app_->GetD2DFactory();
@@ -2884,10 +2889,9 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 Microsoft::WRL::ComPtr<ID2D1StrokeStyle> stroke;
                 auto properties = D2D1::StrokeStyleProperties();
                 properties.startCap = properties.endCap = D2D1_CAP_STYLE_ROUND;
-                const bool hot = data_->selected || PtInRect(&frame, mousePt);
                 const auto color = app_->IsLightContentTheme()
-                    ? D2D1::ColorF(0.12f, 0.16f, 0.22f, hot ? 0.95f : 0.55f)
-                    : D2D1::ColorF(1, 1, 1, hot ? 0.95f : 0.55f);
+                    ? D2D1::ColorF(0.12f, 0.16f, 0.22f, 0.95f)
+                    : D2D1::ColorF(1, 1, 1, 0.95f);
                 if (SUCCEEDED(context->CreateSolidColorBrush(color, &brush)) &&
                     SUCCEEDED(factory->CreateStrokeStyle(properties, nullptr, 0, &stroke)))
                     context->DrawGeometry(path.Get(), brush.Get(), arc.stroke, stroke.Get());
