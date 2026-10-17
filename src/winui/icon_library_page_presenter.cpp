@@ -66,7 +66,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
     c::AppBarButton previewPack,sharePack,browsePacks,syncPacks,copyPack,packInfo,openPack;
     c::ContentDialog workshopDialog{nullptr};
     std::uint64_t operationCounter=0,pendingOperation=0,handledOperation=0,workshopGeneration=0;
-    bool pendingShare=false,groupSelectionInitialized=false;
+    bool pendingShare=false;
     std::string pendingGroup;
     std::string groupId;
     std::wstring targetName;
@@ -199,9 +199,6 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
             { groupId.clear(); groupSignature.clear(); signature.clear(); }
             if (picker && snapshot.imported.size() == 1) selectImported = snapshot.imported.front();
         }
-        // A fresh picker always starts at All, including when groups arrive
-        // after its first snapshot. Management-page group behavior is separate.
-        if(!picker&&!groupSelectionInitialized&&!snapshot.groups.empty()){groupId=snapshot.groups.front().id;groupSelectionInitialized=true;}
         std::wstring next = std::to_wstring(snapshot.revision) + winrt::to_hstring(groupId).c_str();
         std::wstring nextGroups;
         for (const auto& group : snapshot.groups) nextGroups += winrt::to_hstring(group.id).c_str() + group.name;
@@ -567,7 +564,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         });
         groups.SelectionChanged([weak](auto&&, auto&&) { if (auto self = weak.lock(); self && !self->updatingGroups)
             { const auto selected = self->groups.SelectedItem().try_as<c::ComboBoxItem>();
-              self->groupSelectionInitialized=true; self->groupId = selected ? winrt::to_string(winrt::unbox_value<winrt::hstring>(selected.Tag())) : std::string{}; self->signature.clear(); self->Render(); } });
+              self->groupId = selected ? winrt::to_string(winrt::unbox_value<winrt::hstring>(selected.Tag())) : std::string{}; self->signature.clear(); self->Render(); } });
         add(import, "iconLibrary.import", [weak](auto&&, auto&&) { if (auto self = weak.lock()) self->Import(PickFiles(false)); });
         add(selectAll,"iconLibrary.selectFiltered",[weak](auto&&,auto&&){if(const auto self=weak.lock())self->grid.SelectAll();});
         x::Automation::AutomationProperties::SetAutomationId(selectAll,L"IconLibrarySelectFiltered");
@@ -647,6 +644,12 @@ void IconLibraryPagePresenter::Activate(std::wstring target)
 {
     if (!impl_->active)
     {
+        // Each page visit starts at All. Reads during that visit preserve the
+        // chosen filter; a prior visit's pending import must not redirect it.
+        impl_->updatingGroups = true;
+        impl_->groupId.clear(); impl_->groupSignature.clear(); impl_->groups.Items().Clear();
+        impl_->updatingGroups = false;
+        impl_->signature.clear(); impl_->importing = false;
         impl_->active = true; IconLibraryRequest refresh; refresh.action = "refresh"; impl_->Send(refresh); impl_->timer.Start();
     }
     if (target.empty()) return;
