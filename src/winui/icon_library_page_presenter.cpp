@@ -105,7 +105,6 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         {
             co_await foreground;
             resumed=true;
-            if(!image.XamlRoot())co_return;
             if(!stream){missing.Visibility(x::Visibility::Visible);co_return;}
             m::Imaging::BitmapImage bitmap;
             co_await bitmap.SetSourceAsync(stream);
@@ -139,9 +138,11 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         missing.Visibility(entry.missing ? x::Visibility::Visible : x::Visibility::Collapsed);
         checker.Children().Append(image); checker.Children().Append(missing); tile.Children().Append(checker);
         if (!entry.previewPath.empty() && !entry.missing)
-            image.Loaded([weakMissing=winrt::make_weak(missing), path=entry.previewPath](const auto& sender, auto&&) {
-                if(const auto label=weakMissing.get())LoadPreview(sender.template as<c::Image>(),label,path);
-            });
+            // Source assignment is valid before attachment. Loaded may already
+            // have been traversed when a virtualized template is populated;
+            // waiting for it or requiring XamlRoot can silently drop the load.
+            // File activation still starts on the background apartment above.
+            LoadPreview(image, missing, entry.previewPath);
         c::TextBlock name; name.Text(entry.name); name.TextTrimming(x::TextTrimming::CharacterEllipsis); tile.Children().Append(name);
         c::TextBlock detail; detail.FontSize(11); detail.Opacity(.7);
         detail.Text(entry.missing ? L("iconLibrary.missing") : std::to_wstring(entry.width) + L" × " + std::to_wstring(entry.height) + L" · " + winrt::to_hstring(entry.format).c_str());

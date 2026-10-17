@@ -14,6 +14,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <limits>
 #include <memory>
 #include <utility>
 #include <winrt/Microsoft.UI.Input.h>
@@ -2547,6 +2548,10 @@ void SettingsShell::ApplyDesktopStyle(std::string preset, bool animations,
 void SettingsShell::RenderPageCards(bool forcePageCards)
 {
     SettingsRoute pageRoute = navigation_.Route();
+    // The library is a gallery and command surface; let it use the window's
+    // width instead of the prose-reading column used by ordinary settings.
+    PageSurface().MaxWidth(pageRoute.page == SettingsPage::IconLibrary
+        ? std::numeric_limits<double>::infinity() : 1000.);
     pageRoute.focusId.clear();
     pageRoute.guideTopic.clear();
     if (!sessionActive_)

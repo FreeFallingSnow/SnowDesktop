@@ -765,7 +765,9 @@ void TestIconLibraryPaging()
             client.Call<void>("iconLibrary.release", token);
             Reject([&] { (void)client.Call<IconLibraryPage>("iconLibrary.page", token, std::uint32_t{1024}); },
                 "released snapshots cannot leak stale entries into a newer operation");
-            client.Notify("paging.exit");
+            // A rejected request deliberately disconnects Channel. The owner
+            // thread is stopped below; sending cleanup on this endpoint would
+            // turn the successful stale-page rejection into a false failure.
         }
     }
     catch (const std::exception& error) { Check(false, error.what()); }
