@@ -3,6 +3,8 @@
 #include "drag_drop/external_slot_transfer.h"
 #include "drag_drop/external_drop_resources.h"
 #include "drag_drop/external_file_destination.h"
+#include "drag_drop/desktop_file_materialization.h"
+#include "drag_drop/file_drop_execution.h"
 #include "drag_drop/file_backed_drop_request.h"
 #include <wrl/implements.h>
 #include <algorithm>
@@ -184,13 +186,18 @@ struct Batch
     bool existingDesktopPaths = false, dockCapacity = true, pinAccepted = true;
     size_t pinnedIndex = static_cast<size_t>(-1);
     std::vector<std::wstring> pinnedPaths;
-    std::function<void(const ShellFileOperationResult&)> reconcile;
+    std::shared_ptr<pending_drop::Queue> placements = std::make_shared<pending_drop::Queue>();
+    std::unordered_set<std::wstring> existingDesktopKeys;
+    bool reverseOutputs = false;
+    int refreshes = 0;
+    std::vector<std::wstring> forgottenKeys;
 };
 
 struct Harness
 {
     Window window;
     ShellFileOperationWorker reader, files;
+    dock_drop_rules::MaterializedPathReservations reservations;
     std::stop_source stop;
     DWORD owner = GetCurrentThreadId();
     DWORD Submit(Batch& batch, bool async = true, HWND target = nullptr)
@@ -241,23 +248,50 @@ struct Harness
                 auto done, bool sync, auto outputs) {
                 ++batch.executions;
                 if (batch.capturePlan) batch.capturePlan(sources, preview);
-                const DWORD effect = preview.action == DropAction::Move ? DROPEFFECT_MOVE :
-                    preview.action == DropAction::Link ? DROPEFFECT_LINK : DROPEFFECT_COPY;
-                const auto directory = preview.targetKind == DropTargetKind::FolderMapping && preview.targetWidget
-                    ? preview.targetWidget->sourceFolderPath : batch.destination.wstring();
-                auto request = file_backed_drop::BuildRequest(sources.FilePaths(), directory, effect, outputs);
-                if (!request) return false;
-                if (sync)
-                {
-                    const bool success = ShellFileOperationWorker::Execute(*request);
-                    done(success);
-                    return success;
-                }
-                return files.Enqueue(std::move(*request), [&, done](bool success) {
-                    auto completion = std::make_unique<ShellFileOperationUiCompletion>();
-                    completion->callback = done;
-                    PostShellFileOperationCompletion(window.hwnd, completedMessage, std::move(completion), success);
-                });
+                desktop_file_materialization::Services materialization;
+                materialization.enqueue = [&](auto request, auto finishedRequest) {
+                    return files.Enqueue(std::move(request), [&, finishedRequest](bool success) {
+                        if (batch.reverseOutputs) std::reverse(batch.result->outputs.begin(), batch.result->outputs.end());
+                        auto completion = std::make_unique<ShellFileOperationUiCompletion>();
+                        completion->callback = finishedRequest;
+                        PostShellFileOperationCompletion(window.hwnd, completedMessage, std::move(completion), success);
+                    });
+                };
+                materialization.isStaging = [](const auto&) { return false; };
+                materialization.pathsEqual = [](const auto& a, const auto& b) { return _wcsicmp(a.c_str(), b.c_str()) == 0; };
+                materialization.normalize = [](std::wstring value) {
+                    std::transform(value.begin(), value.end(), value.begin(), [](wchar_t c) { return static_cast<wchar_t>(towupper(c)); });
+                    return value;
+                };
+                materialization.copyName = [](const auto& stem, const auto& extension, int index) {
+                    return stem + L" copy " + std::to_wstring(index) + extension;
+                };
+                materialization.shortcutName = L"Shortcut";
+                file_drop_execution::Services execution;
+                execution.snapshotDesktopKeys = [&] { return batch.existingDesktopKeys; };
+                execution.folderPlacement = [normalize = materialization.normalize](const auto& widget, size_t index, const DragSourceList* list) {
+                    return pending_drop::BuildFolder(widget, index, list, widget.id, {},
+                        normalize,
+                        [](const auto& path) { return std::filesystem::path(path).filename().wstring(); });
+                };
+                execution.fileName = services.fileName;
+                execution.pathsEqual = materialization.pathsEqual;
+                execution.desktop = [&, materialization](const auto& list, DropAction action, bool duplicate,
+                    auto finishedRequest, bool synchronous, auto result) {
+                    return desktop_file_materialization::Materialize(list, action, duplicate, batch.destination.wstring(),
+                        reservations, materialization, nullptr, std::move(finishedRequest), synchronous, std::move(result));
+                };
+                execution.folder = [materialization](const auto& list, const auto& directory, DropAction action,
+                    auto finishedRequest, bool synchronous, auto result) {
+                    return desktop_file_materialization::MaterializeFolder(list, directory, action, materialization,
+                        std::move(finishedRequest), synchronous, std::move(result));
+                };
+                execution.pin = services.pinExisting;
+                execution.savePins = services.afterPin;
+                execution.forgetMovedKeys = [&](const auto& keys) { batch.forgottenKeys = keys; };
+                execution.refresh = [&] { ++batch.refreshes; };
+                return file_drop_execution::Execute(sources, preview, *batch.placements,
+                    std::move(execution), std::move(done), sync, std::move(outputs));
             };
             external_file_destination::Destination destination;
             if (batch.captured) destination = *batch.captured;
@@ -273,7 +307,6 @@ struct Harness
         };
         callbacks.completed = [&](bool success) {
             ++batch.completed; batch.success = success;
-            if (batch.reconcile) batch.reconcile(*batch.result);
         };
         return external_slot_transfer::Transfer(batch.source.Get(), batch.effect, async, {},
             external_drop_content::MakeContent(batch.result), reader, stop.get_token(),
@@ -561,6 +594,51 @@ inline void Run(const std::filesystem::path& root)
             batch.source->outcome == E_ABORT && std::filesystem::is_empty(batch.destination) &&
             Bytes(selected[0]) == "alpha" && Bytes(selected[1] / L"b.txt") == "beta",
             "insufficient Dock capacity rejects before materializing files or modifying originals");
+    }
+    // Files can be materialized successfully while the final Dock commit
+    // rejects (for example after capacity changes). Physical success must not
+    // masquerade as a successful Dock drop, and generated files must survive.
+    for (bool asynchronous : {true, false})
+    for (bool accepted : {true, false})
+    for (size_t count : {size_t{1}, size_t{2}})
+    {
+        const auto path = root / std::to_wstring(serial++);
+        const auto selected = Seed(path, count);
+        Batch batch; batch.source = MakeSource(selected); batch.source->async = asynchronous;
+        batch.destination = path / L"target"; batch.effect = DROPEFFECT_LINK;
+        batch.pinAccepted = accepted; batch.reverseOutputs = true;
+        external_file_destination::Destination destination;
+        destination.preview.targetKind = DropTargetKind::Desktop;
+        destination.preview.pinMaterializedItemsToDock = true;
+        destination.preview.dockInsertIndex = 2; destination.preview.action = DropAction::Link;
+        batch.captured = destination;
+        Harness harness;
+        const auto returned = harness.Submit(batch, asynchronous);
+        const DWORD expectedReturn = !asynchronous && !accepted ? DROPEFFECT_NONE : DROPEFFECT_LINK;
+        Require(returned == expectedReturn,
+            "synchronous Dock completion includes final pin success, while async completion remains deferred");
+        if (asynchronous) PumpUntil([&] { return batch.source->ends == 1; });
+        Require(batch.completed == 1 && batch.success == accepted && batch.executions == 1 &&
+            batch.pinSaves == (accepted ? 1 : 0) && batch.refreshes == 1 && batch.placements->empty(),
+            "materialized Dock rejection is reported once without publishing success or losing real output refresh");
+        Require(batch.result->outputs.size() == count && Bytes(selected[0]) == "alpha" &&
+            (count == 1 || Bytes(selected[1] / L"b.txt") == "beta"),
+            "materialized Dock success and rejection both preserve all original files");
+        std::vector<std::wstring> expectedPins;
+        for (const auto& file : selected)
+        {
+            const auto output = std::find_if(batch.result->outputs.begin(), batch.result->outputs.end(),
+                [&](const auto& value) { return value.source == file.wstring(); });
+            Require(output != batch.result->outputs.end() && std::filesystem::exists(output->destination) &&
+                std::filesystem::equivalent(item_location::ResolveRevealPath(output->destination), file),
+                "successful physical output remains a real usable shortcut even when the final Dock pin rejects");
+            expectedPins.push_back(output->destination);
+        }
+        Require(accepted ? batch.pinnedPaths == expectedPins && batch.pinnedIndex == 2 : batch.pinnedPaths.empty(),
+            "materialized Dock commit preserves captured source order and insertion boundary despite reverse receipts");
+        if (asynchronous)
+            Require(batch.source->outcome == (accepted ? S_OK : E_ABORT),
+                "OLE final status reflects the complete Dock transaction rather than only file materialization");
     }
     std::cout << "slot transfer protocol, IO, failure, ownership and reverse-completion cases passed\n";
 }
