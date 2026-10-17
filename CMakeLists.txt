@@ -313,6 +313,7 @@ set(SNOWDESKTOP_SOURCES
     src/icons/icon_workshop.h
     src/icons/icon_library.cpp
     src/icons/icon_library.h
+    src/icons/icon_library_bitmap_cache.h
     src/icons/icon_library_match.h
     src/app/features/app_icon_library.cpp
     src/app/features/app_icon_appearance.cpp
@@ -2511,6 +2512,7 @@ if (BUILD_TESTING)
             src/icons/icon_pack_archive.cpp
             src/icons/android_icon_pack.cpp
             tests/icons/icon_library_tests.cpp
+            tests/icons/icon_library_bitmap_cache_tests.cpp
             tests/icons/icon_pack_tests.cpp
             tests/icons/icon_workshop_storage_tests.cpp
             tests/icons/icon_workshop_workflow_tests.cpp

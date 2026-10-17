@@ -1281,8 +1281,8 @@ void DesktopApp::SetIconBeautifySettings(
     iconReflectionCache_.Clear();
     ResetDemoIconLoader();
     placeholderIconCache_.clear();
-    dockFolderBitmapCache_.Retain([](const auto&) { return false; });
-    dockIconWork_.Cancel(L"dock-folder:");
+    // Dock folder sources are uploaded without beautification and can be
+    // reused when only their derived appearance changes.
     quickNavSysIconCache_.clear();
     quickNavAppIconCache_.clear();
     privacyFileIconBitmap_.Reset();

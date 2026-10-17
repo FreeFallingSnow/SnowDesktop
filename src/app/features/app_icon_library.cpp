@@ -3,6 +3,7 @@
 #include "icons/icon_workshop.h"
 #include "../../../steam_bridge/src/icon_pack_workshop_publish.h"
 #include "icons/icon_image_codec.h"
+#include "icons/icon_library_bitmap_cache.h"
 #include "icons/icon_override_rules.h"
 #include "icons/icon_control_source.h"
 #include "icons/large_icon_edit_rules.h"
@@ -19,7 +20,7 @@ struct IconLibraryHostState
     std::shared_ptr<std::atomic_uint> workshopProgress=std::make_shared<std::atomic_uint>(0);
     std::string validPreparation;
     std::optional<snowdesktop::LargeIconSettingsRequest> pendingLargeIcon;
-    std::unordered_map<std::string, std::shared_ptr<snowdesktop::BackgroundBitmap>> bitmaps;
+    snowdesktop::IconLibraryBitmapCache bitmaps;
 };
 
 IconLibraryHostState& DesktopApp::EnsureIconLibrary()
@@ -158,16 +159,6 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
                 if(floatingPopupHwnd_)InvalidateRect(floatingPopupHwnd_,nullptr,FALSE);
             }
         }
-        if (request.action == "delete" || request.action == "deleteGroupWithAssets" || request.action == "refresh" || request.action == "import" || request.action=="collectRetired")
-        {
-            state.images.Cancel();
-            for (const auto& [key, bitmap] : state.bitmaps)
-            {
-                (void)key;
-                if (bitmap && bitmap->bitmap) EraseD2DIconCacheForBitmap(bitmap->bitmap);
-            }
-            state.bitmaps.clear();
-        }
         std::vector<std::string> protectedIds;
         for (const auto& [id, names] : uses) { (void)names; protectedIds.push_back(id); }
         const auto weak = std::weak_ptr<IconLibraryHostState>(iconLibraryState_);
@@ -203,6 +194,14 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
                 if(request.action=="publishPrepared"&&result.succeeded)current->validPreparation.clear();
                 for(auto& group:result.groups)group.publishedUrl=group.workshopItem.empty()?
                     snowdesktop::steam_bridge::IconPackPublishedUrl(data,group.id):"https://steamcommunity.com/sharedfiles/filedetails/?id="+group.workshopItem;
+                // Refresh/import/group edits do not change content-addressed
+                // originals. Release only removed/missing sources after a
+                // successful result; a failed operation is not an empty library.
+                if (result.succeeded)
+                    current->bitmaps.Reconcile(result.entries, [this, &current](const auto& key, const auto& bitmap) {
+                        current->images.Cancel(Utf8ToWide(key));
+                        if (bitmap && bitmap->bitmap) EraseD2DIconCacheForBitmap(bitmap->bitmap);
+                    });
                 current->snapshot = std::move(result);
                 const auto pending = std::exchange(current->pendingLargeIcon, {});
                 if (pending && current->snapshot.imported.size() == 1)
@@ -248,6 +247,7 @@ bool DesktopApp::SetDockIconAsset(const std::wstring& widgetId, const std::strin
     }
     const auto previous = widget.dockIconAssetId; widget.dockIconAssetId = assetId;
     if (!SaveLayoutSlots()) { widget.dockIconAssetId = previous; return false; }
+    if (assetId.empty()) EnsureIconLibrary().bitmaps.Forget(L"widget:" + widgetId);
     ClearDockAppearanceImages();
     InvalidateDragStaticScene(); InvalidateDockRects();
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
@@ -289,36 +289,38 @@ ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std
     auto& state = EnsureIconLibrary();
     const int edge = snowdesktop::icon_control::ReplacementSourcePixels(identity, pixels);
     const auto key = id + ':' + std::to_string(edge);
-    const auto found = state.bitmaps.find(key);
-    if (found != state.bitmaps.end()) return found->second && found->second->bitmap ?
-        GetStyledD2DBitmap(context, found->second->bitmap, ResolveIconAppearance(identity), true) : nullptr;
-    if (state.busy) return nullptr;
-    if (state.bitmaps.size() >= 256)
+    const auto target = ResolveIconTarget(identity);
+    if (!state.bitmaps.Contains(key))
     {
-        state.images.Cancel();
-        for (const auto& [cacheKey, bitmap] : state.bitmaps)
-        { (void)cacheKey; if (bitmap && bitmap->bitmap) EraseD2DIconCacheForBitmap(bitmap->bitmap); }
-        state.bitmaps.clear();
+        std::unordered_set<std::string> pinned;
+        for (const auto& [owner, asset] : iconOverrides_) { (void)owner; pinned.insert(asset); }
+        for (const auto& widget : widgets_) if (!widget.dockIconAssetId.empty()) pinned.insert(widget.dockIconAssetId);
+        const auto release = [this, &state](const auto& cacheKey, const auto& bitmap) {
+            state.images.Cancel(Utf8ToWide(cacheKey));
+            if (bitmap && bitmap->bitmap) EraseD2DIconCacheForBitmap(bitmap->bitmap);
+        };
+        const auto ticket = state.bitmaps.Begin(key, id, target, pinned, release);
+        const auto path = snowdesktop::IconAssetPath(GetDataSubdirectoryPath(L"icon-library"), id);
+        const auto weak = std::weak_ptr<IconLibraryHostState>(iconLibraryState_);
+        const bool queued = state.images.Submit(Utf8ToWide(key), [path, edge] {
+            auto result = std::make_shared<snowdesktop::BackgroundBitmap>(); snowdesktop::icon_image::Image image; std::string error;
+            if (snowdesktop::icon_image::Decode(path, edge, image, error) && snowdesktop::icon_image::PadSquare(image))
+            { result->bitmap = snowdesktop::icon_image::CreateBitmap(image); result->size = {image.width, image.height}; }
+            return result;
+        }, [this, weak, key, ticket](auto bitmap) {
+            if (auto current = weak.lock())
+            {
+                if (!current->bitmaps.Publish(key, ticket, std::move(bitmap))) return;
+                ClearDockAppearanceImages();
+                InvalidateDragStaticScene(); InvalidateDockRects();
+                if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+            }
+        }, controlHwnd_, kLargeIconAssetsReadyMessage);
+        if (!queued) state.bitmaps.Erase(key, release);
     }
-    state.bitmaps.emplace(key, nullptr);
-    const auto path = snowdesktop::IconAssetPath(GetDataSubdirectoryPath(L"icon-library"), id);
-    const auto weak = std::weak_ptr<IconLibraryHostState>(iconLibraryState_);
-    state.images.Submit(Utf8ToWide(key), [path, edge] {
-        auto result = std::make_shared<snowdesktop::BackgroundBitmap>(); snowdesktop::icon_image::Image image; std::string error;
-        if (snowdesktop::icon_image::Decode(path, edge, image, error) && snowdesktop::icon_image::PadSquare(image))
-        { result->bitmap = snowdesktop::icon_image::CreateBitmap(image); result->size = {image.width, image.height}; }
-        return result;
-    }, [this, weak, key](auto bitmap) {
-        if (auto current = weak.lock())
-        {
-            current->bitmaps[key] = std::move(bitmap);
-            ClearDockAppearanceImages();
-            InvalidateDragStaticScene(); InvalidateDockRects();
-            if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
-            if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
-        }
-    }, controlHwnd_, kLargeIconAssetsReadyMessage);
-    return nullptr;
+    const auto bitmap = state.bitmaps.Read(key, target);
+    return bitmap && bitmap->bitmap ? GetStyledD2DBitmap(context, bitmap->bitmap, ResolveIconAppearance(identity), true) : nullptr;
 }
 
 
@@ -385,6 +387,7 @@ bool DesktopApp::SetIconOverride(const std::wstring& target, const std::string& 
         if (previous.empty()) iconOverrides_.erase(target); else iconOverrides_[target] = previous;
         return false;
     }
+    if (assetId.empty()) state.bitmaps.Forget(target);
     ClearDockAppearanceImages();
     InvalidateDragStaticScene(); InvalidateDockRects();
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);

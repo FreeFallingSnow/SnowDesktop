@@ -2937,7 +2937,7 @@ struct DockPagePresenter::Impl
         for (const auto& button : {startIconBeautify, searchIconBeautify})
         {
             muxc::SymbolIcon icon(muxc::Symbol::Edit); button.Content(icon);
-            const auto label = L("iconAppearance.edit", L"Adjust this icon’s appearance…");
+            const auto label = L("iconAppearance.edit", L"Adjust this icon’s appearance");
             muxa::AutomationProperties::SetName(button, label);
             muxc::ToolTipService::SetToolTip(button, winrt::box_value(label));
         }
@@ -2946,7 +2946,7 @@ struct DockPagePresenter::Impl
         for (const auto& button : {startIconChoose, searchIconChoose, startIconRestore, searchIconRestore})
         {
             const bool restore = button == startIconRestore || button == searchIconRestore;
-            muxc::TextBlock text; text.Text(L(restore ? "iconLibrary.restore" : "iconLibrary.change", restore ? L"Restore default icon" : L"Change icon…"));
+            muxc::TextBlock text; text.Text(L(restore ? "iconLibrary.restore" : "iconLibrary.change", restore ? L"Restore default icon" : L"Change icon"));
             text.TextWrapping(mux::TextWrapping::Wrap); button.Content(text); button.MinWidth(0);
             button.HorizontalAlignment(mux::HorizontalAlignment::Stretch); button.VerticalAlignment(mux::VerticalAlignment::Center);
         }

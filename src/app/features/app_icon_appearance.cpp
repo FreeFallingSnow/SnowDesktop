@@ -45,7 +45,8 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
     IconAppearanceSnapshot result;
     const auto repaint = [this](bool preview) {
         ClearStyledIconCache();
-        dockFolderBitmapCache_.Retain([](const auto&) { return false; }); dockIconWork_.Cancel(L"dock-folder:");
+        // Folder sources are unstyled. Keep them while rebuilding themed
+        // derivatives so preview/apply/cancel never re-enters Shell loading.
         InvalidateDragStaticScene(); InvalidateDockRects(TRUE);
         if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
         if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);

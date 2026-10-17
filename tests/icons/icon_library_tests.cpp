@@ -18,6 +18,7 @@
 int RunIconPackTests(const std::filesystem::path& root);
 int RunIconWorkshopStorageTests(const std::filesystem::path& root);
 int RunIconWorkshopWorkflowTests(const std::filesystem::path& root);
+int RunIconLibraryBitmapCacheTests();
 namespace
 {
 using Microsoft::WRL::ComPtr;
@@ -50,7 +51,7 @@ int RunIconLibraryTests()
         std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64()));
     std::filesystem::create_directories(directory);
     struct Cleanup { std::filesystem::path path; ~Cleanup() { std::error_code ec; std::filesystem::remove_all(path, ec); } } cleanup{directory};
-    int failures = 0;
+    int failures = RunIconLibraryBitmapCacheTests();
     const auto check = [&](bool value, const char* message) { if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; } };
     {
         std::vector<IconLibraryEntry> candidates(8);

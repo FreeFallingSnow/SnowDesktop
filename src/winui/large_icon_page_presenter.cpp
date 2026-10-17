@@ -552,6 +552,11 @@ struct LargeIconPagePresenter::Impl : std::enable_shared_from_this<Impl>
         for (const auto& [value, text] : options)
         {
             c::ComboBoxItem item; item.Content(winrt::box_value(L(text))); input.Items().Append(item); values.push_back(value);
+            if (value == 1 && (member == &LargeIconConfig::content || member == &LargeIconConfig::foregroundContent))
+                synchronize.push_back([this, item, member] {
+                    const auto& asset = member == &LargeIconConfig::content ? draft.imageAssetId : draft.foregroundImageAssetId;
+                    item.Content(winrt::box_value(L(asset.empty() ? "largeIcon.image" : "iconLibrary.title")));
+                });
             if (member == &LargeIconConfig::titleDirection)
                 visibility.push_back([this, item, value] { item.IsEnabled(Supported(value)); });
             if (member == &LargeIconConfig::effect && value == 2)

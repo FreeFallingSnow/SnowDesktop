@@ -53,14 +53,13 @@ void DesktopApp::RequestLargeIconAsset(size_t index, bool refresh, std::filesyst
         GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), item.parsingName.c_str());
         request.appId = snowdesktop::large_icon_steam::AppId(url).value_or(0);
     }
-    if (!variant && request.importPath.empty() && runtime.asset &&
-        (runtime.sourceContent != request.content || runtime.sourceReference != request.reference))
-    { EraseD2DIconCacheForBitmap(runtime.asset->bitmap); runtime.asset.reset(); }
+    // Keep the last displayed source while its replacement is decoded. The
+    // delivered generation swaps pixels atomically; a failed different source
+    // falls back only after that failure is known.
     savedSignature = signature;
     if (!variant)
     {
         runtime.pending = true; runtime.error.clear(); runtime.retryAt = 0;
-        runtime.sourceContent = request.content; runtime.sourceReference = request.reference;
     }
     request.generation = ++largeIconAssetSerial_;
     (variant ? runtime.previewGenerations[variant - 1] : runtime.generation) = request.generation;
@@ -104,7 +103,13 @@ void DesktopApp::ProcessLargeIconAssets()
         state.pending = false; state.error = result.error;
         state.retryAt = result.error.empty() ? 0 : snowdesktop::UiAnimationScheduler::MonotonicMilliseconds() + 120000;
         if (state.retryAt) SetTimer(controlHwnd_, kLargeIconRetryTimerId, 120000, nullptr);
-        if (!result.asset) continue;
+        if (!result.asset)
+        {
+            if (result.request.importPath.empty() && state.asset &&
+                (state.sourceContent != result.request.content || state.sourceReference != result.request.reference))
+            { EraseD2DIconCacheForBitmap(state.asset->bitmap); state.asset.reset(); }
+            continue;
+        }
         if (!result.request.importPath.empty())
         {
             if (!CanEditLargeIcons() || snowdesktop::IsLargeIconFill(*items_[index].largeIcon) != result.request.fillLayer) continue;
@@ -125,6 +130,7 @@ void DesktopApp::ProcessLargeIconAssets()
         }
         if (state.asset && state.asset != result.asset) EraseD2DIconCacheForBitmap(state.asset->bitmap);
         state.asset = std::move(result.asset);
+        state.sourceContent = result.request.content; state.sourceReference = result.request.reference;
         if (snowdesktop::IsLargeIconFill(*items_[index].largeIcon) && items_[index].largeIcon->content == 2 && state.asset->reference.starts_with("steam-") &&
             items_[index].largeIcon->cachedCover != state.asset->reference)
         {
@@ -249,6 +255,9 @@ snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
         wchar_t url[2048]{};
         GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), items_[index].parsingName.c_str());
         if (snowdesktop::large_icon_steam::AppId(url)) { config.backgroundStyle = -2; config.content = 2; config.fit = 1; }
+        const auto target = ResolveIconTarget(items_[index].layoutKey);
+        if (const auto replacement = iconOverrides_.find(target); replacement != iconOverrides_.end())
+            snowdesktop::large_icon_preset_rules::UseLibraryIcon(config, replacement->second);
     }
     config.effect = snowdesktop::large_icon_preset_rules::DefaultEffect(config);
     return config;

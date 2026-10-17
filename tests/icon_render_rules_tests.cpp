@@ -425,6 +425,24 @@ int main(int argc, char** argv)
     config = {};
     Check(presets::DefaultEffect(config) == 2, "new foreground icons and explicit effect resets default to dynamic title");
     {
+        const std::string replacement = std::string(64, 'a') + ".webp";
+        for (const bool fill : {false, true})
+        {
+            auto c = config;
+            if (fill) { c.backgroundStyle = -2; c.content = 2; }
+            const auto original = c;
+            presets::UseLibraryIcon(c, {});
+            Check(c == original, "conversion without a replacement retains ordinary and Steam defaults");
+            presets::UseLibraryIcon(c, replacement);
+            Check(snowdesktop::LargeIconActiveContent(c) == 1 && snowdesktop::LargeIconActiveImage(c) == replacement &&
+                c.backgroundStyle == original.backgroundStyle && c.columns == original.columns && c.rows == original.rows,
+                "conversion retains the selected library source in the active foreground or Steam fill layer without changing layout");
+            JsonValue encoded; snowdesktop::LargeIconConfig restored;
+            Check(ParseJson(snowdesktop::EncodeLargeIconConfig(c), encoded) && snowdesktop::DecodeLargeIconConfig(encoded, restored) && restored == c,
+                "converted library source survives the production config codec");
+        }
+    }
+    {
         auto c = config; c.effect = presets::DefaultEffect(c);
         Check(presets::ApplyBackground(c, -2, true, true) && c.effect == 3 && presets::DefaultEffect(c) == 3,
             "choosing image fill replaces unsupported default title with gentle zoom");
