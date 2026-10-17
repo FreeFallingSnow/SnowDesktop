@@ -8,5 +8,5 @@ namespace snowdesktop::icon_beautify
 std::vector<std::uint32_t> RenderPreview(
     const std::vector<std::uint32_t>& source, int width, int height,
     const IconBeautifySettings& settings, std::optional<EdgeColor> detectedEdgeFill,
-    int rasterScale);
+    int rasterScale, SourceKind sourceKind = SourceKind::Image);
 }

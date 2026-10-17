@@ -981,9 +981,50 @@ std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,
     return pixels;
 }
 
+// Force-fill mode samples the visible contour without requiring the source
+// to pass smart plate recognition. Transparent RGB is never treated as color;
+// prefer reliable alpha so antialiasing does not pollute the sampled background.
+static std::optional<EdgeColor> ContourBackground(const std::vector<std::uint32_t>& source,
+    int width, int height)
+{
+    struct Bucket { std::uint64_t weight = 0, r = 0, g = 0, b = 0; };
+    std::array<Bucket, 512> buckets{};
+    const auto sample = [&](int start, int step, int count) {
+        int fallback = -1, fallbackStep = -1, selected = -1;
+        for (int n = 0, i = start; n < count; ++n, i += step)
+        {
+            const int alpha = PixelA(source[static_cast<size_t>(i)]);
+            if (alpha > 16 && fallback < 0) { fallback = i; fallbackStep = n; }
+            if (alpha >= 160) { selected = i; break; }
+            if (fallbackStep >= 0 && n >= fallbackStep + 2) break;
+        }
+        if (selected < 0) selected = fallback;
+        if (selected < 0) return;
+        const auto pixel = source[static_cast<size_t>(selected)];
+        const int alpha = PixelA(pixel);
+        const auto straight = [&](int shift) {
+            return std::min(255, (static_cast<int>((pixel >> shift) & 255) * 255 + alpha / 2) / alpha);
+        };
+        const int r = straight(16), g = straight(8), b = straight(0);
+        auto& bucket = buckets[(r >> 5) * 64 + (g >> 5) * 8 + (b >> 5)];
+        const auto weight = static_cast<std::uint64_t>(alpha);
+        bucket.weight += weight; bucket.r += r * weight; bucket.g += g * weight; bucket.b += b * weight;
+    };
+    for (int y = 0; y < height; ++y)
+    { sample(y * width, 1, width); sample(y * width + width - 1, -1, width); }
+    for (int x = 0; x < width; ++x)
+    { sample(x, width, height); sample((height - 1) * width + x, -width, height); }
+    const auto best = std::max_element(buckets.begin(), buckets.end(),
+        [](const auto& a, const auto& b) { return a.weight < b.weight; });
+    if (!best->weight) return std::nullopt;
+    return EdgeColor{static_cast<int>((best->r + best->weight / 2) / best->weight),
+        static_cast<int>((best->g + best->weight / 2) / best->weight),
+        static_cast<int>((best->b + best->weight / 2) / best->weight)};
+}
+
 static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& rawSettings,
-    std::optional<EdgeColor> detectedEdgeFill, int rasterScale)
+    std::optional<EdgeColor> detectedEdgeFill, int rasterScale, SourceKind sourceKind)
 {
     if (width <= 0 || height <= 0 ||
         source.size() != static_cast<size_t>(width) * height)
@@ -994,6 +1035,8 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
     const Bounds bounds = VisibleBounds(source, width, height);
     if (!bounds.valid) return source;
     if (settings.mode == 1) detectedEdgeFill.reset();
+    if (settings.mode == 2 && sourceKind == SourceKind::Image && !detectedEdgeFill)
+        detectedEdgeFill = ContourBackground(source, width, height);
     if (!detectedEdgeFill && settings.backgroundSource != 0)
     {
         auto seed = settings.backgroundSource == 1 ? DetectPlateFill(source, width, height) : std::nullopt;
@@ -1037,16 +1080,24 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
     const auto& mask = CachedMask(settings.shape, width, height, 0.0f);
     std::vector<std::uint32_t> output(source.size(), 0);
 
-    if (detectedEdgeFill)
+    if (detectedEdgeFill || settings.mode == 2)
     {
-        const EdgeColor edge = *detectedEdgeFill;
-        const std::uint32_t background = ApplyFilter(
-            PackPremultiplied(edge.r, edge.g, edge.b, 255), settings);
-        // Smart recognition only clips the original icon to the selected shape.
-        // Content scaling is reserved for the explicit shrink-and-background mode.
+        // Default native controls have no image background to sample. Preserve
+        // their optical canvas over the selected theme; image resources use the
+        // recognized or forced contour color, without normalization or fitting.
+        std::uint32_t background = 0;
+        if (detectedEdgeFill)
+        {
+            const auto edge = *detectedEdgeFill;
+            background = ApplyFilter(PackPremultiplied(edge.r, edge.g, edge.b, 255), settings);
+        }
+        else FillPlate(output, width, height, settings, legacyExact, rasterScale);
         for (size_t i = 0; i < output.size(); ++i)
-            output[i] = ScalePixel(SourceOver(
-                ApplyFilter(source[i], settings), background), mask[i]);
+        {
+            const auto foreground = ApplyFilter(source[i], settings);
+            output[i] = detectedEdgeFill ? ScalePixel(SourceOver(foreground, background), mask[i]) :
+                SourceOver(ScalePixel(foreground, mask[i]), output[i]);
+        }
         ApplyTexture(output, width, height, settings, rasterScale);
         ApplyOutline(output, width, height, settings, rasterScale);
         ApplyEdgeReflection(output, width, height, settings, rasterScale);
@@ -1072,10 +1123,11 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
     }
     const float fit = std::min(static_cast<float>(maxW) / sourceW,
         static_cast<float>(maxH) / sourceH);
-    const float scale = settings.mode == 2 ? std::min(1.0f, fit) : fit;
+    const bool nativeMargins = sourceKind == SourceKind::NativeControl;
+    const float scale = nativeMargins ? std::min(1.0f, fit) : fit;
     int destW = std::max(1, static_cast<int>(std::round(sourceW * scale / rasterScale))) * rasterScale;
     int destH = std::max(1, static_cast<int>(std::round(sourceH * scale / rasterScale))) * rasterScale;
-    if (settings.mode == 2) { destW = std::min(sourceW, destW); destH = std::min(sourceH, destH); }
+    if (nativeMargins) { destW = std::min(sourceW, destW); destH = std::min(sourceH, destH); }
     const int destLeft = (width - destW) / 2;
     const int destTop = (height - destH) / 2;
 
@@ -1131,17 +1183,17 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
 
 std::vector<std::uint32_t> Render(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& settings,
-    std::optional<EdgeColor> detectedEdgeFill)
+    std::optional<EdgeColor> detectedEdgeFill, SourceKind sourceKind)
 {
-    return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1);
+    return RenderAtScale(source, width, height, settings, detectedEdgeFill, 1, sourceKind);
 }
 
 std::vector<std::uint32_t> RenderPreview(const std::vector<std::uint32_t>& source,
     int width, int height, const IconBeautifySettings& settings,
-    std::optional<EdgeColor> detectedEdgeFill, int rasterScale)
+    std::optional<EdgeColor> detectedEdgeFill, int rasterScale, SourceKind sourceKind)
 {
     return RenderAtScale(source, width, height, settings, detectedEdgeFill,
-        std::clamp(rasterScale, 1, 4));
+        std::clamp(rasterScale, 1, 4), sourceKind);
 }
 
     static EdgeColor StraightPlateColor(std::uint32_t pixel)

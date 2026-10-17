@@ -176,9 +176,7 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
         if (target == menu) dockActionIcons.emplace_back(command, glyph);
         else SetMenuItemIcon(target, command, glyph, MenuIconFont::FluentRegular);
     };
-    addToggle(menu, kDockStartButton, _LW("app.dock.start_button"), dockSettings_.showWindowsButton,
-        L"\uF133", true, true);
-    const auto addIconPersonalization = [&](UINT change, UINT restore, const wchar_t* target) {
+    const auto addIconPersonalization = [&](UINT change, UINT restore, const wchar_t* target, const wchar_t* title) {
         const HMENU submenu=CreatePopupMenu(); if(!submenu)return submenu;
         AppendMenuW(submenu,MF_STRING,change,_LW("iconLibrary.change"));
         AppendMenuW(submenu,MF_STRING | (iconOverrides_.contains(target)?0:MF_GRAYED),restore,_LW("iconLibrary.restore"));
@@ -193,13 +191,22 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
             AppendMenuW(submenu, MF_STRING, beauty + 1, _LW("iconAppearance.inherit"));
             SetMenuItemIcon(submenu, beauty + 1, L"\uF19A", MenuIconFont::FluentRegular);
         }
-        AppendMenuW(menu,MF_POPUP,reinterpret_cast<UINT_PTR>(submenu),_LW("iconLibrary.personalize"));
+        const auto label = std::wstring(title) + L"\t" + _LW("iconLibrary.personalize");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(submenu), label.c_str());
         return submenu;
     };
-    const auto startIconMenu=addIconPersonalization(kDockStartIcon,kDockStartRestoreIcon,L"control:start");
-    addToggle(menu, kDockQuickSearchButton, _LW("app.dock.quick_search"), dockSettings_.showQuickSearchButton,
+    const auto startIconMenu = addIconPersonalization(kDockStartIcon, kDockStartRestoreIcon,
+        L"control:start", _LW("app.dock.start_button"));
+    if (startIconMenu) AppendMenuW(menu, MF_STRING, kDockStartButton,
+        _LW(dockSettings_.showWindowsButton ? "app.interact.shown" : "app.interact.hidden"));
+    else addToggle(menu, kDockStartButton, _LW("app.dock.start_button"), dockSettings_.showWindowsButton,
+        L"\uF133", true, true);
+    const auto searchIconMenu = addIconPersonalization(kDockSearchIcon, kDockSearchRestoreIcon,
+        L"control:search", _LW("app.dock.quick_search"));
+    if (searchIconMenu) AppendMenuW(menu, MF_STRING, kDockQuickSearchButton,
+        _LW(dockSettings_.showQuickSearchButton ? "app.interact.shown" : "app.interact.hidden"));
+    else addToggle(menu, kDockQuickSearchButton, _LW("app.dock.quick_search"), dockSettings_.showQuickSearchButton,
         L"\uF690", true, true); // search_20
-    const auto searchIconMenu=addIconPersonalization(kDockSearchIcon,kDockSearchRestoreIcon,L"control:search");
     addToggle(menu, kContextDockSingleClickLaunch, _LW("app.dock.single_click_launch"),
         dockSettings_.singleClickLaunchItems, L"\uE445"); // cursor_click_20
     addToggle(menu, kContextDockShowOnlyWhenSummoned, _LW("settings.dock.showOnlyWhenSummoned"),
@@ -243,10 +250,18 @@ HMENU DesktopApp::CreateDockContextMenu(bool includeStatusBar)
     dockActionIcons.emplace_back(keepToggleCommand,
         snowdesktop::menu_fluent_glyphs::kKeepWhenDesktopHidden);
     const auto bindFinalDockIcons = [&] {
-        SetMenuItemInlineAction(menu, kDockStartButton, kDockStartButton);
-        if(startIconMenu)SetMenuItemInlineAction(menu,reinterpret_cast<UINT_PTR>(startIconMenu),kDockStartButton,true,false,true);
-        SetMenuItemInlineAction(menu, kDockQuickSearchButton, kDockQuickSearchButton);
-        if(searchIconMenu)SetMenuItemInlineAction(menu,reinterpret_cast<UINT_PTR>(searchIconMenu),kDockQuickSearchButton,true,false,true);
+        SetMenuItemInlineAction(menu, kDockStartButton, kDockStartButton, startIconMenu != nullptr, false, startIconMenu != nullptr);
+        if (startIconMenu)
+        {
+            SetMenuItemInlineAction(menu, reinterpret_cast<UINT_PTR>(startIconMenu), kDockStartButton);
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(startIconMenu), L"\uF133", MenuIconFont::FluentRegular);
+        }
+        SetMenuItemInlineAction(menu, kDockQuickSearchButton, kDockQuickSearchButton, searchIconMenu != nullptr, false, searchIconMenu != nullptr);
+        if (searchIconMenu)
+        {
+            SetMenuItemInlineAction(menu, reinterpret_cast<UINT_PTR>(searchIconMenu), kDockQuickSearchButton);
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(searchIconMenu), L"\uF690", MenuIconFont::FluentRegular);
+        }
         // Icon metadata is indexed by HMENU row. Leading insertions below
         // shift those rows, so bind Dock actions after the final structure.
         for (const auto& [command, glyph] : dockActionIcons)

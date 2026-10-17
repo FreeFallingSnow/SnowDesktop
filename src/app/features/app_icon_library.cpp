@@ -192,6 +192,7 @@ bool DesktopApp::SetDockIconAsset(const std::wstring& widgetId, const std::strin
     }
     const auto previous = widget.dockIconAssetId; widget.dockIconAssetId = assetId;
     if (!SaveLayoutSlots()) { widget.dockIconAssetId = previous; return false; }
+    ClearDockAppearanceImages();
     InvalidateDragStaticScene(); InvalidateDockRects(); return true;
 }
 
@@ -253,6 +254,7 @@ ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std
         if (auto current = weak.lock())
         {
             current->bitmaps[key] = std::move(bitmap);
+            ClearDockAppearanceImages();
             InvalidateDragStaticScene(); InvalidateDockRects();
             if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
             if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
@@ -325,6 +327,7 @@ bool DesktopApp::SetIconOverride(const std::wstring& target, const std::string& 
         if (previous.empty()) iconOverrides_.erase(target); else iconOverrides_[target] = previous;
         return false;
     }
+    ClearDockAppearanceImages();
     InvalidateDragStaticScene(); InvalidateDockRects();
     if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
     if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
@@ -348,8 +351,7 @@ ID2D1Bitmap* DesktopApp::GetSmallCustomIcon(ID2D1RenderTarget* context, std::wst
             source = std::make_shared<snowdesktop::BackgroundBitmap>();
             source->bitmap = snowdesktop::icon_image::CreateBitmap(snowdesktop::icon_control::MakeSource(target, light, edge));
         }
-        return GetStyledD2DBitmap(context, source->bitmap,
-            snowdesktop::icon_control::NativeGlyphStyle(ResolveIconAppearance(identity)), true);
+        return GetStyledD2DBitmap(context, source->bitmap, ResolveIconAppearance(identity), true, true);
     }
     return nullptr;
 }

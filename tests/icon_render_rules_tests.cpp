@@ -500,7 +500,8 @@ int main(int argc, char** argv)
         std::string png, error;
         const bool encoded = snowdesktop::icon_image::EncodePng(original, png, error);
         Check(encoded, "replacement fixture encodes through production PNG codec");
-        for (const auto identity : {L"control:start", L"control:search"})
+        for (const auto identity : {L"control:start", L"control:search", L"widget:collection", L"widget:files",
+            L"widget:folder", L"widget:group", L"item:C:/fixture/icon.lnk", L"recycle-empty:BIN", L"recycle-full:BIN"})
         {
             snowdesktop::icon_image::Image idle, hover;
             const bool loaded = encoded && snowdesktop::icon_image::DecodeBytes(png, snowdesktop::icon_control::ReplacementSourcePixels(identity, 48), idle, error) &&
@@ -509,8 +510,11 @@ int main(int argc, char** argv)
                 "idle replacement preserves the clear source used by its hover rendering");
             if (loaded)
             {
+                snowdesktop::icon_image::Image oldThumbnail;
+                Check(snowdesktop::icon_image::DecodeBytes(png, 64, oldThumbnail, error) && oldThumbnail.width != idle.width,
+                    "negative control reproduces the different source pixels selected by target-size thumbnails");
                 const auto fill = snowdesktop::icon_beautify::DetectPlateFill(idle.pixels, idle.width, idle.height);
-                Check(fill && fill->g == 200, "idle Start/Search replacement reaches successful production smart recognition");
+                Check(fill && fill->g == 200, "desktop, recycle and Dock replacements share stable production smart recognition");
                 auto style = snowdesktop::icon_beautify::MakePreset(snowdesktop::IconBeautifyPreset::FrostedGlassDark);
                 Check(snowdesktop::icon_beautify::Render(idle.pixels, idle.width, idle.height, style, fill) ==
                     snowdesktop::icon_beautify::Render(hover.pixels, hover.width, hover.height, style,

@@ -616,9 +616,28 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 bool closed = false; const auto token = opened.Closed([&](const auto&, const auto&) { closed = true; });
                 opened.Hide(); PumpUntil([&] { return closed; }); opened.Closed(token); Settle(shell.as<x::FrameworkElement>());
             };
+            const auto captureAppearance = [&](const c::ContentDialog& opened, const wchar_t* name) {
+                Settle(opened);
+                if (opened.ActualWidth() > shell->ActualWidth() || opened.ActualHeight() > shell->ActualHeight())
+                    throw std::runtime_error("individual icon editor exceeds its settings window");
+                x::Media::Imaging::RenderTargetBitmap bitmap; Await(bitmap.RenderAsync(opened));
+                const auto pixels = Await(bitmap.GetPixelsAsync()); BYTE* bytes = nullptr;
+                winrt::check_hresult(pixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
+                std::string imageError;
+                if (!preview_png::Save(output / name, bitmap.PixelWidth(), bitmap.PixelHeight(),
+                    {reinterpret_cast<const std::uint32_t*>(bytes), pixels.Length()/4}, imageError)) throw std::runtime_error(imageError);
+            };
             auto first = open();
             auto preview = PreviewControl<c::Image>(first, L"IconAppearancePreview");
             if (!preview.Source().try_as<x::Media::Imaging::WriteableBitmap>()) throw std::runtime_error("per-icon preview has no decoded pixels");
+            c::ComboBox imageMode{nullptr};
+            Walk(first, [&](const x::DependencyObject& node) {
+                if (const auto combo = node.try_as<c::ComboBox>(); combo &&
+                    x::Automation::AutomationProperties::GetName(combo) == _LW("iconStyle.strategy")) imageMode = combo;
+            });
+            if (!imageMode) throw std::runtime_error("image no-enlargement selector is missing");
+            imageMode.SelectedIndex(2);
+            captureAppearance(first, L"icon-appearance-image-no-upscale.png");
             close(first);
             auto second = open(); close(second);
             if (appearanceFixture->entries.size() != 2) throw std::runtime_error("cancel or reopening unexpectedly saved an icon override");
@@ -635,21 +654,10 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 }
             });
             if (!mode || !theme) throw std::runtime_error("shared processing mode/theme selectors are missing");
-            const auto captureEditor = [&](const wchar_t* name) {
-                Settle(editor);
-                if (editor.ActualWidth() > shell->ActualWidth() || editor.ActualHeight() > shell->ActualHeight())
-                    throw std::runtime_error("individual icon editor exceeds its settings window");
-                x::Media::Imaging::RenderTargetBitmap bitmap; Await(bitmap.RenderAsync(editor));
-                const auto pixels = Await(bitmap.GetPixelsAsync()); BYTE* bytes = nullptr;
-                winrt::check_hresult(pixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&bytes));
-                std::string imageError;
-                if (!preview_png::Save(output / name, bitmap.PixelWidth(), bitmap.PixelHeight(),
-                    {reinterpret_cast<const std::uint32_t*>(bytes), pixels.Length()/4}, imageError)) throw std::runtime_error(imageError);
-            };
             mode.SelectedIndex(0); theme.SelectedIndex(3);
-            captureEditor(L"icon-appearance-native-smart.png");
+            captureAppearance(editor, L"icon-appearance-native-smart.png");
             mode.SelectedIndex(2);
-            captureEditor(L"icon-appearance-editor.png");
+            captureAppearance(editor, L"icon-appearance-editor.png");
             c::Button apply{nullptr};
             Walk(editor, [&](const x::DependencyObject& node) { if (const auto button = node.try_as<c::Button>(); button && button.Name() == L"PrimaryButton") apply = button; });
             if (!apply) throw std::runtime_error("individual appearance Apply button is missing");
@@ -665,6 +673,21 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             InvokePreview(PreviewControl<c::Button>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceInherit"));
             if (appearanceFixture->entries.size() != 2 || list.Items().Size() != 0) throw std::runtime_error("following global settings left an individual list record");
             filter.Text(L""); Settle(shell.as<x::FrameworkElement>());
+            for (int remaining = 0; remaining < 2 && list.Items().Size(); ++remaining)
+            {
+                list.SelectedIndex(0);
+                InvokePreview(PreviewControl<c::Button>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceInherit"));
+            }
+            Settle(shell.as<x::FrameworkElement>());
+            const auto empty = PreviewControl<c::TextBlock>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceEmpty");
+            if (empty.Visibility() != x::Visibility::Visible || list.Visibility() != x::Visibility::Collapsed)
+                throw std::runtime_error("individual appearance empty state failed to replace the list");
+            x::Media::Imaging::RenderTargetBitmap emptyBitmap; Await(emptyBitmap.RenderAsync(shell.as<x::FrameworkElement>()));
+            const auto emptyPixels = Await(emptyBitmap.GetPixelsAsync()); BYTE* emptyBytes = nullptr;
+            winrt::check_hresult(emptyPixels.as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&emptyBytes));
+            std::string emptyError;
+            if (!preview_png::Save(output / L"icon-appearance-empty.png", emptyBitmap.PixelWidth(), emptyBitmap.PixelHeight(),
+                {reinterpret_cast<const std::uint32_t*>(emptyBytes), emptyPixels.Length()/4}, emptyError)) throw std::runtime_error(emptyError);
             std::ofstream(output / L"icon-appearance.tsv") << "following-hidden\tcancel\treopen\tpreview\tsearch-mode-theme\tremove-to-follow\npassed\tpassed\tpassed\tpassed\tpassed\tpassed\n";
         }
         if (page == SettingsPage::IconLibrary)

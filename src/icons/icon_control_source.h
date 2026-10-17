@@ -8,26 +8,17 @@
 
 namespace snowdesktop::icon_control
 {
-// Classify a replacement at a stable resolution; resizing before detection can
-// change a plate into a padded glyph as the pointer enters or leaves the Dock.
-inline int ReplacementSourcePixels(std::wstring_view identity, int targetPixels)
+// Use one classification source for every replacement: desktop items,
+// recycle states, Dock components and controls. Target-size thumbnails can
+// switch plate recognition when the same source is magnified or nested.
+inline int ReplacementSourcePixels(std::wstring_view, int)
 {
-    return identity == L"control:start" || identity == L"control:search"
-        ? icon_render_rules::kMaximumSourcePixels : icon_render_rules::SourcePixelsForTarget(targetPixels);
+    return icon_render_rules::kMaximumSourcePixels;
 }
 // Rendering is independent of hover: interactive feedback belongs to Dock.
 inline bool UsesBitmap(std::wstring_view identity, bool independent, const IconBeautifySettings& style)
 {
     return (identity == L"control:start" || identity == L"control:search") && (independent || style.enabled);
-}
-// Generated control glyphs already contain deliberate optical margins. Keep
-// them when applying a theme instead of expanding their visible bounds to fill
-// the ordinary application-icon content area. Persisted/user image settings do
-// not change; this effective style is used only for our native sources.
-inline IconBeautifySettings NativeGlyphStyle(IconBeautifySettings style)
-{
-    style.mode = 2;
-    return style;
 }
 inline icon_image::Image MakeSource(std::wstring_view target, bool light, int edge = 128)
 {

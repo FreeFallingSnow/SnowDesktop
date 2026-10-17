@@ -64,7 +64,7 @@ struct IconBeautifySettings
 {
     bool enabled = false;
     IconBeautifyPreset preset = IconBeautifyPreset::None;
-    // 0 smart; 1 normalize all; 2 smart with no enlargement of visible content.
+    // 0 smart; 1 normalize all; 2 keep the source canvas and force sampled background fill.
     int mode = 0;
     float backgroundOpacity = 0.65f;
     bool glassEnabled = false;
@@ -140,12 +140,17 @@ std::uint8_t ShapeMaskAlpha(IconBeautifyShape shape, int x, int y,
 /** Normalized closed outline shared by vector UI plates and bitmap masks. */
 const std::vector<ShapePoint>& ShapeOutline(IconBeautifyShape shape);
 
+// Native controls carry intentional optical margins independently of the
+// user-selected processing mode. This is render metadata, never persisted.
+enum class SourceKind { Image, NativeControl };
+
 std::vector<std::uint32_t> Render(
     const std::vector<std::uint32_t>& source,
     int width,
     int height,
     const IconBeautifySettings& settings,
-    std::optional<EdgeColor> detectedEdgeFill = std::nullopt);
+    std::optional<EdgeColor> detectedEdgeFill = std::nullopt,
+    SourceKind sourceKind = SourceKind::Image);
 
 /** Directional reflection without a fill or glyph, for vector control plates. */
 std::vector<std::uint32_t> RenderEdgeReflection(int width, int height,

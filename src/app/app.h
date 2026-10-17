@@ -3047,11 +3047,11 @@ private:
     ID2D1Bitmap* GetTargetIconBitmap(ID2D1RenderTarget* context, HBITMAP bitmap,
         std::wstring_view identity, bool media = false);
     ID2D1Bitmap* GetStyledD2DBitmap(ID2D1RenderTarget* context, HBITMAP bitmap,
-        const snowdesktop::IconBeautifySettings& style, bool managedAlpha = false);
+        const snowdesktop::IconBeautifySettings& style, bool managedAlpha = false, bool nativeControlSource = false);
     ComPtr<ID2D1Bitmap1> CreateStyledD2DBitmap(HBITMAP bitmap,
-        const snowdesktop::IconBeautifySettings& style, bool managedAlpha = false);
+        const snowdesktop::IconBeautifySettings& style, bool managedAlpha = false, bool nativeControlSource = false);
     snowdesktop::icon_appearance::StyleIdentities iconStyleCache_;
-    std::map<std::tuple<std::uintptr_t, size_t, bool>, ComPtr<ID2D1Bitmap1>> styledIconCache_;
+    std::map<std::tuple<std::uintptr_t, size_t, bool, bool>, ComPtr<ID2D1Bitmap1>> styledIconCache_;
     std::unordered_map<ID2D1Bitmap*, snowdesktop::IconBeautifySettings> iconBitmapStyles_;
     void ClearStyledIconCache();
     snowdesktop::icon_image::Image MakeDockControlIconSource(std::wstring_view target, bool light) const;

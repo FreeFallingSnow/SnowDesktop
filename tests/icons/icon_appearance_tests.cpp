@@ -1,5 +1,6 @@
 #include "icons/icon_appearance_rules.h"
 #include "icons/icon_control_source.h"
+#include "icons/icon_beautify_preview.h"
 #include <iostream>
 
 int RunIconAppearanceTests()
@@ -74,23 +75,45 @@ int RunIconAppearanceTests()
     noUpscale.shape = IconBeautifyShape::ContinuousRounded; noUpscale.outlineEnabled = false; noUpscale.shadowStrength = 0;
     noUpscale.textureHighlightStrength = noUpscale.textureShadeStrength = noUpscale.textureEdgeHighlight = 0;
     noUpscale.edgeHighlightEnabled = false; noUpscale.filterEnabled = false;
-    std::vector<std::uint32_t> sparse(64 * 64, 0);
-    for (int y = 28; y < 36; ++y) for (int x = 28; x < 36; ++x) sparse[y * 64 + x] = 0xffd02030;
-    const auto countVisible = [](const auto& pixels) { return std::count_if(pixels.begin(), pixels.end(), [](auto pixel) { return (pixel >> 24) > 0; }); };
-    const auto retained = icon_beautify::Render(sparse, 64, 64, noUpscale);
-    auto smart = noUpscale; smart.mode = 0;
-    check(countVisible(retained) == 64 && countVisible(icon_beautify::Render(sparse, 64, 64, smart)) > 64,
-        "no-enlargement retains sparse glyph dimensions while existing smart mode still normalizes them");
-    std::vector<std::uint32_t> full(64 * 64, 0xffd02030);
-    check(countVisible(icon_beautify::Render(full, 64, 64, noUpscale)) < countVisible(full),
-        "no-enlargement can still shrink oversized glyphs to the configured content bounds");
+    // A padded, undersized source intentionally fails automatic plate detection.
+    // Forced fill must keep its offset mark at the same coordinates and use the
+    // contour background, even with custom/transparent theme backgrounds.
+    constexpr std::uint32_t green = 0xff208050, red = 0xffe04030;
+    std::vector<std::uint32_t> padded(64 * 64, 0x00ffffff);
+    for (int y = 20; y < 44; ++y) for (int x = 24; x < 40; ++x) padded[y * 64 + x] = green;
+    for (int y = 25; y < 29; ++y) for (int x = 27; x < 31; ++x) padded[y * 64 + x] = red;
+    check(!icon_beautify::DetectPlateFill(padded, 64, 64), "forced-fill regression source bypasses automatic plate recognition");
+    const auto forced = icon_beautify::Render(padded, 64, 64, noUpscale);
+    auto compactFill = noUpscale; compactFill.contentScale = .5f;
+    auto largeFill = noUpscale; largeFill.contentScale = .9f;
+    const auto redCount = std::count(forced.begin(), forced.end(), red);
+    check(forced[10 * 64 + 32] == green && forced[25 * 64 + 27] == red && redCount == 16 &&
+        forced == icon_beautify::Render(padded, 64, 64, compactFill) && forced == icon_beautify::Render(padded, 64, 64, largeFill),
+        "no-enlargement forces sampled fill while retaining original glyph size, offset and canvas");
+    auto smartFill = noUpscale; smartFill.mode = 0;
+    check(forced != icon_beautify::Render(padded, 64, 64, smartFill),
+        "negative control distinguishes forced sampled fill from ordinary smart normalization");
+    check(forced == icon_beautify::RenderPreview(padded, 64, 64, noUpscale, {}, 2),
+        "supersampled settings previews use the same force-fill composition");
+    std::vector<std::uint32_t> oversized(64 * 64, green);
+    oversized[32 * 64 + 4] = red;
+    check(icon_beautify::Render(oversized, 64, 64, noUpscale)[32 * 64 + 4] == red,
+        "no-enlargement also avoids shrinking oversized source content");
+    auto translucent = padded;
+    for (auto& pixel : translucent) if (pixel >> 24) pixel = 0x80104028;
+    check(icon_beautify::Render(translucent, 64, 64, noUpscale)[10 * 64 + 32] == green,
+        "sampled fill unpremultiplies translucent edge colors and ignores hidden transparent RGB");
+    auto disabledFill = noUpscale; disabledFill.enabled = false;
+    check(icon_beautify::Render(padded, 64, 64, disabledFill) == padded,
+        "explicit None preserves source pixels instead of forcing a fill");
     JsonValue local; IconBeautifySettings roundtrip;
     check(ParseJson(rules::EncodeStyle(noUpscale), local) && rules::DecodeStyle(local, roundtrip) && roundtrip.mode == 2,
         "no-enlargement survives layout persistence rather than becoming smart or shrink-all on restart");
-    for (const auto target : {L"control:start", L"control:search"})
+    for (const auto target : {L"control:start", L"control:search", L"widget:collection", L"widget:group", L"widget:folder",
+        L"item:C:/fixture/icon.lnk", L"recycle-empty:BIN", L"recycle-full:BIN"})
     {
         check(icon_control::ReplacementSourcePixels(target, 48) == 256 && icon_control::ReplacementSourcePixels(target, 96) == 256,
-            "replaced Start/Search use the same classification source at rest and under magnification");
+            "all replaced desktop, recycle and Dock icons use one source at rest and under magnification");
     }
     // Regression: ordinary beautification enlarged both built-in control glyphs
     // to 68% even though their source canvas deliberately reserves more space.
@@ -109,8 +132,8 @@ int RunIconAppearanceTests()
         for (int mode : {0, 1, 2})
         {
             auto requested = noUpscale; requested.mode = mode;
-            const auto style = icon_control::NativeGlyphStyle(requested);
-            const auto rendered = icon_beautify::Render(source.pixels, edge, edge, style);
+            const auto rendered = icon_beautify::Render(source.pixels, edge, edge, requested, {},
+                icon_beautify::SourceKind::NativeControl);
             check(extent(rendered, edge) <= original + 1,
                 "themed default Start/Search never expand to ordinary application-icon bounds");
             check(requested.mode == mode, "native rendering leaves the saved processing preference unchanged");

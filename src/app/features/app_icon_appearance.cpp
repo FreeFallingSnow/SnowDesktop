@@ -226,7 +226,8 @@ snowdesktop::icon_image::Image DesktopApp::CaptureDockIconSource(ID2D1DeviceCont
 {
     if (drawingIconAppearanceSource_) return {};
     RawIconCapture raw(drawingIconAppearanceSource_);
-    return CaptureIconSource(ctx, 128, [&](auto* offscreen) { DrawDockEntry(offscreen, entry, {0,0,128,128}, 0, 128); });
+    constexpr int edge = snowdesktop::icon_render_rules::kMaximumSourcePixels;
+    return CaptureIconSource(ctx, edge, [&](auto* offscreen) { DrawDockEntry(offscreen, entry, {0,0,edge,edge}, 0, edge); });
 }
 
 void DesktopApp::ClearDockAppearanceImages()
@@ -260,7 +261,9 @@ bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntr
         for (const auto& id : widgets_[owner].childWidgetIds)
         { const auto child = FindWidgetIndexById(id); if (child < widgets_.size()) append(widgets_[child]); if (signature.size() == 4) break; }
     else append(widgets_[owner]);
-    const int edge = std::max(128, snowdesktop::icon_render_rules::SourcePixelsForTarget(target.right - target.left));
+    // Match the editor source at every Dock animation size. A live target
+    // bucket changes gaps/antialiasing and can flip the plate classification.
+    constexpr int edge = snowdesktop::icon_render_rules::kMaximumSourcePixels;
     auto& cached = dockAppearanceImages_[key + L":" + std::to_wstring(edge)];
     if (!cached.bitmap || cached.sources != signature)
     {

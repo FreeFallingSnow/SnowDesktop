@@ -493,7 +493,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateD2DBitmapFromHBitmap(
 }
 
 ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
-    const snowdesktop::IconBeautifySettings& style, bool managedAlpha)
+    const snowdesktop::IconBeautifySettings& style, bool managedAlpha, bool nativeControlSource)
 {
     if (!hbm || !d2dContext_)
         return nullptr;
@@ -516,10 +516,11 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
                     detected.r, detected.g, detected.b };
             }
         }
-        needsGlassBackdrop = style.enabled && style.glassEnabled && !edgeFill;
+        needsGlassBackdrop = style.enabled && style.glassEnabled && !edgeFill && (style.mode != 2 || nativeControlSource);
         buffer.pixels = snowdesktop::icon_beautify::Render(
             buffer.pixels, buffer.width, buffer.height,
-            style, edgeFill);
+            style, edgeFill, nativeControlSource ? snowdesktop::icon_beautify::SourceKind::NativeControl :
+                snowdesktop::icon_beautify::SourceKind::Image);
     }
 
     D2D1_BITMAP_PROPERTIES1 props = D2D1::BitmapProperties1(
@@ -674,15 +675,15 @@ void DesktopApp::ClearStyledIconCache()
     styledIconCache_.clear(); iconStyleCache_.Clear();
 }
 ID2D1Bitmap* DesktopApp::GetStyledD2DBitmap(ID2D1RenderTarget* context, HBITMAP bitmap,
-    const snowdesktop::IconBeautifySettings& requested, bool managedAlpha)
+    const snowdesktop::IconBeautifySettings& requested, bool managedAlpha, bool nativeControlSource)
 {
     if (!context || !bitmap) return nullptr;
     auto style = snowdesktop::icon_beautify::Normalize(requested);
     const auto token = iconStyleCache_.Get(style);
-    const auto key = std::tuple{reinterpret_cast<std::uintptr_t>(bitmap), token, managedAlpha};
+    const auto key = std::tuple{reinterpret_cast<std::uintptr_t>(bitmap), token, managedAlpha, nativeControlSource};
     const auto found = styledIconCache_.find(key);
     if (found != styledIconCache_.end()) return found->second.Get();
-    auto uploaded = CreateStyledD2DBitmap(bitmap, style, managedAlpha);
+    auto uploaded = CreateStyledD2DBitmap(bitmap, style, managedAlpha, nativeControlSource);
     if (!uploaded) return nullptr;
     auto* result = uploaded.Get(); styledIconCache_[key] = std::move(uploaded); return result;
 }

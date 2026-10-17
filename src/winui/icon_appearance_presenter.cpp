@@ -3,7 +3,7 @@
 #include "desktop_page_presenter.h"
 #include "settings_presenter_controls.h"
 #include "icons/icon_image_codec.h"
-#include "icons/icon_control_source.h"
+#include "icons/icon_beautify.h"
 #include "theme/theme_library_settings.h"
 #include <robuffer.h>
 #include <cwctype>
@@ -23,10 +23,11 @@ std::wstring Fold(std::wstring text)
 }
 void SetPreview(const c::Image& image, const icon_image::Image& source, const IconBeautifySettings& requested, bool native = false)
 {
-    const auto style = native ? icon_control::NativeGlyphStyle(requested) : requested;
+    const auto& style = requested;
     if (source.width <= 0 || source.height <= 0 || source.pixels.empty()) { image.Source(nullptr); return; }
     const auto edge = style.mode != 1 ? icon_beautify::DetectPlateFill(source.pixels, source.width, source.height) : std::nullopt;
-    const auto pixels = icon_beautify::Render(source.pixels, source.width, source.height, style, edge);
+    const auto pixels = icon_beautify::Render(source.pixels, source.width, source.height, style, edge,
+        native ? icon_beautify::SourceKind::NativeControl : icon_beautify::SourceKind::Image);
     x::Media::Imaging::WriteableBitmap bitmap(source.width, source.height);
     std::uint8_t* buffer = nullptr;
     winrt::check_hresult(bitmap.PixelBuffer().as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&buffer));
@@ -70,7 +71,11 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         list.IsItemClickEnabled(true); list.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
         list.ItemTemplate(x::Markup::XamlReader::Load(LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Grid Padding="8" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="48"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Image x:Name="Preview" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="48" Height="48" Stretch="Uniform"/><StackPanel Grid.Column="1" Spacing="4"><TextBlock x:Name="Name" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="Detail" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" FontSize="12" TextWrapping="Wrap" Opacity="0.7"/></StackPanel></Grid></DataTemplate>)").as<x::DataTemplate>());
         c::Border surface; presenter_controls::StyleSettingsCard(surface); surface.Padding({0,0,0,0});
-        c::StackPanel content; content.Children().Append(list); empty.Margin({16,16,16,16}); content.Children().Append(empty); surface.Child(content);
+        c::Grid content; content.MinHeight(112); content.Children().Append(list);
+        empty.Name(L"IconAppearanceEmpty"); x::Automation::AutomationProperties::SetAutomationId(empty, L"IconAppearanceEmpty");
+        empty.Margin({16,16,16,16}); empty.HorizontalAlignment(x::HorizontalAlignment::Center);
+        empty.VerticalAlignment(x::VerticalAlignment::Center); empty.TextAlignment(x::TextAlignment::Center);
+        empty.TextWrapping(x::TextWrapping::Wrap); content.Children().Append(empty); surface.Child(content);
         root.Children().Append(surface);
         feedback.IsOpen(false); presenter_controls::BindInfoBarVisibility(feedback); root.Children().Append(feedback);
         LocalizeText();
@@ -151,7 +156,9 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
                 list.Items().Append(winrt::box_value(record.target));
         for (unsigned index = 0; index < list.Items().Size(); ++index)
             if (winrt::unbox_value<winrt::hstring>(list.Items().GetAt(index)) == selected) { list.SelectedIndex(static_cast<int>(index)); break; }
-        empty.Visibility(list.Items().Size() ? x::Visibility::Collapsed : x::Visibility::Visible); Buttons();
+        const bool hasItems = list.Items().Size() != 0;
+        list.Visibility(hasItems ? x::Visibility::Visible : x::Visibility::Collapsed);
+        empty.Visibility(hasItems ? x::Visibility::Collapsed : x::Visibility::Visible); Buttons();
     }
     void Inherit(const std::wstring& target)
     {
