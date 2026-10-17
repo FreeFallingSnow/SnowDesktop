@@ -1652,6 +1652,7 @@ if (BUILD_TESTING)
     add_test(NAME lua_file_drop_delivery
         COMMAND SnowDesktopWidgetFilesystemHandleStoreTests --file-drop-delivery-tests)
     set_tests_properties(lua_file_drop_delivery PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopWidgetFilesystemHandleStoreTests>"
         TIMEOUT 90 LABELS "integration;filesystem;security;interaction;lua;widget")
 
     snowdesktop_add_test(
