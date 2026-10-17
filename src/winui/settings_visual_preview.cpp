@@ -869,6 +869,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             const auto pickerQuery = PreviewControl<c::TextBox>(pickerDialog, L"IconLibrarySearch");
             const auto pickerGroups = PreviewControl<c::ComboBox>(pickerDialog, L"IconLibraryGroups");
             pickerGroups.SelectedIndex(0); Settle(pickerDialog);
+            if (pickerDialog.ActualTheme() != shell->ActualTheme())
+                throw std::runtime_error("icon picker does not inherit its owner window theme");
             PumpUntil([&] { return pickerGrid.ContainerFromIndex(0) && pickerGrid.ContainerFromIndex(1) && pickerGrid.ContainerFromIndex(2); });
             const auto firstTile = pickerGrid.ContainerFromIndex(0).as<x::FrameworkElement>().TransformToVisual(pickerGrid).TransformPoint({0,0});
             const auto secondTile = pickerGrid.ContainerFromIndex(1).as<x::FrameworkElement>().TransformToVisual(pickerGrid).TransformPoint({0,0});

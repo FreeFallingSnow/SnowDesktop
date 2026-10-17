@@ -682,6 +682,7 @@ std::function<void()> IconLibraryPagePresenter::Impl::ShowDialog(x::XamlRoot roo
     const auto view = std::make_shared<IconLibraryPagePresenter::Impl>();
     view->localize = localize; view->action = std::move(action); view->picker = true; view->Build(); view->active = true;
     c::ContentDialog dialog; dialog.XamlRoot(root); dialog.Title(winrt::box_value(localize("iconLibrary.choose")));
+    if (const auto owner = root.Content().try_as<x::FrameworkElement>()) dialog.RequestedTheme(owner.ActualTheme());
     dialog.PrimaryButtonText(localize("iconLibrary.use")); dialog.CloseButtonText(localize("app.settings.cancel"));
     dialog.IsPrimaryButtonEnabled(false); dialog.Content(view->root);
     const auto availableWidth = root ? root.Size().Width : 640.f;
