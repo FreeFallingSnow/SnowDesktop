@@ -2832,5 +2832,6 @@
   "iconAppearance.follow": "Follow global settings",
   "iconAppearance.independent": "Customize this icon",
   "iconAppearance.unavailable": "Target unavailable",
-  "iconAppearance.editEntry": "Edit"
+  "iconAppearance.editEntry": "Edit",
+  "iconStyle.noUpscale": "Smart (no enlargement)"
 }

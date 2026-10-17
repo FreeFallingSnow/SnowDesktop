@@ -2832,5 +2832,6 @@
   "iconAppearance.follow": "Seguir la configuración global",
   "iconAppearance.independent": "Personalizar este ícono",
   "iconAppearance.unavailable": "Destino no disponible",
-  "iconAppearance.editEntry": "Editar"
+  "iconAppearance.editEntry": "Editar",
+  "iconStyle.noUpscale": "Inteligente (sin ampliar)"
 }

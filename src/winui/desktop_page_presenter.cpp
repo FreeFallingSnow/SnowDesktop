@@ -2316,7 +2316,13 @@ DesktopPagePresenter::~DesktopPagePresenter()
 
 void DesktopPagePresenter::SetIconEditorMode()
 {
-    if (impl_ && !impl_->closed) impl_->iconThemes->SetAuthoringEnabled(false);
+    if (impl_ && !impl_->closed)
+    {
+        impl_->iconThemes->SetAuthoringEnabled(false);
+        // The shared setting row keeps its label beside a compact dialog editor.
+        impl_->beautifyPresetRow.layout->controlWidth = 220;
+        impl_->beautifyModeRow.layout->controlWidth = 220;
+    }
 }
 
 void DesktopPagePresenter::SetActions(DesktopPageActions actions)

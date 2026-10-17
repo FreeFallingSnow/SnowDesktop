@@ -67,8 +67,9 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         list.Name(L"IconAppearanceList"); x::Automation::AutomationProperties::SetAutomationId(list, L"IconAppearanceList"); list.MaxHeight(420); list.SelectionMode(c::ListViewSelectionMode::Single);
         list.IsItemClickEnabled(true); list.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
         list.ItemTemplate(x::Markup::XamlReader::Load(LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Grid Padding="8" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="48"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Image x:Name="Preview" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="48" Height="48" Stretch="Uniform"/><StackPanel Grid.Column="1" Spacing="4"><TextBlock x:Name="Name" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="Detail" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TextWrapping="Wrap" Opacity="0.7"/></StackPanel></Grid></DataTemplate>)").as<x::DataTemplate>());
-        c::Border surface; presenter_controls::StyleSettingsCard(surface); surface.Padding({0,0,0,0}); surface.Child(list);
-        root.Children().Append(surface); root.Children().Append(empty);
+        c::Border surface; presenter_controls::StyleSettingsCard(surface); surface.Padding({0,0,0,0});
+        c::StackPanel content; content.Children().Append(list); empty.Margin({16,16,16,16}); content.Children().Append(empty); surface.Child(content);
+        root.Children().Append(surface);
         feedback.IsOpen(false); presenter_controls::BindInfoBarVisibility(feedback); root.Children().Append(feedback);
         LocalizeText();
     }
@@ -230,7 +231,8 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
             result.library = draft->library; return result;
         };
         draft->editor->SetActions(std::move(actions)); draft->editor->ApplySnapshot(draft->settings); draft->editor->Activate();
-        c::StackPanel body; body.Spacing(16); body.MinWidth(320); body.MaxWidth(640);
+        c::StackPanel body; body.Spacing(8);
+        body.MinWidth(std::clamp(root.XamlRoot().Size().Width - 96., 280., 500.)); body.MaxWidth(640);
         draft->preview.Name(L"IconAppearancePreview"); x::Automation::AutomationProperties::SetAutomationId(draft->preview, L"IconAppearancePreview");
         draft->preview.Width(128); draft->preview.Height(128); draft->preview.Stretch(m::Stretch::Uniform);
         draft->preview.HorizontalAlignment(x::HorizontalAlignment::Center); body.Children().Append(draft->preview);

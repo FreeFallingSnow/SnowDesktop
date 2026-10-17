@@ -1172,8 +1172,8 @@ std::vector<std::uint32_t> RenderPreview(const std::vector<std::uint32_t>& sourc
             return std::nullopt;
 
         constexpr int kEdgeAlpha = 16;
-        constexpr int kReliableAlpha = 160;
-        constexpr int kMaxInnerProbe = 4;
+        // Probe inside the contour, past a decorative rim and tiny alpha gaps.
+        const int kMaxInnerProbe = std::clamp(std::min(width, height) / 32, 2, 8);
         constexpr int kColorBucketSize = 24;
         constexpr int kEdgeColorToleranceSq = 30 * 30 * 3;
         constexpr float kMinimumFillRatio = 0.992f;
@@ -1278,9 +1278,7 @@ std::vector<std::uint32_t> RenderPreview(const std::vector<std::uint32_t>& sourc
             for (int x = rowLeft; x <= rowRight; ++x)
             {
                 ++expectedPixels;
-                if (!isVisible(x, y))
-                    return std::nullopt;
-                ++filledPixels;
+                if (isVisible(x, y)) ++filledPixels;
             }
         }
         const float fillRatio = expectedPixels > 0
@@ -1289,29 +1287,30 @@ std::vector<std::uint32_t> RenderPreview(const std::vector<std::uint32_t>& sourc
         if (fillRatio < kMinimumFillRatio)
             return std::nullopt;
 
-        auto stableEdgeColor = [&](int x, int y, int dx, int dy) {
+        auto stableEdgeColor = [&](int x, int y) {
+            const float dx = static_cast<float>(boundsLeft + boundsRight) * .5f - static_cast<float>(x);
+            const float dy = static_cast<float>(boundsTop + boundsBottom) * .5f - static_cast<float>(y);
+            const float span = std::max({std::abs(dx), std::abs(dy), 1.f});
             int bestX = x;
             int bestY = y;
             int bestAlpha = PixelA(pixels[static_cast<size_t>(y) * width + x]);
 
             for (int step = 1; step <= kMaxInnerProbe; ++step)
             {
-                const int nx = x + dx * step;
-                const int ny = y + dy * step;
+                const int nx = x + static_cast<int>(std::lround(dx / span * step));
+                const int ny = y + static_cast<int>(std::lround(dy / span * step));
                 if (nx < 0 || ny < 0 || nx >= width || ny >= height)
                     break;
 
                 const int alpha = PixelA(pixels[static_cast<size_t>(ny) * width + nx]);
                 if (alpha <= kEdgeAlpha)
-                    break;
-                if (alpha > bestAlpha)
+                    continue;
+                if (alpha >= bestAlpha)
                 {
                     bestAlpha = alpha;
                     bestX = nx;
                     bestY = ny;
                 }
-                if (alpha >= kReliableAlpha)
-                    break;
             }
 
             return StraightPlateColor(pixels[static_cast<size_t>(bestY) * width + bestX]);
@@ -1354,9 +1353,9 @@ std::vector<std::uint32_t> RenderPreview(const std::vector<std::uint32_t>& sourc
         {
             const int rowLeft = left[static_cast<size_t>(y)];
             const int rowRight = right[static_cast<size_t>(y)];
-            addSample(stableEdgeColor(rowLeft, y, 1, 0), rowLeft, y);
+            addSample(stableEdgeColor(rowLeft, y), rowLeft, y);
             if (rowRight != rowLeft)
-                addSample(stableEdgeColor(rowRight, y, -1, 0), rowRight, y);
+                addSample(stableEdgeColor(rowRight, y), rowRight, y);
         }
 
         for (int x = boundsLeft; x <= boundsRight; ++x)
@@ -1366,9 +1365,9 @@ std::vector<std::uint32_t> RenderPreview(const std::vector<std::uint32_t>& sourc
             if (colTop < 0 || colBottom < colTop)
                 return std::nullopt;
 
-            addSample(stableEdgeColor(x, colTop, 0, 1), x, colTop);
+            addSample(stableEdgeColor(x, colTop), x, colTop);
             if (colBottom != colTop)
-                addSample(stableEdgeColor(x, colBottom, 0, -1), x, colBottom);
+                addSample(stableEdgeColor(x, colBottom), x, colBottom);
         }
 
         if (edgeSamples.empty())

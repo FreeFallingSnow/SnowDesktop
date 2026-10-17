@@ -2832,5 +2832,6 @@
   "iconAppearance.follow": "전체 설정 따르기",
   "iconAppearance.independent": "개별 설정",
   "iconAppearance.unavailable": "대상을 사용할 수 없음",
-  "iconAppearance.editEntry": "편집"
+  "iconAppearance.editEntry": "편집",
+  "iconStyle.noUpscale": "스마트 꾸미기(확대 안 함)"
 }

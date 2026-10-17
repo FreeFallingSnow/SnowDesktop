@@ -522,6 +522,26 @@ int main(int argc, char** argv)
     }
     for (int y = 36; y < 60; ++y) for (int x = 36; x < 60; ++x) rounded[y * 96 + x] = 0;
     Check(!snowdesktop::icon_beautify::DetectPlateFill(rounded, 96, 96), "a hollow icon silhouette is not mistaken for a solid background plate");
+    {
+        std::vector<std::uint32_t> rimmed(256 * 256, 0);
+        for (int y = 4; y < 252; ++y) for (int x = 4; x < 252; ++x)
+        {
+            const double dx = x + .5 - std::clamp(x + .5, 44., 212.);
+            const double dy = y + .5 - std::clamp(y + .5, 44., 212.);
+            if (dx * dx + dy * dy <= 40. * 40.) rimmed[y * 256 + x] = 0xff20c870;
+        }
+        for (int y = 48; y < 208; ++y) rimmed[y * 256 + 2] = rimmed[y * 256 + 253] = 0xff101010;
+        for (int x = 90; x < 166; ++x) rimmed[2 * 256 + x] = rimmed[253 * 256 + x] = 0xff101010;
+        rimmed[3 * 256 + 128] = rimmed[252 * 256 + 128] = 0xff20c870;
+        rimmed[128 * 256 + 3] = rimmed[128 * 256 + 252] = 0xff20c870;
+        const auto saved = rimmed;
+        const auto plate = snowdesktop::icon_beautify::DetectPlateFill(rimmed, 256, 256);
+        Check(plate && plate->g == 200 && rimmed == saved,
+            "thin detached outline and alpha seams still identify the inner plate without mutating original pixels");
+        for (int y = 80; y < 176; ++y) for (int x = 80; x < 176; ++x) rimmed[y * 256 + x] = 0;
+        Check(!snowdesktop::icon_beautify::DetectPlateFill(rimmed, 256, 256),
+            "seam tolerance never reclassifies a hollow symbol as an opaque icon plate");
+    }
     config.backgroundStyle = 7;
     Check(TextColor(config, 0x111111, 0x161616) == 0x161616, "component title color uses theme foreground even when luminance disagrees");
     config.autoTitleColor = false; config.titleColor = 0x123456;
