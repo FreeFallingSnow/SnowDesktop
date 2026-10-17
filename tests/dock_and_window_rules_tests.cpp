@@ -25,6 +25,7 @@
 #include "dock/dock_collection_icon_rules.h"
 #include "layout/collection_popup_layout.h"
 #include "layout/popup_scrollbar_layout.h"
+#include "widget/view/widget_scroll_rules.h"
 #include "layout/folder_sort_rules.h"
 #include "shell/shell_item_visibility.h"
 #include "shell/shell_file_operation_worker.h"
