@@ -4432,6 +4432,7 @@ private:
     ComPtr<OleDragDropAdapter> oleDragDropAdapter_;
     bool dropTargetRegistered_ = false;
     bool externalOleDragLeavePending_ = false;
+    std::uint64_t externalOleDragLeaveDeadline_ = 0;
     /** @} */
 
     OleDragDropAdapter* EnsureOleDragDropAdapter();

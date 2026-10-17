@@ -112,7 +112,7 @@ inline EnteredDrag Enter(DesktopApp& app, ole_file_source_fixture::Source& sourc
         Require(Access::NoPresentationWindows(app),
             "native OLE entry fixture must remain on its owned message-only window without host feedback windows");
         Require(source.starts == 0 && source.ends == 0 && !source.wrongApartment &&
-            (!source.asynchronous || (source.fileReads == 0 && !source.fileReadBeforeStart)),
+            (!source.asynchronous || (source.dataReads == 0 && !source.fileReadBeforeStart)),
             "native OLE enter and over cannot start a lease or render delayed source content");
     };
     stage(initial, {point.x + 100, point.y}, true, 6);

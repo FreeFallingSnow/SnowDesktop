@@ -17,6 +17,7 @@ public:
     bool asynchronous = true;
     bool wrongApartment = false, fileReadBeforeStart = false;
     int fileReads = 0, starts = 0, ends = 0;
+    int dataReads = 0;
     HRESULT outcome = E_PENDING;
     DWORD endEffect = 0xffffffff;
 
@@ -24,12 +25,13 @@ public:
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* format, STGMEDIUM* medium) override
     {
         CheckThread();
+        ++dataReads;
         if (format && format->cfFormat == CF_HDROP)
         { ++fileReads; fileReadBeforeStart |= asynchronous && starts == 0; }
         return shell->GetData(format, medium);
     }
     HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC* f, STGMEDIUM* m) override
-    { CheckThread(); return shell->GetDataHere(f, m); }
+    { CheckThread(); ++dataReads; return shell->GetDataHere(f, m); }
     HRESULT STDMETHODCALLTYPE QueryGetData(FORMATETC* f) override
     { CheckThread(); return shell->QueryGetData(f); }
     HRESULT STDMETHODCALLTYPE GetCanonicalFormatEtc(FORMATETC* f, FORMATETC* out) override

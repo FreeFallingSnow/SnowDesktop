@@ -4,9 +4,9 @@ namespace native_ole_leave_cases
 {
 using namespace native_ole_file_cases;
 
-enum class Sequence { Outside, Expire, ReturnOver, ReplaceSource, Drop, NewGrace };
+enum class Sequence { Outside, Expire, ReturnOver, ReplaceSource, Drop, NewGrace, SelfOwner };
 inline constexpr Sequence sequences[]{Sequence::Outside, Sequence::Expire, Sequence::ReturnOver,
-    Sequence::ReplaceSource, Sequence::Drop, Sequence::NewGrace};
+    Sequence::ReplaceSource, Sequence::Drop, Sequence::NewGrace, Sequence::SelfOwner};
 
 inline std::vector<fs::path> Files(const fs::path& directory, std::size_t count, const std::string& name)
 {
@@ -115,6 +115,14 @@ inline void Run()
                             {
                                 submitted = source.Get(); submittedFiles = &originals; submittedName = "original";
                             }
+                            else if (sequence == Sequence::SelfOwner)
+                            {
+                                Access::BeginSelfModel(app);
+                                Deliver(oldTick);
+                                Require(Access::InternalSelfSession(app) && !Access::LeavePending(app),
+                                    "external leave cleanup cannot end a newer internally owned drag context");
+                                Access::EndSelfModel(app);
+                            }
                             else
                             {
                                 DWORD effect = 7;
@@ -172,12 +180,15 @@ inline void Run()
                     }
                     for (const auto* provider : {source.Get(), replacement.Get()})
                         Require(!provider->wrongApartment && !provider->fileReadBeforeStart &&
-                            (provider == submitted || (provider->starts == 0 && provider->ends == 0)),
+                            (provider == submitted || (provider->starts == 0 && provider->ends == 0 &&
+                                (!provider->asynchronous || provider->dataReads == 0))),
                             "cancelled and superseded native sources cannot start leases or read delayed content");
                     CheckFiles(originals, "original"); CheckFiles(replacements, "replacement");
                     const auto outputs = Outputs(desktop, existing);
                     Require(outputs.size() == (submitted ? submittedFiles->size() : 0),
                         "native leave sequences must create exactly the selected source outputs once");
+                    std::vector<std::pair<std::wstring, GridCell>> published;
+                    std::unordered_set<std::wstring> occupied;
                     for (std::size_t i = 0; submitted && i < submittedFiles->size(); ++i)
                     {
                         const auto output = std::find_if(outputs.begin(), outputs.end(),
@@ -185,6 +196,31 @@ inline void Run()
                         Require(output != outputs.end() && Read(i ? *output / L"nested.txt" : *output) ==
                                 submittedName + (i ? "-directory" : "-file"),
                             "native return must submit the current source bytes rather than a cancelled or superseded source");
+                        const auto& item = Find(app, ToUpperInvariant(output->wstring()));
+                        const auto advertised = asynchronous ? 1 : submittedFiles->size();
+                        const auto landing = std::find_if(entered.preview.landings.begin(), entered.preview.landings.end(),
+                            [&](const auto& value) { return value.sourceIndex == i; });
+                        if (i < advertised)
+                            Require(landing != entered.preview.landings.end() && item.gridCell.pageId == landing->cell.pageId &&
+                                item.gridCell.column == landing->cell.column && item.gridCell.row == landing->cell.row,
+                                "native returned drop must fulfill the current source's accepted preview cells");
+                        Require(Access::HasVisibleIcon(app, item) && Access::HasMatchingRuntimeSlot(app, item) &&
+                            occupied.insert(item.gridCell.pageId + L":" + std::to_wstring(item.gridCell.column) +
+                                L"," + std::to_wstring(item.gridCell.row)).second,
+                            "native returned outputs must have distinct visible runtime placements");
+                        published.emplace_back(item.layoutKey, item.gridCell);
+                    }
+                    if (submitted)
+                    {
+                        Access::Load(app);
+                        native_drag_async_reload_cases::Refresh(app, true);
+                        for (const auto& [key, cell] : published)
+                        {
+                            const auto& item = Find(app, key);
+                            Require(item.gridCell.pageId == cell.pageId && item.gridCell.column == cell.column &&
+                                item.gridCell.row == cell.row && Access::HasVisibleIcon(app, item) && Access::HasMatchingRuntimeSlot(app, item),
+                                "native leave and return outputs must retain accepted placements after asynchronous disk reload");
+                        }
                     }
                     CheckOriginals(app, existing);
                     ticks += Access::graceTimerMessages; completions += Access::fileCompletionMessages;

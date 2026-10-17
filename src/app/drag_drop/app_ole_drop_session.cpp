@@ -159,6 +159,7 @@ private:
 void DesktopApp::CancelPendingExternalOleDragLeave()
 {
     externalOleDragLeavePending_ = false;
+    externalOleDragLeaveDeadline_ = 0;
     if (hwnd_ && IsWindow(hwnd_))
         KillTimer(hwnd_, kExternalOleDragLeaveGraceTimerId);
 }
@@ -168,9 +169,17 @@ void DesktopApp::FinalizePendingExternalOleDragLeave()
     if (!externalOleDragLeavePending_)
         return;
 
-    CancelPendingExternalOleDragLeave();
     if (!dragDropController_.IsExternalDragActive())
+    {
+        CancelPendingExternalOleDragLeave();
         return;
+    }
+    // KillTimer leaves already-queued WM_TIMER messages intact. A completion
+    // from an older leave must respect the currently armed grace interval.
+    if (externalOleDragLeaveDeadline_ != 0 && GetTickCount64() < externalOleDragLeaveDeadline_)
+        return;
+
+    CancelPendingExternalOleDragLeave();
 
     dragDropController_.EndExternalDrag();
     EndDragSession();
@@ -532,10 +541,14 @@ HRESULT DesktopApp::HandleExternalOleDragLeave(bool pointerOnDesktopSurface)
                 hwnd_, kExternalOleDragLeaveGraceTimerId,
                 kExternalOleDragLeaveGraceMs, nullptr) != 0;
         if (externalOleDragLeavePending_)
+        {
+            externalOleDragLeaveDeadline_ = GetTickCount64() + kExternalOleDragLeaveGraceMs;
             return S_OK;
+        }
     }
 
     externalOleDragLeavePending_ = true;
+    externalOleDragLeaveDeadline_ = 0;
     FinalizePendingExternalOleDragLeave();
     return S_OK;
 }

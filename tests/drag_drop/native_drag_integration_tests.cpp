@@ -134,6 +134,21 @@ struct NativeDragIntegrationAccess
             app.dragDropController_.ExternalSummary().fileCount == 0 && !app.dragSession_.IsActive() &&
             !app.dragSession_.HasContext() && !app.dragSession_.TargetContainer() && app.cachedDropPreview_.landings.empty();
     }
+    static void BeginSelfModel(DesktopApp& app)
+    {
+        BeginModel(app, 0, 1);
+        app.dragDropController_.BeginSelfDrag();
+    }
+    static bool InternalSelfSession(const DesktopApp& app)
+    {
+        return app.dragDropController_.IsSelfDragActive() && app.dragSession_.IsActive() &&
+            app.dragSession_.Items().size() == 1 && app.dragSession_.Source() == Desktop(app);
+    }
+    static void EndSelfModel(DesktopApp& app)
+    {
+        app.dragDropController_.EndSelfDrag();
+        app.EndDragSession();
+    }
     static bool FileDropIdle(const DesktopApp& app)
     {
         return AsyncIdle(app) && app.shellFileOperationInFlight_ == 0 && app.pendingLandingCaches_.empty();
