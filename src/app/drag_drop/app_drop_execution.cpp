@@ -13,6 +13,7 @@
 #include "drag_drop/desktop_file_materialization.h"
 #include "drag_drop/file_drop_execution.h"
 #include "drag_drop/drop_pipeline.h"
+#include "drag_drop/internal_desktop_drop.h"
 
 // Internal and file-backed drop-plan execution.
 
@@ -162,30 +163,13 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                     return collection ? ReleaseCollectionFromGroup(id, cell) : ReleaseWidgetFromFileGroup(id, cell);
                 });
         }
-        RemoveDesktopKeysFromWidgets(sourceList.DesktopKeys());
-        bool changed = false;
-        for (const auto& landing : preview.landings)
-        {
-            auto it = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
-                [&](const DragSourceEntry& entry) { return entry.sourceIndex == landing.sourceIndex; });
-            if (it == sourceList.entries.end()) continue;
-            if (it->desktopWidgetIcon)
-            {
-                const size_t index = FindWidgetIndexById(it->widgetId);
-                if (index < widgets_.size())
-                {
-                    widgets_[index].gridCell = landing.cell;
-                    changed = true;
-                }
-                continue;
-            }
-            if (it->desktopIndex >= items_.size()) continue;
-            items_[it->desktopIndex].gridCell = landing.cell;
-            items_[it->desktopIndex].slot = SlotFromCell(gridPages_, landing.cell);
-            changed = true;
-        }
-        if (changed)
-        {
+        snowdesktop::internal_desktop_drop::Services services;
+        services.removeKeys = [this](const auto& keys) { RemoveDesktopKeysFromWidgets(keys); };
+        services.findWidget = [this](const auto& id) { return FindWidgetIndexById(id); };
+        services.findItem = [this](const auto& key) { return FindItemIndexByKey(key); };
+        services.slot = [this](const auto& cell) { return SlotFromCell(gridPages_, cell); };
+        services.mapPages = [this] { ApplyPageMapping(); };
+        services.committed = [this] {
             // Releasing existing items changes widget membership without a
             // Shell file event, so auto-collection must run at this boundary.
             ApplyAutoCollectFileCategoryWidgets();
@@ -193,8 +177,8 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
             LayoutItems();
             SaveLayoutSlots();
             InvalidateRect(hwnd_, nullptr, TRUE);
-        }
-        return changed;
+        };
+        return snowdesktop::internal_desktop_drop::Execute(sourceList, preview, items_, widgets_, services);
     }
 
     if (preview.targetKind == DropTargetKind::KeyedWidget && preview.targetWidget)
