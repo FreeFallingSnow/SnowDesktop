@@ -83,7 +83,7 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
             std::filesystem::create_directory(paths.back());
             std::ofstream(paths.back() / L"B.txt") << "original B";
         }
-        Batch batch; batch.source = MakeSource(paths); batch.effect = effect; batch.reverseOutputs = true;
+        Batch batch; batch.source = MakeSource(paths); batch.source->async = async; batch.effect = effect; batch.reverseOutputs = true;
         batch.destination = world.root / L"output"; std::filesystem::create_directory(batch.destination);
         external_file_destination::Destination destination;
         destination.preview.targetKind = DropTargetKind::Desktop; destination.preview.anchorCell = request;
@@ -100,8 +100,9 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
                     "the marshaled source paths identify exactly the selected real files");
         };
         Harness harness;
-        Require(harness.Submit(batch, async) == effect, "file page scenario accepts the requested real transfer effect");
-        PumpUntil([&] { return batch.completed == 1 && batch.source->ends == 1; });
+        const DWORD reportedEffect = !async && effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect;
+        Require(harness.Submit(batch, async) == reportedEffect, "file page scenario preserves the selected operation and optimized synchronous move reporting");
+        PumpUntil([&] { return batch.completed == 1 && (!async || batch.source->ends == 1); });
         Require(batch.success && batch.executions == 1 && batch.result->outputs.size() == count &&
             batch.placements->size() == 1 && world.Snapshot() == before,
             "real file completion retains one captured placement without mutating page state during preview");
