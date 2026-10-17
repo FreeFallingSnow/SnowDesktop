@@ -7,6 +7,9 @@
 #include "drag_drop/file_drop_execution.h"
 #include "drag_drop/drop_pipeline.h"
 #include "drag_drop/file_backed_drop_request.h"
+#include "dock/dock_drop_model.h"
+#include "data/dock_layout_codec.h"
+#include "common/json_string.h"
 #include <wrl/implements.h>
 #include <algorithm>
 #include <array>
@@ -14,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 
 namespace async_slot_transfer_cases
@@ -200,6 +204,7 @@ struct Batch
     std::vector<std::wstring> forgottenKeys;
     std::vector<DesktopWidget> widgets;
     std::vector<DockEntry> dock;
+    std::vector<DesktopItem> items;
     bool programsEnabled = false, confirmPrograms = false, confirmConversion = false;
     bool programSaveAccepted = true, exiting = false, conversionPrograms = false;
     int programPrompts = 0, conversionPrompts = 0, programSaveAttempts = 0;
@@ -299,12 +304,37 @@ struct Harness
             };
             services.canPinExisting = [&](const auto&) { return batch.existingDesktopPaths; };
             services.pinExisting = [&](const auto& paths, size_t index) {
-                if (!batch.pinAccepted) return false;
+                dock_drop_model::Services model;
+                model.normalize = Normalize;
+                model.recycle = [](const auto& entry) { return entry.reference == kDesktopIconClsidRecycleBin; };
+                model.folder = [](const auto& entry) { return entry.type == DockEntryType::FolderMapping; };
+                model.capacity = [&](size_t) { return batch.pinAccepted; };
+                model.item = [&](const auto& key) -> DesktopItem* {
+                    for (auto& item : batch.items) if (Normalize(item.layoutKey) == key) return &item;
+                    return nullptr;
+                };
+                if (!dock_drop_model::AddMaterialized({batch.dock, batch.widgets}, paths, index, false, model)) return false;
                 batch.pinnedPaths = paths; batch.pinnedIndex = index;
                 return true;
             };
             services.dockHasCapacity = [&](size_t) { return batch.dockCapacity; };
-            services.afterPin = [&] { ++batch.pinSaves; };
+            services.afterPin = [&] {
+                ++batch.pinSaves;
+                std::ostringstream stream;
+                stream << "{\"schemaVersion\":1,\"dockEntries\":[";
+                const auto ordered = dock_folder_rules::EntriesInUserOrder(batch.dock);
+                for (size_t index = 0; index < ordered.size(); ++index)
+                {
+                    if (index) stream << ',';
+                    dock_layout_codec::Write(stream, *ordered[index], [](const auto& key) {
+                        const auto utf8 = std::filesystem::path(key).u8string();
+                        return json::EscapeString(std::string(utf8.begin(), utf8.end()));
+                    });
+                }
+                stream << "]}";
+                Require(layout_storage::SaveDocument(batch.destination.parent_path() / L"dock-layout.json", stream.str()),
+                    "accepted Dock pin persists the actual committed entries atomically");
+            };
             services.fileName = [](const auto& path) { return std::filesystem::path(path).filename().wstring(); };
             auto executeFiles = [&, fileName = services.fileName, pin = services.pinExisting, afterPin = services.afterPin](const DragSourceList& sources, const DropPreviewList& preview,
                 auto done, bool sync, auto outputs) {
@@ -399,6 +429,37 @@ inline std::vector<std::filesystem::path> Seed(const std::filesystem::path& root
         result.push_back(folder);
     }
     return result;
+}
+
+inline void SeedDock(Batch& batch)
+{
+    batch.dock = {{DockEntryType::DesktopItem, L"EXISTING-0", true},
+        {DockEntryType::DesktopItem, L"EXISTING-1", true}};
+}
+
+inline void CheckDock(const Batch& batch, const std::vector<std::wstring>& paths, bool accepted)
+{
+    std::vector<std::wstring> expected{L"EXISTING-0", L"EXISTING-1"};
+    if (accepted) for (const auto& path : paths) expected.push_back(Normalize(path));
+    std::vector<std::wstring> actual;
+    for (const auto& entry : batch.dock) actual.push_back(entry.reference);
+    Require(actual == expected, "real Dock model contains exactly the selected output identities at the captured insertion boundary");
+    const auto documentPath = batch.destination.parent_path() / L"dock-layout.json";
+    if (!accepted)
+    {
+        Require(!std::filesystem::exists(documentPath), "rejected Dock model does not publish a successful layout save");
+        return;
+    }
+    layout_storage::Document document;
+    Require(layout_storage::LoadDocument(documentPath, document).status == layout_storage::LoadStatus::LoadedPrimary &&
+        document.dockEntries.size() == expected.size(), "actual Dock identities survive the shared atomic layout storage");
+    for (size_t index = 0; index < expected.size(); ++index)
+    {
+        const auto entry = dock_layout_codec::Restore(document.dockEntries[index], batch.widgets,
+            [](const auto& text) { return std::filesystem::path(std::u8string(text.begin(), text.end())).wstring(); }, Normalize);
+        Require(entry.reference == expected[index] && entry.type == DockEntryType::DesktopItem &&
+            entry.keepOnDesktop == (index < 2), "Dock reload preserves original entry order and each mapping versus exclusive identity");
+    }
 }
 
 inline void AssertSuccess(const Batch& batch, const std::vector<std::filesystem::path>& paths, bool asynchronous = true)
@@ -619,13 +680,14 @@ inline void Run(const std::filesystem::path& root)
             "changed destination cancels before file execution and preserves both files and membership");
     }
     // Pinning an existing desktop identity must not produce another physical
-    // copy or shortcut. Pin persistence is an explicit host service boundary.
+    // copy or shortcut. Keep the actual Dock model commit and layout codec.
     for (bool accepted : {true, false})
     {
         const auto path = root / std::to_wstring(serial++);
         const auto selected = Seed(path, 2);
         Batch batch; batch.source = MakeSource(selected); batch.destination = path / L"target";
         batch.effect = DROPEFFECT_LINK; batch.existingDesktopPaths = true; batch.pinAccepted = accepted;
+        SeedDock(batch);
         external_file_destination::Destination destination;
         destination.preview.pinMaterializedItemsToDock = true;
         destination.preview.dockInsertIndex = 2; destination.preview.action = DropAction::Link;
@@ -641,6 +703,7 @@ inline void Run(const std::filesystem::path& root)
         if (accepted)
             Require(batch.pinnedPaths == std::vector<std::wstring>{selected[0].wstring(), selected[1].wstring()} &&
                 batch.pinnedIndex == 2, "Dock identity pinning preserves the original selection and insertion boundary");
+        CheckDock(batch, {selected[0].wstring(), selected[1].wstring()}, accepted);
     }
     {
         const auto path = root / std::to_wstring(serial++);
@@ -671,6 +734,7 @@ inline void Run(const std::filesystem::path& root)
         Batch batch; batch.source = MakeSource(selected); batch.source->async = asynchronous;
         batch.destination = path / L"target"; batch.effect = DROPEFFECT_LINK;
         batch.pinAccepted = accepted; batch.reverseOutputs = true;
+        SeedDock(batch);
         external_file_destination::Destination destination;
         destination.preview.targetKind = DropTargetKind::Desktop;
         destination.preview.pinMaterializedItemsToDock = true;
@@ -700,6 +764,7 @@ inline void Run(const std::filesystem::path& root)
         }
         Require(accepted ? batch.pinnedPaths == expectedPins && batch.pinnedIndex == 2 : batch.pinnedPaths.empty(),
             "materialized Dock commit preserves captured source order and insertion boundary despite reverse receipts");
+        CheckDock(batch, expectedPins, accepted);
         if (asynchronous)
             Require(batch.source->outcome == (accepted ? S_OK : E_ABORT),
                 "OLE final status reflects the complete Dock transaction rather than only file materialization");

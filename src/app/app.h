@@ -62,6 +62,7 @@
 #include "icons/large_icon_assets.h"
 #include "icons/website_icon.h"
 #include "icons/large_icon_motion.h"
+namespace snowdesktop::dock_drop_model { struct Services; }
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
 namespace snowdesktop::tray { struct Icon; class Service; }
 #include "navigation/navigation_settings.h"
@@ -1372,6 +1373,7 @@ private:
     GridPage ResolveDockSizingPage(const GridPage& page) const;
     int GetDockPageItemIconSize(const GridPage& page) const;
     int GetDockPageEdgeMargin(const GridPage& page, bool vertical) const;
+    snowdesktop::dock_drop_model::Services DockDropServices();
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
         DockContainer* targetDock, size_t insertIndex, int mods);
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);

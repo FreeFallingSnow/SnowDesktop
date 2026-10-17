@@ -2720,7 +2720,9 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopShellFileOperationWorkerTests --group-release-tests)
     add_test(NAME shell_widget_displacement_storage
         COMMAND SnowDesktopShellFileOperationWorkerTests --widget-displacement-tests)
-    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests shell_async_slot_transfers shell_drop_placement_storage shell_member_order_storage shell_right_drag_files shell_drop_pipeline_decisions shell_group_membership_storage shell_group_release_storage shell_widget_displacement_storage PROPERTIES
+    add_test(NAME shell_dock_model_storage
+        COMMAND SnowDesktopShellFileOperationWorkerTests --dock-model-tests)
+    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests shell_async_slot_transfers shell_drop_placement_storage shell_member_order_storage shell_right_drag_files shell_drop_pipeline_decisions shell_group_membership_storage shell_group_release_storage shell_widget_displacement_storage shell_dock_model_storage PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
         TIMEOUT 90 LABELS "integration;shell;interaction;storage")
     add_test(NAME shell_file_operation_worker_network_preflight

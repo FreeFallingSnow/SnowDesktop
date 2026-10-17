@@ -1,8 +1,34 @@
 #include "app/app.h"
 #include "widgets/collection_group_rules.h"
 #include "desktop/desktop_source.h"
+#include "dock/dock_drop_model.h"
 
 // Dock insertion, collection drops and restoration to the desktop.
+
+snowdesktop::dock_drop_model::Services DesktopApp::DockDropServices()
+{
+    snowdesktop::dock_drop_model::Services services;
+    services.normalize = ToUpperInvariant;
+    services.recycle = [this](const auto& entry) { return IsRecycleBinDockEntry(entry); };
+    services.folder = [this](const auto& entry) { return IsFolderDockEntry(entry); };
+    services.item = [this](const auto& key) -> DesktopItem* {
+        const auto index = FindItemIndexByKey(key);
+        return index < items_.size() ? &items_[index] : nullptr;
+    };
+    services.capacity = [this](size_t count) {
+        bool found = false;
+        for (const auto& container : containers_)
+        {
+            const auto* dock = dynamic_cast<DockContainer*>(container.get());
+            if (!dock) continue;
+            found = true;
+            if (!dock->HasCapacity(count)) return false;
+        }
+        return found;
+    };
+    return services;
+}
+
 
 void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
     Container* origin, DockContainer* targetDock, size_t insertIndex, int mods)
@@ -35,43 +61,12 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
                     !IsRecycleBinDockEntry(dockEntries_[index]))
                     indices.push_back(index);
             }
-        std::sort(indices.begin(), indices.end());
-        indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
-        if (indices.empty()) return;
-
-        std::vector<DockEntry> moving;
-        for (size_t index : indices)
-            if (index < dockEntries_.size()) moving.push_back(dockEntries_[index]);
-        const bool movingFolders = std::all_of(
-            moving.begin(), moving.end(),
-            [this](const DockEntry& entry) {
-                return IsFolderDockEntry(entry);
-            });
-        const bool movingMain = std::all_of(
-            moving.begin(), moving.end(),
-            [this](const DockEntry& entry) {
-                return !IsFolderDockEntry(entry);
-            });
-        if (!movingFolders && !movingMain)
+        const auto result = snowdesktop::dock_drop_model::Reorder(dockEntries_, std::move(indices), insertIndex, DockDropServices());
+        if (result != snowdesktop::dock_drop_model::ReorderResult::Changed)
         {
-            MessageBeep(MB_ICONWARNING);
+            if (result == snowdesktop::dock_drop_model::ReorderResult::MixedSections) MessageBeep(MB_ICONWARNING);
             return;
         }
-        for (auto it = indices.rbegin(); it != indices.rend(); ++it)
-        {
-            if (*it < insertIndex) --insertIndex;
-            dockEntries_.erase(dockEntries_.begin() + static_cast<std::ptrdiff_t>(*it));
-        }
-        const size_t mainEnd = DockMainEntryCount();
-        const size_t folderEnd =
-            mainEnd + DockFolderEntryCount();
-        insertIndex = movingFolders
-            ? std::clamp(insertIndex, mainEnd, folderEnd)
-            : std::min(insertIndex, mainEnd);
-        dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(insertIndex),
-            moving.begin(), moving.end());
-        snowdesktop::dock_folder_rules::CaptureUserOrder(dockEntries_);
-        NormalizeDockRecycleBinPosition();
         InvalidateDockContainers();
         return;
     }
@@ -148,112 +143,13 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
     }
     if (additions.empty()) return;
 
-    size_t genuinelyNew = 0;
-    for (const DockEntry& addition : additions)
-    {
-        bool exists = std::any_of(dockEntries_.begin(), dockEntries_.end(),
-            [&](const DockEntry& current) {
-                return current.type == addition.type &&
-                    ToUpperInvariant(current.reference) == ToUpperInvariant(addition.reference);
-            });
-        if (!exists) ++genuinelyNew;
-    }
-    if (!targetDock->HasCapacity(genuinelyNew))
+    auto services = DockDropServices();
+    services.capacity = [targetDock](size_t count) { return targetDock->HasCapacity(count); };
+    if (!snowdesktop::dock_drop_model::Pin({dockEntries_, widgets_}, additions, insertIndex, services))
     {
         MessageBeep(MB_ICONWARNING);
         return;
     }
-
-    for (const DockEntry& addition : additions)
-    {
-        auto existing = std::find_if(dockEntries_.begin(), dockEntries_.end(),
-            [&](const DockEntry& current) {
-                return current.type == addition.type &&
-                    ToUpperInvariant(current.reference) == ToUpperInvariant(addition.reference);
-            });
-        if (existing != dockEntries_.end())
-        {
-            const bool becomingExclusive = existing->keepOnDesktop && !addition.keepOnDesktop;
-            existing->keepOnDesktop = addition.keepOnDesktop;
-            if (IsWidgetDockEntryType(addition.type))
-            {
-                existing->keepOnDesktop = false;
-                size_t widgetIndex = FindWidgetIndexById(addition.reference);
-                if (widgetIndex < widgets_.size())
-                {
-                    if (addition.type == DockEntryType::Collection ||
-                        addition.type == DockEntryType::FolderMapping ||
-                    addition.type == DockEntryType::DesktopFiles)
-                    {
-                        for (auto& group : widgets_)
-                        {
-                            if (group.type != (addition.type == DockEntryType::Collection
-                                    ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup)) continue;
-                            std::erase(group.childWidgetIds, addition.reference);
-                            group.activeCategoryId =
-                                snowdesktop::collection_group_rules::
-                                    ResolveActiveItem(
-                                        group.childWidgetIds,
-                                        group.activeCategoryId);
-                        }
-                    }
-                    widgets_[widgetIndex].gridCell = { kDockPageId, 0, 0 };
-                }
-                continue;
-            }
-            if (becomingExclusive)
-            {
-                RemoveDesktopKeysFromWidgets({ addition.reference });
-                size_t itemIndex = FindItemIndexByKey(addition.reference);
-                if (itemIndex < items_.size())
-                    items_[itemIndex].gridCell = { kDockPageId, 0, 0 };
-            }
-            continue;
-        }
-        auto recycleBin = std::find_if(dockEntries_.begin(), dockEntries_.end(),
-            [this](const DockEntry& entry) { return IsRecycleBinDockEntry(entry); });
-        const size_t sortableEnd = static_cast<size_t>(
-            std::distance(dockEntries_.begin(), recycleBin));
-        insertIndex = IsRecycleBinDockEntry(addition)
-            ? dockEntries_.size()
-            : std::min(insertIndex, sortableEnd);
-        dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(insertIndex), addition);
-        if (!IsRecycleBinDockEntry(addition))
-            ++insertIndex;
-
-        if (addition.keepOnDesktop && addition.type == DockEntryType::DesktopItem) continue;
-        if (addition.type == DockEntryType::DesktopItem)
-        {
-            RemoveDesktopKeysFromWidgets({ addition.reference });
-            size_t itemIndex = FindItemIndexByKey(addition.reference);
-            if (itemIndex < items_.size()) items_[itemIndex].gridCell = { kDockPageId, 0, 0 };
-        }
-        else
-        {
-            size_t widgetIndex = FindWidgetIndexById(addition.reference);
-            if (widgetIndex < widgets_.size())
-            {
-                if (addition.type == DockEntryType::Collection ||
-                    addition.type == DockEntryType::FolderMapping ||
-                    addition.type == DockEntryType::DesktopFiles)
-                {
-                    for (auto& group : widgets_)
-                    {
-                        if (group.type != (addition.type == DockEntryType::Collection
-                                ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup)) continue;
-                        std::erase(group.childWidgetIds, addition.reference);
-                        group.activeCategoryId =
-                            snowdesktop::collection_group_rules::
-                                ResolveActiveItem(
-                                    group.childWidgetIds,
-                                    group.activeCategoryId);
-                    }
-                }
-                widgets_[widgetIndex].gridCell = { kDockPageId, 0, 0 };
-            }
-        }
-    }
-    NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
     InvalidateDockContainers();
     InvalidateDragStaticScene();
@@ -263,65 +159,8 @@ bool DesktopApp::AddMaterializedItemsToDock(
     const std::vector<std::wstring>& createdPaths,
     size_t insertIndex, bool keepOnDesktop)
 {
-    std::unordered_set<std::wstring> newKeys;
-    for (const auto& path : createdPaths)
-    {
-        const auto key = ToUpperInvariant(path);
-        if (key.empty() || snowdesktop::shell_item_visibility::IsAlwaysHidden(key)) continue;
-        if (std::none_of(dockEntries_.begin(), dockEntries_.end(), [&](const auto& entry) {
-                return entry.type == DockEntryType::DesktopItem &&
-                    ToUpperInvariant(entry.reference) == key;
-            })) newKeys.insert(key);
-    }
-    bool hasDock = false;
-    for (const auto& container : containers_)
-    {
-        auto* dock =
-            dynamic_cast<DockContainer*>(container.get());
-        if (!dock) continue;
-        hasDock = true;
-        if (!dock->HasCapacity(newKeys.size()))
-            return false;
-    }
-    if (!hasDock) return false;
-
-    bool changed = false;
-    for (const std::wstring& path : createdPaths)
-    {
-        const std::wstring upper = ToUpperInvariant(path);
-        if (upper.empty() ||
-            snowdesktop::
-                shell_item_visibility::
-                    IsAlwaysHidden(upper))
-            continue;
-        auto existing = std::find_if(dockEntries_.begin(), dockEntries_.end(),
-            [&](const DockEntry& entry) {
-                return entry.type == DockEntryType::DesktopItem &&
-                    ToUpperInvariant(entry.reference) == upper;
-        });
-        if (existing != dockEntries_.end())
-        {
-            if (keepOnDesktop && !existing->keepOnDesktop)
-            {
-                existing->keepOnDesktop = true;
-                const auto itemIndex = FindItemIndexByKey(upper);
-                if (itemIndex < items_.size() && items_[itemIndex].gridCell.pageId == kDockPageId)
-                    items_[itemIndex].gridCell = {};
-                changed = true;
-            }
-            continue;
-        }
-        auto recycleBin = std::find_if(dockEntries_.begin(), dockEntries_.end(),
-            [this](const DockEntry& entry) { return IsRecycleBinDockEntry(entry); });
-        insertIndex = std::min(insertIndex,
-            static_cast<size_t>(std::distance(dockEntries_.begin(), recycleBin)));
-        dockEntries_.insert(dockEntries_.begin() + static_cast<std::ptrdiff_t>(insertIndex),
-            DockEntry{ DockEntryType::DesktopItem, upper, keepOnDesktop });
-        ++insertIndex;
-        changed = true;
-    }
-    if (!changed) return keepOnDesktop && !createdPaths.empty();
-    NormalizeDockRecycleBinPosition();
+    if (!snowdesktop::dock_drop_model::AddMaterialized({dockEntries_, widgets_}, createdPaths,
+            insertIndex, keepOnDesktop, DockDropServices())) return false;
     RefreshCollectedKeysCache();
     InvalidateDockContainers();
     InvalidateDragStaticScene();
