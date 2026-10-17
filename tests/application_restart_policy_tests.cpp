@@ -2,6 +2,7 @@
 #include "platform/application_restart_policy.h"
 #include "platform/crash_restart_history.h"
 #include "platform/owned_window_shutdown.h"
+#include "platform/user_object_recovery.h"
 #include "../src/app/lifecycle/startup_cancellation.h"
 #include "../src/app/lifecycle/startup_diagnostics.h"
 #include "shell/shell_call_diagnostics.h"
@@ -307,6 +308,147 @@ void TestRealProcessExit(DWORD exitCode, bool preventRestart,
             "watchdog reports the restart launcher result");
     }
 }
+
+// Replace only the resource query, persistence and restart boundaries. The
+// production monitor owns timing, busy deferral, reentrancy and attempt limits.
+void TestUserObjectRecovery()
+{
+    namespace recovery = snowdesktop::user_object_recovery;
+    struct Fixture
+    {
+        recovery::Monitor monitor;
+        DWORD count = 10000, quota = 10000;
+        bool safe = true, saved = true, launched = true, reenter = false;
+        LSTATUS reservation = ERROR_SUCCESS;
+        int queries = 0, checkpoints = 0, reservations = 0, restarts = 0;
+        std::vector<recovery::Event> events;
+        bool Poll(ULONGLONG now)
+        {
+            return monitor.Poll(now, quota, safe,
+                [&] { ++queries; return count; },
+                [&] {
+                    ++checkpoints;
+                    if (reenter)
+                    {
+                        reenter = false;
+                        const auto before = queries;
+                        Expect(!Poll(now + 10000) && queries == before,
+                            "nested timer dispatch cannot query or restart during a recovery checkpoint");
+                    }
+                    return saved;
+                },
+                [&](ULONGLONG) { ++reservations; return reservation; },
+                [&] { ++restarts; return launched; },
+                [&](recovery::Event event, DWORD objects, DWORD limit, LSTATUS) {
+                    Expect(objects == count && limit == quota,
+                        "recovery diagnostics retain the triggering resource sample");
+                    events.push_back(event);
+                });
+        }
+    };
+    Fixture exhausted;
+    Expect(!exhausted.Poll(0) && !exhausted.Poll(500) && exhausted.queries == 1,
+        "resource sampling does not allocate another timer or run per input message");
+    Expect(!exhausted.Poll(1000) && !exhausted.Poll(2000) && exhausted.Poll(3000) &&
+            exhausted.checkpoints == 1 && exhausted.reservations == 1 && exhausted.restarts == 1,
+        "the reported 10000-object exhaustion invokes one saved, budgeted restart after sustained pressure");
+    Expect(!exhausted.Poll(4000) && exhausted.restarts == 1,
+        "a queued maintenance message cannot immediately repeat an accepted restart");
+
+    Fixture transient;
+    transient.count = 9500;
+    transient.Poll(0);
+    transient.count = 9400;
+    transient.Poll(2000);
+    transient.count = 9500;
+    Expect(!transient.Poll(4000) && !transient.Poll(6000) && transient.Poll(7000),
+        "a temporary near-quota spike resets the continuous-pressure deadline");
+
+    Fixture busy;
+    busy.safe = false;
+    busy.Poll(0);
+    Expect(!busy.Poll(5000) && busy.checkpoints == 0 && busy.reservations == 0 && busy.restarts == 0,
+        "busy drag, menu, file-operation and startup gates cannot save an intermediate model or restart");
+    busy.safe = true;
+    busy.reenter = true;
+    Expect(busy.Poll(6000) && busy.restarts == 1,
+        "sustained exhaustion can recover once the host reaches a safe maintenance boundary");
+
+    Fixture unsaved;
+    unsaved.saved = false;
+    unsaved.Poll(0);
+    Expect(!unsaved.Poll(3000) && unsaved.reservations == 0 && unsaved.restarts == 0 &&
+            unsaved.events.back() == recovery::Event::CheckpointFailed,
+        "layout persistence failure retains the old host without consuming a restart reservation");
+    unsaved.saved = true;
+    Expect(!unsaved.Poll(32000) && unsaved.Poll(33000),
+        "a failed checkpoint retries at a bounded interval instead of on every maintenance tick");
+
+    for (const LSTATUS error : {ERROR_RETRY, ERROR_ACCESS_DENIED})
+    {
+        Fixture limited;
+        limited.reservation = error;
+        limited.Poll(0);
+        Expect(!limited.Poll(3000) && limited.restarts == 0 &&
+                limited.events.back() == recovery::Event::RestartLimited &&
+                !limited.Poll(33000) && limited.reservations == 1,
+            "a previous restart or unavailable persistent budget denies automatic relaunch");
+    }
+    Fixture failed;
+    failed.launched = false;
+    failed.Poll(0);
+    Expect(!failed.Poll(3000) && failed.events.back() == recovery::Event::RestartFailed &&
+            !failed.Poll(33000) && failed.restarts == 1,
+        "a failed restart handoff keeps the host and cannot form a tight launch loop");
+    Fixture noReading;
+    noReading.count = 0;
+    noReading.Poll(0);
+    Expect(!noReading.Poll(10000) && noReading.checkpoints == 0 && noReading.events.empty(),
+        "a failed or empty USER query is not classified as exhaustion");
+    Fixture customQuota;
+    customQuota.quota = 18000;
+    customQuota.Poll(0);
+    Expect(!customQuota.Poll(4000) && customQuota.restarts == 0,
+        "10000 objects do not exhaust an explicitly raised 18000-object quota");
+    customQuota.count = 17100;
+    Expect(!customQuota.Poll(5000) && customQuota.Poll(8000),
+        "a configured process quota determines the sustained recovery threshold");
+}
+
+void TestUserObjectRestartBudget()
+{
+    namespace recovery = snowdesktop::user_object_recovery;
+    const std::wstring keyName = L"Software\\SnowDesktopTests\\UserObjectRecovery-" +
+        std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(GetTickCount64());
+    const auto now = GetTickCount64();
+    Expect(recovery::ReserveRestart(now, HKEY_CURRENT_USER, keyName.c_str()) == ERROR_SUCCESS,
+        "first automatic recovery reserves its isolated registry budget");
+    HANDLE child = StartChild(L"\"--child-resource-budget=" + keyName + L"\"");
+    Expect(child != nullptr, "a fresh process checks the persisted recovery budget");
+    if (child)
+    {
+        const auto wait = WaitForSingleObject(child, 10000);
+        DWORD code = STILL_ACTIVE;
+        GetExitCodeProcess(child, &code);
+        Expect(wait == WAIT_OBJECT_0 && code == 0,
+            "a replacement process cannot bypass the automatic restart interval");
+        if (wait != WAIT_OBJECT_0) { TerminateProcess(child, ERROR_CANCELLED); WaitForSingleObject(child, 5000); }
+        CloseHandle(child);
+    }
+    Expect(recovery::ReserveRestart(now + 15 * 60 * 1000, HKEY_CURRENT_USER, keyName.c_str()) == ERROR_SUCCESS,
+        "a later recovery can reserve again after the documented fifteen-minute interval");
+    HKEY key = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, keyName.c_str(), 0, KEY_SET_VALUE, &key) == ERROR_SUCCESS)
+    {
+        const DWORD malformed = 42;
+        RegSetValueExW(key, L"LastRestartUptime", 0, REG_DWORD,
+            reinterpret_cast<const BYTE*>(&malformed), sizeof(malformed));
+        RegCloseKey(key);
+    }
+    Expect(recovery::ReserveRestart(now, HKEY_CURRENT_USER, keyName.c_str()) != ERROR_SUCCESS,
+        "an unreadable or malformed persistent guard cannot authorize a restart loop");
+    RegDeleteTreeW(HKEY_CURRENT_USER, keyName.c_str());
+}
 }
 
 int wmain(int argc, wchar_t* argv[])
@@ -315,6 +457,13 @@ int wmain(int argc, wchar_t* argv[])
     if (argc == 2)
     {
         const std::wstring_view argument(argv[1]);
+        constexpr std::wstring_view budgetPrefix = L"--child-resource-budget=";
+        if (argument.starts_with(budgetPrefix))
+        {
+            const std::wstring key(argument.substr(budgetPrefix.size()));
+            return snowdesktop::user_object_recovery::ReserveRestart(
+                GetTickCount64(), HKEY_CURRENT_USER, key.c_str()) == ERROR_RETRY ? 0 : 1;
+        }
         if (argument == L"--child-cancel-startup")
         {
             snowdesktop::StartupCancellation cancellation;
@@ -343,6 +492,8 @@ int wmain(int argc, wchar_t* argv[])
     using namespace snowdesktop::application_restart_policy;
     TestStartupDiagnostics();
     TestCrashHistoryRead();
+    TestUserObjectRecovery();
+    TestUserObjectRestartBudget();
     TestFailedStartupWindows();
     TestSlowShellDiagnostics();
     if (!AllowsCrashRestart(kFlags))
