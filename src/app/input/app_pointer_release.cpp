@@ -1760,4 +1760,7 @@ cleanup:
     marqueeWidgetIndex_ = static_cast<size_t>(-1);
     marqueeDockFolderPopup_ = false;
     ReleaseCapture();
+    if (generalSettings_.dockEnabled && !reloading_ &&
+        dockRunningWindowsRefreshTick_ == 0)
+        RefreshDockRunningWindows(false);
 }

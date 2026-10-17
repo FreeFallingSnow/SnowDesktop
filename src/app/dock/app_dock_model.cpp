@@ -410,6 +410,9 @@ bool DesktopApp::RemoveDockDragOutItems(const std::vector<Item*>& sourceItems)
         RefreshCollectedKeysCache();
     }
     if (!usageChanged && mappedEntryIndices.empty()) return false;
+    // The drag still owns Dock item wrappers here. Let its release/unwind
+    // refresh running membership after those references have been released.
+    dockRunningWindowsRefreshTick_ = 0;
     InvalidateDockContainers();
     InvalidateDragStaticScene();
     return true;
@@ -432,6 +435,10 @@ bool DesktopApp::RemoveDockMappingAt(
     SaveLayoutSlots();
     RebuildContainersAndItems();
     LayoutItems();
+    // Removing a pin changes running-area membership without a window event.
+    // Do not leave the app missing until the periodic discovery fallback.
+    dockRunningWindowsRefreshTick_ = 0;
+    RefreshDockRunningWindows(false);
     InvalidateDragStaticScene();
     if (hwnd_)
         InvalidateRect(hwnd_, nullptr, TRUE);

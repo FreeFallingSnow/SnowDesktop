@@ -1195,6 +1195,11 @@ void DesktopApp::OnMouseMoveAt(
                     CancelActiveItemDrag();
                     InvalidateRect(hwnd_, nullptr, FALSE);
                 }
+                // A self-drop can remove a Dock mapping while OLE still owns
+                // the source wrappers. Discovery is safe after full unwind.
+                if (generalSettings_.dockEnabled && !reloading_ &&
+                    dockRunningWindowsRefreshTick_ == 0)
+                    RefreshDockRunningWindows(false);
                 return;
             }
         }
