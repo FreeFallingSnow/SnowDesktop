@@ -133,17 +133,17 @@ inline void RunLandings(const std::filesystem::path& root, bool previewOnly = fa
     for (bool reverse : {false, true})
     for (size_t count : {size_t{1}, size_t{2}})
     for (int owner : {1, 2, 3, 4})
-    for (bool smallGrid : {false, true})
+    for (const auto grid : {GridSpan{6, 5}, GridSpan{1, 1}, GridSpan{1, 5}, GridSpan{6, 1}})
     for (bool full : {false, true})
     {
-        if ((monitors == 1 && reverse) || (smallGrid && !full)) continue;
+        if (monitors == 1 && reverse) continue;
         World world(root / (L"landings-" + std::to_wstring(serial++)), monitors, reverse);
         Seed(world, count, owner, false);
         // Keep a complete, valid enumerated model. The nonselected file stays
         // in its original logical owner while selected files leave it.
         world.widgets.back().itemKeys.push_back(world.items.back().layoutKey);
         world.names[L"source"] = L"Source";
-        if (smallGrid) { world.columns[L"target"] = 1; world.rows[L"target"] = 1; }
+        world.columns[L"target"] = grid.columns; world.rows[L"target"] = grid.rows;
         const auto fill = [&](const std::wstring& id) {
             DesktopWidget widget; widget.id = L"filler-" + id; widget.type = DesktopWidgetType::Collection;
             widget.gridCell = {id, 0, 0}; widget.gridSpan = {world.columns.at(id), world.rows.at(id)};
@@ -170,7 +170,7 @@ inline void RunLandings(const std::filesystem::path& root, bool previewOnly = fa
             auto ids = world.savedIds; ids.insert(ids.end(), reserved.begin(), reserved.end());
             return page_mapping::GenerateId(ids);
         };
-        const GridCell request{target, smallGrid ? 0 : 1, smallGrid ? 0 : 1};
+        const GridCell request{target, grid.columns == 1 ? 0 : 1, grid.rows == 1 ? 0 : 1};
         const auto before = world.Snapshot(); const auto stored = Bytes(world.root / L"layout.json");
         const auto files = widget_displacement_cases::Files(world.root / L"sources");
         const auto metadata = world.Metadata();
@@ -182,11 +182,15 @@ inline void RunLandings(const std::filesystem::path& root, bool previewOnly = fa
             "desktop landing preview never changes source ownership, page records or persisted layout");
         std::set<std::tuple<std::wstring, int, int>> previewCells;
         for (const auto& landing : preview.landings)
+        {
+            Require(landing.span.columns > 0 && landing.span.rows > 0 && !landing.cell.pageId.empty(),
+                "desktop preview publishes nonoverlapping legal landings for accepted sources");
             for (int column = 0; column < landing.span.columns; ++column)
                 for (int row = 0; row < landing.span.rows; ++row)
-                    Require(landing.span.columns > 0 && landing.span.rows > 0 && landing.cell.column + column >= 0 &&
+                    Require(landing.cell.column + column >= 0 &&
                         landing.cell.row + row >= 0 && previewCells.emplace(landing.cell.pageId, landing.cell.column + column, landing.cell.row + row).second,
                         "desktop preview publishes nonoverlapping legal landings for accepted sources");
+        }
         if (previewOnly) continue;
         // Q08 does not prescribe a full-page fallback. A declined plan may
         // preserve the model; every plan that does commit must remain legal.
@@ -205,7 +209,7 @@ inline void RunLandings(const std::filesystem::path& root, bool previewOnly = fa
             Require(item.gridCell.column == landing.cell.column && item.gridCell.row == landing.cell.row,
                 "accepted desktop landings retain their captured cell coordinates");
             if (!full && count == 1)
-                Require(item.gridCell.pageId == world.Named(L"Destination") && item.gridCell.column == 1 && item.gridCell.row == 1,
+                Require(item.gridCell.pageId == world.Named(L"Destination") && item.gridCell.column == request.column && item.gridCell.row == request.row,
                     "a free single-file target fulfills the visible requested destination cell");
         }
         Require(world.Metadata() == metadata && widget_displacement_cases::Files(world.root / L"sources") == files,
@@ -298,6 +302,20 @@ inline void Run(const std::filesystem::path& root, std::wstring_view section = L
         Require(!world.Execute(source, preview) && world.Snapshot() == before && world.commits == 0 &&
             Bytes(world.root / L"layout.json") == stored && world.Named(L"Replacement") == (invalid == 0 ? id : L""),
             "invalid or replaced planned pages reject before page registration, ownership removal and persisted mutation");
+    }
+    if (section == L"all" || section == L"landings")
+    for (bool columnsChanged : {false, true})
+    {
+        World world(root / (columnsChanged ? L"columns-shrink" : L"rows-shrink")); Seed(world, 1, 1, false);
+        world.widgets.back().itemKeys.push_back(world.items.back().layoutKey);
+        world.Apply(); const auto source = Sources(world, 1); auto preview = Preview(source);
+        const auto target = world.Named(L"Destination"); preview.landings[0].cell = {target, 1, 1};
+        if (columnsChanged) world.columns[target] = 1;
+        else world.rows[target] = 1;
+        world.Apply(); world.Legal(); world.Save();
+        const auto before = world.Snapshot(); const auto stored = Bytes(world.root / L"layout.json");
+        Require(!world.Execute(source, preview) && world.Snapshot() == before && world.commits == 0 && Bytes(world.root / L"layout.json") == stored,
+            "a captured landing invalidated by a page-column or page-row change rejects without altering ownership or storage");
     }
     std::cout << "internal desktop file dispatch, identity, rejection, landing preview, page mapping and storage cases passed\n";
 }
