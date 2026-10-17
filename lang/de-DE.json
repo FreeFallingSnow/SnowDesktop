@@ -787,7 +787,7 @@
   "app.widget_preview.setting_search_box": "Suchfeld",
   "app.widget_preview.setting_hide": "Aus",
   "app.widget_preview.setting_show": "Ein",
-  "app.widget_preview.collection_intro": "Bewahren Sie häufig verwendete Elemente in einer Sammlung auf. Bei den unten aufgeführten kompakten und großen Größen handelt es sich um schnell hinzuzufügende Voreinstellungen, deren Größe Sie nach dem Hinzufügen frei ändern können.",
+  "app.widget_preview.collection_intro": "Häufig verwendete Elemente in einer Sammlung bündeln. Ein kompaktes Widget, ein Symbol oder eine größere Vorlage wählen und die Größe nach dem Hinzufügen anpassen.",
   "app.widget_preview.collection_compact": "Kompakte Sammlung",
   "app.widget_preview.collection_compact_hint": "Behalten Sie einen einfachen Sammlungseintrag auf dem Desktop und klicken Sie darauf, um den Inhalt anzuzeigen.",
   "app.widget_preview.collection_scroll_grid": "Große Sammlung",
@@ -2833,5 +2833,8 @@
   "iconAppearance.independent": "Dieses Symbol anpassen",
   "iconAppearance.unavailable": "Ziel nicht verfügbar",
   "iconAppearance.editEntry": "Bearbeiten",
-  "iconStyle.noUpscale": "Intelligent (ohne Vergrößern)"
+  "iconStyle.noUpscale": "Intelligent (ohne Vergrößern)",
+  "app.interact.single_cell_display": "Einzelzellenansicht",
+  "app.interact.single_cell_component": "Widget-Modus",
+  "app.interact.single_cell_icon": "Symbolmodus"
 }

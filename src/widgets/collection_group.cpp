@@ -644,6 +644,7 @@ Item* CollectionGroup::GetSlotItem(size_t idx) const
 std::vector<std::unique_ptr<Slot>>
 CollectionGroup::BuildSlots()
 {
+    if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
     std::vector<std::unique_ptr<Slot>> slots;
     if (!data_ || !app_) return slots;
@@ -876,6 +877,7 @@ WidgetHit CollectionGroup::HitTestWidget(POINT pt) const
 {
     WidgetHit base =
         WidgetContainer::HitTestWidget(pt);
+    if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None) return base;
     RECT search = GetSearchBoxRect();
     if (!IsRectEmptyRect(search) &&
@@ -900,6 +902,7 @@ WidgetHit CollectionGroup::HitTestWidget(POINT pt) const
 HitRegion CollectionGroup::HitTestDrag(
     POINT pt, Slot*& outSlot)
 {
+    if (IsSingleCellDesktopPoint(pt)) return WidgetContainer::HitTestDrag(pt, outSlot);
     outSlot = nullptr;
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt))

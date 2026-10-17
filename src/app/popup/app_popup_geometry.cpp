@@ -2,6 +2,7 @@
 #include "app/dock/dock_folder_popup_read.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "categorized_popup_scope.h"
+#include "widgets/single_cell_widget_rules.h"
 
 // Collection-popup model lookup, selection adapter, geometry and animation-cache preparation.
 
@@ -11,7 +12,7 @@ bool DesktopApp::UsesCategorizedPopupControls(const DesktopWidget& widget) const
     const bool dockFolder = dockFolderPopupOpen_ && &widget == &dockFolderPopupWidget_;
     const size_t sourceCount = widget.type == DesktopWidgetType::FolderMapping
         ? widget.folderEntries.size() : widget.itemKeys.size();
-    return popupAnchoredToDock_ &&
+    return (popupAnchoredToDock_ || snowdesktop::single_cell_widget::IsSingleCell(widget)) &&
         (widget.type == DesktopWidgetType::FileCategories || widget.type == DesktopWidgetType::FolderMapping) &&
         (widget.showSearchBox || widget.showFileCategories) &&
         // Match the known-file reservation used by the opening geometry. Use
@@ -36,7 +37,7 @@ ScrollingItemWidget* DesktopApp::GetCategorizedPopupView() const
     if (!widget || !UsesCategorizedPopupControls(*widget)) return nullptr;
     if (dockFolderPopupOpen_) return dockFolderPopupContainer_.get();
     for (const auto& container : containers_)
-        if (auto* view = dynamic_cast<FileCategories*>(container.get());
+        if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get());
             view && view->GetWidgetData() == widget) return view;
     return nullptr;
 }

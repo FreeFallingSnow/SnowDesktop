@@ -1,4 +1,5 @@
 #include "test_source_boundary.h"
+#include "widgets/single_cell_widget_rules.h"
 #include "layout/layout_scroll_save.h"
 #include "layout/layout_scroll_save_rules.h"
 #include "dock/dock_magnification.h"
@@ -1951,6 +1952,42 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    {
+        namespace single = snowdesktop::single_cell_widget;
+        for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::FileCategories,
+                DesktopWidgetType::FolderMapping, DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})
+        {
+            DesktopWidget widget;
+            widget.type = type;
+            widget.gridSpan = {1, 1};
+            Check(single::IsSingleCell(widget) && !widget.singleCellIconMode,
+                "all five native single-cell containers default to four-thumbnail widget mode");
+            widget.gridSpan = {1, 2};
+            Check(!single::IsSingleCell(widget), "single-column widgets are not compact single-cell entrances");
+        }
+        DesktopWidget lua;
+        lua.type = DesktopWidgetType::LuaScript;
+        lua.gridSpan = {1, 1};
+        Check(!single::IsSingleCell(lua), "Lua widget contracts do not inherit native storage presentation");
+        DesktopWidget dockPopup;
+        dockPopup.type = DesktopWidgetType::FolderMapping;
+        dockPopup.gridSpan = {1, 1};
+        dockPopup.gridCell.pageId = kDockPageId;
+        Check(!single::IsDesktopSingleCell(dockPopup),
+            "the internal Dock directory popup is never treated as a compact desktop entrance");
+        const auto arc = single::ResolveArc({0, 0, 64, 64}, 1.0f);
+        Check(single::HitArc(arc, {60, 57}) && !single::HitArc(arc, {32, 32}) &&
+            !single::HitArc(arc, {50, 50}),
+            "the corner arc moves the whole container without capturing its center or hollow corner");
+        const RECT first = single::ThumbnailCell({0, 0, 100, 100}, 0, 6);
+        const RECT fourth = single::ThumbnailCell({0, 0, 100, 100}, 3, 6);
+        Check(first.left == 6 && first.top == 6 && first.right == 50 && first.bottom == 50 &&
+            fourth.left == 50 && fourth.top == 50 && fourth.right == 94 && fourth.bottom == 94,
+            "four-thumbnail component mode fills the same compact grid as a collection");
+        const RECT tiny = single::ThumbnailIconRect({0, 0, 12, 12}, 6, 4, 16);
+        Check(tiny.left == 0 && tiny.top == 0 && tiny.right == 12 && tiny.bottom == 12,
+            "small-scale collection thumbnails retain the existing minimum while fitting the actual tile");
+    }
     if (argc == 2 &&
         (std::string_view(argv[1]) == "--dock-taskbar-exclusion" ||
          std::string_view(argv[1]) == "--dock-taskbar-exclusion-negative-control"))

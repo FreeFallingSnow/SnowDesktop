@@ -179,6 +179,7 @@ constexpr UINT kContextWidgetDetailType = 41059;
 constexpr UINT kContextWidgetDetailSize = 41060;
 constexpr UINT kContextWidgetToggleLargeFolderTitleless = 41061;
 constexpr UINT kContextWidgetToggleExpandOnHover = 41063;
+constexpr UINT kContextWidgetToggleSingleCellMode = 41066;
 constexpr UINT kContextWidgetDemoCategoryFirst = 41900;
 constexpr UINT kContextWidgetDemoCategoryLast = 41912;
 constexpr UINT kContextSpacingPresetFirst = 41150;

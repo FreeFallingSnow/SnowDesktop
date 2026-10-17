@@ -787,7 +787,7 @@
     "app.widget_preview.setting_search_box": "Search box",
     "app.widget_preview.setting_hide": "Off",
     "app.widget_preview.setting_show": "On",
-    "app.widget_preview.collection_intro": "Keep frequently used items in one collection. The compact and large sizes below are quick-add presets, and you can resize freely after adding.",
+    "app.widget_preview.collection_intro": "Keep frequently used items in a collection. Choose a compact widget, an icon, or a larger preset, then resize it after adding.",
     "app.widget_preview.collection_compact": "Compact Collection",
     "app.widget_preview.collection_compact_hint": "Keep a simple collection entry on the desktop and click it to view the contents.",
     "app.widget_preview.collection_scroll_grid": "Large Collection",
@@ -2833,5 +2833,8 @@
   "iconAppearance.independent": "Customize this icon",
   "iconAppearance.unavailable": "Target unavailable",
   "iconAppearance.editEntry": "Edit",
-  "iconStyle.noUpscale": "Smart (no enlargement)"
+  "iconStyle.noUpscale": "Smart (no enlargement)",
+  "app.interact.single_cell_display": "Single-cell display",
+  "app.interact.single_cell_component": "Widget mode",
+  "app.interact.single_cell_icon": "Icon mode"
 }

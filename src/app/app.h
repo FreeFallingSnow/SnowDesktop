@@ -2997,7 +2997,8 @@ private:
     bool StartCollectionPopupCompositionAnimation();
     bool StartLuaWidgetPanelCompositionAnimation();
     void DrawDockEntry(ID2D1DeviceContext* ctx, const DockEntry& entry, RECT rect, int state,
-        int requestedIconSize = 0);
+        int requestedIconSize = 0, const DesktopWidget* widgetSource = nullptr,
+        snowdesktop::WidgetPreviewScene* previewScene = nullptr);
     void RegisterIconBackdrop(ID2D1RenderTarget* target, RECT frame,
         float opacity, std::uintptr_t ownerKey, const snowdesktop::IconBeautifySettings* style = nullptr);
     void DrawBeautifiedIconPlate(ID2D1RenderTarget* ctx, RECT rect,
@@ -3255,7 +3256,8 @@ private:
     void OpenCollectionPopupAt(size_t widgetIndex, POINT anchorPoint,
         const std::wstring& categoryId = L"",
         bool closingStartedByCurrentPress = false);
-    void OpenDockFolderPopupAt(size_t entryIndex, POINT anchorPoint);
+    void OpenDockFolderPopupAt(size_t entryIndex, POINT anchorPoint,
+        size_t mappingWidgetIndex = static_cast<size_t>(-1));
     void ClearDockFolderPopupEntries();
     bool HasActiveContextMenuSession() const;
     void DismissActiveContextMenuForPopupTransition();

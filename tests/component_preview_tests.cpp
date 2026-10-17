@@ -265,6 +265,66 @@ void RunScrollContentClipTests();
 
 int wmain()
 {
+    {
+        using namespace snowdesktop::component_preview;
+        for (UINT dpi : {96u, 144u, 192u})
+            for (const auto appearance : {snowdesktop::modern_menu::Appearance::SystemLightBlur,
+                    snowdesktop::modern_menu::Appearance::SystemDarkBlur})
+            {
+                Window window;
+                Model model;
+                model.title = L"Button surface regression";
+                Card card;
+                card.previewWidth = 120;
+                card.previewHeight = 80;
+                card.cacheKey = L"button-opacity-regression";
+                card.applySettings.kind = ApplyKind::FileCategories;
+                card.options = {{OptionSetting::ListMode, L"Layout", L"Grid", L"List"}};
+                card.render = [](int width, int height, UINT, const StagePlacement&, const ApplySettings&, bool) {
+                    return SolidBitmap(width, height, 0xff204080u);
+                };
+                model.cards.push_back(std::move(card));
+                bool observed = false;
+                window.SetPaintObserverForTesting([&](const std::uint32_t* pixels, int width, int height) {
+                    const RECT button = window.OptionBoundsForTesting(OptionSetting::ListMode, true);
+                    Expect(!IsRectEmpty(&button) && button.right <= width && button.bottom <= height,
+                        "the production preview exposes the unselected option button");
+                    const int x = button.left + MulDiv(8, static_cast<int>(dpi), 96);
+                    const int y = (button.top + button.bottom) / 2;
+                    Expect((pixels[static_cast<size_t>(y) * width + x] >> 24) == 246,
+                        "real unselected button fill cannot become translucent panel material");
+                    bool smoothEdge = false;
+                    for (int row = button.top; row < button.top + (button.bottom - button.top) / 3; ++row)
+                        for (int column = button.left; column < button.left + (button.right - button.left) / 3; ++column)
+                        {
+                            const auto alpha = pixels[static_cast<size_t>(row) * width + column] >> 24;
+                            if (alpha > 76 && alpha < 246) smoothEdge = true;
+                        }
+                    Expect(smoothEdge, "real button corner opacity transitions smoothly into the blurred panel at every DPI");
+                    observed = true;
+                });
+                const RECT anchor{40, 40, 140, 80};
+                Expect(window.Show(model, anchor, nullptr, dpi, false, {}, {}, appearance) && observed,
+                    "the opacity regression executes the production layered-window paint path");
+                window.Close();
+            }
+    }
+    {
+        using snowdesktop::component_preview::detail::ComposeSurfacePixel;
+        // Same RGB inside and outside a button must retain different surface opacity.
+        const COLORREF background = RGB(240, 240, 240);
+        constexpr std::uint32_t pixel = 0x00f0f0f0;
+        Expect((ComposeSurfacePixel(pixel, background, 1.0f, 70, 246, 1.0f) >> 24) == 246,
+            "button interiors remain opaque even when their fill matches the panel background");
+        Expect((ComposeSurfacePixel(pixel, background, 0.0f, 70, 246, 1.0f) >> 24) == 70,
+            "panel material outside controls retains its transparency");
+        Expect((ComposeSurfacePixel(pixel, background, 0.5f, 70, 246, 1.0f) >> 24) == 158,
+            "antialiased button edges interpolate surface opacity instead of jumping at RGB equality");
+        Expect(ComposeSurfacePixel(0x00aaaaaau, background, 0.5f, 70, 246, 1.0f) == 0x9e515151u,
+            "a half-covered gray outline uses the two surfaces' premultiplied colors without a pale halo");
+        Expect(ComposeSurfacePixel(pixel, background, 1.0f, 70, 246, 0.0f) == 0,
+            "the outer panel clip clears control surfaces outside its rounded outline");
+    }
     TestRoundedCoverageEquivalence();
     TestPreviewFrameMemoryBudget();
     TestWidgetClipFactoryReplacement();

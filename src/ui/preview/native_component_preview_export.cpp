@@ -415,14 +415,14 @@ DesktopApp::ExportNativeComponentPreviews(
     };
     const std::array definitions{
         ComponentDefinition{ "collection", kContextAddCollectionWidget,
-            2 },
+            3 },
         ComponentDefinition{ "collection-group",
-            kContextAddCollectionGroupWidget, 1 },
-        ComponentDefinition{ "file-group", kContextAddFileGroupWidget, 1 },
+            kContextAddCollectionGroupWidget, 3 },
+        ComponentDefinition{ "file-group", kContextAddFileGroupWidget, 3 },
         ComponentDefinition{ "file-categories",
-            kContextAddFileCategoryWidget, 1 },
+            kContextAddFileCategoryWidget, 3 },
         ComponentDefinition{ "folder-mapping",
-            kContextAddFolderMappingWidget, 1 },
+            kContextAddFolderMappingWidget, 3 },
     };
     const auto filename = [](std::string_view prefix,
                               std::string_view id) {
@@ -433,6 +433,9 @@ DesktopApp::ExportNativeComponentPreviews(
     };
     const auto buildVariants = [&](std::string_view component) {
         std::vector<Variant> variants;
+        variants.push_back({ "icon", filename(component, "icon"), 2 });
+        if (component != "collection")
+            variants.push_back({ "compact", filename(component, "compact"), 1 });
         if (component == "collection")
         {
             variants.push_back({ "compact", L"collection-compact.png", 0 });

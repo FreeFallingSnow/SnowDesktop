@@ -22,6 +22,7 @@
 #include "layout/collection_titleless_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
+#include "single_cell_widget_rules.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -332,16 +333,8 @@ static RECT GetCollectionSlotRect(const Collection* collection, size_t slot, REC
 // the saved-key placeholder path and the resolved-item thumbnail path.
 RECT Collection::GetThumbnailIconRect(RECT rect) const
 {
-    const int width = rect.right - rect.left;
-    const int height = rect.bottom - rect.top;
-    const int available = std::max(1,
-        std::min(width - Cu(6.0f), height - Cu(4.0f)));
-    const int iconSize = std::min(
-        std::max(Cu(16.0f), available),
-        std::max(1, std::min(width, height)));
-    const int iconX = rect.left + (width - iconSize) / 2;
-    const int iconY = rect.top + (height - iconSize) / 2;
-    return {iconX, iconY, iconX + iconSize, iconY + iconSize};
+    return snowdesktop::single_cell_widget::ThumbnailIconRect(
+        rect, Cu(6.0f), Cu(4.0f), Cu(16.0f));
 }
 
 void Collection::DrawThumbnail(ID2D1DeviceContext* context,
@@ -751,6 +744,7 @@ void Collection::DrawContent(ID2D1DeviceContext* context, RECT body)
  */
 std::vector<std::unique_ptr<Slot>> Collection::BuildSlots()
 {
+    if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
 
     std::vector<std::unique_ptr<Slot>> slots;
@@ -1005,6 +999,7 @@ RECT Collection::GetAllButtonRect() const
 WidgetHit Collection::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
+    if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None || base == WidgetHit::ResizeHandle) return base;
     if (!data_ || !app_ || data_->type != DesktopWidgetType::Collection) return base;
 
@@ -1054,6 +1049,7 @@ WidgetHit Collection::HitTestWidget(POINT pt) const
 
 HitRegion Collection::HitTestDrag(POINT pt, Slot*& outSlot)
 {
+    if (IsSingleCellDesktopPoint(pt)) return WidgetContainer::HitTestDrag(pt, outSlot);
     if (data_ && !data_->scrollContainerMode &&
         GetCollectionPresentation(this, false).interactiveItemCount == 0)
     {

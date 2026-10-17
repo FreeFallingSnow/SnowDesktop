@@ -1088,6 +1088,7 @@ FileGroup::GetSourceTabItemAtPoint(POINT pt) const
 
 std::vector<std::unique_ptr<Slot>> FileGroup::BuildSlots()
 {
+    if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
     std::vector<std::unique_ptr<Slot>> result;
     if (IsGroupSearchActive())
@@ -1553,6 +1554,7 @@ bool FileGroup::TryScrollTabs(POINT pt, int delta, bool* changed)
 WidgetHit FileGroup::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
+    if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None) return base;
     RECT search = GetSearchBoxRect();
     if (!IsRectEmptyRect(search) && PtInRect(&search, pt))
@@ -1599,6 +1601,7 @@ HitRegion FileGroup::HitTestDrag(
     dropPreviewValid_ = false;
     dropPreviewSourceTab_ = false;
     dropPreviewItemPad_ = 0.0f;
+    if (IsSingleCellDesktopPoint(pt)) return WidgetContainer::HitTestDrag(pt, outSlot);
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt))
         return HitRegion::None;

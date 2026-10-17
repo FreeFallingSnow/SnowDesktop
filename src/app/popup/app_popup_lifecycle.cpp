@@ -125,12 +125,21 @@ TryActivateDockPopupFromMenuPointerPress(
 }
 
 void DesktopApp::OpenDockFolderPopupAt(
-    size_t entryIndex, POINT anchorPoint)
+    size_t entryIndex, POINT anchorPoint, size_t mappingWidgetIndex)
 {
-    if (entryIndex >= dockEntries_.size() ||
+    const bool standaloneMapping = mappingWidgetIndex < widgets_.size();
+    if (standaloneMapping && widgets_[mappingWidgetIndex].type != DesktopWidgetType::FolderMapping) return;
+    if (!standaloneMapping && (entryIndex >= dockEntries_.size() ||
         IsLogicalDockEntryType(dockEntries_[entryIndex].type) ||
-        !IsFolderDockEntry(dockEntries_[entryIndex]))
+        !IsFolderDockEntry(dockEntries_[entryIndex])))
         return;
+    DockEntry entry;
+    if (standaloneMapping)
+    {
+        entry.type = DockEntryType::FolderMapping;
+        entry.reference = widgets_[mappingWidgetIndex].id;
+    }
+    else entry = dockEntries_[entryIndex];
 
     pendingCollectionPopupOpen_.reset();
     DismissActiveContextMenuForPopupTransition();
@@ -159,7 +168,6 @@ void DesktopApp::OpenDockFolderPopupAt(
 
     PreserveDockFolderPopupDragSourceForTransition();
     ClearPopupDragTarget();
-    const DockEntry entry = dockEntries_[entryIndex];
     bool targetPending = false;
     const auto target = ResolveDockFolderTarget(entry, &targetPending);
     const std::wstring sourceId =
@@ -370,6 +378,9 @@ void DesktopApp::OpenDockFolderPopupAt(
             }
         }
     }
+    if (standaloneMapping)
+        for (const auto& page : gridPages_)
+            if (page.id == widgets_[mappingWidgetIndex].gridCell.pageId) { dockPage = &page; break; }
     if (!dockPage)
         dockPage = GetFirstPageGridPage();
     if (dockPage) popupPageId_ = dockPage->id;

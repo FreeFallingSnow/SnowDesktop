@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/single_cell_widget_rules.h"
 #include "app/menus/sort_menu.h"
 #include "platform/demo_collection_rules.h"
 #include "layout/collection_titleless_rules.h"
@@ -328,7 +329,8 @@ void DesktopApp::ShowWidgetContextMenu(
     const auto menuWidgetId = widget.id;
     const auto menuPackageId = widget.packageId;
     const auto menuWidgetType = widget.type;
-    const bool dockIconMenu = dockRenameAnchor.has_value() && widget.gridCell.pageId == kDockPageId &&
+    const bool dockIconMenu = ((dockRenameAnchor.has_value() && widget.gridCell.pageId == kDockPageId) ||
+        (snowdesktop::single_cell_widget::IsSingleCell(widget) && widget.singleCellIconMode)) &&
         (widget.type == DesktopWidgetType::Collection || widget.type == DesktopWidgetType::FileCategories ||
          widget.type == DesktopWidgetType::CollectionGroup || widget.type == DesktopWidgetType::FileGroup ||
          widget.type == DesktopWidgetType::FolderMapping);
@@ -470,6 +472,16 @@ void DesktopApp::ShowWidgetContextMenu(
     bool luaElementMenu = false;
     std::optional<POINT> resolvedLuaLocalPoint;
     HMENU demoCategoryMenu = nullptr;
+
+    if (snowdesktop::single_cell_widget::IsSingleCell(widget) && widget.gridCell.pageId != kDockPageId)
+    {
+        const auto label = statusLabel(_LW("app.interact.single_cell_display"),
+            widget.singleCellIconMode ? _LW("app.interact.single_cell_icon")
+                : _LW("app.interact.single_cell_component"));
+        AppendMenuW(menu, MF_STRING, kContextWidgetToggleSingleCellMode, label.c_str());
+        setFluentIcon(menu, kContextWidgetToggleSingleCellMode,
+            snowdesktop::menu_fluent_glyphs::kCollection);
+    }
 
     if (widget.type == DesktopWidgetType::Collection)
     {
@@ -1080,6 +1092,25 @@ void DesktopApp::ShowWidgetContextMenu(
 
     switch (command)
     {
+    case kContextWidgetToggleSingleCellMode:
+        if (const size_t targetIndex = FindWidgetIndexById(menuWidgetId);
+            targetIndex < widgets_.size() && snowdesktop::single_cell_widget::IsSingleCell(widgets_[targetIndex]))
+        {
+            SelectWidgetOnly(targetIndex);
+            const bool previous = widgets_[targetIndex].singleCellIconMode;
+            widgets_[targetIndex].singleCellIconMode = !widgets_[targetIndex].singleCellIconMode;
+            if (!SaveLayoutSlots())
+            {
+                widgets_[targetIndex].singleCellIconMode = previous;
+                break;
+            }
+            InvalidateDragStaticScene();
+            for (const auto& container : containers_)
+                if (auto* view = dynamic_cast<WidgetContainer*>(container.get());
+                    view && view->GetWidgetData() == &widgets_[targetIndex]) view->InvalidateSlots();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        break;
     case kContextWidgetOpen:
     {
         POINT clientPoint = screenPoint;

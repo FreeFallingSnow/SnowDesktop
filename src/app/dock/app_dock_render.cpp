@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widget/preview/widget_preview_scene.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "dock_platform_helpers.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -153,7 +154,8 @@ void DesktopApp::DrawDockAttentionDot(
 }
 
 void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
-    const DockEntry& entry, RECT rect, int state, int requestedIconSize)
+    const DockEntry& entry, RECT rect, int state, int requestedIconSize,
+    const DesktopWidget* widgetSource, snowdesktop::WidgetPreviewScene* previewScene)
 {
     if (!ctx) return;
     const int scaledSpacing = std::max(1, static_cast<int>(std::round(
@@ -347,16 +349,26 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         return;
     }
 
-    size_t widgetIndex = FindWidgetIndexById(entry.reference);
-    if (widgetIndex >= widgets_.size()) return;
-    const DesktopWidget& widget = widgets_[widgetIndex];
-    if (widget.dockIconAssetId.empty() && DrawIndependentDockIcon(ctx, entry, iconRect, state)) return;
+    if (!widgetSource)
+    {
+        const size_t widgetIndex = FindWidgetIndexById(entry.reference);
+        if (widgetIndex >= widgets_.size()) return;
+        widgetSource = &widgets_[widgetIndex];
+    }
+    const DesktopWidget& widget = *widgetSource;
+    if (!previewScene && widget.dockIconAssetId.empty() && DrawIndependentDockIcon(ctx, entry, iconRect, state)) return;
     if (entry.type == DockEntryType::FolderMapping)
     {
         if (auto custom = GetDockCustomIcon(ctx, widget.dockIconAssetId, iconSize, L"widget:" + widget.id))
         {
-            DrawIconBitmap(ctx, custom, iconRect, 1.f, reinterpret_cast<std::uintptr_t>(&entry));
+            DrawIconBitmap(ctx, custom, iconRect, 1.f, reinterpret_cast<std::uintptr_t>(&widget));
             if (state == 2) DrawDockSelectionIndicator(ctx, iconRect, lt);
+            return;
+        }
+        if (previewScene)
+        {
+            DrawPrivacyFaIcon(ctx, iconRect, true);
+            if (ShouldDrawShortcutArrow(true, false)) DrawShortcutArrowOverlay(ctx, iconRect, 1.0f);
             return;
         }
         const std::wstring iconCacheKey =
@@ -393,12 +405,14 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     }
                     else if (!refined || !dockFolderBitmapCache_.PublishFailure(iconCacheKey, ticket, std::chrono::seconds(5))) return;
                     ClearDockAppearanceImages();
+                    InvalidateDragStaticScene();
                     InvalidateDockRects();
+                    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
                 }, hwnd_, kBackgroundShellReadyMessage);
         }
         if (local.value && local.value->Get())
             DrawIconBitmap(ctx, local.value->Get(), iconRect,
-                1.0f, reinterpret_cast<std::uintptr_t>(&entry));
+                1.0f, reinterpret_cast<std::uintptr_t>(&widget));
         else if (local.fresh)
             DrawPrivacyFaIcon(ctx, iconRect, true);
         else
@@ -412,7 +426,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
         return;
     }
     if (auto* custom = widget.dockIconAssetId.empty() ? nullptr : GetDockCustomIcon(ctx, widget.dockIconAssetId, iconSize, L"widget:" + widget.id))
-        DrawIconBitmap(ctx, custom, iconRect, 1.f, reinterpret_cast<std::uintptr_t>(&entry));
+        DrawIconBitmap(ctx, custom, iconRect, 1.f, reinterpret_cast<std::uintptr_t>(&widget));
     else
     {
         const auto collectionLayout =
@@ -420,9 +434,14 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 CalculateLayout(iconRect);
         DrawDockControlBackground(
             ctx, collectionLayout.background,
-            0, !lt, reinterpret_cast<std::uintptr_t>(&entry));
+            0, !lt, reinterpret_cast<std::uintptr_t>(&widget));
         struct PreviewItem { const DesktopWidget* owner; const std::wstring* key; const FolderEntry* folder; };
         std::vector<PreviewItem> previewItems;
+        const auto resolveItem = [&](const std::wstring& key) -> DesktopItem* {
+            if (previewScene) return previewScene->FindDesktopItem(key);
+            const auto index = FindItemIndexByKey(key);
+            return index < items_.size() ? &items_[index] : nullptr;
+        };
         auto appendPreview = [&](const DesktopWidget& source) {
             if (source.type == DesktopWidgetType::FolderMapping)
             {
@@ -436,22 +455,24 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 for (const auto& key : source.itemKeys)
                 {
                     if (previewItems.size() == 4) break;
-                    if (FindItemIndexByKey(key) < items_.size() || initialShellReadPending_)
+                    if (resolveItem(key) || (!previewScene && initialShellReadPending_))
                         previewItems.push_back({ &source, &key, nullptr });
                 }
         };
         if (IsGroupWidgetType(widget.type))
             for (const auto& id : widget.childWidgetIds)
             {
-                const size_t child = FindWidgetIndexById(id);
-                if (child < widgets_.size()) appendPreview(widgets_[child]);
+                const auto childIndex = FindWidgetIndexById(id);
+                const auto* child = previewScene ? previewScene->FindWidget(id)
+                    : (childIndex < widgets_.size() ? &widgets_[childIndex] : nullptr);
+                if (child) appendPreview(*child);
                 if (previewItems.size() == 4) break;
             }
         else appendPreview(widget);
         for (size_t i = 0; i < previewItems.size(); ++i)
         {
             const auto& preview = previewItems[i];
-            size_t itemIndex = preview.key ? FindItemIndexByKey(*preview.key) : items_.size();
+            const auto* item = preview.key ? resolveItem(*preview.key) : nullptr;
             int col = static_cast<int>(i % 2);
             int row = static_cast<int>(i / 2);
             const RECT cell =
@@ -459,8 +480,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                     CellRect(
                         collectionLayout,
                         col, row);
-            if (itemIndex < items_.size())
-                drawDesktopItem(items_[itemIndex], cell, preview.owner);
+            if (item)
+                drawDesktopItem(*item, cell, preview.owner);
             else if (auto previewIcon = preview.folder ? GetSmallCustomIcon(ctx, preview.folder->fullPath, cell.right - cell.left) : nullptr)
                 DrawIconBitmap(ctx, previewIcon, cell);
             else if (preview.folder && preview.folder->iconBitmap)

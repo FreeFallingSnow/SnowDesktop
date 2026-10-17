@@ -482,6 +482,7 @@ void DesktopApp::LoadLayoutSlots()
         widget.showOnHoverOnly = saved.showOnHoverOnly;
         widget.privacyMode = saved.privacyMode;
         widget.scrollContainerMode = saved.scrollContainerMode;
+        widget.singleCellIconMode = saved.singleCellIconMode;
         widget.titleBarCollapsed = saved.titleBarCollapsed;
         widget.titleBarExpandOnHover = saved.titleBarExpandOnHover;
         widget.largeFolderTitleless =
@@ -1253,6 +1254,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
              << ", \"showSearchBox\": " << (w.showSearchBox ? "true" : "false")
              << ", \"showOnHoverOnly\": " << (w.showOnHoverOnly ? "true" : "false")
              << ", \"privacyMode\": " << (w.privacyMode ? "true" : "false")
+             << ", \"singleCellIconMode\": " << (w.singleCellIconMode ? "true" : "false")
              << ", \"scrollContainerMode\": " << (w.scrollContainerMode ? "true" : "false")
              << ", \"titleBarCollapsed\": " << (w.titleBarCollapsed ? "true" : "false")
              << ", \"titleBarExpandOnHover\": " << (w.titleBarExpandOnHover ? "true" : "false")

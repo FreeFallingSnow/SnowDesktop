@@ -188,6 +188,11 @@ public:
     RECT GetFrameRect() const;
     RECT GetLayoutFrameRect() const;
     bool IsCollapsed() const;
+    bool IsSingleCellPresentation() const;
+    bool IsSingleCellDesktopPoint(POINT point) const;
+    bool IsSingleCellIconMode() const;
+    RECT GetSingleCellIconRect() const;
+    void DrawSingleCellContents(ID2D1DeviceContext* context, RECT body);
     RECT GetCollapseButtonRect() const;
     snowdesktop::PageItemVisualMetrics GetItemVisualMetrics() const override;
     RECT GetBodyRect() const;

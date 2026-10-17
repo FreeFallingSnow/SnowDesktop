@@ -3,13 +3,14 @@
 #include "common/types.h"
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget_chrome_rules.h"
+#include "single_cell_widget_rules.h"
 
 namespace snowdesktop::storage_title_bar
 {
 
 inline bool UsesTop(const DesktopWidget& widget, bool enabled) noexcept
 {
-    if (!enabled) return false;
+    if (!enabled || single_cell_widget::IsDesktopSingleCell(widget)) return false;
     switch (widget.type)
     {
     case DesktopWidgetType::Collection:

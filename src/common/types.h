@@ -549,6 +549,8 @@ struct DesktopWidget
     bool keepWhenDesktopHidden = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
+    // Applies only to a standalone 1x1 native storage widget.
+    bool singleCellIconMode = false;
     bool titleBarCollapsed = false;
     bool titleBarExpandOnHover = false;
     bool largeFolderTitleless = false;

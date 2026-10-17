@@ -20,6 +20,7 @@
 #include "app/app.h"
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
+#include "single_cell_widget_rules.h"
 #include "storage_title_bar_layout.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "widget/preview/widget_preview_scene.h"
@@ -35,6 +36,27 @@
 
 namespace
 {
+// Popup groups share their model/view with the desktop. Project a desktop
+// draw or hit without invalidating the popup's live slots or drag pointers.
+struct ScopedDesktopFrame
+{
+    bool& hosted;
+    bool& popup;
+    bool savedHosted;
+    bool savedPopup;
+    ScopedDesktopFrame(bool& hostedFlag, bool& popupFlag)
+        : hosted(hostedFlag), popup(popupFlag), savedHosted(hostedFlag), savedPopup(popupFlag)
+    {
+        hosted = false;
+        popup = false;
+    }
+    ~ScopedDesktopFrame()
+    {
+        hosted = savedHosted;
+        popup = savedPopup;
+    }
+};
+
 ScrollingItemWidget* CategoryTabSource(ScrollingItemWidget* widget)
 {
     if (auto* group = dynamic_cast<FileGroup*>(widget))
@@ -468,6 +490,7 @@ RECT WidgetContainer::GetFrameRect() const
     if (!data_) return {};
     if (hostedFrameActive_)
         return hostedFrame_;
+    if (IsSingleCellIconMode()) return data_->bounds;
     if (app_ && app_->IsGroupedWidget(*data_))
         return {};
     return app_
@@ -488,6 +511,113 @@ bool WidgetContainer::IsCollapsed() const
     // A source hosted inside a file group follows its host's layout, not its
     // own saved standalone collapse preference. Previews also stay expanded.
     return !hostedFrameActive_ && data_ && app_ && app_->IsWidgetCollapsed(*data_);
+}
+
+bool WidgetContainer::IsSingleCellPresentation() const
+{
+    return data_ && snowdesktop::single_cell_widget::IsDesktopSingleCell(*data_) &&
+        (!app_ || !app_->IsGroupedWidget(*data_) || IsPreviewRendering()) &&
+        !IsPopupHosted() && (!IsHosted() || IsPreviewRendering());
+}
+
+bool WidgetContainer::IsSingleCellDesktopPoint(POINT point) const
+{
+    return data_ && snowdesktop::single_cell_widget::IsDesktopSingleCell(*data_) &&
+        (!app_ || !app_->IsGroupedWidget(*data_) || IsPreviewRendering()) &&
+        (!IsHosted() || IsPreviewRendering() ||
+            (IsPopupHosted() && !PtInRect(&hostedFrame_, point)));
+}
+
+bool WidgetContainer::IsSingleCellIconMode() const
+{
+    return IsSingleCellPresentation() && data_->singleCellIconMode;
+}
+
+RECT WidgetContainer::GetSingleCellIconRect() const
+{
+    if (!data_ || !app_) return {};
+    return app_->GetItemIconRect(IsPreviewRendering() ? GetFrameRect() : data_->bounds);
+}
+
+void WidgetContainer::DrawSingleCellContents(ID2D1DeviceContext* context, RECT body)
+{
+    if (!app_ || !data_ || !context) return;
+    struct Entry
+    {
+        const DesktopWidget* owner;
+        const DesktopItem* desktop;
+        const FolderEntry* folder;
+    };
+    std::vector<Entry> entries;
+    auto* scene = GetPreviewScene();
+    const auto append = [&](const DesktopWidget& source) {
+        if (source.type == DesktopWidgetType::FolderMapping)
+        {
+            for (const auto& entry : source.folderEntries)
+            {
+                if (entries.size() == 4) break;
+                entries.push_back({&source, nullptr, &entry});
+            }
+        }
+        else for (const auto& key : source.itemKeys)
+        {
+            if (entries.size() == 4) break;
+            const auto index = scene ? static_cast<size_t>(-1) : app_->FindItemIndexByKey(key);
+            const auto* item = scene ? scene->FindDesktopItem(key)
+                : (index < app_->items_.size() ? &app_->items_[index] : nullptr);
+            if (item) entries.push_back({&source, item, nullptr});
+        }
+    };
+    if (IsGroupWidgetType(data_->type))
+        for (const auto& id : data_->childWidgetIds)
+        {
+            const auto index = scene ? static_cast<size_t>(-1) : app_->FindWidgetIndexById(id);
+            const auto* child = scene ? scene->FindWidget(id)
+                : (index < app_->widgets_.size() ? &app_->widgets_[index] : nullptr);
+            if (child) append(*child);
+            if (entries.size() == 4) break;
+        }
+    else append(*data_);
+
+    const POINT pointer = IsPreviewRendering() ? GetRenderPointer() : app_->lastMousePoint_;
+    const bool privateContents = data_->privacyMode && !PtInRect(&body, pointer) &&
+        !app_->dragSession_.IsActive() && !app_->dragDropController_.IsExternalDragActive();
+    for (size_t index = 0; index < entries.size(); ++index)
+    {
+        RECT tile = snowdesktop::single_cell_widget::ThumbnailCell(body, index, Cu(6.0f));
+        const RECT icon = snowdesktop::single_cell_widget::ThumbnailIconRect(
+            tile, Cu(6.0f), Cu(4.0f), Cu(16.0f));
+        const int edge = icon.right - icon.left;
+        const auto& entry = entries[index];
+        const auto ownerKey = entry.folder ? reinterpret_cast<std::uintptr_t>(entry.folder)
+            : reinterpret_cast<std::uintptr_t>(entry.desktop);
+        const bool directory = entry.folder && entry.folder->isDirectory;
+        if (privateContents)
+        {
+            app_->DrawPrivacyFaIcon(context, icon, directory);
+            continue;
+        }
+        const auto& identity = entry.folder ? entry.folder->fullPath : entry.desktop->layoutKey;
+        const HBITMAP bitmap = entry.folder ? entry.folder->iconBitmap : entry.desktop->iconBitmap;
+        const bool thumbnail = entry.folder ? entry.folder->iconIsMediaThumbnail : entry.desktop->iconIsMediaThumbnail;
+        const int sysIndex = entry.folder ? entry.folder->sysIconIndex : entry.desktop->sysIconIndex;
+        const bool demo = entry.desktop && app_->ShouldUseDemoCollectionIdentity(entry.owner);
+        if (demo)
+            app_->DrawDemoCollectionIdentityIcon(context, *entry.owner, identity, icon, 1.0f);
+        else if (auto* custom = app_->GetSmallCustomIcon(context, identity, edge))
+            app_->DrawIconBitmap(context, custom, icon, 1.0f, ownerKey);
+        else if (bitmap)
+        {
+            if (auto* image = app_->GetTargetIconBitmap(context, bitmap, identity, thumbnail))
+                app_->DrawIconBitmap(context, image, icon, 1.0f, ownerKey);
+            else app_->DrawPlaceholderIcon(context, sysIndex, icon, 1.0f);
+        }
+        else app_->DrawPlaceholderIcon(context, sysIndex, icon, 1.0f);
+        if (!demo && app_->ShouldDrawShortcutArrow(
+                entry.folder ? entry.folder->isShortcut : entry.desktop->isShortcut,
+                entry.folder ? entry.folder->isApplicationShortcut : entry.desktop->isApplicationShortcut))
+            app_->DrawShortcutArrowOverlay(context, icon, 1.0f);
+    }
 }
 
 RECT WidgetContainer::GetCollapseButtonRect() const
@@ -533,6 +663,7 @@ RECT WidgetContainer::GetMoveHandleRect() const
  */
 RECT WidgetContainer::GetResizeHandleRect() const
 {
+    if (IsSingleCellIconMode()) return {};
     if (IsCollapsed()) return {};
     return StorageChromeLayout(*this,
         app_ ? app_->CurrentPersonalization().cornerRadius : 12.0f).resize;
@@ -561,11 +692,13 @@ RECT WidgetContainer::GetScrollbarViewportRect() const
  */
 RECT WidgetContainer::GetTitleRect() const
 {
+    if (IsSingleCellIconMode() && app_)
+        return app_->GetItemTextRect(IsPreviewRendering() ? GetFrameRect() : data_->bounds, data_->selected);
     RECT handle = GetMoveHandleRect();
     const float barScale = GetBarScale();
     const int reserved = snowdesktop::widget_chrome_rules::
         BottomBarTitleTrailingReserve(
-            GetBottomBarButtonCount(),
+            IsSingleCellPresentation() ? 0 : GetBottomBarButtonCount(),
             Cu(14.0f * barScale),
             Cu(4.0f * barScale),
             Cu(4.0f * barScale),
@@ -607,8 +740,19 @@ bool WidgetContainer::HitResizeHandle(POINT pt) const
  */
 WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
 {
+    if (IsPopupHosted() && IsSingleCellDesktopPoint(pt))
+    {
+        auto* self = const_cast<WidgetContainer*>(this);
+        ScopedDesktopFrame desktop(self->hostedFrameActive_, self->popupFrameActive_);
+        return self->HitTestWidget(pt);
+    }
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt)) return WidgetHit::None;
+
+    if (IsSingleCellIconMode())
+        return snowdesktop::single_cell_widget::HitArc(
+            snowdesktop::single_cell_widget::ResolveArc(GetSingleCellIconRect(), GetCellScale()), pt)
+            ? WidgetHit::MoveHandle : WidgetHit::CollectionOpenBtn;
 
     if (IsPopupHosted()) return WidgetHit::Content;
 
@@ -619,6 +763,8 @@ WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
 
     RECT move = GetMoveHandleRect();
     if (PtInRect(&move, pt)) return WidgetHit::MoveHandle;
+
+    if (IsSingleCellPresentation()) return WidgetHit::CollectionOpenBtn;
 
     return IsCollapsed() ? WidgetHit::MoveHandle : WidgetHit::Content;
 }
@@ -633,9 +779,16 @@ WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
  */
 HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
 {
+    if (IsPopupHosted() && IsSingleCellDesktopPoint(pt))
+    {
+        ScopedDesktopFrame desktop(hostedFrameActive_, popupFrameActive_);
+        return HitTestDrag(pt, outSlot);
+    }
     outSlot = nullptr;
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt)) return HitRegion::None;
+
+    if (IsSingleCellPresentation()) return HitRegion::SortAfter;
 
     auto& slots = GetSlots();
     const bool verticalBar =
@@ -796,6 +949,12 @@ std::wstring WidgetContainer::GetDragHint(Slot* slot, HitRegion region,
  */
 void WidgetContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion region)
 {
+    if (app_ && IsPopupHosted() && IsSingleCellDesktopPoint(app_->lastMousePoint_))
+    {
+        ScopedDesktopFrame desktop(hostedFrameActive_, popupFrameActive_);
+        DrawDropPreview(ctx, slot, region);
+        return;
+    }
     if (!slot || !ctx) return;
     const bool verticalBar =
         GetInsertionStyle() == BarStyle::VBar;
@@ -2671,6 +2830,58 @@ ID2D1Geometry* WidgetContainer::GetCachedClipGeometry(
 void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
 {
     if (!data_ || !context || !app_) return;
+    if (IsPopupHosted() && snowdesktop::single_cell_widget::IsDesktopSingleCell(*data_) &&
+        !app_->IsGroupedWidget(*data_))
+    {
+        ScopedDesktopFrame desktop(hostedFrameActive_, popupFrameActive_);
+        DrawChrome(context, mousePt);
+        return;
+    }
+
+    if (IsSingleCellIconMode())
+    {
+        const RECT frame = IsPreviewRendering() ? GetFrameRect() : data_->bounds;
+        const RECT icon = GetSingleCellIconRect();
+        if (IsRectEmpty(&frame) || IsRectEmpty(&icon)) return;
+        if (data_->selected)
+            app_->DrawD2DRoundedRectangle(context, frame, static_cast<float>(Cu(7.0f)),
+                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.18f), D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.55f));
+        DockEntry entrance;
+        entrance.type = DockEntryTypeForWidget(data_->type);
+        entrance.reference = data_->id;
+        app_->DrawDockEntry(context, entrance, icon, 0,
+            icon.right - icon.left, data_, GetPreviewScene());
+        app_->DrawItemText(context, frame, data_->title, data_->selected, 1.0f,
+            app_->IsLightContentTheme());
+
+        const auto arc = snowdesktop::single_cell_widget::ResolveArc(icon, GetCellScale());
+        Microsoft::WRL::ComPtr<ID2D1PathGeometry> path;
+        Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
+        auto* factory = app_->GetD2DFactory();
+        if (factory && SUCCEEDED(factory->CreatePathGeometry(&path)) &&
+            SUCCEEDED(path->Open(&sink)))
+        {
+            sink->BeginFigure(D2D1::Point2F(arc.centerX + arc.radius, arc.centerY), D2D1_FIGURE_BEGIN_HOLLOW);
+            sink->AddArc(D2D1::ArcSegment(D2D1::Point2F(arc.centerX, arc.centerY + arc.radius),
+                D2D1::SizeF(arc.radius, arc.radius), 0, D2D1_SWEEP_DIRECTION_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+            sink->EndFigure(D2D1_FIGURE_END_OPEN);
+            if (SUCCEEDED(sink->Close()))
+            {
+                Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
+                Microsoft::WRL::ComPtr<ID2D1StrokeStyle> stroke;
+                auto properties = D2D1::StrokeStyleProperties();
+                properties.startCap = properties.endCap = D2D1_CAP_STYLE_ROUND;
+                const bool hot = data_->selected || PtInRect(&frame, mousePt);
+                const auto color = app_->IsLightContentTheme()
+                    ? D2D1::ColorF(0.12f, 0.16f, 0.22f, hot ? 0.95f : 0.55f)
+                    : D2D1::ColorF(1, 1, 1, hot ? 0.95f : 0.55f);
+                if (SUCCEEDED(context->CreateSolidColorBrush(color, &brush)) &&
+                    SUCCEEDED(factory->CreateStrokeStyle(properties, nullptr, 0, &stroke)))
+                    context->DrawGeometry(path.Get(), brush.Get(), arc.stroke, stroke.Get());
+            }
+        }
+        return;
+    }
 
     RECT frame = GetFrameRect();
     RECT body = GetBodyRect();
@@ -2754,7 +2965,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
                 D2D1::RectF((float)frame.left, (float)frame.top, (float)frame.right, (float)frame.bottom),
                 clipGeo), nullptr);
 
-        DrawContent(context, body);
+        if (IsSingleCellPresentation()) DrawSingleCellContents(context, body);
+        else DrawContent(context, body);
 
         if (clipGeo) context->PopLayer();
     }
@@ -2920,12 +3132,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         // Subclass buttons
         {
             RECT handle = GetMoveHandleRect();
-            DrawButtons(context, handle, hovered);
+            if (!IsSingleCellPresentation()) DrawButtons(context, handle, hovered);
         }
     }
 
     // ── Scrollbar (on top of everything, hover only) ──────────
-    if (!IsCollapsed()) DrawScrollbar(context, hovered);
+    if (!IsCollapsed() && !IsSingleCellPresentation()) DrawScrollbar(context, hovered);
 
     // The material reflection must remain visible after component content and
     // the bottom gradient have been composited. Selection keeps its flat

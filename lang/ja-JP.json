@@ -787,7 +787,7 @@
   "app.widget_preview.setting_search_box": "検索ボックス",
   "app.widget_preview.setting_hide": "オフ",
   "app.widget_preview.setting_show": "オン",
-  "app.widget_preview.collection_intro": "よく使うアイテムをひとつにまとめて。以下のコンパクトサイズとラージサイズはクイック追加プリセットであり、追加後に自由にサイズを変更できます。",
+  "app.widget_preview.collection_intro": "よく使う項目をコレクションにまとめます。コンパクトなウィジェット、アイコン、大きなプリセットから選び、追加後にサイズを変更できます。",
   "app.widget_preview.collection_compact": "コンパクトコレクション",
   "app.widget_preview.collection_compact_hint": "デスクトップ上に単純なコレクション エントリを保持し、それをクリックして内容を表示します。",
   "app.widget_preview.collection_scroll_grid": "大コレクション",
@@ -2833,5 +2833,8 @@
   "iconAppearance.independent": "個別に設定",
   "iconAppearance.unavailable": "対象を利用できません",
   "iconAppearance.editEntry": "編集",
-  "iconStyle.noUpscale": "スマート美化（拡大なし）"
+  "iconStyle.noUpscale": "スマート美化（拡大なし）",
+  "app.interact.single_cell_display": "1マス表示",
+  "app.interact.single_cell_component": "ウィジェットモード",
+  "app.interact.single_cell_icon": "アイコンモード"
 }

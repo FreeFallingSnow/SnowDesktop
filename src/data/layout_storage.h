@@ -91,6 +91,7 @@ struct WidgetRecord
     bool showOnHoverOnly = false;
     bool privacyMode = false;
     bool scrollContainerMode = false;
+    bool singleCellIconMode = false;
     bool titleBarCollapsed = false;
     bool titleBarExpandOnHover = false;
     bool largeFolderTitleless = false;

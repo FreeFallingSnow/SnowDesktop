@@ -471,6 +471,17 @@ void TestWidgetCatalogRediscovery(const std::filesystem::path& root)
 void TestDockLayoutBackup(const std::filesystem::path& root)
 {
     namespace layout = snowdesktop::layout_storage;
+    for (const auto* type : {"collection", "fileCategories", "folderMapping", "collectionGroup", "fileGroup"})
+    {
+        const auto prefix = std::string("{\"widgets\":[{\"id\":\"single\",\"page\":\"p\",\"x\":0,\"y\":0,\"type\":\"") + type + "\",\"w\":1,\"h\":1";
+        layout::Document saved;
+        Expect(layout::ParseDocument(prefix + "}]}", saved) && !saved.widgets.front().singleCellIconMode,
+            "legacy layouts default every single-cell native widget to component mode");
+        Expect(layout::ParseDocument(prefix + ",\"singleCellIconMode\":true}]}", saved) && saved.widgets.front().singleCellIconMode,
+            "icon-mode preference loads independently of native widget type");
+        Expect(!layout::ParseDocument(prefix + ",\"singleCellIconMode\":\"true\"}]}", saved),
+            "a malformed single-cell preference cannot silently change presentation");
+    }
     const auto primary = root / L"dock-layout" / L"SnowDesktop.layout.json";
     const auto backup = root / L"dock-layout" / L"backups" / L"saved.json";
     for (int position = 0; position < 4; ++position)

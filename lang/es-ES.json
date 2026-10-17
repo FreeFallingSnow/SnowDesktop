@@ -787,7 +787,7 @@
   "app.widget_preview.setting_search_box": "Cuadro de búsqueda",
   "app.widget_preview.setting_hide": "Desactivado",
   "app.widget_preview.setting_show": "Activado",
-  "app.widget_preview.collection_intro": "Mantén los elementos que usas con frecuencia en una colección. Los tamaños compacto y grande son ajustes preestablecidos para añadirlos rápidamente; después puedes cambiar su tamaño libremente.",
+  "app.widget_preview.collection_intro": "Agrupa los elementos habituales en una colección. Elige un componente compacto, un icono o un diseño más grande y ajusta su tamaño después de añadirlo.",
   "app.widget_preview.collection_compact": "Colección compacta",
   "app.widget_preview.collection_compact_hint": "Mantén una entrada sencilla de la colección en el escritorio y haz clic en ella para ver el contenido.",
   "app.widget_preview.collection_scroll_grid": "Colección grande",
@@ -2833,5 +2833,8 @@
   "iconAppearance.independent": "Personalizar este icono",
   "iconAppearance.unavailable": "Destino no disponible",
   "iconAppearance.editEntry": "Editar",
-  "iconStyle.noUpscale": "Inteligente (sin ampliar)"
+  "iconStyle.noUpscale": "Inteligente (sin ampliar)",
+  "app.interact.single_cell_display": "Vista de una celda",
+  "app.interact.single_cell_component": "Modo componente",
+  "app.interact.single_cell_icon": "Modo icono"
 }

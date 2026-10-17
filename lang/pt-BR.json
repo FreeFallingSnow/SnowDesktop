@@ -787,7 +787,7 @@
   "app.widget_preview.setting_search_box": "Caixa de pesquisa",
   "app.widget_preview.setting_hide": "Desativado",
   "app.widget_preview.setting_show": "Ativado",
-  "app.widget_preview.collection_intro": "Mantenha os itens usados com frequência em uma coleção. Os tamanhos compactos e grandes abaixo são predefinições de adição rápida e você pode redimensionar livremente após adicioná-las.",
+  "app.widget_preview.collection_intro": "Reúna os itens mais usados em uma coleção. Escolha um widget compacto, um ícone ou uma predefinição maior e ajuste o tamanho depois de adicionar.",
   "app.widget_preview.collection_compact": "Coleção compacta",
   "app.widget_preview.collection_compact_hint": "Mantenha uma entrada de coleção simples na área de trabalho e clique nela para visualizar o conteúdo.",
   "app.widget_preview.collection_scroll_grid": "Grande coleção",
@@ -2833,5 +2833,8 @@
   "iconAppearance.independent": "Personalizar este ícone",
   "iconAppearance.unavailable": "Destino indisponível",
   "iconAppearance.editEntry": "Editar",
-  "iconStyle.noUpscale": "Inteligente (sem ampliar)"
+  "iconStyle.noUpscale": "Inteligente (sem ampliar)",
+  "app.interact.single_cell_display": "Exibição em uma célula",
+  "app.interact.single_cell_component": "Modo de widget",
+  "app.interact.single_cell_icon": "Modo de ícone"
 }

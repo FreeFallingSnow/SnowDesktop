@@ -787,7 +787,7 @@
   "app.widget_preview.setting_search_box": "검색 상자",
   "app.widget_preview.setting_hide": "끄기",
   "app.widget_preview.setting_show": "켜짐",
-  "app.widget_preview.collection_intro": "자주 사용하는 항목을 하나의 컬렉션에 보관하십시오. 아래의 소형 및 대형 크기는 빠른 추가 사전 설정이며 추가 후 자유롭게 크기를 조정할 수 있습니다.",
+  "app.widget_preview.collection_intro": "자주 사용하는 항목을 컬렉션에 모으세요. 작은 위젯, 아이콘 또는 큰 프리셋을 선택하고 추가 후 크기를 조절할 수 있습니다.",
   "app.widget_preview.collection_compact": "컴팩트 컬렉션",
   "app.widget_preview.collection_compact_hint": "데스크톱에 간단한 컬렉션 항목을 두고 클릭하여 내용을 확인할 수 있습니다.",
   "app.widget_preview.collection_scroll_grid": "대형 컬렉션",
@@ -2833,5 +2833,8 @@
   "iconAppearance.independent": "개별 설정",
   "iconAppearance.unavailable": "대상을 사용할 수 없음",
   "iconAppearance.editEntry": "편집",
-  "iconStyle.noUpscale": "스마트 꾸미기(확대 안 함)"
+  "iconStyle.noUpscale": "스마트 꾸미기(확대 안 함)",
+  "app.interact.single_cell_display": "한 칸 표시",
+  "app.interact.single_cell_component": "위젯 모드",
+  "app.interact.single_cell_icon": "아이콘 모드"
 }

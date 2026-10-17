@@ -659,6 +659,7 @@ Item* FolderMapping::GetSlotItem(size_t idx) const
  */
 std::vector<std::unique_ptr<Slot>> FolderMapping::BuildSlots()
 {
+    if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
 
     std::vector<std::unique_ptr<Slot>> slots;
@@ -1246,6 +1247,7 @@ void FolderMapping::EnsureCategoryTabVisible(
 WidgetHit FolderMapping::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
+    if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None || !data_) return base;
 
     if (!CategoryIdAtPoint(pt).empty())

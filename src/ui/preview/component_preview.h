@@ -25,6 +25,10 @@ namespace detail
 float RoundedRectangleCoverage(float sampleX, float sampleY,
     float left, float top, float right, float bottom, float radius);
 
+std::uint32_t ComposeSurfacePixel(std::uint32_t rgb, COLORREF background,
+    float controlCoverage, unsigned materialAlpha, unsigned contentAlpha,
+    float panelCoverage);
+
 } // namespace detail
 
 struct Bitmap
@@ -65,6 +69,7 @@ struct ApplySettings
     int rows = 1;
     bool listMode = false;
     bool scrollContainerMode = false;
+    bool singleCellIconMode = false;
     bool largeFolderTitleless = false;
     bool dateHeaders = false;
     bool showFileCategories = false;
@@ -201,6 +206,10 @@ public:
     {
         return cardFrameCacheBytes_;
     }
+    void SetPaintObserverForTesting(std::function<void(const std::uint32_t*, int, int)> observer)
+    {
+        paintObserverForTesting_ = std::move(observer);
+    }
 
 private:
     enum class WallpaperBackdropLoadResult
@@ -226,6 +235,7 @@ private:
         HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
 
     HWND hwnd_ = nullptr;
+    std::function<void(const std::uint32_t*, int, int)> paintObserverForTesting_;
     int width_ = 0;
     int height_ = 0;
     Model model_;

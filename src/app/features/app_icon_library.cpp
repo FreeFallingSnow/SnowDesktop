@@ -41,7 +41,7 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
         if (!id.empty()) uses[id].push_back(name);
     };
     for (const auto& [target, asset] : iconOverrides_) retain(asset, IconOverrideTargetName(target));
-    for (const auto& widget : widgets_) retain(widget.dockIconAssetId, widget.title + L" · Dock");
+    for (const auto& widget : widgets_) retain(widget.dockIconAssetId, widget.title);
     const auto retainLarge = [&](const auto& config, const std::wstring& name) {
         retain(config.imageAssetId, name); retain(config.foregroundImageAssetId, name);
     };
@@ -172,14 +172,14 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
 void DesktopApp::OpenDockIconLibrary(const std::wstring& widgetId)
 {
     const auto index = FindWidgetIndexById(widgetId);
-    if (index >= widgets_.size() || widgets_[index].gridCell.pageId != kDockPageId) return;
+    if (index >= widgets_.size() || !IsWidgetDockEntryType(DockEntryTypeForWidget(widgets_[index].type))) return;
     OpenIconOverrideLibrary(L"widget:" + widgetId);
 }
 
 bool DesktopApp::SetDockIconAsset(const std::wstring& widgetId, const std::string& assetId)
 {
     const auto index = FindWidgetIndexById(widgetId);
-    if (index >= widgets_.size() || widgets_[index].gridCell.pageId != kDockPageId) return false;
+    if (index >= widgets_.size()) return false;
     auto& widget = widgets_[index];
     if (widget.type != DesktopWidgetType::Collection && widget.type != DesktopWidgetType::FileCategories &&
         widget.type != DesktopWidgetType::CollectionGroup && widget.type != DesktopWidgetType::FileGroup &&
@@ -193,7 +193,9 @@ bool DesktopApp::SetDockIconAsset(const std::wstring& widgetId, const std::strin
     const auto previous = widget.dockIconAssetId; widget.dockIconAssetId = assetId;
     if (!SaveLayoutSlots()) { widget.dockIconAssetId = previous; return false; }
     ClearDockAppearanceImages();
-    InvalidateDragStaticScene(); InvalidateDockRects(); return true;
+    InvalidateDragStaticScene(); InvalidateDockRects();
+    if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
 }
 
 bool DesktopApp::ApplyLargeIconLibraryAsset(const snowdesktop::LargeIconSettingsRequest& request, const std::string& id)
@@ -271,7 +273,7 @@ bool DesktopApp::IsIconOverrideTarget(const std::wstring& target) const
     if (target.starts_with(L"widget:"))
     {
         const auto index = FindWidgetIndexById(target.substr(7));
-        return index < widgets_.size() && widgets_[index].gridCell.pageId == kDockPageId;
+        return index < widgets_.size() && IsWidgetDockEntryType(DockEntryTypeForWidget(widgets_[index].type));
     }
     const auto colon = target.find(L':');
     if (colon == std::wstring::npos) return false;
@@ -296,7 +298,7 @@ std::wstring DesktopApp::IconOverrideTargetName(const std::wstring& target) cons
     if (target.starts_with(L"widget:"))
     {
         const auto index = FindWidgetIndexById(target.substr(7));
-        return index < widgets_.size() ? widgets_[index].title + L" · Dock" : target.substr(7);
+        return index < widgets_.size() ? widgets_[index].title : target.substr(7);
     }
     if (target.starts_with(L"recycle-empty:")) return _LW("iconLibrary.recycleEmpty");
     if (target.starts_with(L"recycle-full:")) return _LW("iconLibrary.recycleFull");

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "widgets/single_cell_widget_rules.h"
 
 // Keyboard entry/exit and activation for widget-contained items.
 
@@ -50,6 +51,14 @@ void DesktopApp::EnterWidget()
     if (widget.type == DesktopWidgetType::LuaScript ||
         widget.type == DesktopWidgetType::Guide)
         return;   // 此类组件无内部成员导航
+
+    if (snowdesktop::single_cell_widget::IsSingleCell(widget))
+    {
+        OpenCollectionPopupAt(static_cast<size_t>(foundIdx),
+            {(widget.bounds.left + widget.bounds.right) / 2, widget.bounds.bottom});
+        // Folder mappings use the existing directory-popup selection model.
+        if (widget.type == DesktopWidgetType::FolderMapping) return;
+    }
 
     if (IsWidgetCollapsed(widget))
         ToggleWidgetCollapsed(static_cast<size_t>(foundIdx));

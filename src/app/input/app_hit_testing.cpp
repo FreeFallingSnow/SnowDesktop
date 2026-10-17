@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "widgets/widget_chrome_rules.h"
 #include "widgets/storage_title_bar_layout.h"
+#include "widgets/single_cell_widget_rules.h"
 
 // Desktop-item and standalone-widget hit testing.
 
@@ -107,6 +108,14 @@ int DesktopApp::GetComponentEdgeMargin(
 
 RECT DesktopApp::GetStandaloneWidgetFrameRect(const DesktopWidget& widget) const
 {
+    if (snowdesktop::single_cell_widget::IsDesktopSingleCell(widget) && widget.singleCellIconMode)
+    {
+        if (IsRectEmpty(&widget.bounds)) return widget.bounds;
+        const RECT title = GetItemTextRect(widget.bounds, widget.selected);
+        RECT frame{};
+        UnionRect(&frame, &widget.bounds, &title);
+        return frame;
+    }
     return snowdesktop::storage_title_bar::VisibleFrame(
         GetExpandedWidgetFrameRect(widget), IsWidgetCollapsed(widget),
         ScaleWidgetCu(GetCategorizedWidgetTabHeight(), GetWidgetCellScale(widget)),

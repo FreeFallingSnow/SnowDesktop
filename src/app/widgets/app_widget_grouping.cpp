@@ -331,6 +331,9 @@ void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
 GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
     int availableColumns, int availableRows) const
 {
+    if (span.columns == 1 && span.rows == 1 &&
+        IsWidgetDockEntryType(DockEntryTypeForWidget(widget.type))) return span;
+
     const int pageMaxColumns = std::max(1, availableColumns);
     const int pageMaxRows = std::max(1, availableRows);
     const int maxColumns = widget.maxGridSpan.columns > 0
@@ -451,6 +454,7 @@ std::wstring DesktopApp::ApplyWidgetPreviewSettings(POINT screenPoint,
     widget.id = MakeNewWidgetId();
     widget.listMode = settings.listMode;
     widget.scrollContainerMode = settings.scrollContainerMode;
+    widget.singleCellIconMode = settings.singleCellIconMode;
     widget.largeFolderTitleless = settings.largeFolderTitleless;
     widget.dateHeaders = settings.dateHeaders;
     widget.showFileCategories = settings.showFileCategories;

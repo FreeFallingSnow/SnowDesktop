@@ -173,8 +173,16 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
             { image.width = pixels.width; image.height = pixels.height; image.pixels = std::move(pixels.pixels); }
         }
         if (image.pixels.empty() && request.target.starts_with(L"widget:") && d2dContext_)
-            for (const auto& entry : dockEntries_) if (entry.reference == request.target.substr(7))
-            { image = CaptureDockIconSource(d2dContext_.Get(), entry); break; }
+        {
+            const auto index = FindWidgetIndexById(request.target.substr(7));
+            if (index < widgets_.size())
+            {
+                DockEntry entry;
+                entry.type = DockEntryTypeForWidget(widgets_[index].type);
+                entry.reference = widgets_[index].id;
+                image = CaptureDockIconSource(d2dContext_.Get(), entry);
+            }
+        }
         if (!image.pixels.empty()) (void)icon_image::EncodePng(image, result.previewPng, error);
     }
     result.succeeded = true;
@@ -280,7 +288,7 @@ bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntr
         iconGlassBackdrop_.erase(cached.bitmap.Get()); iconBitmapStyles_.erase(cached.bitmap.Get());
         cached = {std::move(signature), std::move(uploaded)};
     }
-    DrawIconBitmap(ctx, cached.bitmap.Get(), target, 1.f, reinterpret_cast<std::uintptr_t>(&entry));
+    DrawIconBitmap(ctx, cached.bitmap.Get(), target, 1.f, reinterpret_cast<std::uintptr_t>(&widgets_[owner]));
     if (entry.type == DockEntryType::FolderMapping && ShouldDrawShortcutArrow(true, false)) DrawShortcutArrowOverlay(ctx, target, 1.f);
     // Badges belong to the entry and stay outside the beautified source.
     if (IsGroupDockEntryType(entry.type)) DrawDockGroupBadge(ctx, target);

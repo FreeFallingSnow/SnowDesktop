@@ -131,6 +131,13 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     POINT anchorPoint, const std::wstring& categoryId,
     bool closingStartedByCurrentPress)
 {
+    if (widgetIndex < widgets_.size() && widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
+    {
+        if (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widgets_[widgetIndex].id &&
+            !popupAnimation_.IsClosing()) CloseCollectionPopup();
+        else OpenDockFolderPopupAt(static_cast<size_t>(-1), anchorPoint, widgetIndex);
+        return;
+    }
     {
         wchar_t message[320]{};
         swprintf_s(
@@ -147,6 +154,7 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     if (widgetIndex >= widgets_.size() ||
         (widgets_[widgetIndex].type != DesktopWidgetType::Collection &&
          widgets_[widgetIndex].type != DesktopWidgetType::FileCategories &&
+         widgets_[widgetIndex].type != DesktopWidgetType::FolderMapping &&
          !IsGroupWidgetType(widgets_[widgetIndex].type)))
         return;
 

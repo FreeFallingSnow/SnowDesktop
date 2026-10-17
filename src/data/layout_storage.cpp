@@ -528,6 +528,8 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 error) ||
             !ReadBoolean(object, "privacyMode", path + ".privacyMode",
                 record.privacyMode, error) ||
+            !ReadBoolean(object, "singleCellIconMode", path + ".singleCellIconMode",
+                record.singleCellIconMode, error) ||
             !ReadBoolean(object, "scrollContainerMode",
                 path + ".scrollContainerMode", record.scrollContainerMode,
                 error) ||

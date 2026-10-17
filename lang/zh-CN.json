@@ -787,7 +787,7 @@
     "app.widget_preview.setting_search_box": "搜索框",
     "app.widget_preview.setting_hide": "关闭",
     "app.widget_preview.setting_show": "开启",
-    "app.widget_preview.collection_intro": "把常用项目收纳在一个集合中。下方提供紧凑和大尺寸两种快速预设，添加后可自由调整大小。",
+    "app.widget_preview.collection_intro": "把常用项目收纳在一个集合中。可选择紧凑组件、图标或大尺寸预设，添加后可调整大小。",
     "app.widget_preview.collection_compact": "紧凑集合",
     "app.widget_preview.collection_compact_hint": "在桌面上保留一个简洁入口，点击即可查看集合内容。",
     "app.widget_preview.collection_scroll_grid": "大尺寸集合",
@@ -2833,5 +2833,8 @@
   "iconAppearance.independent": "单独设置",
   "iconAppearance.unavailable": "目标不可用",
   "iconAppearance.editEntry": "编辑",
-  "iconStyle.noUpscale": "智能美化（不放大）"
+  "iconStyle.noUpscale": "智能美化（不放大）",
+  "app.interact.single_cell_display": "单格显示",
+  "app.interact.single_cell_component": "组件模式",
+  "app.interact.single_cell_icon": "图标模式"
 }

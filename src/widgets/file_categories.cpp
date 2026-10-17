@@ -861,6 +861,7 @@ static size_t InsertIndexForVisibleSlot(FileCategories* widget, size_t visibleIn
  */
 std::vector<std::unique_ptr<Slot>> FileCategories::BuildSlots()
 {
+    if (IsSingleCellPresentation()) return {};
     slotItemCache_.clear();
 
     std::vector<std::unique_ptr<Slot>> slots;
@@ -1437,6 +1438,7 @@ void FileCategories::DrawButtons(ID2D1DeviceContext* context, RECT handleRect, b
 WidgetHit FileCategories::HitTestWidget(POINT pt) const
 {
     WidgetHit base = WidgetContainer::HitTestWidget(pt);
+    if (IsSingleCellDesktopPoint(pt)) return base;
     if (base == WidgetHit::None || !data_) return base;
 
     if ((!data_->showSearchBox || searchText_.empty()) &&
