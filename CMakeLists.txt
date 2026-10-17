@@ -1637,11 +1637,22 @@ if (BUILD_TESTING)
         widget_filesystem_handle_store
         SOURCES
             tests/widget_filesystem_handle_store_tests.cpp
+            tests/drag_drop/lua_file_delivery_cases.cpp
             src/widget/tasks/widget_filesystem_handle_store.cpp
+            src/widget/view/widget_interaction_region.cpp
+            src/widget/permissions/widget_permission_broker.cpp
+            src/widget/permissions/widget_permission_state.cpp
+            src/widget/runtime/widget_lua_lifecycle.cpp
+            src/widget/runtime/lua_runtime.cpp
             src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES bcrypt
+        LINK_LIBRARIES bcrypt SnowDesktopLua
         LABELS contract filesystem security task lua widget)
+
+    add_test(NAME lua_file_drop_delivery
+        COMMAND SnowDesktopWidgetFilesystemHandleStoreTests --file-drop-delivery-tests)
+    set_tests_properties(lua_file_drop_delivery PROPERTIES
+        TIMEOUT 90 LABELS "integration;filesystem;security;interaction;lua;widget")
 
     snowdesktop_add_test(
         SnowDesktopWidgetFilesystemTaskExecutorTests

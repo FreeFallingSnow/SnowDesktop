@@ -53,6 +53,7 @@ namespace text_input = snowdesktop::text_input;
 #include "widget_l10n_format.h"
 #include "widget_time.h"
 #include "widget/permissions/widget_permission_broker.h"
+#include "widget_file_drop_delivery.h"
 #include "widget/preview/widget_preview_context.h"
 #include "widget/view/widget_interaction_region.h"
 #include "widget/view/widget_draw_geometry.h"
@@ -21931,50 +21932,17 @@ bool WidgetEngine::InvokeFileDrop(const FileDropTarget& target,
 {
     using namespace snowdesktop::widget_runtime;
     const int index = FindWidget(target.widgetId);
-    if (paths.empty() || paths.size() > 128 || index < 0 || !filesystemHandleStore_)
-        return false;
+    if (index < 0 || !filesystemHandleStore_) return false;
     auto& widget = widgets_[index];
-    if (!widget.state || widget.preview || widget.packageId != target.packageId ||
-        !snowdesktop::widget::WidgetPermissionBroker::AllowsPermission(
-            widget.permissions, kFilesystemReadPermission) ||
-        !IsWidgetFileDropTargetCurrent(widget.interactionRegions, target.targetKey,
-            target.action, target.runtimeToken, widget.runtimeToken)) return false;
-    const auto& action = target.action;
-    const auto& targetKey = target.targetKey;
+    const WidgetFileDropDeliveryState current{widget.state != nullptr, widget.preview,
+        widget.runtimeToken, widget.permissions, widget.interactionRegions};
     const WidgetFilesystemHandleOwner owner{WideToUtf8(target.widgetId), widget.packageId};
-    WidgetFilesystemDropGrant batch(*filesystemHandleStore_, owner);
-    if (!batch.Acquire(paths)) return false;
-    const auto& items = batch.items;
-    WidgetTrustedGestureScope gestureScope(trustedGestureState_, true);
-    const bool delivered = InvokeLifecycleEvent(widget, "action",
-        [&](lua_State* state) {
-            lua_pushlstring(state, action.id.data(), action.id.size());
-            lua_setfield(state, -2, "id");
-            PushInteractionValue(state, action.value); lua_setfield(state, -2, "value");
-            lua_pushliteral(state, "fileDrop"); lua_setfield(state, -2, "action");
-            lua_pushliteral(state, "host.drop"); lua_setfield(state, -2, "source");
-            lua_pushliteral(state, "desktop"); lua_setfield(state, -2, "surface");
-            lua_pushlstring(state, targetKey.data(), targetKey.size());
-            lua_setfield(state, -2, "targetKey");
-            lua_pushboolean(state, 1); lua_setfield(state, -2, "trustedGesture");
-            lua_createtable(state, static_cast<int>(items.size()), 0);
-            int itemIndex = 1;
-            for (const auto& item : items)
-            {
-                lua_createtable(state, 0, 4);
-                lua_pushlstring(state, item.handle.data(), item.handle.size());
-                lua_setfield(state, -2, "handle");
-                const auto name = WideToUtf8(item.path.filename().wstring());
-                lua_pushlstring(state, name.data(), name.size()); lua_setfield(state, -2, "name");
-                const auto kind = WidgetFilesystemHandleStore::KindName(item.kind);
-                lua_pushlstring(state, kind.data(), kind.size()); lua_setfield(state, -2, "kind");
-                lua_pushliteral(state, "read"); lua_setfield(state, -2, "access");
-                lua_rawseti(state, -2, itemIndex++);
-            }
-            lua_setfield(state, -2, "items");
+    return DeliverWidgetFileDrop(target, current, *filesystemHandleStore_, owner,
+        trustedGestureState_, paths, [&](const auto& items) {
+            return InvokeLifecycleEvent(widget, "action", [&](lua_State* state) {
+                PushWidgetFileDropFields(state, target, items, PushInteractionValue, WideToUtf8);
+            });
         });
-    if (delivered) batch.Commit();
-    return delivered;
 }
 
 void WidgetEngine::InvokeMouseEvent(const std::wstring& widgetId, const char* callbackName, int x, int y,
