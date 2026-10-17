@@ -10,7 +10,7 @@
 
 | 执行入口 | 已接入的生产行为 | 替换或尚未执行的边界 |
 | --- | --- | --- |
-| `native_drag_integration_tests.cpp` / `native_drag_target_integration` | 实际 `DesktopApp::ResolveCurrentDragTargetAt` → 控制器 → 真实 `DesktopGrid` 和五类原生存储容器虚函数命中；空桌面格、前景本体/单图标、隐藏状态与画面外清除，内部/外部单多项及负坐标页 | 首批 88 个原生场景通过；反转实际容器遍历顺序后，在前景目标身份断言退出 1。模型、初始手势和页几何为输入；不调用 `Run`、不创建宿主窗口，未执行鼠标消息、提交、布局或重载；未初始化的应用对象保持进程存活期，避免触发宿主全局 Shell 关闭。首次目标已编译链接，但构建后的 PRI 部署声明失败，不能记为目标构建通过 |
+| `native_drag_integration_tests.cpp` / `native_drag_target_integration` | 实际 `DesktopApp::ResolveCurrentDragTargetAt` → 控制器 → 真实 `DesktopGrid` 和五类原生存储容器虚函数命中；空桌面格、前景本体/单图标、隐藏状态与画面外清除，内部/外部单多项及负坐标页 | 首批 88 个原生场景通过；反转实际容器遍历顺序后，在前景目标身份断言退出 1。模型、初始手势和页几何为输入；不调用 `Run`、不创建宿主窗口，未执行鼠标消息、提交、布局或重载；未初始化的应用对象保持进程存活期，避免触发宿主全局 Shell 关闭。统一 PRI 部署参数后独立目标完整构建通过，当前标准 Release/全量仍待后续 |
 | `external_desktop_cases.h` / `shell_allowed_effect_requests` | 生产 `delayed_desktop_file_drop::Dispatch`；四种显式修饰键、八种来源效果集合；单文件及文件加目录；真实 Shell 请求、内容、源保留和链接目标 | 来源异步能力与 DesktopApp 提交回调；未执行菜单、跨线程读取或布局 |
 | `async_slot_transfer_cases.h` / `shell_async_slot_transfers` | 宿主直接调用的 `external_slot_transfer::Transfer`、OLE 来源租约、真实 COM 封送、STA 读取、完成消息所有权、`external_file_destination::Commit`、`drop_pipeline::Execute`、`file_drop_execution::Execute`、`desktop_file_materialization` 的实际桌面/文件夹请求与 Shell 提交；成功、失败、停止、投递失败、取消、逆序完成、拥有内容的释放、目标变化、Dock 容量复核；固定经过宿主共用 `dock_drop_model::AddMaterialized`、真实布局编解码及原子存储 | Explorer 数据源、解码、桌面目录与预览几何、原生容器存活、文案、Shell 文件夹分类和 Dock 容量为服务输入；消息接收窗口为 message-only HWND，未执行整个 DesktopApp 消息分派和界面副作用 |
 | `placement_cases.h` / `shell_drop_placement_storage` | 共用正常文件提交 → `file_drop_execution::Execute` 实际构造快照、安排物化并按真实输出发布 → 宿主共用的文件夹/逻辑归属与插入处理 → 实际组件布局写入、原子存储、解析及位置/成员恢复；同名冲突、逆序、部分成功、拒绝及越界分配 | 悬停目标情境与新枚举记录由夹具提供；接收策略是显式服务输入；未执行悬停捕获、命中、完整容器重建和整个 DesktopApp 重新加载 |
@@ -114,6 +114,8 @@ S08 组件路径进一步执行宿主实际的 `ApplyPageMapping` 编排：搬�
 缓存候选把实际会话场景修订与当前外部来源数量纳入匹配及发布后的状态。三个内部场景与 12 个外部场景退出 0；隔离恢复父提交的原缓存，四组原业务断言仍退出 1。单独移除场景修订匹配或外部数量匹配，分别再次暴露内部三组或外部一致性失败。同一候选的原有 96 个文件页场景补验通过，三处宿主接线定向编译无警告，默认语言检查通过（1138 个源码、3150 个引用键、10 种语言）。这些是原生缓存、文件与存储边界证据；当前标准 Release/全量、完整宿主变化入口和实际桌面验收仍待后续。
 
 原生目标扩展直接链接除 `main.cpp` 以外的宿主生产源图，测试没有替换容器的命中虚函数，也不通过 `Run` 初始化窗口。首批使用八组内部/外部单多项及正/负坐标页情境，分别检查桌面字面行列、画面外清除和五类存储组件的本体/单图标前景命中及隐藏过滤，共 88 个场景；CTest 退出 0（约 0.4 秒）。隔离副本仅将真实 `DragTargetResolver` 的前后层遍历方向反转，同一程序在前景目标身份断言退出 1；这是断言有效性对照，不作为现存产品缺陷。首次独立 CMake 接入的 NuGet 元数据共目录导致 IDL 编译失败，隔离后真实宿主源图无警告编译链接；随后发现部署清单写死主程序 PRI 文件名，目标构建仍失败。上述构建/诊断脚本错误不计为拖放故障。文件后果、布局与重建仍需沿此原生入口继续接入。
+
+PRI 候选在声明和清单写入时传递同一目标资源名，省略参数仍要求主程序的 `SnowDesktop.pri`。独立原生目标及两个受影响部署测试目标均完整构建通过且无警告；三个 CTest 条目以并行度 4 执行，全部通过（总计约 14.4 秒，原生 88 场景约 0.4 秒）。实际清单中的原生目标 PRI 与磁盘哈希相同；新增 C++ 部署情境检查默认名称、显式目标名称、固定字节哈希，以及缺失资源拒绝且不覆盖已有清单。仅恢复清单校验端的固定名称，同一 C++ 程序在“显式目标 PRI 必须生成清单”断言退出 1。早先失败尝试和后续通过记录分别保留；这些独立目标结果不代表标准 Release、全量或实际桌面验收。
 
 分析日期：2026-10-17。基线：`release/v1.0.11.0`，开始审阅时 HEAD `5dce86b061509aeabbe195678d4f263f49d2bb7f`，包含当前工作区未提交改动。审阅期间其他任务仍在开发；结束时提交、差异范围和相关文件指纹见原始审阅记录 `.codex-probes/drag-drop-matrix/source-evidence.json`（本地证据，不是测试输入）。
 

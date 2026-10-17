@@ -11,7 +11,8 @@ param(
     [Parameter(Mandatory = $true)][string]$WindowsMlLicensePath,
     [Parameter(Mandatory = $true)][string]$WindowsMlNoticePath,
     [Parameter(Mandatory = $true)][string]$WebView2LicensePath,
-    [Parameter(Mandatory = $true)][string]$WebView2NoticePath
+    [Parameter(Mandatory = $true)][string]$WebView2NoticePath,
+    [string]$ApplicationPriFileName = "SnowDesktop.pri"
 )
 
 Set-StrictMode -Version Latest
@@ -48,6 +49,7 @@ function ConvertTo-DeploymentPath {
 }
 
 $TargetDirectory = [System.IO.Path]::GetFullPath($TargetDirectory)
+$ApplicationPriFileName = ConvertTo-DeploymentPath $ApplicationPriFileName
 if (-not (Test-Path -LiteralPath $TargetDirectory -PathType Container)) {
     throw "Build target directory was not found: $TargetDirectory"
 }
@@ -94,7 +96,7 @@ foreach ($line in @(Get-Content -LiteralPath $FileList -Encoding UTF8)) {
 $required = @(
     "App.xbf",
     "SettingsShell.xbf",
-    "SnowDesktop.pri",
+    $ApplicationPriFileName,
     "SnowDesktop.winmd",
     "Microsoft.WindowsAppRuntime.dll",
     "Microsoft.ui.xaml.dll",
