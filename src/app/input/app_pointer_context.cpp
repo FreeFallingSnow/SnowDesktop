@@ -5,6 +5,7 @@
 #include "widgets/lua_logical_slot.h"
 #include "dock/dock_drop_rules.h"
 #include "app/widgets/widget_right_drag_actions.h"
+#include "drag_drop/right_drag_actions.h"
 
 #include <utility>
 
@@ -448,92 +449,31 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
             return true;
     }
 
-    struct Choice {
-        UINT command;
-        DWORD effect;
-        DWORD modifiers;
-        const char* label;
-        pair::Action pairAction = pair::Action::None;
+    snowdesktop::right_drag_actions::Context menuContext;
+    menuContext.allowedEffects = allowedEffects;
+    menuContext.handleDrag = handleDrag; menuContext.nativeMove = nativeMove;
+    menuContext.itemTarget = itemTarget; menuContext.luaFileDrop = luaFileDrop;
+    menuContext.dockRemoval = dockRemoval; menuContext.externalSource = externalSource;
+    menuContext.targetDock = dynamic_cast<DockContainer*>(target) != nullptr;
+    menuContext.sourceDock = dynamic_cast<DockContainer*>(dragSession_.Source()) != nullptr;
+    menuContext.displayDockTarget = handleDrag ? widgetDockTarget_ : menuContext.targetDock;
+    menuContext.sourceWidgets = dragSession_.SourceList().hasWidgets;
+    menuContext.sourceDesktopIcons = dragSession_.SourceList().hasDesktopIcons;
+    menuContext.sourceFolderEntries = dragSession_.SourceList().hasFolderEntries;
+    menuContext.desktopWidgetIcons = dragSession_.SourceList().HasDesktopWidgetIcons();
+    menuContext.handoff = region == HitRegion::Handoff;
+    menuContext.sourceHasPaths = !dragSession_.SourceList().FilePaths().empty();
+    menuContext.externalFileCount = dragDropController_.ExternalSummary().fileCount;
+    menuContext.preview = [&](DWORD modifiers) {
+        return BuildDropPreviewList(dragSession_.SourceList(), target, slot, region,
+            static_cast<int>(modifiers), point);
     };
-    const bool hasWidgets = handleDrag || dragSession_.SourceList().hasWidgets;
-    std::vector<Choice> choices = {
-        {1, DROPEFFECT_MOVE, snowdesktop::widget_right_drag::MoveModifiers(hasWidgets), "widget.base.move"},
-        {2, DROPEFFECT_COPY, MK_CONTROL, "widget.base.copy_label"},
-        {3, DROPEFFECT_LINK, MK_ALT, "widget.base.create_shortcut"},
-    };
-    for (const auto& choice : pairChoices)
-        choices.push_back({choice.command, DROPEFFECT_MOVE, choice.modifiers, choice.label, choice.action});
+    const auto choices = snowdesktop::right_drag_actions::Build(menuContext, pairChoices);
+    if (choices.empty()) return false;
     HMENU menu = CreatePopupMenu();
     if (!menu) return false;
-    bool hasChoice = false;
     for (const auto& choice : choices)
-    {
-        if ((allowedEffects & choice.effect) == 0) continue;
-        bool accepted = false;
-        if (choice.pairAction != pair::Action::None)
-            accepted = true;
-        else if (handleDrag)
-            accepted = nativeMove && choice.effect == DROPEFFECT_MOVE;
-        else if (!itemTarget)
-            accepted = false;
-        else if (luaFileDrop)
-            accepted = choice.effect == DROPEFFECT_COPY;
-        else if (dockRemoval)
-            accepted = choice.effect == DROPEFFECT_MOVE;
-        else if (dynamic_cast<DockContainer*>(target))
-        {
-            if (externalSource)
-                accepted = choice.effect == snowdesktop::dock_drop_rules::
-                    ChooseExternalMappingEffect(allowedEffects);
-            else if (dynamic_cast<DockContainer*>(dragSession_.Source()))
-                accepted = choice.effect == DROPEFFECT_MOVE;
-            else if (hasWidgets && !dragSession_.SourceList().hasDesktopIcons &&
-                !dragSession_.SourceList().hasFolderEntries)
-                accepted = choice.effect == DROPEFFECT_MOVE;
-            else if (dragSession_.SourceList().hasFolderEntries)
-                accepted = choice.effect == DROPEFFECT_LINK;
-            else
-                accepted = choice.effect == DROPEFFECT_MOVE || choice.effect == DROPEFFECT_COPY;
-        }
-        else if (dragSession_.SourceList().hasWidgets)
-        {
-            accepted = choice.effect == DROPEFFECT_MOVE;
-            if (!accepted && dragSession_.SourceList().HasDesktopWidgetIcons())
-            {
-                const auto preview = BuildDropPreviewList(dragSession_.SourceList(), target, slot, region,
-                    static_cast<int>(choice.modifiers), point);
-                accepted = !preview.Empty() && preview.action == DropActionFromMods(static_cast<int>(choice.modifiers));
-            }
-        }
-        else if (externalSource)
-            accepted = dragDropController_.ExternalSummary().fileCount > 0 ||
-                choice.effect == DROPEFFECT_COPY;
-        else if (region == HitRegion::Handoff)
-            accepted = !dragSession_.SourceList().FilePaths().empty();
-        else
-        {
-            const DropPreviewList preview = BuildDropPreviewList(
-                dragSession_.SourceList(), target, slot, region,
-                static_cast<int>(choice.modifiers), point);
-            const DropAction action = DropActionFromMods(static_cast<int>(choice.modifiers));
-            accepted = !preview.Empty() &&
-                (preview.action == action ||
-                    (action == DropAction::Move && preview.consumeDockSource));
-        }
-        if (accepted)
-        {
-            const bool dockTarget = handleDrag ? widgetDockTarget_ : dynamic_cast<DockContainer*>(target) != nullptr;
-            const bool copyCreatesDockMapping = dockTarget && !luaFileDrop &&
-                region != HitRegion::Handoff && choice.effect == DROPEFFECT_COPY;
-            const char* label = externalSource && dockTarget
-                ? "widget.base.create_shortcut"
-                : copyCreatesDockMapping
-                    ? "app.dock.create_mapping_action" : choice.label;
-            AppendMenuW(menu, MF_STRING, choice.command, _LW(label));
-            hasChoice = true;
-        }
-    }
-    if (!hasChoice) { DestroyMenu(menu); return false; }
+        AppendMenuW(menu, MF_STRING, choice.command, _LW(choice.label));
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 4, _LW("app.settings.cancel"));
 
@@ -571,9 +511,10 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
     DestroyMenu(menu);
     ClearMenuIcons();
     RestoreDesktopWindowLayer();
-    for (const auto& choice : choices)
+    const auto* selected = snowdesktop::right_drag_actions::Select(choices, command);
+    if (!selected) return false;
     {
-        if (choice.command != command) continue;
+        const auto& choice = *selected;
         if (handleDrag)
         {
             const size_t rebound = FindWidgetIndexById(sourceId);
@@ -629,11 +570,10 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
         }
         // The user already selected a verb. Use a left-button Shell handoff so
         // the native target does not show a second right-drag action menu.
-        keyState = MK_LBUTTON | choice.modifiers;
+        keyState = snowdesktop::right_drag_actions::SelectedKeys(choice);
         if (!handleDrag) dragSession_.UpdateActionFromMods(static_cast<int>(choice.modifiers));
         return true;
     }
-    return false;
 }
 
 /**

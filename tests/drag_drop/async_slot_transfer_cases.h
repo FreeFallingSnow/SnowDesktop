@@ -481,7 +481,7 @@ inline void Run(const std::filesystem::path& root)
         Require(outcome == 0 ? Bytes(batch.destination / L"a.txt") == "alpha" : std::filesystem::is_empty(batch.destination),
             "rendered-file cleanup preserves successful outputs and creates nothing for cancellation");
     }
-    // S04: the original destination changes while its external source is
+    // S06: the original destination changes while its external source is
     // reading. Resume the real posted UI commit only after that mutation.
     for (int mutation = 0; mutation < 5; ++mutation)
     {

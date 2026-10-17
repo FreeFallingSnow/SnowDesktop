@@ -7,8 +7,11 @@
 | 执行入口 | 已接入的生产行为 | 替换或尚未执行的边界 |
 | --- | --- | --- |
 | `external_desktop_cases.h` / `shell_allowed_effect_requests` | 生产 `delayed_desktop_file_drop::Dispatch`；四种显式修饰键、八种来源效果集合；单文件及文件加目录；真实 Shell 请求、内容、源保留和链接目标 | 来源异步能力与 DesktopApp 提交回调；未执行菜单、跨线程读取或布局 |
-| `async_slot_transfer_cases.h` / `shell_async_slot_transfers` | 宿主直接调用的 `external_slot_transfer::Transfer`、OLE 来源租约、真实 COM 封送、STA 读取、完成消息所有权、真实 Shell 文件提交；成功、失败、停止、投递失败、取消、逆序完成及拥有内容的释放 | Explorer 数据源是测试提供者；解码和最终目的地是服务边界；消息接收窗口为不可见的 message-only HWND，未执行整个 DesktopApp 消息分派和界面副作用 |
-| `placement_cases.h` / `shell_drop_placement_storage` | 真实异步文件输出 → `pending_drop::Complete` → 宿主共用的文件夹/逻辑归属与插入处理 → 实际组件布局写入、原子存储、解析及位置/成员恢复；同名冲突、逆序、部分成功、拒绝及越界分配 | 目标快照与新枚举记录由夹具提供；接收策略是显式服务输入；未执行命中、菜单、快照构造、完整容器重建和整个 DesktopApp 重新加载 |
+| `async_slot_transfer_cases.h` / `shell_async_slot_transfers` | 宿主直接调用的 `external_slot_transfer::Transfer`、OLE 来源租约、真实 COM 封送、STA 读取、完成消息所有权、`external_file_destination::Commit` 目标重检与数量展开、真实 Shell 文件提交；成功、失败、停止、投递失败、取消、逆序完成、拥有内容的释放、等待期间目标变化及 Dock 容量复核 | Explorer 数据源是测试提供者；解码、桌面预览几何、Dock 身份固定存储及应用执行适配仍是服务边界；消息接收窗口为不可见的 message-only HWND，未执行整个 DesktopApp 消息分派和界面副作用 |
+| `placement_cases.h` / `shell_drop_placement_storage` | 共用正常文件提交 → `pending_drop::BuildLanding/BuildFolder` 实际快照构造 → 真实异步文件输出 → `pending_drop::Complete` → 宿主共用的文件夹/逻辑归属与插入处理 → 实际组件布局写入、原子存储、解析及位置/成员恢复；同名冲突、逆序、部分成功、拒绝及越界分配 | 悬停目标情境与新枚举记录由夹具提供；接收策略是显式服务输入；未执行悬停捕获、命中、完整容器重建和整个 DesktopApp 重新加载 |
+| `right_drag_file_cases.h` / `shell_right_drag_files` | 宿主共用的 `right_drag_actions::Build/Select/SelectedKeys` → 延迟桌面文件分派 → 共用异步传输和正常文件提交 → 真实 Shell IO；三种动作、8 种允许效果、单选/文件加目录、取消和关闭 | 目标事实由夹具提供；命令来自可控的菜单选择；未执行实际菜单显示、鼠标消息、菜单期间重入、悬停命中和完整宿主适配 |
+| `member_order_cases.h` / `shell_member_order_storage` | 共用映射成员重排及刷新、实际文件元数据排序、`widget_pair_drop` 成组事务、组件布局原子存储及恢复；A04/A05 的独立字面顺序和文件不变性 | 来源索引、成组手势及目标模型由夹具提供；未执行拖动命中、标签重建与显示 |
+| `lua_ingress_cases.cpp` / `lua_file_ingress_matrix` | 实际 `LuaLogicalSlotContainer` 接收与最终提交限制、真实 `LogicalSlotModel` 的 Bind/Export/revision、实际源文件；A06 多文件拒绝及单项成功对照 | 文件项目包装和引擎 surface provider 为夹具；未执行外部 OLE 到 Lua 的整个宿主路由 |
 
 `placement_cases.h` 的情境表将组件类型、页面/入口位置、图标/列表形态和分组关系分别登记。执行层验证已接收目标快照的文件后果和归属，不据此声称这些形态的命中或接收规则已验证。网格占用、分配及最终落点调用宿主共用实现；冲突回退只要求合法、不重叠，Q08 尚未定义的精确回退顺序不作为通过标准。
 
@@ -17,6 +20,8 @@
 分派负向对照：候选副本通过实际 Shell 文件检查；仅将生产分派入口恢复成强制 Copy 后，相同 Shift + 全效果来源场景因“原文件仍存在”的文件系统断言失败，退出码为 1。该证据保护分派决策及其文件后果，仍不替代上文列出的宿主边界。完整 CLI 语言正负对照与清理范围见 `../localization/README.md`。
 
 执行层负向对照：以 `84a431d7` 的隔离副本分别恢复跳过提交、重复完成、按回执顺序插入、拒绝后提前改位置、只检查非负坐标、漏存成员六种错误；对应测试均因预定业务断言退出 1。候选的两个原生模式退出 0。证据见本地 `.build/verification/matrix-execution-diagnostic-3a3e6c762698410fbab8c4017b74d878.json`；它是隔离原生诊断，不能替代标准 Release、全量及实机记录。停止时的 COM 释放阻塞另有执行轨迹与调整后退出证据，尚无合格的有界负向对照，不与这六项混计。
+
+后续对照进一步覆盖正常文件提交强制复制、跳过目标类型重检、右键菜单选择后强制 Ctrl 三种错误，均因预定文件/归属或所选动作断言退出 1。候选异步、落点、重排和右键模式分别退出 0。提交记录绑定隔离副本、二进制和日志；这些结果尚未成为当前输入的标准宿主构建或全量结果。夹具中将普通文件误标为 `copyOnly`、随后又绕过该字段的问题已消除：最终请求采用共用提交产生的实际动作。
 
 分析日期：2026-10-17。基线：`release/v1.0.11.0`，开始审阅时 HEAD `5dce86b061509aeabbe195678d4f263f49d2bb7f`，包含当前工作区未提交改动。审阅期间其他任务仍在开发；结束时提交、差异范围和相关文件指纹见原始审阅记录 `.codex-probes/drag-drop-matrix/source-evidence.json`（本地证据，不是测试输入）。
 
@@ -346,7 +351,7 @@ Lua binding 不属于公开的 pointerReorder/pointerTransfer 来源；collectio
 
 ### 7.3 独立预期的具体样本
 
-以下样本冻结操作语义和可观察结果。A01 至 A03 已接入文件执行及部分归属边界，仍缺右键菜单与完整宿主入口；A07 已接入真实同名文件逆序完成、独立归属和布局存储；A08 的默认语言门禁已接入。A04 至 A06 及其他缺口继续按实际执行边界登记，不能由相邻样本的通过代替。
+以下样本冻结操作语义和可观察结果。A01 至 A03 已接入文件执行、右键动作模型及部分归属边界，实际菜单和完整宿主入口仍未执行；A04 已接入映射重排、刷新及存储；A05 已接入实际成组模型事务及存储；A06 已接入原生 Lua 容器到逻辑模型；A07 已接入真实同名文件逆序完成、独立归属和布局存储；A08 的默认语言门禁已接入。各自尚缺的边界以上表为准，不能由相邻样本的通过代替。
 
 | 样本 | 明确输入 | 独立预期 |
 | --- | --- | --- |
