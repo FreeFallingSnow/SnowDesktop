@@ -41,6 +41,12 @@ inline bool ValidateWorkshopUploadFile(const std::filesystem::path& path,
         return true;
     }
     const bool theme = kind == WorkshopContentKind::Theme;
+    if(kind==WorkshopContentKind::IconPack)
+    {
+        if(extension!=L".snowicons")return fail("package must be a .snowicons artifact");
+        if(size>128ull*1024*1024)return fail("icon pack exceeds 128 MiB");
+        return true;
+    }
     if (extension != (theme ? L".snowtheme" : L".snowwidget"))
         return fail(theme ? "package must be a .snowtheme artifact" :
             "package must be a .snowwidget artifact");

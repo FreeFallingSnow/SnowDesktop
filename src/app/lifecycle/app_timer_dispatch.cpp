@@ -16,6 +16,10 @@
 
 void DesktopApp::PollSteamWorkshopSubscriptions(bool bypassThrottle)
 {
+    if(GetTickCount64()-iconWorkshopLastPoll_>=60000)
+    {
+        iconWorkshopLastPoll_=GetTickCount64();snowdesktop::IconLibraryRequest request;request.action="autoSyncSubscriptions";(void)EditIconLibrary(request);
+    }
     if (!widgetEngine_) return;
 
     std::optional<SteamWorkshopSubscriptionPollState::ReadyQuery> ready;

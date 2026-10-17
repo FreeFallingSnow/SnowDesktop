@@ -23,14 +23,15 @@ namespace m = x::Media;
 namespace dt = winrt::Windows::ApplicationModel::DataTransfer;
 namespace
 {
-std::vector<std::wstring> PickFiles(bool folder)
+std::vector<std::wstring> PickFiles(bool folder, bool cover = false)
 {
     Microsoft::WRL::ComPtr<IFileOpenDialog> dialog;
     if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog)))) return {};
     DWORD flags = 0; dialog->GetOptions(&flags);
-    dialog->SetOptions(flags | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | (folder ? FOS_PICKFOLDERS : FOS_FILEMUSTEXIST | FOS_ALLOWMULTISELECT));
+    dialog->SetOptions(flags | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST | (folder ? FOS_PICKFOLDERS : FOS_FILEMUSTEXIST | (cover ? 0 : FOS_ALLOWMULTISELECT)));
     const COMDLG_FILTERSPEC filter[]{{L"PNG, ICO, JPEG, BMP, SVG, WebP, ZIP, APK", L"*.png;*.ico;*.jpg;*.jpeg;*.bmp;*.svg;*.webp;*.zip;*.apk"}};
-    if (!folder) dialog->SetFileTypes(1, filter);
+    const COMDLG_FILTERSPEC coverFilter[]{{L"PNG, JPEG, BMP",L"*.png;*.jpg;*.jpeg;*.bmp"}};
+    if (!folder) dialog->SetFileTypes(1, cover ? coverFilter : filter);
     const HWND owner = GetActiveWindow(); DWORD process = 0;
     if (owner) GetWindowThreadProcessId(owner, &process);
     if (FAILED(dialog->Show(process == GetCurrentProcessId() ? owner : nullptr))) return {};
@@ -59,6 +60,11 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
     c::CommandBar toolbar;
     c::ComboBox groups;
     c::AppBarButton newGroup, renameGroup, deleteGroup, moveGroup;
+    c::AppBarButton previewPack,sharePack,browsePacks,syncPacks,copyPack,packInfo,openPack;
+    c::ContentDialog workshopDialog{nullptr};
+    std::uint64_t operationCounter=0,pendingOperation=0,handledOperation=0,workshopGeneration=0;
+    bool pendingShare=false,groupSelectionInitialized=false;
+    std::string pendingGroup;
     std::string groupId;
     std::wstring groupSignature;
     bool updatingGroups = false;
@@ -158,11 +164,20 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
     void UpdateButtons()
     {
         const auto selected = Selected();
-        import.IsEnabled(!snapshot.busy); rename.IsEnabled(!snapshot.busy && selected.size() == 1);
-        remove.IsEnabled(!snapshot.busy && !selected.empty()); png.IsEnabled(!snapshot.busy && !selected.empty()); ico.IsEnabled(!snapshot.busy && !selected.empty());
+        const auto group=std::find_if(snapshot.groups.begin(),snapshot.groups.end(),[&](const auto& value){return value.id==groupId;});
+        const bool realGroup=group!=snapshot.groups.end(),managed=realGroup&&!group->workshopItem.empty();
+        const bool nonempty=realGroup&&std::any_of(snapshot.entries.begin(),snapshot.entries.end(),[&](const auto& entry){return std::find(entry.groupIds.begin(),entry.groupIds.end(),groupId)!=entry.groupIds.end();});
+        previewPack.IsEnabled(!snapshot.busy&&nonempty&&!managed);sharePack.IsEnabled(previewPack.IsEnabled());
+        for(const auto& button:{sharePack,browsePacks,syncPacks})button.Visibility(!picker&&snapshot.workshopAvailable?x::Visibility::Visible:x::Visibility::Collapsed);
+        for(const auto& button:{previewPack,packInfo})button.Visibility(!picker?x::Visibility::Visible:x::Visibility::Collapsed);
+        copyPack.Visibility(!picker&&managed?x::Visibility::Visible:x::Visibility::Collapsed);copyPack.IsEnabled(!snapshot.busy);
+        openPack.Visibility(!picker&&realGroup&&!group->publishedUrl.empty()?x::Visibility::Visible:x::Visibility::Collapsed);
+        openPack.IsEnabled(!snapshot.busy);packInfo.IsEnabled(realGroup&&!snapshot.busy);syncPacks.IsEnabled(!snapshot.busy);browsePacks.IsEnabled(!snapshot.busy);
+        import.IsEnabled(!snapshot.busy&&!managed); rename.IsEnabled(!snapshot.busy && !managed && selected.size() == 1);
+        remove.IsEnabled(!snapshot.busy && !managed && !selected.empty()); png.IsEnabled(!snapshot.busy && !selected.empty()); ico.IsEnabled(!snapshot.busy && !selected.empty());
         newGroup.IsEnabled(!snapshot.busy);
-        renameGroup.IsEnabled(!snapshot.busy && !groupId.empty() && groupId != "ungrouped");
-        deleteGroup.IsEnabled(renameGroup.IsEnabled()); moveGroup.IsEnabled(!snapshot.busy && !selected.empty());
+        renameGroup.IsEnabled(!snapshot.busy && realGroup && !managed);
+        deleteGroup.IsEnabled(renameGroup.IsEnabled()); moveGroup.IsEnabled(!snapshot.busy && !managed && !selected.empty());
         selectAll.IsEnabled(!snapshot.busy&&grid.Items().Size()>0);
         if (selectionChanged) selectionChanged();
     }
@@ -175,6 +190,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
             if (!snapshot.importedGroupId.empty()) { groupId = snapshot.importedGroupId; groupSignature.clear(); signature.clear(); }
             if (picker && snapshot.imported.size() == 1) selectImported = snapshot.imported.front();
         }
+        if(!groupSelectionInitialized&&!snapshot.groups.empty()){groupId=snapshot.groups.front().id;groupSelectionInitialized=true;}
         std::wstring next = std::to_wstring(snapshot.revision) + winrt::to_hstring(groupId).c_str();
         std::wstring nextGroups;
         for (const auto& group : snapshot.groups) nextGroups += winrt::to_hstring(group.id).c_str() + group.name;
@@ -186,7 +202,14 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
                 groups.Items().Append(item); if (id == groupId) groups.SelectedItem(item);
             };
             append({}, L("iconLibrary.allGroups")); append("ungrouped", L("iconLibrary.ungrouped"));
-            for (const auto& group : snapshot.groups) append(group.id, group.name);
+            for (const auto& group : snapshot.groups)
+            {
+                auto label=group.name;
+                const bool duplicate=std::count_if(snapshot.groups.begin(),snapshot.groups.end(),[&](const auto& other){return other.name==group.name;})>1;
+                if(!group.workshopItem.empty())label+=L" · "+(group.author.empty()?winrt::to_hstring(group.workshopOwner).c_str():group.author)+L" · #"+winrt::to_hstring(group.workshopItem).c_str();
+                else if(duplicate){label+=L" · ";label+=winrt::to_hstring(group.source).c_str();label+=L" · ";label+=winrt::to_hstring(group.id.substr(6)).c_str();}
+                append(group.id,label);
+            }
             if (groups.SelectedIndex() < 0) { groupId.clear(); groups.SelectedIndex(0); }
             updatingGroups = false;
         }
@@ -200,8 +223,9 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         {
             signature = std::move(next); const auto selected = selectImported.empty() ? Selected() : std::vector<std::string>{selectImported}; rendering = true;
             grid.Items().Clear(); visible.clear();
-            for (const auto& entry : snapshot.entries)
+            for (auto entry : snapshot.entries)
             {
+                if(entry.groupNames.contains(groupId))entry.name=entry.groupNames.at(groupId);
                 auto name = entry.name; std::transform(name.begin(), name.end(), name.begin(), [](wchar_t v) { return static_cast<wchar_t>(std::towlower(v)); });
                 if (!lowerQuery.empty() && name.find(lowerQuery) == name.npos) continue;
                 if (groupId == "ungrouped" ? !entry.groupIds.empty() :
@@ -216,6 +240,9 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         empty.Text(L("iconLibrary.noMatches"));
         empty.Visibility(!snapshot.entries.empty() && !grid.Items().Size() ? x::Visibility::Visible : x::Visibility::Collapsed);
         std::wstring message = snapshot.busy ? L("iconLibrary.working") : L(snapshot.error);
+        if(snapshot.busy&&snapshot.progress)message=L(snapshot.progress==4?"iconWorkshop.sync":snapshot.progress==3?"iconWorkshop.share":"iconWorkshop.preview")+L" · "+message;
+        if(!snapshot.busy&&snapshot.succeeded&&snapshot.completedAction=="publishPrepared"&&!snapshot.publishedUrl.empty())
+        {message=L("iconWorkshop.openItem")+L": ";message+=winrt::to_hstring(snapshot.publishedUrl).c_str();}
         for (size_t i = 0; i < std::min<size_t>(snapshot.failures.size(), 12); ++i) message += L"\n" + snapshot.failures[i];
         if (snapshot.failures.size() > 12) message += L"\n… (" + std::to_wstring(snapshot.failures.size()) + L")";
         status.Message(message); status.IsOpen(!message.empty());
@@ -224,6 +251,11 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         retry.IsEnabled(!snapshot.busy);
         timer.Interval(snapshot.busy ? std::chrono::milliseconds(300) : std::chrono::milliseconds(2000));
         UpdateButtons();
+        if(active&&!snapshot.busy&&pendingOperation&&snapshot.operationId==pendingOperation&&handledOperation!=pendingOperation)
+        {
+            handledOperation=pendingOperation;
+            if(snapshot.succeeded&&!snapshot.coverPath.empty()&&(snapshot.completedAction=="preparePreview"||snapshot.completedAction=="prepareShare"))ShowPrepared();
+        }
     }
     bool Send(IconLibraryRequest request)
     {
@@ -243,6 +275,61 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         const auto ids = Selected(); if (ids.empty() || snapshot.busy) return;
         const auto paths = PickFiles(true); if (paths.empty()) return;
         IconLibraryRequest request; request.action = "export"; request.ids = ids; request.format = std::move(format); request.destination = paths.front(); Send(std::move(request));
+    }
+    void BeginPreparation(bool share,std::wstring title={},std::wstring description={},std::wstring license={},bool rights=false,std::wstring cover={})
+    {
+        if(snapshot.busy)return;pendingShare=share;pendingGroup=groupId;pendingOperation=++operationCounter;
+        IconLibraryRequest request;request.action=share?"prepareShare":"preparePreview";request.groupId=groupId;request.operationId=pendingOperation;
+        request.title=std::move(title);request.description=std::move(description);request.license=std::move(license);request.rightsConfirmed=rights;request.coverPath=std::move(cover);Send(std::move(request));
+    }
+    winrt::fire_and_forget ShareForm()
+    {
+        const auto lifetime=shared_from_this();const auto generation=workshopGeneration;const auto id=groupId;
+        const auto group=std::find_if(snapshot.groups.begin(),snapshot.groups.end(),[&](const auto& value){return value.id==id;});
+        if(group==snapshot.groups.end()||!group->workshopItem.empty()||snapshot.busy)co_return;
+        c::StackPanel form;form.Spacing(10);
+        c::TextBox title;title.Header(winrt::box_value(L("iconWorkshop.title")));title.MaxLength(256);title.Text(group->shareTitle.empty()?group->name:group->shareTitle);
+        c::TextBox description;description.Header(winrt::box_value(L("iconWorkshop.description")));description.AcceptsReturn(true);description.MaxLength(8000);description.MaxHeight(120);description.Text(group->description);
+        c::TextBox license;license.Header(winrt::box_value(L("iconWorkshop.license")));license.AcceptsReturn(true);license.MaxLength(4096);license.MaxHeight(120);license.Text(group->license);
+        c::CheckBox rights;rights.Content(winrt::box_value(L("iconWorkshop.rights")));rights.IsChecked(group->rightsConfirmed);
+        c::TextBlock reminder;reminder.Text(L("iconWorkshop.reminder"));reminder.TextWrapping(x::TextWrapping::Wrap);
+        c::Button choose;choose.Content(winrt::box_value(L("iconWorkshop.chooseCover")));
+        const auto cover=std::make_shared<std::wstring>();choose.Click([cover,choose](auto&&,auto&&){const auto files=PickFiles(false,true);if(!files.empty()){*cover=files.front();c::ToolTipService::SetToolTip(choose,winrt::box_value(*cover));}});
+        for(const auto& control:{title.as<x::UIElement>(),description.as<x::UIElement>(),license.as<x::UIElement>(),rights.as<x::UIElement>(),reminder.as<x::UIElement>(),choose.as<x::UIElement>()})form.Children().Append(control);
+        c::ScrollViewer scroll;scroll.MaxHeight(480);scroll.Content(form);
+        c::ContentDialog dialog;dialog.XamlRoot(root.XamlRoot());dialog.Title(winrt::box_value(L("iconWorkshop.share")));dialog.Content(scroll);
+        dialog.PrimaryButtonText(L("iconWorkshop.preview"));dialog.CloseButtonText(L("settings.dialog.cancel"));dialog.DefaultButton(c::ContentDialogButton::Close);workshopDialog=dialog;
+        try{const auto answer=co_await dialog.ShowAsync();workshopDialog=nullptr;
+            if(active&&generation==workshopGeneration&&groupId==id&&answer==c::ContentDialogResult::Primary)
+                BeginPreparation(true,title.Text().c_str(),description.Text().c_str(),license.Text().c_str(),rights.IsChecked().Value(),*cover);
+        }catch(...){workshopDialog=nullptr;}
+    }
+    winrt::fire_and_forget ShowPrepared()
+    {
+        const auto lifetime=shared_from_this();const auto generation=workshopGeneration;const auto id=pendingGroup;
+        const auto preparation=snapshot.preparationId;const bool share=pendingShare;
+        c::StackPanel form;form.Spacing(10);c::Image image;image.MaxHeight(400);image.MaxWidth(400);image.Stretch(m::Stretch::Uniform);
+        c::TextBlock failed;failed.Text(L("iconLibrary.missing"));LoadPreview(image,failed,snapshot.coverPath);form.Children().Append(image);form.Children().Append(failed);
+        c::TextBlock message;message.TextWrapping(x::TextWrapping::Wrap);
+        const auto group=std::find_if(snapshot.groups.begin(),snapshot.groups.end(),[&](const auto& value){return value.id==id;});
+        std::wstring text=group==snapshot.groups.end()?std::wstring{}:group->name;
+        if(share)text+=L"\n"+L("iconWorkshop.confirmShare");if(!snapshot.publishedUrl.empty()){text+=L"\n";text+=winrt::to_hstring(snapshot.publishedUrl).c_str();}message.Text(text);form.Children().Append(message);
+        c::ScrollViewer scroll;scroll.MaxHeight(560);scroll.Content(form);
+        c::ContentDialog dialog;dialog.XamlRoot(root.XamlRoot());dialog.Title(winrt::box_value(L("iconWorkshop.preview")));dialog.Content(scroll);
+        if(share)dialog.PrimaryButtonText(L(snapshot.publishedUrl.empty()?"iconWorkshop.publish":"iconWorkshop.publishUpdate"));
+        dialog.CloseButtonText(L("settings.dialog.cancel"));dialog.DefaultButton(c::ContentDialogButton::Close);workshopDialog=dialog;
+        try{const auto answer=co_await dialog.ShowAsync();workshopDialog=nullptr;
+            if(share&&active&&generation==workshopGeneration&&answer==c::ContentDialogResult::Primary)
+            {IconLibraryRequest request;request.action="publishPrepared";request.groupId=id;request.preparationId=preparation;request.operationId=++operationCounter;pendingOperation=request.operationId;Send(request);}
+        }catch(...){workshopDialog=nullptr;}
+    }
+    winrt::fire_and_forget Info()
+    {
+        const auto lifetime=shared_from_this();const auto group=std::find_if(snapshot.groups.begin(),snapshot.groups.end(),[&](const auto& value){return value.id==groupId;});if(group==snapshot.groups.end())co_return;
+        c::TextBlock text;text.TextWrapping(x::TextWrapping::Wrap);text.IsTextSelectionEnabled(true);
+        text.Text(group->name+L"\n"+group->author+L"\n"+winrt::to_hstring(group->sourceUri).c_str()+L"\n\n"+group->description+L"\n\n"+(group->license.empty()?L("iconWorkshop.noLicense"):group->license));
+        c::ScrollViewer scroll;scroll.MaxHeight(460);scroll.Content(text);c::ContentDialog dialog;dialog.XamlRoot(root.XamlRoot());dialog.Title(winrt::box_value(L("iconWorkshop.info")));dialog.Content(scroll);dialog.CloseButtonText(L("settings.dialog.cancel"));
+        try{co_await dialog.ShowAsync();}catch(...){}
     }
     winrt::fire_and_forget EditGroup(bool create)
     {
@@ -310,7 +397,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         try
         {
             if (co_await dialog.ShowAsync() == c::ContentDialogResult::Primary && active)
-            { IconLibraryRequest request; request.action = "rename"; request.ids = ids; request.name = name.Text(); Send(std::move(request)); }
+            { IconLibraryRequest request; request.action = "rename"; request.ids = ids; request.name = name.Text(); request.groupId=groupId; Send(std::move(request)); }
         }
         catch (...) { /* The owning settings island may have closed. */ }
     }
@@ -392,7 +479,7 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         });
         groups.SelectionChanged([weak](auto&&, auto&&) { if (auto self = weak.lock(); self && !self->updatingGroups)
             { const auto selected = self->groups.SelectedItem().try_as<c::ComboBoxItem>();
-              self->groupId = selected ? winrt::to_string(winrt::unbox_value<winrt::hstring>(selected.Tag())) : std::string{}; self->signature.clear(); self->Render(); } });
+              self->groupSelectionInitialized=true; self->groupId = selected ? winrt::to_string(winrt::unbox_value<winrt::hstring>(selected.Tag())) : std::string{}; self->signature.clear(); self->Render(); } });
         add(import, "iconLibrary.import", [weak](auto&&, auto&&) { if (auto self = weak.lock()) self->Import(PickFiles(false)); });
         add(selectAll,"iconLibrary.selectFiltered",[weak](auto&&,auto&&){if(const auto self=weak.lock())self->grid.SelectAll();});
         x::Automation::AutomationProperties::SetAutomationId(selectAll,L"IconLibrarySelectFiltered");
@@ -407,6 +494,14 @@ struct IconLibraryPagePresenter::Impl : std::enable_shared_from_this<Impl>
         { button.Label(L(key)); toolbar.PrimaryCommands().Append(button); }
         renameGroup.Click([weak](auto&&, auto&&) { if (auto self=weak.lock()) self->EditGroup(false); });
         deleteGroup.Click([weak](auto&&, auto&&) { if (auto self=weak.lock()) self->DeleteGroup(); });
+        const auto workshopButton=[&](c::AppBarButton button,const char* key,auto click){button.Label(L(key));toolbar.SecondaryCommands().Append(button);button.Click(click);};
+        workshopButton(previewPack,"iconWorkshop.preview",[weak](auto&&,auto&&){if(const auto self=weak.lock())self->BeginPreparation(false);});
+        workshopButton(sharePack,"iconWorkshop.share",[weak](auto&&,auto&&){if(const auto self=weak.lock())self->ShareForm();});
+        workshopButton(browsePacks,"iconWorkshop.browse",[weak](auto&&,auto&&){if(const auto self=weak.lock()){IconLibraryRequest request;request.action="openWorkshop";self->Send(request);}});
+        workshopButton(syncPacks,"iconWorkshop.sync",[weak](auto&&,auto&&){if(const auto self=weak.lock()){IconLibraryRequest request;request.action="syncSubscriptions";request.operationId=++self->operationCounter;self->Send(request);}});
+        workshopButton(copyPack,"iconWorkshop.copyLocal",[weak](auto&&,auto&&){if(const auto self=weak.lock()){self->importing=true;IconLibraryRequest request;request.action="copyLocalGroup";request.groupId=self->groupId;self->Send(request);}});
+        workshopButton(packInfo,"iconWorkshop.info",[weak](auto&&,auto&&){if(const auto self=weak.lock())self->Info();});
+        workshopButton(openPack,"iconWorkshop.openItem",[weak](auto&&,auto&&){if(const auto self=weak.lock()){IconLibraryRequest request;request.action="openPublished";request.groupId=self->groupId;self->Send(request);}});
         if (picker) { selectAll.Visibility(x::Visibility::Collapsed); newGroup.Visibility(x::Visibility::Collapsed); renameGroup.Visibility(x::Visibility::Collapsed); deleteGroup.Visibility(x::Visibility::Collapsed); moveGroup.Visibility(x::Visibility::Collapsed); rename.Visibility(x::Visibility::Collapsed); remove.Visibility(x::Visibility::Collapsed); png.Visibility(x::Visibility::Collapsed); ico.Visibility(x::Visibility::Collapsed); }
         grid.Height(picker ? 340 : 460); grid.SelectionMode(picker ? c::ListViewSelectionMode::Single : c::ListViewSelectionMode::Multiple);
         // Let GridView own and recycle its containers. Mutating Content from
@@ -486,6 +581,9 @@ void IconLibraryPagePresenter::Activate(std::wstring target)
 }
 void IconLibraryPagePresenter::Deactivate()
 {
+    ++impl_->workshopGeneration;impl_->pendingOperation=0;
+    if(impl_->workshopDialog){impl_->workshopDialog.Hide();impl_->workshopDialog=nullptr;}
+    if(impl_->active&&impl_->action){IconLibraryRequest cancel;cancel.action="cancelWorkshop";try{impl_->action(cancel);}catch(...){}}
     impl_->active = false; impl_->timer.Stop();
     ++impl_->pickerGeneration;
     if (auto cancel = std::exchange(impl_->cancelPicker, {})) cancel();
@@ -493,6 +591,7 @@ void IconLibraryPagePresenter::Deactivate()
 }
 void IconLibraryPagePresenter::RefreshLocalizedText()
 {
+    for(auto [button,key]:{std::pair{impl_->previewPack,"iconWorkshop.preview"},{impl_->sharePack,"iconWorkshop.share"},{impl_->browsePacks,"iconWorkshop.browse"},{impl_->syncPacks,"iconWorkshop.sync"},{impl_->copyPack,"iconWorkshop.copyLocal"},{impl_->packInfo,"iconWorkshop.info"},{impl_->openPack,"iconWorkshop.openItem"}})button.Label(impl_->L(key));
     impl_->search.PlaceholderText(impl_->L("iconLibrary.search"));
     impl_->import.Label(impl_->L("iconLibrary.import")); impl_->rename.Label(impl_->L("iconLibrary.rename"));
     impl_->remove.Label(impl_->L("iconLibrary.delete")); impl_->png.Label(impl_->L("iconLibrary.exportPng"));

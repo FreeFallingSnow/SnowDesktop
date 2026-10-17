@@ -243,6 +243,11 @@ bool IsExcludedDataPath(const std::filesystem::path& relative)
         _wcsicmp(first.c_str(), L"SnowDesktop_crash.log") == 0 ||
         _wcsicmp(first.c_str(), L"SnowDesktop.entitlement.bin") == 0)
         return true;
+    if (_wcsicmp(first.c_str(), L"IconPackWorkshop") == 0)
+    {
+        const auto next=std::next(part);
+        return next!=relative.end()&&_wcsicmp(next->wstring().c_str(),L"publications")!=0;
+    }
     if (_wcsicmp(first.c_str(), L"icon-library") == 0)
     {
         const auto next = std::next(part);

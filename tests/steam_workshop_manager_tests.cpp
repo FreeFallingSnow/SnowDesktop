@@ -108,6 +108,15 @@ void TestWorkshopUploadFileKinds()
         !ValidateWorkshopUploadFile(widget, false, WorkshopContentKind::Theme, error),
         "the old widget-only validation rejects this theme; opposite content kinds remain rejected");
     Check(ValidateWorkshopUploadFile(widget, false, WorkshopContentKind::Widget, error), "widget upload preflight keeps its existing package kind");
+    const auto icons=temporary.path/L"package.snowicons";
+    {std::ofstream file(icons);file<<"icon package";}
+    Check(ValidateWorkshopUploadFile(icons,false,WorkshopContentKind::IconPack,error)&&
+        !ValidateWorkshopUploadFile(icons,false,WorkshopContentKind::Widget,error)&&
+        !ValidateWorkshopUploadFile(widget,false,WorkshopContentKind::IconPack,error),"icon package upload kind is independent of widget and theme protocols");
+    std::filesystem::resize_file(icons,128ull*1024*1024);
+    Check(ValidateWorkshopUploadFile(icons,false,WorkshopContentKind::IconPack,error),"icon package accepts exact 128 MiB boundary");
+    std::filesystem::resize_file(icons,128ull*1024*1024+1);
+    Check(!ValidateWorkshopUploadFile(icons,false,WorkshopContentKind::IconPack,error),"icon package rejects bytes beyond 128 MiB before Steam calls");
     std::filesystem::resize_file(theme, 4ull * 1024ull * 1024ull);
     Check(ValidateWorkshopUploadFile(theme, false, WorkshopContentKind::Theme, error), "theme package accepts its format limit");
     std::filesystem::resize_file(theme, 4ull * 1024ull * 1024ull + 1);

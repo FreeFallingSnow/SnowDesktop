@@ -15,8 +15,8 @@ namespace
 constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr UINT_PTR AsyncTimerId = 1;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
-// Native Start/Search preview sources carry their optical sizing policy.
-constexpr std::uint32_t Version = 44;
+// Icon pack sharing metadata and immutable operation results.
+constexpr std::uint32_t Version = 46;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;

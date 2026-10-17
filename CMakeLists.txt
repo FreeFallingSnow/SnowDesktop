@@ -306,6 +306,10 @@ set(SNOWDESKTOP_SOURCES
     src/icons/android_icon_pack.h
     src/icons/icon_image_codec.h
     src/icons/icon_override_rules.h
+    src/icons/icon_package.cpp
+    src/icons/icon_package.h
+    src/icons/icon_workshop.cpp
+    src/icons/icon_workshop.h
     src/icons/icon_library.cpp
     src/icons/icon_library.h
     src/app/features/app_icon_library.cpp
@@ -2499,16 +2503,23 @@ if (BUILD_TESTING)
             src/icons/large_icon_renderer.cpp
             src/icons/large_icon_assets.cpp
             src/icons/icon_image_codec.cpp
+            src/icons/icon_package.cpp
             src/icons/icon_library.cpp
             src/icons/icon_pack_archive.cpp
             src/icons/android_icon_pack.cpp
             tests/icons/icon_library_tests.cpp
             tests/icons/icon_pack_tests.cpp
+            tests/icons/icon_workshop_storage_tests.cpp
+            tests/icons/icon_workshop_workflow_tests.cpp
+            src/icons/icon_workshop.cpp
+            src/theme/theme_preview.cpp
+            src/widget/preview/widget_preview_stage.cpp
+            src/steam/steam_workshop_cache.cpp
             src/icons/icon_beautify.cpp
             src/ui/preview/preview_png_writer.cpp
             src/data/atomic_file.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES webp SnowDesktopPuff bcrypt ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid xmllite
+        LINK_LIBRARIES SnowDesktopWorkshopManagerSupport webp SnowDesktopPuff bcrypt ole32 shell32 shlwapi uuid windowscodecs gdi32 advapi32 user32 d2d1 dwrite d3d11 dxguid xmllite
         LABELS rules shell ui)
 
     add_test(NAME large_icon_shell_assets

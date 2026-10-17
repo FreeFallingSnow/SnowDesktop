@@ -15,6 +15,8 @@
 #include <cmath>
 
 int RunIconPackTests(const std::filesystem::path& root);
+int RunIconWorkshopStorageTests(const std::filesystem::path& root);
+int RunIconWorkshopWorkflowTests(const std::filesystem::path& root);
 namespace
 {
 using Microsoft::WRL::ComPtr;
@@ -212,6 +214,8 @@ int RunIconLibraryTests()
     check(!partial.succeeded && partial.imported.size() == 1 && partial.failures.size() == 1 && partial.entries.size() == 1,
         "a partial import preserves its valid resource and reports exactly the failed input");
     failures += RunIconPackTests(directory);
+    failures += RunIconWorkshopStorageTests(directory);
+    failures += RunIconWorkshopWorkflowTests(directory);
     if (SUCCEEDED(initialized)) CoUninitialize();
     return failures ? 1 : 0;
 }

@@ -110,12 +110,12 @@ SD_IPC_FIELDS(IconAppearanceChoice, v.id, v.name, v.settings);
 SD_IPC_FIELDS(IconAppearanceRequest, v.action, v.target, v.session, v.revision, v.settings, v.themeId);
 SD_IPC_FIELDS(IconAppearanceSnapshot, v.entries, v.themes, v.current, v.session, v.revision,
     v.succeeded, v.available, v.independent, v.error, v.previewPng, v.nativeControlSource);
-SD_IPC_FIELDS(IconLibraryGroup, v.id, v.name, v.source, v.packageId, v.packageVersion, v.sourceUri);
+SD_IPC_FIELDS(IconLibraryGroup, v.id, v.name, v.source, v.packageId, v.packageVersion, v.sourceUri, v.shareTitle, v.description, v.license, v.author, v.rightsConfirmed, v.workshopItem, v.workshopOwner, v.workshopHash, v.publishedUrl, v.accounts);
 SD_IPC_FIELDS(IconLibraryEntry, v.id, v.format, v.name, v.previewPath, v.width, v.height, v.missing,
-    v.source, v.packageId, v.packageVersion, v.packageEntryId, v.uses, v.groupIds);
-SD_IPC_FIELDS(IconLibraryRequest, v.action, v.ids, v.paths, v.name, v.destination, v.target, v.format, v.session, v.revision, v.groupId);
+    v.source, v.packageId, v.packageVersion, v.packageEntryId, v.uses, v.groupIds, v.localOwned, v.groupNames);
+SD_IPC_FIELDS(IconLibraryRequest, v.action, v.ids, v.paths, v.name, v.destination, v.target, v.format, v.session, v.revision, v.groupId, v.title, v.description, v.license, v.coverPath, v.rightsConfirmed, v.preparationId, v.operationId);
 SD_IPC_FIELDS(IconLibrarySnapshot, v.groups, v.entries, v.imported, v.importedGroupId, v.failures, v.revision, v.session, v.busy, v.succeeded,
-    v.error, v.target, v.targetName);
+    v.error, v.target, v.targetName, v.workshopAvailable, v.coverPath, v.preparationId, v.publishedUrl, v.completedAction, v.operationId, v.progress);
 SD_IPC_FIELDS(LargeIconSettingsSnapshot, v.key, v.name, v.imagePath, v.session, v.revision,
     v.available, v.editable, v.succeeded, v.maxColumns, v.maxRows, v.config, v.error,
     v.landscapePath, v.portraitPath, v.source, v.landscapeSource, v.portraitSource, v.accent, v.steam,

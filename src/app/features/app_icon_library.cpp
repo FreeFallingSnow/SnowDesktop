@@ -1,5 +1,7 @@
 #include "app/app.h"
 #include "icons/icon_library.h"
+#include "icons/icon_workshop.h"
+#include "../../../steam_bridge/src/icon_pack_workshop_publish.h"
 #include "icons/icon_image_codec.h"
 #include "icons/icon_override_rules.h"
 #include "icons/icon_control_source.h"
@@ -13,6 +15,9 @@ struct IconLibraryHostState
     bool initialized = false, busy = false;
     std::wstring target;
     std::uint64_t session = 0;
+    std::shared_ptr<std::atomic_bool> workshopCancel=std::make_shared<std::atomic_bool>(false);
+    std::shared_ptr<std::atomic_uint> workshopProgress=std::make_shared<std::atomic_uint>(0);
+    std::string validPreparation;
     std::optional<snowdesktop::LargeIconSettingsRequest> pendingLargeIcon;
     std::unordered_map<std::string, std::shared_ptr<snowdesktop::BackgroundBitmap>> bitmaps;
 };
@@ -60,8 +65,33 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
         auto result = state.snapshot; result.succeeded = SetIconOverride(request.target, {});
         result.error = result.succeeded ? "" : "iconLibrary.saveFailed"; return result;
     }
+    if(request.action=="cancelWorkshop")
+    {state.workshopCancel->store(true);state.validPreparation.clear();state.snapshot.preparationId.clear();auto result=state.snapshot;result.busy=state.busy;return result;}
+    if(request.action=="openWorkshop"||request.action=="openPublished")
+    {
+        std::string url="https://steamcommunity.com/workshop/browse/?appid=5080330&requiredtags%5B0%5D=Icon%20Pack";
+        if(request.action=="openPublished")
+        {
+            const auto group=std::find_if(state.snapshot.groups.begin(),state.snapshot.groups.end(),[&](const auto& value){return value.id==request.groupId;});
+            if(group==state.snapshot.groups.end())return state.snapshot;
+            url=group->publishedUrl;if(url.empty())return state.snapshot;
+        }
+        const auto wide=Utf8ToWide(url);ShellExecuteW(nullptr,L"open",wide.c_str(),nullptr,nullptr,SW_SHOWNORMAL);return state.snapshot;
+    }
+    if((request.action=="delete"||request.action=="rename"||request.action=="deleteGroupWithAssets")&&
+        !(request.action=="rename"&&std::any_of(state.snapshot.groups.begin(),state.snapshot.groups.end(),[&](const auto& group){return group.id==request.groupId&&group.workshopItem.empty();}))&&
+        std::any_of(state.snapshot.groups.begin(),state.snapshot.groups.end(),[&](const auto& group){
+            if(group.workshopItem.empty())return false;
+            return std::any_of(state.snapshot.entries.begin(),state.snapshot.entries.end(),[&](const auto& entry){return
+                (request.action=="deleteGroupWithAssets"?std::find(entry.groupIds.begin(),entry.groupIds.end(),request.groupId)!=entry.groupIds.end():
+                std::find(request.ids.begin(),request.ids.end(),entry.id)!=request.ids.end())&&std::find(entry.groupIds.begin(),entry.groupIds.end(),group.id)!=entry.groupIds.end();});}))
+    {auto result=state.snapshot;result.succeeded=false;result.error="iconWorkshop.managedGroup";return result;}
+    const bool workshopOperation=request.action=="preparePreview"||request.action=="prepareShare"||request.action=="publishPrepared"||request.action=="syncSubscriptions"||request.action=="autoSyncSubscriptions";
+    if(request.action=="publishPrepared"&&(state.workshopCancel->load()||request.preparationId.empty()||request.preparationId!=state.validPreparation))
+    {auto result=state.snapshot;result.succeeded=false;result.error="iconWorkshop.stalePreparation";return result;}
     auto response = state.snapshot;
     response.busy = state.busy; response.target.clear(); response.targetName.clear(); response.session = 0;
+    response.progress=state.busy?state.workshopProgress->load():0;
     if (!request.target.empty())
     {
         if (request.target != state.target || !IsIconOverrideTarget(request.target))
@@ -82,9 +112,9 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
     }
     else if ((!state.initialized || request.action == "refresh" || request.action == "import" ||
         request.action == "rename" || request.action == "delete" || request.action == "export" ||
-        request.action == "createGroup" || request.action == "renameGroup" || request.action == "deleteGroup" || request.action == "deleteGroupWithAssets" || request.action == "moveGroup") && !state.busy)
+        workshopOperation || request.action=="copyLocalGroup" || request.action=="saveSharing" || request.action=="collectRetired" || request.action == "createGroup" || request.action == "renameGroup" || request.action == "deleteGroup" || request.action == "deleteGroupWithAssets" || request.action == "moveGroup") && !state.busy)
     {
-        if (request.action != "read" && request.action != "refresh" && request.action != "import" && !state.initialized)
+        if (request.action != "read" && request.action != "refresh" && request.action != "import" && request.action!="autoSyncSubscriptions" && !state.initialized)
         { response.error = "iconLibrary.working"; response.succeeded = false; return response; }
         if(request.action=="delete"||request.action=="deleteGroupWithAssets")
         {
@@ -128,7 +158,7 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
                 if(floatingPopupHwnd_)InvalidateRect(floatingPopupHwnd_,nullptr,FALSE);
             }
         }
-        if (request.action == "delete" || request.action == "deleteGroupWithAssets" || request.action == "refresh" || request.action == "import")
+        if (request.action == "delete" || request.action == "deleteGroupWithAssets" || request.action == "refresh" || request.action == "import" || request.action=="collectRetired")
         {
             state.images.Cancel();
             for (const auto& [key, bitmap] : state.bitmaps)
@@ -141,15 +171,39 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
         std::vector<std::string> protectedIds;
         for (const auto& [id, names] : uses) { (void)names; protectedIds.push_back(id); }
         const auto weak = std::weak_ptr<IconLibraryHostState>(iconLibraryState_);
+        if(workshopOperation)state.workshopCancel=std::make_shared<std::atomic_bool>(false);
+        if(request.action=="preparePreview"||request.action=="prepareShare")state.validPreparation.clear();
+        const auto cancellation=state.workshopCancel;
+        const auto progress=state.workshopProgress;progress->store(0);
+        const auto bridge=std::filesystem::path(GetExecutableDirectoryPath())/L"SnowDesktopSteamBridge.exe";
+        const auto data=std::filesystem::path(GetDataDirectoryPath());
+        const bool previousAvailability=state.snapshot.workshopAvailable;
+        if(workshopOperation){response.coverPath.clear();response.completedAction.clear();response.operationId=request.operationId;}
+
         state.busy = true;
         response.error.clear(); response.failures.clear(); response.busy = true; response.succeeded = true;
         const bool queued = state.operations.Submit(L"library-operation",
-            [library = state.library, request, protectedIds = std::move(protectedIds)] {
-                if (request.action == "refresh") return library->Refresh();
+            [library = state.library, request, protectedIds = std::move(protectedIds),bridge,data,cancellation,progress,workshopOperation,previousAvailability] {
+                if(workshopOperation)
+                {
+                    auto result=snowdesktop::icon_workshop::Run(*library,request,bridge,data,cancellation.get(),progress.get());
+                    result.workshopAvailable=snowdesktop::icon_workshop::Available(bridge);result.operationId=request.operationId;result.completedAction=request.action;
+                    return result;
+                }
+                if(request.action=="collectRetired") {auto result=library->CollectRetired(protectedIds);result.workshopAvailable=previousAvailability;return result;}
+                if (request.action == "refresh" || request.action=="read")
+                {auto result=request.action=="refresh"?library->Refresh():library->Read();result.workshopAvailable=snowdesktop::icon_workshop::Available(bridge);return result;}
                 return request.action == "read" ? library->Read() : library->Invoke(request, protectedIds);
-            }, [this, weak](auto result) {
+            }, [this, weak, request, data, workshopOperation, previousAvailability](auto result) {
                 const auto current = weak.lock(); if (!current) return;
-                current->busy = false; current->initialized = true; current->snapshot = std::move(result);
+                current->busy = false; current->initialized = true;
+                if(!workshopOperation&&request.action!="read"&&request.action!="refresh")result.workshopAvailable=previousAvailability;
+                if(workshopOperation&&current->workshopCancel->load()){result.coverPath.clear();result.preparationId.clear();result.completedAction.clear();}
+                if(!result.preparationId.empty())current->validPreparation=result.preparationId;
+                if(request.action=="publishPrepared"&&result.succeeded)current->validPreparation.clear();
+                for(auto& group:result.groups)group.publishedUrl=group.workshopItem.empty()?
+                    snowdesktop::steam_bridge::IconPackPublishedUrl(data,group.id):"https://steamcommunity.com/sharedfiles/filedetails/?id="+group.workshopItem;
+                current->snapshot = std::move(result);
                 const auto pending = std::exchange(current->pendingLargeIcon, {});
                 if (pending && current->snapshot.imported.size() == 1)
                 {
@@ -160,6 +214,8 @@ snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLi
                     largeIconRuntime_[pending->key].error = current->snapshot.error.empty() ? "iconLibrary.invalid" : current->snapshot.error;
                 InvalidateDockRects();
                 if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+                if((request.action=="syncSubscriptions"||request.action=="autoSyncSubscriptions")&&current->snapshot.succeeded)
+                {snowdesktop::IconLibraryRequest collect;collect.action="collectRetired";(void)EditIconLibrary(collect);}
             }, controlHwnd_, kLargeIconAssetsReadyMessage);
         if (!queued) { state.busy = false; response.busy = false; response.succeeded = false; response.error = "iconLibrary.unavailable"; }
     }

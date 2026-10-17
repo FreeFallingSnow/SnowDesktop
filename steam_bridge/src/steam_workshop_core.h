@@ -110,7 +110,7 @@ struct PublishProgress
     bool submitStarted = false;
 };
 
-enum class WorkshopContentKind { Widget, Theme };
+enum class WorkshopContentKind { Widget, Theme, IconPack };
 struct PublishRequest
 {
     WorkshopContentKind contentKind = WorkshopContentKind::Widget;

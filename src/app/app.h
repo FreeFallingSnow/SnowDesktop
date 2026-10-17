@@ -2001,6 +2001,7 @@ private:
     /** @brief 处理定时器事件。 @param timerId 定时器标识 */
     void OnTimer(WPARAM timerId);
     void PollSteamWorkshopSubscriptions(bool bypassThrottle = false);
+    ULONGLONG iconWorkshopLastPoll_ = 0;
     void StartSteamWorkshopWatcher();
     void StopSteamWorkshopWatcher();
     static DWORD WINAPI SteamWorkshopWatcherThreadProc(LPVOID param);

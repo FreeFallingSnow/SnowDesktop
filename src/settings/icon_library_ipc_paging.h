@@ -39,6 +39,10 @@ public:
             page.error = snapshot_.error;
             page.target = snapshot_.target;
             page.targetName = snapshot_.targetName;
+            page.workshopAvailable=snapshot_.workshopAvailable;page.coverPath=snapshot_.coverPath;
+            page.preparationId=snapshot_.preparationId;page.publishedUrl=snapshot_.publishedUrl;
+            page.completedAction=snapshot_.completedAction;page.operationId=snapshot_.operationId;
+            page.progress=snapshot_.progress;
         }
         std::size_t bytes = 0;
         for (std::size_t i = offset; i < snapshot_.entries.size() && page.entries.size() < 1024; ++i)

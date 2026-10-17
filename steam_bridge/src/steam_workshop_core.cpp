@@ -655,7 +655,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
                 "cannot create the temporary Workshop upload directory");
             return std::nullopt;
         }
-        const auto stagedPackage = upload.root / (request.contentKind == WorkshopContentKind::Theme ? L"package.snowtheme" : L"package.snowwidget");
+        const auto stagedPackage = upload.root / (request.contentKind == WorkshopContentKind::Theme ? L"package.snowtheme" : request.contentKind == WorkshopContentKind::IconPack ? L"package.snowicons" : L"package.snowwidget");
         upload.files.push_back(stagedPackage);
         std::filesystem::copy_file(request.package, stagedPackage,
             std::filesystem::copy_options::none, ec);
@@ -690,6 +690,16 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
         }
         if (!request.validateStagedPreviews(additionalPreviews))
         { SetError(error, kInvalidArguments, "stalePreparation", "Theme gallery changed before upload"); return std::nullopt; }
+    }
+    if(request.contentKind==WorkshopContentKind::IconPack)
+    {
+        themePreview.root=upload.root;themePreview.root+=L"-preview";
+        if(!request.preview||!request.validateStagedArtifacts||!std::filesystem::create_directory(themePreview.root,ec)||ec)
+        {SetError(error,kInvalidArguments,"stalePreparation","Cannot freeze icon pack artifacts");return std::nullopt;}
+        previewPath=themePreview.root/L"cover.png";themePreview.files.push_back(previewPath);
+        std::filesystem::copy_file(*request.preview,previewPath,std::filesystem::copy_options::none,ec);
+        if(ec||!request.validateStagedArtifacts(upload.root/L"package.snowicons",previewPath))
+        {SetError(error,kInvalidArguments,"stalePreparation","Icon pack artifacts changed");return std::nullopt;}
     }
     ISteamUGC* ugc = SteamUGC();
     ISteamUtils* utils = SteamUtils();
@@ -738,7 +748,7 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
                 static_cast<std::uint64_t>(itemId) });
     }
     else lifecycle.BindExisting(static_cast<std::uint64_t>(itemId));
-    if (request.contentKind == WorkshopContentKind::Theme && needsAgreement)
+    if (request.contentKind != WorkshopContentKind::Widget && needsAgreement)
         return PublishResult{creating, static_cast<std::uint64_t>(itemId), true, CommunityItemUrl(itemId)};
     std::vector<std::string> previousPreviews;
     if (!creating && request.contentKind == WorkshopContentKind::Widget && !request.expectedPackageId.empty())
@@ -750,12 +760,12 @@ std::optional<PublishResult> SteamWorkshopCore::Publish(
             SteamUser()->GetSteamID().ConvertToUint64(), item->consumerAppId, appId, detail))
         { SetError(error, kInvalidArguments, "project_item_mismatch", detail.empty() ? "Workshop item identity changed before upload" : detail); return std::nullopt; }
     }
-    if (!creating && request.contentKind == WorkshopContentKind::Theme)
+    if (!creating && (request.contentKind == WorkshopContentKind::Theme || request.contentKind == WorkshopContentKind::IconPack))
     {
         const auto item = FindItem(itemId, error);
         if (!item || item->ownerSteamId != SteamUser()->GetSteamID().ConvertToUint64() || item->consumerAppId != appId || item->banned)
         { SetError(error, kSteamOperationFailed, "authorMismatch", "Theme gallery owner changed"); return std::nullopt; }
-        previousPreviews = item->additionalPreviewFilenames;
+        if(request.contentKind==WorkshopContentKind::Theme)previousPreviews = item->additionalPreviewFilenames;
     }
     const UGCUpdateHandle_t update = ugc->StartItemUpdate(appId, itemId);
     if (update == k_UGCUpdateHandleInvalid)

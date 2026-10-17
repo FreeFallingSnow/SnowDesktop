@@ -5,6 +5,8 @@
 #include <fstream>
 #include <limits>
 #include <string_view>
+#include <set>
+#include <map>
 extern "C" {
 #include "puff.h"
 }
@@ -56,7 +58,7 @@ std::string Utf8Name(std::string_view name, bool utf8)
     return result;
 }
 }
-bool Read(const std::filesystem::path& path, Archive& result, std::string& error)
+bool Read(const std::filesystem::path& path, Archive& result, std::string& error, bool strictIconPackage)
 {
     result = {}; error.clear();
     const auto fail = [&](const char* why) { error = why; result.images.clear(); return false; };
@@ -75,7 +77,10 @@ bool Read(const std::filesystem::path& path, Archive& result, std::string& error
     const auto count = U16(bytes, end + 10); size_t pos = U32(bytes, end + 16);
     if (!count || count > 50000 || pos > end || U32(bytes, end + 12) != end - pos) return fail("iconLibrary.invalid");
     const bool apk = Lower(path.extension().string()) == ".apk";
+    const auto centralStart=pos;
+    std::map<std::size_t,std::size_t> localRanges;
     std::uint64_t expanded = 0;
+    std::set<std::string> names;
     for (unsigned i = 0; i < count; ++i)
     {
         if (pos > end || end - pos < 46 || U32(bytes, pos) != 0x02014b50) return fail("iconLibrary.invalid");
@@ -83,13 +88,16 @@ bool Read(const std::filesystem::path& path, Archive& result, std::string& error
         const auto crc = U32(bytes, pos + 16), packed = U32(bytes, pos + 20), unpacked = U32(bytes, pos + 24);
         const size_t nameSize = U16(bytes, pos + 28), extra = U16(bytes, pos + 30), comment = U16(bytes, pos + 32);
         const size_t local = U32(bytes, pos + 42);
+        if(strictIconPackage&&((flags&~0x808u)||((U32(bytes,pos+38)>>16)&0170000)==0120000))return fail("iconLibrary.invalid");
         if (46 + nameSize + extra + comment > end - pos || U16(bytes, pos + 34)) return fail("iconLibrary.invalid");
         const std::string name = bytes.substr(pos + 46, nameSize), lower = Lower(name);
         pos += 46 + nameSize + extra + comment;
         if (!SafeName(name)) return fail("iconLibrary.invalid");
+        if (strictIconPackage && (!names.insert(lower).second || (name != "icon-pack.json" &&
+            (!name.starts_with("assets/") || !ImageName(lower))))) return fail("iconLibrary.invalid");
         if (name.back() == '/') continue;
         const bool resource = lower.starts_with("res/") || lower == "resources.arsc" || lower == "assets/appfilter.xml" || lower == "assets/drawable.xml";
-        const bool document = apk && (lower.ends_with(".xml") || lower == "resources.arsc");
+        const bool document = (apk && (lower.ends_with(".xml") || lower == "resources.arsc")) || (strictIconPackage && name == "icon-pack.json");
         if (apk && !resource) continue;
         if (!ImageName(lower) && !document) continue;
         // Launcher UI nine-patches are not mapped icons. A mapped reference to
@@ -97,11 +105,19 @@ bool Read(const std::filesystem::path& path, Archive& result, std::string& error
         if (apk && lower.ends_with(".9.png")) continue;
         expanded += unpacked;
         if (unpacked > icon_image::kMaxFileBytes || expanded > maxExpanded) return fail("iconLibrary.packTooLarge");
-        if (!unpacked || flags & 1 || (method != 0 && method != 8)) { result.skipped.push_back(name); continue; }
+        if (!unpacked || flags & 1 || (method != 0 && method != 8)) { if (strictIconPackage) return fail("iconLibrary.invalid"); result.skipped.push_back(name); continue; }
         if (local > end || end - local < 30 || U32(bytes, local) != 0x04034b50 ||
             U16(bytes, local + 8) != method || U16(bytes, local + 6) != flags) return fail("iconLibrary.invalid");
         const size_t data = local + 30 + U16(bytes, local + 26) + U16(bytes, local + 28);
         if (data > end || packed > end - data || U16(bytes, local + 26) != nameSize || bytes.compare(local + 30, nameSize, name)) return fail("iconLibrary.invalid");
+        if(strictIconPackage)
+        {
+            const auto next=localRanges.lower_bound(local);
+            if(data>centralStart||packed>centralStart-data||(next!=localRanges.end()&&next->first<data+packed)||
+                (next!=localRanges.begin()&&std::prev(next)->second>local))return fail("iconLibrary.invalid");
+            localRanges.emplace(local,data+packed);
+            if(!(flags&8)&&(U32(bytes,local+14)!=crc||U32(bytes,local+18)!=packed||U32(bytes,local+22)!=unpacked))return fail("iconLibrary.invalid");
+        }
         Entry entry; entry.name = Utf8Name(name, (flags & 0x800) != 0); entry.bytes.resize(unpacked);
         if (entry.name.empty()) return fail("iconLibrary.invalid");
         if (method == 0)

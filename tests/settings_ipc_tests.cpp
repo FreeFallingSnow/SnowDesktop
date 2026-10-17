@@ -547,8 +547,17 @@ void TestCodec()
     asset.previewPath = L"C:\\图片\\资源 # %.png"; asset.width = 96; asset.height = 96; asset.uses = {L"集合 · Dock"};
     snowdesktop::IconLibraryGroup group; group.id = "group-" + std::string(32, '1'); group.name = L"订阅图标包"; group.source = "android-apk"; group.packageId = std::string(64,'b');
     asset.groupIds = {group.id}; library.groups.push_back(group); library.importedGroupId = group.id;
+    library.workshopAvailable=true;library.coverPath=L"C:\\预览\\cover.png";library.preparationId="123-456";
+    library.publishedUrl="https://steamcommunity.com/sharedfiles/filedetails/?id=777";library.operationId=UINT64_MAX;
+    library.completedAction="prepareShare";library.groups[0].license=L"许可说明";library.groups[0].workshopItem="777";
+    library.groups[0].accounts={"321","654"};asset.localOwned=false;asset.groupNames[group.id]=L"包内名称";
     library.entries.push_back(asset); library.failures = {L"无效图片.svg"};
     const auto libraryCopy = Unpack<snowdesktop::IconLibrarySnapshot>(Pack(library));
+    Check(libraryCopy.workshopAvailable&&libraryCopy.coverPath==library.coverPath&&libraryCopy.preparationId==library.preparationId&&
+        libraryCopy.operationId==UINT64_MAX&&libraryCopy.publishedUrl==library.publishedUrl&&libraryCopy.completedAction==library.completedAction&&
+        libraryCopy.groups[0].license==library.groups[0].license&&libraryCopy.groups[0].accounts==library.groups[0].accounts&&
+        !libraryCopy.entries[0].localOwned&&libraryCopy.entries[0].groupNames==asset.groupNames,
+        "icon package ownership, license and frozen publication state survive settings IPC without image bytes");
     Check(libraryCopy.session == library.session && libraryCopy.revision == 27 && libraryCopy.busy &&
         libraryCopy.target == library.target && libraryCopy.entries.size() == 1 && libraryCopy.entries[0].id == asset.id &&
         libraryCopy.groups.size() == 1 && libraryCopy.groups[0].name == group.name && libraryCopy.groups[0].packageId == group.packageId &&
@@ -732,6 +741,8 @@ void TestIconLibraryPaging()
     expected.groups.push_back({"pack", L"Large pack"});
     expected.imported = {"last"}; expected.importedGroupId = "pack";
     expected.failures = {L"unsupported resource"};
+    expected.workshopAvailable=true;expected.coverPath=L"C:\\preview\\cover.png";expected.preparationId="456-789";expected.progress=2;
+    expected.operationId=123;expected.completedAction="prepareShare";expected.publishedUrl="https://steamcommunity.com/sharedfiles/filedetails/?id=777";
     for (unsigned i = 0; i < 42000; ++i)
     {
         snowdesktop::IconLibraryEntry entry;
@@ -773,7 +784,9 @@ void TestIconLibraryPaging()
             Check(entriesMatch && result.revision == 72 && result.session == 9 && result.succeeded &&
                 result.target == expected.target && result.targetName == expected.targetName &&
                 Pack(result.groups) == Pack(expected.groups) && result.imported == expected.imported &&
-                result.importedGroupId == expected.importedGroupId && result.failures == expected.failures,
+                result.importedGroupId == expected.importedGroupId && result.failures == expected.failures &&
+                result.workshopAvailable && result.coverPath==expected.coverPath && result.preparationId==expected.preparationId &&
+                result.operationId==expected.operationId && result.completedAction==expected.completedAction && result.progress==2 && result.publishedUrl==expected.publishedUrl,
                 "every filtered resource, group, usage and action field survives multi-frame transport");
             Check(operations == 1, "reading pages never repeats the import/delete operation");
             const auto first = client.Call<IconLibraryPage>("iconLibrary.action", snowdesktop::IconLibraryRequest{});

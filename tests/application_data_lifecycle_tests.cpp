@@ -3104,6 +3104,8 @@ int main()
         L"uploads" / L"package.snowwidget", "excluded upload staging\n");
     Write(fullBackupData / L"SteamWorkshopManager" / L"staging" /
         L"packages" / L"package.snowwidget", "excluded manager staging\n");
+    Write(fullBackupData/L"IconPackWorkshop"/L"publications"/L"group.json","retained publication binding");
+    Write(fullBackupData/L"IconPackWorkshop"/L"prepared"/L"cover.png","rebuildable icon cover");
     std::filesystem::path longBackupRelative;
     for (int index = 0; index < 4; ++index)
     {
@@ -3212,6 +3214,9 @@ int main()
         Read(createdFullBackup.backup.data / L"icon-library" / L"packs" / L"fixture.zip") == "retained package source" &&
         !std::filesystem::exists(createdFullBackup.backup.data / L"icon-library" / L"previews"),
         "complete backups retain groups, decodable alpha icons and package sources while omitting rebuildable previews");
+    Expect(Read(createdFullBackup.backup.data/L"IconPackWorkshop"/L"publications"/L"group.json")=="retained publication binding"&&
+        !std::filesystem::exists(createdFullBackup.backup.data/L"IconPackWorkshop"/L"prepared"),
+        "complete backups retain icon publication bindings while omitting frozen temporary artifacts");
     Expect(createdFullBackup.ok &&
         std::filesystem::is_regular_file(
             createdFullBackup.backup.root / L"backup.json"),

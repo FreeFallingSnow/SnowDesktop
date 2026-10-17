@@ -6,6 +6,9 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <map>
+#include <set>
+#include "icon_package.h"
 
 namespace snowdesktop
 {
@@ -14,6 +17,10 @@ struct IconLibraryGroup
     std::string id;
     std::wstring name;
     std::string source = "local", packageId, packageVersion, sourceUri;
+    std::wstring shareTitle, description, license, author;
+    bool rightsConfirmed = false;
+    std::string workshopItem, workshopOwner, workshopHash, publishedUrl;
+    std::vector<std::string> accounts;
 };
 struct IconLibraryEntry
 {
@@ -24,6 +31,8 @@ struct IconLibraryEntry
     std::string source = "local", packageId, packageVersion, packageEntryId;
     std::vector<std::wstring> uses;
     std::vector<std::string> groupIds;
+    bool localOwned = true;
+    std::map<std::string, std::wstring> groupNames;
 };
 struct IconLibraryRequest
 {
@@ -33,6 +42,10 @@ struct IconLibraryRequest
     std::wstring name, destination, target;
     std::string format = "png", groupId;
     std::uint64_t session = 0, revision = 0;
+    std::wstring title, description, license, coverPath;
+    bool rightsConfirmed = false;
+    std::string preparationId;
+    std::uint64_t operationId = 0;
 };
 struct IconLibrarySnapshot
 {
@@ -45,6 +58,23 @@ struct IconLibrarySnapshot
     bool busy = false, succeeded = false;
     std::string error;
     std::wstring target, targetName;
+    bool workshopAvailable = false;
+    std::wstring coverPath;
+    std::string preparationId, publishedUrl, completedAction;
+    std::uint64_t operationId = 0;
+    unsigned progress = 0; // 0 idle, 1 preparing package, 2 rendering cover, 3 publishing, 4 synchronizing
+};
+struct IconPackDownload
+{
+    std::string item, owner, author, sha256;
+    icon_package::Package package;
+};
+struct IconPackSubscriptions
+{
+    bool authoritative = false;
+    std::string account;
+    std::set<std::string> subscribed, deleted;
+    std::vector<IconPackDownload> downloads;
 };
 using IconLibraryAction = std::function<IconLibrarySnapshot(IconLibraryRequest)>;
 
@@ -71,6 +101,9 @@ public:
     IconLibrarySnapshot Refresh();
     IconLibrarySnapshot Invoke(const IconLibraryRequest& request,
         const std::vector<std::string>& protectedIds = {});
+    bool ExportGroup(std::string_view id, icon_package::Package&, std::string& error);
+    IconLibrarySnapshot Reconcile(const IconPackSubscriptions&);
+    IconLibrarySnapshot CollectRetired(const std::vector<std::string>& protectedIds);
 private:
     bool Load();
     bool Save();
@@ -79,6 +112,7 @@ private:
     std::filesystem::path directory_;
     std::vector<IconLibraryEntry> entries_;
     std::vector<IconLibraryGroup> groups_;
+    std::map<std::string, std::set<std::string>> subscriptionAccounts_;
     bool loaded_ = false, valid_ = true;
     std::uint64_t revision_ = 0;
 };
