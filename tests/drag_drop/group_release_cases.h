@@ -170,6 +170,7 @@ inline void Run(const std::filesystem::path& root)
         if (blocked) grid_occupancy::Mark(occupied, {L"release-left", 2, 3}, {2, 2});
         Require(ReleaseOne(batch, L"B", {L"release-left", 2, 3}, false, pages, occupied) == !blocked,
             "mapped folder release uses the same final transaction and exact landing collision decision");
+        UnchangedFiles(path);
         if (blocked) Require(Scene(batch) == before, "rejected mapped folder release does not cancel selection or detach its label");
         else
         {
@@ -178,7 +179,6 @@ inline void Run(const std::filesystem::path& root)
                 "mapped release keeps the original directory mapping at the captured desktop landing");
             Preserved(widgets, batch.widgets, {L"B"}); CheckRoundTrip(path / L"layout.json", batch.widgets);
         }
-        UnchangedFiles(path);
     }
     std::cout << "group release placement, rejection, original files and storage cases passed\n";
 }
