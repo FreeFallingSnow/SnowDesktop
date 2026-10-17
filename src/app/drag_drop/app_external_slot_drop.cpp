@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "drag_drop/external_drop_resources.h"
+#include "drag_drop/external_slot_transfer.h"
 #include "drag_drop/drop_staging.h"
 #include "widgets/lua_logical_slot.h"
 
@@ -17,25 +18,6 @@ std::shared_ptr<content::Content> NewSlotContent(
         delete value;
     }};
 }
-
-struct MarshaledSlotSource
-{
-    ComPtr<IStream> stream;
-    ~MarshaledSlotSource()
-    {
-        // Releasing an unread stream alone does not release its marshal data.
-        ComPtr<IDataObject> discarded;
-        if (stream)
-            CoGetInterfaceAndReleaseStream(stream.Detach(), IID_PPV_ARGS(&discarded));
-    }
-    ComPtr<IDataObject> Take()
-    {
-        ComPtr<IDataObject> source;
-        if (stream)
-            CoGetInterfaceAndReleaseStream(stream.Detach(), IID_PPV_ARGS(&source));
-        return source;
-    }
-};
 
 content::Paths DownloadSlotUrls(const content::Paths& urls, std::stop_token stop)
 {
@@ -324,75 +306,29 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         return content::Read(false, allowContent, readers);
     };
 
-    FileOperationCompletion oleCompletion;
-    auto marshaled = std::make_shared<MarshaledSlotSource>();
-    if (asynchronousSource)
-    {
-        if (FAILED(CoMarshalInterThreadInterfaceInStream(IID_IDataObject,
-                dataObject, &marshaled->stream)) ||
-            !PrepareOleAsyncFileOperation(dataObject,
-                effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect, {}, oleCompletion))
-            return DROPEFFECT_NONE;
-    }
-    else
-    {
-        try { *value = read(dataObject, false, knownPaths); }
-        catch (...) { return DROPEFFECT_NONE; }
-    }
-    auto finished = [value,
-        oleCompletion](bool succeeded) {
+    snowdesktop::external_slot_transfer::Callbacks callbacks;
+    callbacks.read = std::move(read);
+    callbacks.resolveUrls = [downloadUrls](const content::Paths& urls) {
+        content::Readers readers;
+        readers.urls = [urls] { return urls; };
+        readers.download = downloadUrls;
+        readers.shortcut = [urls]() -> content::Paths {
+            const auto path = urls.empty() ? std::wstring{} : CreateUrlShortcut(urls.front());
+            return path.empty() ? content::Paths{} : content::Paths{path};
+        };
+        return content::Read(false, true, readers);
+    };
+    callbacks.commit = [this, destination, result](const content::Content& input,
+        FileOperationCompletion finished, bool synchronously) {
+        return CommitExternalSlotPaths(destination, input.paths, input.owned,
+            input.copyOnly, std::move(finished), synchronously, result);
+    };
+    callbacks.completed = [](bool succeeded) {
         if (!succeeded)
             WriteDiagnosticLogEntry(L"External file drop failed during content reading or destination commit");
-        if (oleCompletion) oleCompletion(succeeded);
     };
-    if (!asynchronousSource && value->pendingUrls.empty())
-    {
-        const bool committed = CommitExternalSlotPaths(destination, value->paths,
-            value->owned, value->copyOnly, finished, true, result);
-        if (!committed) finished(false);
-        return committed ? (effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect) : DROPEFFECT_NONE;
-    }
-
-    HWND window = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
-    if (!window || !IsWindow(window)) return DROPEFFECT_NONE;
-    auto* completion = new (std::nothrow) ShellFileOperationUiCompletion{
-        false, [this, destination, value, finished, result](bool succeeded) {
-            if (!succeeded || !CommitExternalSlotPaths(destination, value->paths,
-                    value->owned, value->copyOnly, finished, false, result))
-                finished(false);
-        }, false};
-    if (!completion) return DROPEFFECT_NONE;
-    const bool queued = externalSlotReadWorker_.Enqueue(
-        snowdesktop::ShellReadRequest{[asynchronousSource, marshaled, value, read, downloadUrls, stop] {
-            try
-            {
-                if (stop.stop_requested()) return false;
-                if (asynchronousSource)
-                {
-                    auto source = marshaled->Take();
-                    if (!source) return false;
-                    *value = read(source.Get(), true, {});
-                }
-                else
-                {
-                    const auto urls = value->pendingUrls;
-                    content::Readers readers;
-                    readers.urls = [urls] { return urls; };
-                    readers.download = downloadUrls;
-                    readers.shortcut = [urls]() -> content::Paths {
-                        const auto path = urls.empty() ? std::wstring{} : CreateUrlShortcut(urls.front());
-                        return path.empty() ? content::Paths{} : content::Paths{path};
-                    };
-                    *value = content::Read(false, true, readers);
-                }
-                return !value->paths.empty();
-            }
-            catch (...) { return false; }
-        }}, [window, completion](bool succeeded) {
-            completion->succeeded = succeeded;
-            if (!PostMessageW(window, kShellFileOperationCompletedMessage, 0,
-                    reinterpret_cast<LPARAM>(completion))) delete completion;
-        });
-    if (!queued) delete completion;
-    return queued ? effect : DROPEFFECT_NONE;
+    const HWND window = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
+    return snowdesktop::external_slot_transfer::Transfer(dataObject, effect,
+        asynchronousSource, knownPaths, std::move(value), externalSlotReadWorker_,
+        stop, window, kShellFileOperationCompletedMessage, std::move(callbacks));
 }

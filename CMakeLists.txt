@@ -2683,7 +2683,9 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopShellFileOperationWorkerTests --folder-link-request-tests)
     add_test(NAME shell_allowed_effect_requests
         COMMAND SnowDesktopShellFileOperationWorkerTests --allowed-effect-request-tests)
-    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests PROPERTIES
+    add_test(NAME shell_async_slot_transfers
+        COMMAND SnowDesktopShellFileOperationWorkerTests --async-slot-transfer-tests)
+    set_tests_properties(shell_folder_link_requests shell_allowed_effect_requests shell_async_slot_transfers PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopShellFileOperationWorkerTests>"
         TIMEOUT 90 LABELS "integration;shell;interaction;storage")
     add_test(NAME shell_file_operation_worker_network_preflight

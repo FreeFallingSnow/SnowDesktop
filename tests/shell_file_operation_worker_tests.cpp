@@ -11,6 +11,7 @@
 #include "drag_drop/file_backed_drop_request.h"
 #include "drag_drop/ole_drag_rules.h"
 #include "drag_drop/external_desktop_cases.h"
+#include "drag_drop/async_slot_transfer_cases.h"
 #include <wincodec.h>
 
 #include <algorithm>
@@ -764,6 +765,19 @@ int wmain(int argc, wchar_t** argv)
     if (argc == 2)
     {
         const std::wstring mode(argv[1]);
+        if (mode == L"--async-slot-transfer-tests")
+        {
+            const HRESULT initialized = OleInitialize(nullptr);
+            Expect(SUCCEEDED(initialized), "async transfer test owns an STA");
+            const auto root = CreateTemporaryDirectory();
+            int result = 0;
+            try { async_slot_transfer_cases::Run(root); }
+            catch (const std::exception& error)
+            { std::cerr << "FAILED async slot transfer: " << error.what() << '\n'; result = 1; }
+            std::filesystem::remove_all(root);
+            OleUninitialize();
+            return result;
+        }
         if (mode == L"--folder-link-request-tests") return RunFileBackedDropRegression(true, false);
         if (mode == L"--allowed-effect-request-tests") return RunFileBackedDropRegression(false, true);
         if (mode == L"--tracked-path-alias-tests")

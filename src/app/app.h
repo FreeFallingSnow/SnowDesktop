@@ -119,6 +119,7 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "ui/preview/native_component_preview_export.h"
 #include "widget/preview/widget_preview_scene.h"
 #include "shell/shell_file_operation_worker.h"
+#include "shell/shell_file_operation_completion.h"
 #include "ui/input/low_level_mouse_hook.h"
 #include "navigation/everything_search.h"
 #include "navigation/quick_navigation_search_async.h"
@@ -4081,12 +4082,7 @@ private:
     /** @name 控制窗口（托盘图标所有权 + 桌面宿主监听） */
     /** @{ */
     HWND controlHwnd_ = nullptr;
-    struct ShellFileOperationUiCompletion
-    {
-        bool succeeded = false;
-        FileOperationCompletion callback;
-        bool fileOperation = true;
-    };
+    using ShellFileOperationUiCompletion = snowdesktop::ShellFileOperationUiCompletion;
     struct UrlDropDownloadUiCompletion
     {
         snowdesktop::UrlDropDownloadResult result;
