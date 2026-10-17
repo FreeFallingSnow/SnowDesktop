@@ -642,6 +642,35 @@ DesktopApp::RenderWidgetMenuPreview(
                     globalAppearance.cornerRadius, data->cellScale)) },
             { stage.canvasWidth, stage.canvasHeight,
                 stage.offsetX, stage.offsetY }, stage.wallpaper);
+        if (iconMode && iconBeautifySettings_.enabled && iconBeautifySettings_.glassEnabled)
+        {
+            const auto& outline = snowdesktop::icon_beautify::ShapeOutline(iconBeautifySettings_.shape);
+            RECT icon = GetItemIconRect(desktopFrame);
+            OffsetRect(&icon, -desktopFrame.left, -desktopFrame.top);
+            ComPtr<ID2D1Factory> factory;
+            context->GetFactory(&factory);
+            ComPtr<ID2D1PathGeometry> clip;
+            ComPtr<ID2D1GeometrySink> sink;
+            if (!outline.empty() && factory && SUCCEEDED(factory->CreatePathGeometry(&clip)) &&
+                SUCCEEDED(clip->Open(&sink)))
+            {
+                const auto point = [&](const snowdesktop::icon_beautify::ShapePoint& value) {
+                    return D2D1::Point2F(icon.left + value.x * (icon.right - icon.left),
+                        icon.top + value.y * (icon.bottom - icon.top));
+                };
+                sink->BeginFigure(point(outline.front()), D2D1_FIGURE_BEGIN_FILLED);
+                for (size_t i = 1; i < outline.size(); ++i) sink->AddLine(point(outline[i]));
+                sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+                if (SUCCEEDED(sink->Close()))
+                {
+                    context->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), clip.Get()), nullptr);
+                    snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
+                        {stage.lightTheme, true, iconBeautifySettings_.glassBlurRadius, 0.0f},
+                        {stage.canvasWidth, stage.canvasHeight, stage.offsetX, stage.offsetY}, stage.wallpaper);
+                    context->PopLayer();
+                }
+            }
+        }
     }
     context->SetTransform(D2D1::Matrix3x2F::Translation(
         static_cast<float>(-desktopFrame.left),
@@ -657,7 +686,15 @@ DesktopApp::RenderWidgetMenuPreview(
     options.dpi = dpi ? dpi : USER_DEFAULT_SCREEN_DPI;
     options.interactive = true;
     options.registerBackdrop = false;
-    widget->DrawPreview(context.Get(), options.frame, options);
+    {
+        // An offscreen preview must never publish its icon glass to the live
+        // desktop compositor. Its wallpaper/material was drawn locally above.
+        snowdesktop::WidgetIconBackdrops previewIconBackdrops;
+        const auto previousIconBackdrops = desktopWidgetIconBackdropsDrawing_;
+        desktopWidgetIconBackdropsDrawing_ = &previewIconBackdrops;
+        widget->DrawPreview(context.Get(), options.frame, options);
+        desktopWidgetIconBackdropsDrawing_ = previousIconBackdrops;
+    }
     const HRESULT drawResult = context->EndDraw();
     context->SetTransform(D2D1::Matrix3x2F::Identity());
     context->SetTarget(nullptr);
