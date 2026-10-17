@@ -153,6 +153,27 @@ inline void Run()
                 Require(Access::Ready(app) && !Access::ReloadPending(app) && Access::Save(app),
                     "native complete disk reload must finish rebuilding and permit a subsequent save");
                 Check(app, keys, preview, source, count);
+
+                context = scenario + " phase=newer-disk-positions";
+                // A separate owner writes a newer document through actual
+                // native persistence. This app still holds the old records;
+                // restoring from its cache is insufficient evidence of a read.
+                auto& writer = profile.Model(secondary, directory / L"layout");
+                Access::Load(writer);
+                Access::ReadSnapshot(writer, files, true);
+                Require(Access::WriteReplacementPositions(writer, keys, count),
+                    "a separate native owner must save the literal replacement positions");
+                auto replacement = Snapshot(files);
+                Access::Reload(app, replacement, true);
+                Require(Access::Ready(app) && !Access::ReloadPending(app), "newer native disk records must complete the reload barrier");
+                for (std::size_t i = 0; i < count; ++i)
+                {
+                    const auto& item = Find(app, keys[i]);
+                    Require(item.gridCell.pageId == L"__page:1" && item.gridCell.column == static_cast<int>(i) * 2 + 1 &&
+                        item.gridCell.row == 2 && Access::HasVisibleIcon(app, item) && Access::HasMatchingRuntimeSlot(app, item),
+                        "native disk reload must observe newer file positions instead of cached layout records");
+                }
+                Access::StopModel(writer);
                 for (std::size_t i = 0; i < files.size(); ++i)
                     Require(Read(files[i]) == "reload-file-" + std::to_string(i),
                         "native whole reload cannot modify the original logical files");

@@ -261,6 +261,19 @@ struct NativeDragIntegrationAccess
         for (auto& item : app.items_) item.gridCell = {L"__page:1", 0, 2};
         for (auto& widget : app.widgets_) widget.itemKeys.clear();
     }
+    static bool WriteReplacementPositions(DesktopApp& app,
+        const std::vector<std::wstring>& keys, std::size_t count)
+    {
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            const auto found = std::find_if(app.items_.begin(), app.items_.end(),
+                [&](const auto& item) { return item.layoutKey == keys[i]; });
+            if (found == app.items_.end()) throw std::runtime_error("replacement writer requires each stable file identity");
+            found->gridCell = {L"__page:1", static_cast<int>(i) * 2 + 1, 2};
+        }
+        app.LayoutItems();
+        return Save(app);
+    }
     static bool HasMatchingRuntimeSlot(DesktopApp& app, const DesktopItem& item)
     {
         std::size_t offset = 0;
