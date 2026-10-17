@@ -81,6 +81,11 @@ inline bool ApplyPlan(std::vector<DesktopWidget>& widgets, std::vector<DockEntry
     const auto target = std::find_if(widgets.begin(), widgets.end(),
         [&](const auto& widget) { return &widget == preview.targetWidget; });
     if (target == widgets.end()) return false;
+    if (preview.landings.empty() || std::any_of(preview.landings.begin(), preview.landings.end(),
+        [&](const auto& landing) {
+            return landing.kind != DropLandingKind::WidgetIndex || landing.widget != preview.targetWidget ||
+                landing.widgetId != target->id;
+        })) return false;
     const bool collections = sources.hasCollectionGroupEntries && target->type == DesktopWidgetType::CollectionGroup;
     const bool files = sources.hasFileGroupEntries && target->type == DesktopWidgetType::FileGroup;
     if (!collections && !files) return false;

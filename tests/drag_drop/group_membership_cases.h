@@ -91,7 +91,7 @@ inline void UnchangedChildren(const std::vector<DesktopWidget>& before, const st
 }
 
 inline bool Execute(Harness& harness, Batch& batch, const std::vector<std::wstring>& moving,
-    size_t targetIndex, size_t insertBefore, DesktopWidget* overrideTarget = nullptr)
+    size_t targetIndex, size_t insertBefore, DesktopWidget* overrideTarget = nullptr, std::function<void()> beforeCommit = {})
 {
     const bool collections = batch.widgets[0].type == DesktopWidgetType::CollectionGroup;
     DragSourceList sources;
@@ -113,9 +113,10 @@ inline bool Execute(Harness& harness, Batch& batch, const std::vector<std::wstri
     preview.insertIndex = insertBefore;
     for (size_t index = 0; index < moving.size(); ++index)
     {
-        DropLanding landing; landing.kind = DropLandingKind::WidgetIndex; landing.sourceIndex = index;
+        DropLanding landing; landing.kind = DropLandingKind::WidgetIndex; landing.sourceIndex = index; landing.widget = preview.targetWidget; landing.widgetId = preview.targetWidget->id;
         preview.landings.push_back(landing);
     }
+    if (beforeCommit) beforeCommit();
     int internal = 0, completed = 0;
     bool notified = false;
     batch.commitInternal = [&](const auto& list, const auto& plan) {
@@ -204,6 +205,20 @@ inline void Run(const std::filesystem::path& root)
         const auto before = Scene(batch);
         Require(!Execute(harness, batch, moving, 1, 1, invalid == 5 ? &stale : nullptr) && Scene(batch) == before,
             "invalid group-label source or target rejects without changing membership, order, selection or Dock data");
+        UnchangedFiles(path);
+    }
+    // Captured identity remains decisive even when a live replacement occupies
+    // the exact old address. The user selected G2, never replacement G4.
+    for (auto type : {DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})
+    {
+        Batch batch; const auto path = root / (L"replaced-" + std::to_wstring(serial++));
+        SeedWorld(batch, path, type, 0, 0);
+        std::string before;
+        Require(!Execute(harness, batch, {L"B"}, 1, 1, nullptr, [&] {
+            batch.widgets[1].id = L"replacement-G4";
+            before = Scene(batch);
+        }) && Scene(batch) == before,
+            "captured group identity cannot commit into a different group occupying the same address");
         UnchangedFiles(path);
     }
     // A repeated source identity may be rejected or applied idempotently, but
