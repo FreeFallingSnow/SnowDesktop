@@ -19,6 +19,7 @@ template<class Decode, class NormalizeKey>
 inline void RestoreMembers(const layout_storage::WidgetRecord& saved,
     DesktopWidget& widget, Decode decode, NormalizeKey normalizeKey)
 {
+    widget.activeCategoryId = decode(saved.activeCategory);
     widget.itemKeys.clear();
     widget.itemKeys.reserve(saved.items.size());
     for (const auto& key : saved.items) widget.itemKeys.push_back(decode(key));

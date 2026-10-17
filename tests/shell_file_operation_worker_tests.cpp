@@ -16,6 +16,7 @@
 #include "drag_drop/member_order_cases.h"
 #include "drag_drop/right_drag_file_cases.h"
 #include "drag_drop/pipeline_decision_cases.h"
+#include "drag_drop/group_membership_cases.h"
 #include <wincodec.h>
 
 #include <algorithm>
@@ -770,7 +771,8 @@ int wmain(int argc, wchar_t** argv)
     {
         const std::wstring mode(argv[1]);
         if (mode == L"--async-slot-transfer-tests" || mode == L"--drop-placement-tests" ||
-            mode == L"--member-order-tests" || mode == L"--right-drag-file-tests" || mode == L"--pipeline-decision-tests")
+            mode == L"--member-order-tests" || mode == L"--right-drag-file-tests" || mode == L"--pipeline-decision-tests" ||
+            mode == L"--group-membership-tests")
         {
             const HRESULT initialized = OleInitialize(nullptr);
             Expect(SUCCEEDED(initialized), "async transfer test owns an STA");
@@ -781,6 +783,7 @@ int wmain(int argc, wchar_t** argv)
                 else if (mode == L"--member-order-tests") member_order_cases::Run(root);
                 else if (mode == L"--right-drag-file-tests") right_drag_file_cases::Run(root);
                 else if (mode == L"--pipeline-decision-tests") pipeline_decision_cases::Run(root);
+                else if (mode == L"--group-membership-tests") group_membership_cases::Run(root);
                 else async_slot_transfer_cases::Run(root);
             }
             catch (const std::exception& error)

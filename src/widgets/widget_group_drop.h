@@ -1,6 +1,6 @@
 #pragma once
 
-#include "common/types.h"
+#include "core/drop_model.h"
 #include "collection_group_rules.h"
 
 #include <unordered_set>
@@ -69,5 +69,25 @@ inline bool Apply(std::vector<DesktopWidget>& widgets, std::vector<DockEntry>& d
     for (auto& widget : widgets)
         if (movingSet.contains(widget.id)) widget.selected = false;
     return true;
+}
+
+// Internal label drops used to have a second, unchecked remove/insert path.
+// Keep the captured preview binding, then use the same validated transaction
+// as component entrances and Dock sources. Never dereference a stale pointer.
+inline bool ApplyPlan(std::vector<DesktopWidget>& widgets, std::vector<DockEntry>& dock,
+    const DragSourceList& sources, const DropPreviewList& preview)
+{
+    if (preview.fileBacked || preview.targetKind != DropTargetKind::KeyedWidget) return false;
+    const auto target = std::find_if(widgets.begin(), widgets.end(),
+        [&](const auto& widget) { return &widget == preview.targetWidget; });
+    if (target == widgets.end()) return false;
+    const bool collections = sources.hasCollectionGroupEntries && target->type == DesktopWidgetType::CollectionGroup;
+    const bool files = sources.hasFileGroupEntries && target->type == DesktopWidgetType::FileGroup;
+    if (!collections && !files) return false;
+    std::vector<std::wstring> movingIds;
+    for (const auto& source : sources.entries)
+        if (source.kind == (collections ? DropSourceKind::CollectionGroupEntry : DropSourceKind::FileGroupEntry) &&
+            !source.widgetId.empty()) movingIds.push_back(source.widgetId);
+    return Apply(widgets, dock, static_cast<size_t>(target - widgets.begin()), movingIds, preview.insertIndex);
 }
 }

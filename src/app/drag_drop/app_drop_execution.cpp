@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "drag_drop/pending_drop_completion.h"
 #include "widgets/collection_group_rules.h"
+#include "widgets/widget_group_drop.h"
 #include "layout/folder_self_drop_rules.h"
 #include "layout/item_location.h"
 #include "layout/category_collection_rules.h"
@@ -258,68 +259,7 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
              preview.targetWidget->type ==
                 DesktopWidgetType::FileGroup))
         {
-            std::vector<std::wstring> movingIds;
-            for (const auto& entry : sourceList.entries)
-            {
-                const bool matchingEntry =
-                    sourceList.hasCollectionGroupEntries
-                        ? entry.kind ==
-                            DropSourceKind::CollectionGroupEntry
-                        : entry.kind ==
-                            DropSourceKind::FileGroupEntry;
-                if (matchingEntry &&
-                    !entry.widgetId.empty())
-                    movingIds.push_back(entry.widgetId);
-            }
-            if (movingIds.empty()) return false;
-
-            DesktopWidget& targetGroup =
-                *preview.targetWidget;
-            const std::wstring previousTargetActive =
-                targetGroup.activeCategoryId;
-            size_t removedBefore = 0;
-            for (const auto& id : movingIds)
-            {
-                auto it = std::find(
-                    targetGroup.childWidgetIds.begin(),
-                    targetGroup.childWidgetIds.end(), id);
-                if (it != targetGroup.childWidgetIds.end() &&
-                    static_cast<size_t>(std::distance(
-                        targetGroup.childWidgetIds.begin(), it)) <
-                        preview.insertIndex)
-                    ++removedBefore;
-            }
-
-            for (auto& widget : widgets_)
-            {
-                if (widget.type !=
-                    preview.targetWidget->type)
-                    continue;
-                for (const auto& id : movingIds)
-                {
-                    std::erase(widget.childWidgetIds, id);
-                    if (widget.activeCategoryId == id)
-                        widget.activeCategoryId =
-                            widget.childWidgetIds.empty()
-                                ? L""
-                                : widget.childWidgetIds.front();
-                }
-            }
-            size_t insertAt =
-                preview.insertIndex > removedBefore
-                    ? preview.insertIndex - removedBefore
-                    : 0;
-            insertAt = std::min(
-                insertAt, targetGroup.childWidgetIds.size());
-            targetGroup.childWidgetIds.insert(
-                targetGroup.childWidgetIds.begin() +
-                    static_cast<std::ptrdiff_t>(insertAt),
-                movingIds.begin(), movingIds.end());
-            targetGroup.activeCategoryId =
-                snowdesktop::collection_group_rules::
-                    ResolveActiveItem(
-                        targetGroup.childWidgetIds,
-                        previousTargetActive);
+            if (!snowdesktop::widget_group_drop::ApplyPlan(widgets_, dockEntries_, sourceList, preview)) return false;
             for (auto& container : containers_)
             {
                 if (auto* group =
@@ -331,6 +271,8 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                                  container.get()))
                     fileGroup->InvalidateHostedView();
             }
+            NormalizeDockRecycleBinPosition();
+            RefreshCollectedKeysCache();
             EnsureNavTabOrder();
             LayoutItems();
             SaveLayoutSlots();

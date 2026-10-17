@@ -207,6 +207,7 @@ struct Batch
     int dockChanges = 0, collectedRefreshes = 0;
     std::function<void(bool)> onConfirmation;
     std::function<void()> savePrograms;
+    std::function<bool(const DragSourceList&, const DropPreviewList&)> commitInternal;
 };
 
 struct Harness
@@ -216,6 +217,51 @@ struct Harness
     dock_drop_rules::MaterializedPathReservations reservations;
     std::stop_source stop;
     DWORD owner = GetCurrentThreadId();
+    drop_pipeline::Services PipelineServices(Batch& batch, decltype(drop_pipeline::Services::files) executeFiles)
+    {
+        drop_pipeline::Services pipeline;
+        pipeline.containsPrograms = [](const DragSourceList& list) {
+            return drop_pipeline::ContainsPrograms(list, {}, [](const auto&) -> DesktopItem* { return nullptr; }, Normalize);
+        };
+        pipeline.confirmConversion = [&](bool programs) {
+            ++batch.conversionPrompts; batch.conversionPrograms = programs;
+            if (batch.onConfirmation) batch.onConfirmation(true);
+            return batch.confirmConversion;
+        };
+        pipeline.confirmPrograms = [&] {
+            ++batch.programPrompts;
+            if (batch.onConfirmation) batch.onConfirmation(false);
+            return batch.confirmPrograms;
+        };
+        pipeline.exiting = [&] { return batch.exiting; };
+        pipeline.runtimeLive = [](Container*) { return true; };
+        pipeline.createConvertedView = [&](DesktopWidget*) {
+            ++batch.viewsCreated;
+            std::shared_ptr<int> lifetime(new int(1), [&batch](int* value) { ++batch.viewsReleased; delete value; });
+            return drop_pipeline::ConvertedView{lifetime, nullptr};
+        };
+        pipeline.saveLayout = [&] { ++batch.layoutSaves; };
+        pipeline.convertedLayout = [&] { ++batch.convertedLayouts; ++batch.layoutSaves; };
+        pipeline.programsEnabled = [&] { return batch.programsEnabled; };
+        pipeline.enablePrograms = [&] {
+            ++batch.programSaveAttempts;
+            if (!batch.programSaveAccepted) return false;
+            if (batch.savePrograms) batch.savePrograms();
+            batch.programsEnabled = true;
+            return true;
+        };
+        pipeline.autoCollectSource = [&](const auto& list) { return drop_pipeline::AutoCollectSource(list, batch.widgets); };
+        pipeline.normalize = Normalize;
+        pipeline.refreshCollectedKeys = [&] { ++batch.collectedRefreshes; };
+        pipeline.dockChanged = [&] { ++batch.dockChanges; };
+        pipeline.files = executeFiles;
+        pipeline.internal = [&](const auto& list, const auto& preview) -> bool {
+            if (batch.commitInternal) return batch.commitInternal(list, preview);
+            throw std::runtime_error("external files cannot execute the internal-only model route");
+        };
+        pipeline.collectionTitle = L"Collection"; pipeline.filesTitle = L"Desktop files";
+        return pipeline;
+    }
     DWORD Submit(Batch& batch, bool async = true, HWND target = nullptr)
     {
         external_slot_transfer::Callbacks callbacks;
@@ -307,46 +353,7 @@ struct Harness
                     std::move(execution), std::move(done), sync, std::move(outputs));
             };
             services.execute = [&, executeFiles](const auto& sources, const auto& preview, auto done, bool sync, auto outputs) {
-                drop_pipeline::Services pipeline;
-                pipeline.containsPrograms = [](const DragSourceList& list) {
-                    return drop_pipeline::ContainsPrograms(list, {}, [](const auto&) -> DesktopItem* { return nullptr; }, Normalize);
-                };
-                pipeline.confirmConversion = [&](bool programs) {
-                    ++batch.conversionPrompts; batch.conversionPrograms = programs;
-                    if (batch.onConfirmation) batch.onConfirmation(true);
-                    return batch.confirmConversion;
-                };
-                pipeline.confirmPrograms = [&] {
-                    ++batch.programPrompts;
-                    if (batch.onConfirmation) batch.onConfirmation(false);
-                    return batch.confirmPrograms;
-                };
-                pipeline.exiting = [&] { return batch.exiting; };
-                pipeline.runtimeLive = [](Container*) { return true; };
-                pipeline.createConvertedView = [&](DesktopWidget*) {
-                    ++batch.viewsCreated;
-                    std::shared_ptr<int> lifetime(new int(1), [&batch](int* value) { ++batch.viewsReleased; delete value; });
-                    return drop_pipeline::ConvertedView{lifetime, nullptr};
-                };
-                pipeline.saveLayout = [&] { ++batch.layoutSaves; };
-                pipeline.convertedLayout = [&] { ++batch.convertedLayouts; ++batch.layoutSaves; };
-                pipeline.programsEnabled = [&] { return batch.programsEnabled; };
-                pipeline.enablePrograms = [&] {
-                    ++batch.programSaveAttempts;
-                    if (!batch.programSaveAccepted) return false;
-                    if (batch.savePrograms) batch.savePrograms();
-                    batch.programsEnabled = true;
-                    return true;
-                };
-                pipeline.autoCollectSource = [&](const auto& list) { return drop_pipeline::AutoCollectSource(list, batch.widgets); };
-                pipeline.normalize = Normalize;
-                pipeline.refreshCollectedKeys = [&] { ++batch.collectedRefreshes; };
-                pipeline.dockChanged = [&] { ++batch.dockChanges; };
-                pipeline.files = executeFiles;
-                pipeline.internal = [](const auto&, const auto&) -> bool {
-                    throw std::runtime_error("external files cannot execute the internal-only model route");
-                };
-                pipeline.collectionTitle = L"Collection"; pipeline.filesTitle = L"Desktop files";
+                auto pipeline = PipelineServices(batch, executeFiles);
                 return drop_pipeline::Execute(sources, preview, batch.widgets, batch.dock, pipeline,
                     std::move(done), sync, std::move(outputs));
             };

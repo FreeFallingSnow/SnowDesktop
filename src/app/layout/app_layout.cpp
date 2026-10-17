@@ -570,7 +570,6 @@ void DesktopApp::LoadLayoutSlots()
         widget.scrollOffset = std::max(0, saved.scrollOffset);
         widget.tabScrollOffset = std::max(0, saved.tabScrollOffset);
         snowdesktop::widget_layout_codec::RestoreSort(saved, widget);
-        widget.activeCategoryId = Utf8ToWide(saved.activeCategory);
         for (const auto& id : saved.categoryTabOrder)
             widget.categoryTabOrder.push_back(Utf8ToWide(id));
         snowdesktop::widget_layout_codec::RestoreMembers(saved, widget, Utf8ToWide, ToUpperInvariant);

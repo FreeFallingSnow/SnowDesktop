@@ -112,8 +112,8 @@ inline void CheckRoundTrip(const std::filesystem::path& path, const std::vector<
             restored.gridCell.pageId == before.gridCell.pageId && restored.gridCell.column == before.gridCell.column &&
             restored.gridCell.row == before.gridCell.row && restored.itemKeys == before.itemKeys &&
             restored.gridSpan.columns == before.gridSpan.columns && restored.gridSpan.rows == before.gridSpan.rows &&
-            restored.childWidgetIds == before.childWidgetIds,
-            "reload preserves component identity, page, exact position, member order and group children");
+            restored.childWidgetIds == before.childWidgetIds && restored.activeCategoryId == before.activeCategoryId,
+            "reload preserves component identity, page, exact position, member order and group children (including active identity)");
         Require(saved.singleCellIconMode == before.singleCellIconMode && saved.listMode == before.listMode &&
             saved.fanPopup == before.fanPopup && saved.sourceFolderPath == Encode(before.sourceFolderPath) &&
             saved.folderSortMode == before.folderSortMode && saved.privacyMode == before.privacyMode,
