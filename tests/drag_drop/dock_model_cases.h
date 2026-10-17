@@ -3,6 +3,7 @@
 #include "widget_displacement_cases.h"
 #include "dock/dock_drop_model.h"
 #include "data/dock_layout_codec.h"
+#include <cmath>
 
 namespace dock_model_cases
 {
@@ -11,6 +12,13 @@ using namespace drop_placement_cases;
 inline bool SameCell(const GridCell& left, const GridCell& right)
 {
     return left.pageId == right.pageId && left.column == right.column && left.row == right.row;
+}
+
+inline bool SameDividerPosition(float left, float right)
+{
+    // These are normalized UI divider positions. A millionth of the width is
+    // below a visible pixel; raw float-bit equality is not the UI contract.
+    return std::isfinite(left) && std::isfinite(right) && std::abs(left - right) < 0.000001f;
 }
 
 struct World
@@ -145,8 +153,8 @@ struct World
                 restored.fanPopup == current->fanPopup && restored.showSearchBox == current->showSearchBox &&
                 restored.showFileCategories == current->showFileCategories && restored.categoryTabOrder == current->categoryTabOrder &&
                 restored.detailShowModified == current->detailShowModified && restored.detailShowType == current->detailShowType &&
-                restored.detailShowSize == current->detailShowSize && restored.detailModifiedPosition == current->detailModifiedPosition &&
-                restored.detailTypePosition == current->detailTypePosition && restored.detailSizePosition == current->detailSizePosition,
+                restored.detailShowSize == current->detailShowSize && SameDividerPosition(restored.detailModifiedPosition, current->detailModifiedPosition) &&
+                SameDividerPosition(restored.detailTypePosition, current->detailTypePosition) && SameDividerPosition(restored.detailSizePosition, current->detailSizePosition),
                 "moving a Dock entry retains all popup presentation, sorting and member-order settings after reload");
         }
         for (const auto& item : items)
