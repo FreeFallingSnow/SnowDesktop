@@ -548,6 +548,11 @@ void TestReferenceAuditContracts()
     const auto luaBindings = audit::CollectLiteralBindings(luaSources, keys);
     Check(luaBindings.contains("ui.direct") && luaBindings.contains("ui.table") && !luaBindings.contains("ui.dead"),
         "Lua tables retain consumers while unused assignments do not consume following statements");
+    const std::vector<audit::Source> luaFields{{"fixture.lua", audit::Lex(
+        "local labels = {single='ui.table', weekly='ui.direct'}\nl10n.tr(labels[mode])", true), true}};
+    const auto fieldBindings = audit::CollectLiteralBindings(luaFields, keys);
+    Check(fieldBindings.contains("ui.direct") && fieldBindings.contains("ui.table"),
+        "consumed Lua tables keep their named-field translation values");
     const auto conditional = audit::Lex("_LW(state == \"status\" ? \"ui.direct\" : \"ui.table\")");
     std::vector<std::string> branchKeys;
     for (size_t at = 2; at < conditional.size(); ++at)

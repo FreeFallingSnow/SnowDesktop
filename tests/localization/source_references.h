@@ -170,6 +170,10 @@ inline std::vector<const Token*> LiveStrings(const Source& source,
             --name;
         }
         if (tokens[name].kind != TokenKind::Identifier) continue;
+        // Lua's table fields (mode = "key") are not local variable
+        // declarations. Their value is consumed through the enclosing table.
+        if (source.lua && (name == 0 || tokens[name - 1].value != "local")) continue;
+        if (!source.lua && name > 0 && tokens[name - 1].value == ".") continue;
         if (tokens[index].value == "{")
         {
             bool declaration = false;
