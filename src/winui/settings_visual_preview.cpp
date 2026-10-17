@@ -859,6 +859,58 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             if (oldHint) throw std::runtime_error("removed empty-library hint is still mounted");
             libraryFixture->entries = entries; ++libraryFixture->revision;
             PumpUntil([&] { return grid.Items().Size() == 7 && loadedImages(); });
+            // Supply only the host's completed-share snapshot. Keep the actual
+            // presenter, timer, InfoBar close button and page navigation live;
+            // this checks notice dismissal, not a real Steam upload.
+            libraryFixture->completedAction="publishPrepared";
+            libraryFixture->publishedUrl="https://steamcommunity.com/sharedfiles/filedetails/?id=1";
+            libraryFixture->operationId=101;++libraryFixture->revision;
+            c::InfoBar shareNotice{nullptr};
+            PumpUntil([&] {
+                Walk(cards,[&](const x::DependencyObject& node) {
+                    if(const auto bar=node.try_as<c::InfoBar>();bar&&bar.IsOpen()&&
+                        std::wstring_view(bar.Message()).find(_LW("iconWorkshop.openItem"))!=std::wstring_view::npos)shareNotice=bar;
+                });return bool(shareNotice);
+            });
+            const auto closeShareNotice=[&] {
+                Settle(shell.as<x::FrameworkElement>());
+                c::Button close{nullptr};
+                Walk(shareNotice,[&](const x::DependencyObject& node) {
+                    if(const auto button=node.try_as<c::Button>();button&&IsPreviewElementVisible(button)) {
+                        if(close)throw std::runtime_error("share notice has ambiguous close buttons");close=button;
+                    }
+                });
+                if(!close)throw std::runtime_error("share notice close button missing");
+                InvokePreview(close);PumpUntil([&]{return !shareNotice.IsOpen();});
+            };
+            closeShareNotice();
+            const auto readsAfterClose=*libraryReads;
+            PumpUntil([&]{return *libraryReads>=readsAfterClose+2;});
+            if(shareNotice.IsOpen()||shareNotice.Visibility()!=x::Visibility::Collapsed)
+                throw std::runtime_error("closed Workshop share notice reopened after polling");
+            query.Text(L"Preview");Settle(shell.as<x::FrameworkElement>());
+            if(shareNotice.IsOpen())throw std::runtime_error("gallery filtering reopened the dismissed share notice");
+            query.Text(L"");Settle(shell.as<x::FrameworkElement>());
+            if(!shell->Navigate(SettingsRoute::ForPage(SettingsPage::General))||
+                !shell->Navigate(SettingsRoute::ForPage(SettingsPage::IconLibrary)))throw std::runtime_error("share notice return route failed");
+            Settle(shell.as<x::FrameworkElement>());
+            if(shareNotice.IsOpen())throw std::runtime_error("returning to the library reopened the dismissed share notice");
+            libraryFixture->operationId=102;libraryFixture->busy=true;libraryFixture->progress=3;
+            libraryFixture->completedAction.clear();++libraryFixture->revision;
+            PumpUntil([&]{return shareNotice.IsOpen()&&std::wstring_view(shareNotice.Message()).find(_LW("iconLibrary.working"))!=std::wstring_view::npos;});
+            libraryFixture->busy=false;libraryFixture->progress=0;libraryFixture->completedAction="publishPrepared";++libraryFixture->revision;
+            // Updating the same Workshop URL is a new operation and must notify.
+            PumpUntil([&]{return shareNotice.IsOpen()&&std::wstring_view(shareNotice.Message()).find(_LW("iconWorkshop.openItem"))!=std::wstring_view::npos;});
+            closeShareNotice();const auto readsAfterSecondClose=*libraryReads;
+            PumpUntil([&]{return *libraryReads>readsAfterSecondClose;});
+            if(shareNotice.IsOpen())throw std::runtime_error("updated Workshop share notice reopened after dismissal");
+            libraryFixture->completedAction.clear();libraryFixture->publishedUrl.clear();
+            libraryFixture->error="iconLibrary.unavailable";libraryFixture->succeeded=false;++libraryFixture->revision;
+            PumpUntil([&]{return shareNotice.IsOpen()&&shareNotice.Severity()==c::InfoBarSeverity::Error;});
+            libraryFixture->error.clear();libraryFixture->succeeded=true;++libraryFixture->revision;
+            PumpUntil([&]{return !shareNotice.IsOpen();});
+            waitForLibraryImages("after share notice checks");
+            std::ofstream(output/L"icon-library-share-notice.tsv")<<"close-and-poll\tfilter\tpage-return\tnew-progress\tnew-share-same-url\tnew-error\npassed\tpassed\tpassed\tpassed\tpassed\tpassed\n";
             struct PickerResult { bool completed = false; std::string id; };
             const auto pickerResult = std::make_shared<PickerResult>();
             const auto pickerReads = std::make_shared<unsigned>(0);
