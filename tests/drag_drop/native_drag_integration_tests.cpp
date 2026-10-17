@@ -216,6 +216,70 @@ struct NativeDragIntegrationAccess
         if (complete) app.LayoutItems();
     }
     static const auto& Items(const DesktopApp& app) { return app.items_; }
+    static void PrepareReload(DesktopApp& app)
+    {
+        // These providers are outside the layout contract. Do not read the
+        // user's clipboard or collect caches while exercising ReloadItems.
+        app.clipboardReadWork_.Stop();
+        app.dataCleanupWorker_.Stop();
+        app.settingsController_ = std::make_unique<snowdesktop::SettingsController>(
+            snowdesktop::CreateNativeSettingsStore());
+        if (!app.settingsController_->Initialize().Succeeded())
+            throw std::runtime_error("initialize actual native settings store in the isolated profile");
+        auto general = app.generalSettings_;
+        general.dockEnabled = true;
+        snowdesktop::DesktopDisplaySettings desktop;
+        desktop.dockEnabled = true;
+        if (!app.settingsController_->SynchronizeGeneral(general) ||
+            !app.settingsController_->SynchronizeDesktop(desktop))
+            throw std::runtime_error("seed distinct controller mirrors before actual disk reload");
+    }
+    static void Reload(DesktopApp& app, snowdesktop::shell_refresh::Snapshot& snapshot, bool disk)
+    {
+        app.ReloadItems(disk, &snapshot);
+    }
+    static bool ReloadPending(const DesktopApp& app) { return app.layoutReload_.Pending(); }
+    static bool ShellReloadPending(const DesktopApp& app) { return app.shellReloadPending_; }
+    static void BeginDesktopGesture(DesktopApp& app, const std::wstring& key)
+    {
+        for (auto& item : app.items_) item.selected = item.layoutKey == key;
+        auto* origin = app.containers_.front().get();
+        auto items = origin->GetSelectedItems();
+        if (items.size() != 1) throw std::runtime_error("reload gesture must select the captured visible desktop identity");
+        auto captured = app.BuildDragSourceList(items, origin);
+        app.dragSession_.Begin(origin, std::move(items), std::move(captured), {50, 50}, {50, 50});
+    }
+    static void EndGesture(DesktopApp& app) { app.dragSession_.End(); }
+    static bool ReloadSettingsAgree(const DesktopApp& app)
+    {
+        const auto snapshot = app.settingsController_->Snapshot();
+        return snapshot && snapshot->initialized && !snapshot->values.general.dockEnabled &&
+            !snapshot->values.desktop.dockEnabled && !app.generalSettings_.dockEnabled;
+    }
+    static void PerturbBeforeDiskRead(DesktopApp& app)
+    {
+        for (auto& item : app.items_) item.gridCell = {L"__page:1", 0, 2};
+        for (auto& widget : app.widgets_) widget.itemKeys.clear();
+    }
+    static bool HasMatchingRuntimeSlot(DesktopApp& app, const DesktopItem& item)
+    {
+        std::size_t offset = 0;
+        for (const auto& page : app.gridPages_)
+        {
+            if (page.id == item.gridCell.pageId)
+            {
+                if (item.gridCell.column < 0 || item.gridCell.column >= page.columns ||
+                    item.gridCell.row < 0 || item.gridCell.row >= page.rows) return false;
+                const auto index = offset + static_cast<std::size_t>(item.gridCell.column + item.gridCell.row * page.columns);
+                const auto& slots = app.containers_.front()->GetSlots();
+                if (index >= slots.size()) return false;
+                const auto frame = slots[index]->GetBounds();
+                return EqualRect(&frame, &item.bounds) && frame.right > frame.left && frame.bottom > frame.top;
+            }
+            offset += static_cast<std::size_t>(page.columns * page.rows);
+        }
+        return false;
+    }
     static const auto& Widgets(const DesktopApp& app) { return app.widgets_; }
     static const auto& Pages(const DesktopApp& app) { return app.gridPages_; }
     static std::wstring LayoutPath(const DesktopApp& app) { return app.GetLayoutPath(); }
@@ -239,12 +303,15 @@ struct NativeDragIntegrationAccess
         app.folderNotifications_.Clear();
         app.StopIconLoader();
         app.appIndexWork_.Stop();
+        app.dataCleanupWorker_.Stop();
+        if (app.largeIconAssets_) app.largeIconAssets_->Stop();
         app.items_oo_.clear(); app.containers_.clear(); app.items_.clear(); app.widgets_.clear();
         app.hwnd_ = nullptr;
     }
 };
 
 #include "native_drag_commit_cases.h"
+#include "native_drag_reload_cases.h"
 
 namespace
 {
@@ -302,6 +369,7 @@ int main(int argc, char** argv)
     {
         if (argc == 1) RunTargets();
         else if (argc == 2 && std::string_view(argv[1]) == "--commit-storage") native_drag_commit_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--reload-storage") native_drag_reload_cases::Run();
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

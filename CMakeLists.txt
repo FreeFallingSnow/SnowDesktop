@@ -2578,7 +2578,7 @@ if (BUILD_TESTING)
         LABELS integration icon interaction rendering)
 
     # Execute real native containers and DesktopApp routing without Run(),
-    # HWND creation or desktop automation. The virtual methods reference the
+    # desktop HWND creation or desktop automation. The virtual methods reference the
     # host graph, so link its production sources rather than fake container
     # methods. Keep XAML generation and runtime deployment in separate trees.
     set(SNOWDESKTOP_NATIVE_DRAG_SOURCES ${SNOWDESKTOP_SOURCES})
@@ -2629,6 +2629,11 @@ if (BUILD_TESTING)
     add_test(NAME native_drag_commit_storage
         COMMAND SnowDesktopNativeDragIntegrationTests --commit-storage)
     set_tests_properties(native_drag_commit_storage PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
+    add_test(NAME native_drag_reload_storage
+        COMMAND SnowDesktopNativeDragIntegrationTests --reload-storage)
+    set_tests_properties(native_drag_reload_storage PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;slot;widget;data")
 
