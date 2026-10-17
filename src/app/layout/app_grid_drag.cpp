@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "layout/page_mapping.h"
 #include "desktop/desktop_drop_search.h"
 #include "layout/selected_grid_move.h"
 #include "widgets/collection_group_rules.h"
@@ -226,18 +227,7 @@ void DesktopApp::ConfigureGridPage(GridPage& page) const
  */
 void DesktopApp::ApplySavedGridDimensions()
 {
-    for (auto& page : gridPages_)
-    {
-        auto colIt = savedPageColumns_.find(page.id);
-        auto rowIt = savedPageRows_.find(page.id);
-        if (colIt != savedPageColumns_.end() && rowIt != savedPageRows_.end() &&
-            colIt->second >= 1 && rowIt->second >= 1)
-        {
-            page.columns = colIt->second;
-            page.rows = rowIt->second;
-            ApplyIconSpacingToPage(page);
-        }
-    }
+    snowdesktop::page_mapping::Dimensions(PageMappingState(), PageMappingServices());
 }
 
 /**

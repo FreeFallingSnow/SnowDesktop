@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "layout/page_navigation_rules.h"
+#include "layout/page_mapping.h"
 #include "widgets/collection_group_rules.h"
 #include "widgets/guide_widget_rules.h"
 #include <commctrl.h>
@@ -1669,13 +1670,31 @@ placed:
 /**
  * @brief 将已保存的页面 ID 映射到当前网格页面，并应用保存的列/行数。
  */
+snowdesktop::page_mapping::State DesktopApp::PageMappingState()
+{
+    return {savedPageIds_, savedPageColumns_, savedPageRows_, savedPageNames_, layoutRecords_, widgets_, items_,
+        gridPages_, pageOffset_, lastMonitorPageId_, pageMutationRevision_};
+}
+
+snowdesktop::page_mapping::Services DesktopApp::PageMappingServices()
+{
+    snowdesktop::page_mapping::Services services;
+    services.ready = [this] { return desktopItemsReady_; };
+    services.hasContent = [this](const auto& id) { return PageHasContent(id); };
+    services.monitorOrder = [this] { return BuildMonitorRenderOrder(); };
+    services.firstPage = [this] { return GetFirstPageGridPage(); };
+    services.cancelHover = [this] { CancelPopupHover(); };
+    services.refreshOwnership = [this] { RefreshCollectedKeysCache(); };
+    services.spacing = [this](auto& page) { ApplyIconSpacingToPage(page); };
+    services.notify = [this](int index) { ShowPageNotify(GetPageDisplayName(index)); };
+    services.reserveDock = [this] { ApplyDockWorkAreaReservation(); };
+    services.refreshIcons = [this] { RefreshIconBitmapResolution(); };
+    return services;
+}
+
 std::wstring DesktopApp::GeneratePageId() const
 {
-    int maxNum = 0;
-    for (auto& pid : savedPageIds_)
-        if (pid.starts_with(L"__page:"))
-            maxNum = (std::max)(maxNum, std::stoi(pid.substr(7)));
-    return L"__page:" + std::to_wstring(maxNum + 1);
+    return snowdesktop::page_mapping::GenerateId(savedPageIds_);
 }
 
 /**
@@ -1683,55 +1702,7 @@ std::wstring DesktopApp::GeneratePageId() const
  */
 void DesktopApp::NormalizePageIds()
 {
-    std::erase(savedPageIds_, std::wstring(kDockPageId));
-    savedPageColumns_.erase(kDockPageId);
-    savedPageRows_.erase(kDockPageId);
-    savedPageNames_.erase(kDockPageId);
-    if (savedPageIds_.empty()) return;
-    if (savedPageIds_.size() > 9999) return;   // 防御：编号爆炸
-
-    // 按 pages 列表顺序严格分配 __page:1, __page:2, ...
-    std::unordered_map<std::wstring, std::wstring> idMap;
-    for (size_t i = 0; i < savedPageIds_.size(); ++i)
-    {
-        std::wstring newId = L"__page:" + std::to_wstring(i + 1);
-        if (savedPageIds_[i] != newId)
-            idMap[savedPageIds_[i]] = newId;
-    }
-    if (idMap.empty()) return;
-
-    // savedPageIds_
-    for (auto& pid : savedPageIds_)
-        if (idMap.contains(pid)) pid = idMap[pid];
-
-    // layoutRecords_: keys and cell.pageId（用 try_emplace 防止 key 冲突覆盖）
-    std::unordered_map<std::wstring, LayoutRecord> newRecords;
-    for (auto& [key, rec] : layoutRecords_)
-    {
-        if (idMap.contains(rec.cell.pageId)) rec.cell.pageId = idMap[rec.cell.pageId];
-        std::wstring newKey = idMap.contains(key) ? idMap[key] : key;
-        newRecords.try_emplace(newKey, std::move(rec));
-    }
-    layoutRecords_ = std::move(newRecords);
-
-    // widgets_
-    for (auto& w : widgets_)
-        if (idMap.contains(w.gridCell.pageId)) w.gridCell.pageId = idMap[w.gridCell.pageId];
-
-    // items_
-    for (auto& item : items_)
-        if (idMap.contains(item.gridCell.pageId)) item.gridCell.pageId = idMap[item.gridCell.pageId];
-
-    // savedPageColumns_ / savedPageRows_
-    std::unordered_map<std::wstring, int> newCols, newRows;
-    for (auto& [k, v] : savedPageColumns_)
-        newCols.try_emplace(idMap.contains(k) ? idMap[k] : k, v);
-    for (auto& [k, v] : savedPageRows_)
-        newRows.try_emplace(idMap.contains(k) ? idMap[k] : k, v);
-    savedPageColumns_ = std::move(newCols);
-    savedPageRows_ = std::move(newRows);
-    snowdesktop::page_management::RemapNames(savedPageNames_, idMap);
-    ++pageMutationRevision_;
+    snowdesktop::page_mapping::Normalize(PageMappingState());
 }
 
 /**
@@ -1748,15 +1719,7 @@ void DesktopApp::NormalizePageIds()
  */
 void DesktopApp::PruneEmptyOverflowPages()
 {
-    RefreshCollectedKeysCache();
-    pageOffset_ = snowdesktop::page_navigation_rules::PruneEmptyPages(
-        savedPageIds_, savedPageColumns_, savedPageRows_, gridPages_.size(),
-        desktopItemsReady_, [this](const std::wstring& pageId) {
-            return PageIsNavigable(pageId);
-        }, pageOffset_);
-    std::erase_if(savedPageNames_, [this](const auto& entry) {
-        return std::ranges::find(savedPageIds_, entry.first) == savedPageIds_.end();
-    });
+    snowdesktop::page_mapping::Prune(PageMappingState(), PageMappingServices());
 }
 
 /**
@@ -1764,22 +1727,7 @@ void DesktopApp::PruneEmptyOverflowPages()
  */
 void DesktopApp::PadPagesToMonitorCount()
 {
-    const size_t N = gridPages_.size();
-    if (N == 0) return;
-    const size_t target = N;   // 补齐到 N 个：每个显示器一个槽位页
-    std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
-    while (savedPageIds_.size() < target)
-    {
-        std::wstring newId = GeneratePageId();
-        const size_t refIdx = savedPageIds_.size();
-        const GridPage* refPage = (refIdx < monitorOrder.size() && monitorOrder[refIdx] < gridPages_.size())
-            ? &gridPages_[monitorOrder[refIdx]]
-            : GetFirstPageGridPage();
-        if (!refPage) return;
-        savedPageIds_.push_back(newId);
-        savedPageColumns_[newId] = std::max(1, refPage->columns);
-        savedPageRows_[newId] = std::max(1, refPage->rows);
-    }
+    snowdesktop::page_mapping::Pad(PageMappingState(), PageMappingServices());
 }
 
 /**
@@ -1787,14 +1735,7 @@ void DesktopApp::PadPagesToMonitorCount()
  */
 void DesktopApp::CompactPageIds()
 {
-    if (savedPageIds_.empty()) return;
-    bool needCompact = false;
-    for (size_t i = 0; i < savedPageIds_.size(); ++i)
-    {
-        if (savedPageIds_[i] != L"__page:" + std::to_wstring(i + 1))
-        { needCompact = true; break; }
-    }
-    if (needCompact) NormalizePageIds();
+    snowdesktop::page_mapping::Compact(PageMappingState());
 }
 
 /**
@@ -1802,40 +1743,7 @@ void DesktopApp::CompactPageIds()
  */
 void DesktopApp::MapPagesToMonitors()
 {
-    const std::wstring oldLastPageId = lastMonitorPageId_;
-    lastMonitorPageId_.clear();
-    if (gridPages_.empty()) return;
-
-    pageOffset_ = std::clamp(pageOffset_, 0, MaxPageOffset());
-    std::vector<size_t> monitorOrder = BuildMonitorRenderOrder();
-    const size_t numMonitors = monitorOrder.size();
-    for (size_t i = 0; i < numMonitors; ++i)
-    {
-        GridPage& page = gridPages_[monitorOrder[i]];
-        const bool isLast = (i == numMonitors - 1);
-        const size_t pageIdx = i + (isLast ? static_cast<size_t>(pageOffset_) : 0);
-        if (pageIdx < savedPageIds_.size())
-            page.id = savedPageIds_[pageIdx];
-        else
-            page.id = L"";   // 越界：末屏渲染空网格
-        if (isLast)
-            lastMonitorPageId_ = page.id;
-    }
-    // 仅当存在溢出页时保留 lastMonitorPageId_，否则清空（gfx 据此决定末屏箭头）
-    if (!lastMonitorPageId_.empty() && savedPageIds_.size() <= gridPages_.size())
-        lastMonitorPageId_.clear();
-
-    // 末屏显示页变化时触发换页通知（类似电视台换台角标）
-    // 仅当 oldLastPageId 非空时才触发——避免启动/初始化时误弹通知
-    if (!oldLastPageId.empty() && !lastMonitorPageId_.empty() && lastMonitorPageId_ != oldLastPageId)
-    {
-        auto it = std::ranges::find(savedPageIds_, lastMonitorPageId_);
-        if (it != savedPageIds_.end())
-        {
-            const int pageIdx = static_cast<int>(it - savedPageIds_.begin());
-            ShowPageNotify(GetPageDisplayName(pageIdx));
-        }
-    }
+    snowdesktop::page_mapping::Map(PageMappingState(), PageMappingServices());
 }
 
 /**
@@ -1843,32 +1751,7 @@ void DesktopApp::MapPagesToMonitors()
  */
 void DesktopApp::ApplyPageMapping()
 {
-    CancelPopupHover();
-    if (gridPages_.empty()) { lastMonitorPageId_.clear(); return; }
-
-    // 首屏兜底：若 savedPageIds_ 为空，确保至少有一个首屏页
-    if (savedPageIds_.empty())
-    {
-        std::wstring firstId = GeneratePageId();
-        savedPageIds_.push_back(firstId);
-        const GridPage* ref = GetFirstPageGridPage();
-        if (!ref) return;
-        savedPageColumns_[firstId] = std::max(1, ref->columns);
-        savedPageRows_[firstId] = std::max(1, ref->rows);
-    }
-
-    PruneEmptyOverflowPages();
-    PadPagesToMonitorCount();
-    CompactPageIds();
-    MapPagesToMonitors();
-    ApplySavedGridDimensions();
-
-    // The Dock reservation depends on the active page's grid dimensions.
-    // Page navigation changes the mapped page without rebuilding monitor
-    // geometry, so refresh the reservation before LayoutItems() rebuilds the
-    // Dock containers from dockAreas_.
-    ApplyDockWorkAreaReservation();
-    RefreshIconBitmapResolution();
+    snowdesktop::page_mapping::Apply(PageMappingState(), PageMappingServices());
 }
 
 /**

@@ -62,6 +62,7 @@
 #include "icons/large_icon_assets.h"
 #include "icons/website_icon.h"
 #include "icons/large_icon_motion.h"
+namespace snowdesktop::page_mapping { struct State; struct Services; }
 namespace snowdesktop::dock_drop_model { struct Services; }
 namespace snowdesktop::dock_desktop_return { struct Services; struct Landing; }
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
@@ -2432,6 +2433,8 @@ private:
         snowdesktop::IconBeautifyUpdateKind updateKind =
             snowdesktop::IconBeautifyUpdateKind::Commit);
     /** @brief 应用页面到显示器的映射关系（编排清理/补齐/重排/映射）。 */
+    snowdesktop::page_mapping::State PageMappingState();
+    snowdesktop::page_mapping::Services PageMappingServices();
     void ApplyPageMapping();
     /** @brief 清理溢出区空页（保留前 N-1 槽位页与末屏当前显示的空页）。 */
     void PruneEmptyOverflowPages();
