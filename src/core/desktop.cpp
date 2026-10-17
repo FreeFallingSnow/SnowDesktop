@@ -20,6 +20,7 @@
 #include "common/l10n.h"
 #include "icons/large_icon_visibility_rules.h"
 #include "icons/large_icon_renderer.h"
+#include "app/drag_drop/desktop_preview_source.h"
 #include <algorithm>
 #include <shlobj.h>
 #include <shlwapi.h>
@@ -703,9 +704,9 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
         app_->dragSession_.SourceList().origin == this)
     {
         const auto& entries = app_->dragSession_.SourceList().entries;
+        const snowdesktop::desktop_preview_source::Lookup previewSources(app_->items_, true);
         const bool hasLarge = std::any_of(entries.begin(), entries.end(), [&](const auto& entry) {
-            return !entry.fromDock && entry.desktopIndex < app_->items_.size() &&
-                app_->items_[entry.desktopIndex].largeIcon.has_value();
+            return previewSources.Find(entry) != nullptr;
         });
         if (hasLarge)
         {
@@ -735,11 +736,10 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
                     DesktopWidget geometry; geometry.gridCell = cell;
                     geometry.bounds = GetGridRect(app_->gridPages_, cell, entry.originalSpan);
                     geometry.cellScale = GetGridPageCuScale(*page);
-                    if (!entry.fromDock && entry.desktopIndex < app_->items_.size() &&
-                        app_->items_[entry.desktopIndex].largeIcon)
+                    if (const auto* sourceItem = previewSources.Find(entry))
                     {
                         const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
-                            app_->EffectiveLargeIconConfig(app_->items_[entry.desktopIndex]),
+                            app_->EffectiveLargeIconConfig(*sourceItem),
                             app_->CurrentPersonalization().cornerRadius);
                         snowdesktop::large_icon_renderer::DrawPlacementPreview(ctx, config,
                             app_->GetStandaloneWidgetFrameRect(geometry), app_->GetItemLayoutScale(geometry.bounds), false, &geometry.bounds);

@@ -6,6 +6,7 @@
 #include "app/layout/new_item_placement.h"
 #include "shell/shell_new_item_capture.h"
 #include "icons/large_icon_renderer.h"
+#include "desktop_preview_source.h"
 
 // Desktop drop-preview rendering, caching and deferred placement.
 
@@ -31,6 +32,7 @@ void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
     const DropPreviewList& preview)
 {
     if (!ctx) return;
+    const snowdesktop::desktop_preview_source::Lookup sourceLookup(items_, dragSession_.IsActive());
     for (const auto& landing : preview.landings)
     {
         if (landing.kind != DropLandingKind::DesktopCell) continue;
@@ -44,13 +46,13 @@ void DesktopApp::DrawDesktopDropPreviewList(ID2D1DeviceContext* ctx,
             const auto& sources = dragSession_.SourceList().entries;
             const auto source = std::find_if(sources.begin(), sources.end(),
                 [&](const auto& entry) { return entry.sourceIndex == landing.sourceIndex; });
-            if (source != sources.end() && !source->fromDock && source->desktopIndex < items_.size() &&
-                items_[source->desktopIndex].largeIcon)
+            const auto* sourceItem = source != sources.end() ? sourceLookup.Find(*source) : nullptr;
+            if (sourceItem)
             {
                 DesktopWidget geometry; geometry.bounds = targetRect; geometry.gridCell = landing.cell;
                 if (const auto* page = FindGridPage(gridPages_, landing.cell.pageId)) geometry.cellScale = GetGridPageCuScale(*page);
                 const auto config = snowdesktop::large_icon_render_rules::ResolveComponentRadius(
-                    EffectiveLargeIconConfig(items_[source->desktopIndex]), CurrentPersonalization().cornerRadius);
+                    EffectiveLargeIconConfig(*sourceItem), CurrentPersonalization().cornerRadius);
                 snowdesktop::large_icon_renderer::DrawPlacementPreview(ctx, config, GetStandaloneWidgetFrameRect(geometry),
                     GetItemLayoutScale(targetRect), true, &targetRect);
                 continue;

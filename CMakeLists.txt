@@ -2563,6 +2563,17 @@ if (BUILD_TESTING)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopIconRenderRulesTests>"
         TIMEOUT 60 LABELS "integration;icon;ui;rendering")
 
+    snowdesktop_add_test(
+        SnowDesktopDesktopPreviewRenderingTests
+        desktop_preview_rendering
+        SOURCES
+            tests/drag_drop/desktop_preview_rendering_tests.cpp
+            src/icons/large_icon_renderer.cpp
+            src/ui/preview/preview_png_writer.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES ole32 shell32 uuid windowscodecs d2d1 dwrite dxguid
+        LABELS integration icon interaction rendering)
+
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)
     set_tests_properties(icon_bitmap_rendering PROPERTIES
