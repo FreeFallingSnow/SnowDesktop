@@ -90,6 +90,37 @@ struct NativeDragIntegrationAccess
         adapter.Attach(new OleDragDropAdapter(&app));
         return adapter->Drop(source, keys | MK_LBUTTON, {screen.x, screen.y}, &effect);
     }
+    static ComPtr<OleDragDropAdapter> ExternalAdapter(DesktopApp& app)
+    {
+        ComPtr<OleDragDropAdapter> adapter;
+        adapter.Attach(new OleDragDropAdapter(&app));
+        return adapter;
+    }
+    static POINTL ExternalPoint(POINT point)
+    {
+        if (!ClientToScreen(completionWindow, &point))
+            throw std::runtime_error("convert native OLE input through the owned message-only window");
+        return {point.x, point.y};
+    }
+    static const ExternalDragSummary& ExternalSummary(const DesktopApp& app)
+    { return app.dragDropController_.ExternalSummary(); }
+    static bool ExternalSession(const DesktopApp& app)
+    {
+        return app.dragDropController_.IsExternalDragActive() && app.dragSession_.IsActive() &&
+            app.dragSession_.Items().empty();
+    }
+    static DropAction CurrentAction(const DesktopApp& app) { return app.dragSession_.Action(); }
+    static bool NoPresentationWindows(const DesktopApp& app)
+    {
+        return app.hwnd_ == completionWindow && !app.inputHwnd_ && !app.controlHwnd_ &&
+            !app.dragPreviewHwnd_ && !app.hintHwnd_ && !app.dcompDevice_ && !app.dwriteFactory_;
+    }
+    static DropPreviewList ObserveOlePreview(DesktopApp& app, POINT point, int mods)
+    {
+        // Observe the target chosen by Enter/Over; do not repair it by resolving again.
+        return app.GetCachedDesktopDropPreview(false, app.dragSession_.SourceList(),
+            Target(app), TargetSlot(app), Region(app), mods, point);
+    }
     static bool FileDropIdle(const DesktopApp& app)
     {
         return AsyncIdle(app) && app.shellFileOperationInFlight_ == 0 && app.pendingLandingCaches_.empty();
@@ -473,6 +504,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--reload-storage") native_drag_reload_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--async-reload-storage") native_drag_async_reload_cases::Run();
         else if (argc == 3 && std::string_view(argv[1]) == "--ole-files") native_ole_file_cases::Run(argv[2]);
+        else if (argc == 3 && std::string_view(argv[1]) == "--ole-gesture-files") native_ole_file_cases::Run(argv[2], true);
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

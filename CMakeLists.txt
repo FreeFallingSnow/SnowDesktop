@@ -2647,6 +2647,11 @@ if (BUILD_TESTING)
         set_tests_properties(native_ole_files_${GESTURE} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
             TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
+        add_test(NAME native_ole_gesture_files_${GESTURE}
+            COMMAND SnowDesktopNativeDragIntegrationTests --ole-gesture-files ${GESTURE})
+        set_tests_properties(native_ole_gesture_files_${GESTURE} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
     endforeach()
 
     add_test(NAME icon_bitmap_rendering

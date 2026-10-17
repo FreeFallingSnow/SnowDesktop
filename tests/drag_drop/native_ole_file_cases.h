@@ -18,12 +18,13 @@ struct Gesture
     // Expectations come from the named verb and source capability, not a
     // production key-conversion or effect-selection function.
     std::array<DWORD, 8> effects;
+    DropAction action;
 };
 inline constexpr Gesture gestures[]{
-    {"copy", MK_CONTROL, {0,1,0,1,0,1,0,1}},
-    {"move", MK_SHIFT, {0,0,2,2,0,0,2,2}},
-    {"alt_link", MK_ALT, {0,0,0,0,4,4,4,4}},
-    {"ctrl_shift_link", MK_CONTROL | MK_SHIFT, {0,0,0,0,4,4,4,4}},
+    {"copy", MK_CONTROL, {0,1,0,1,0,1,0,1}, DropAction::Copy},
+    {"move", MK_SHIFT, {0,0,2,2,0,0,2,2}, DropAction::Move},
+    {"alt_link", MK_ALT, {0,0,0,0,4,4,4,4}, DropAction::Link},
+    {"ctrl_shift_link", MK_CONTROL | MK_SHIFT, {0,0,0,0,4,4,4,4}, DropAction::Link},
 };
 
 template<class Predicate>
@@ -76,7 +77,53 @@ inline void CheckOriginals(DesktopApp& app, const std::vector<fs::path>& existin
     }
 }
 
-inline void Run(std::string_view action)
+struct EnteredDrag
+{
+    ComPtr<OleDragDropAdapter> adapter;
+    DropPreviewList preview;
+};
+
+inline EnteredDrag Enter(DesktopApp& app, ole_file_source_fixture::Source& source,
+    const Gesture& selected, DWORD allowed, std::size_t summaryCount, POINT point, bool releaseChanges)
+{
+    Require(Access::NoPresentationWindows(app),
+        "native OLE entry starts without desktop render devices or presentation windows");
+    EnteredDrag drag{Access::ExternalAdapter(app), {}};
+    const auto selectedIndex = static_cast<std::size_t>(&selected - std::begin(gestures));
+    const auto& initial = gestures[(selectedIndex + 1) % std::size(gestures)];
+    const auto& different = gestures[(selectedIndex + 2) % std::size(gestures)];
+    const auto stage = [&](const Gesture& current, POINT position, bool entering, int slot) {
+        DWORD feedback = allowed;
+        const auto screen = Access::ExternalPoint(position);
+        const auto result = entering
+            ? drag.adapter->DragEnter(&source, current.keys | MK_LBUTTON, screen, &feedback)
+            : drag.adapter->DragOver(current.keys | MK_LBUTTON, screen, &feedback);
+        Require(SUCCEEDED(result) && feedback == current.effects[allowed],
+            "native OLE hover feedback must honor current modifiers and the original source effects");
+        const auto& summary = Access::ExternalSummary(app);
+        Require(Access::ExternalSession(app) && summary.fileCount == static_cast<int>(summaryCount) &&
+            !summary.hasShortcut && !summary.foldersOnly &&
+            Access::Target(app) == Access::Desktop(app) && Access::Region(app) == HitRegion::Empty &&
+            Access::TargetSlot(app) && Access::TargetSlot(app)->GetIndex() == slot,
+            "native OLE enter and over must derive the external summary and current physical target without fixture repair");
+        if (feedback)
+            Require(Access::CurrentAction(app) == current.action,
+                "native OLE accepted hover action must follow the current explicit gesture");
+        Require(Access::NoPresentationWindows(app),
+            "native OLE entry fixture must remain on its owned message-only window without host feedback windows");
+        Require(source.starts == 0 && source.ends == 0 && !source.wrongApartment &&
+            (!source.asynchronous || (source.fileReads == 0 && !source.fileReadBeforeStart)),
+            "native OLE enter and over cannot start a lease or render delayed source content");
+    };
+    stage(initial, {point.x + 100, point.y}, true, 6);
+    if (!releaseChanges) stage(different, point, false, 5);
+    stage(selected, point, false, 5);
+    drag.preview = Access::ObserveOlePreview(app, point, static_cast<int>(selected.keys));
+    if (releaseChanges) stage(different, point, false, 5);
+    return drag;
+}
+
+inline void Run(std::string_view action, bool nativeEntry = false)
 {
     const auto gesture = std::find_if(std::begin(gestures), std::end(gestures),
         [&](const auto& value) { return value.name == action; });
@@ -88,13 +135,16 @@ inline void Run(std::string_view action)
     for (const bool secondary : {false, true})
         for (const bool asynchronous : {false, true})
             for (const std::size_t count : {1u, 2u})
+                for (const bool releaseChanges : {false, true})
                 for (const DWORD allowed : {0u,1u,2u,3u,4u,5u,6u,7u})
                 {
+                    if (!nativeEntry && releaseChanges) continue;
                     const auto expected = gesture->effects[allowed];
                     auto& context = native_drag_commit_cases::context;
                     context = "OLE " + std::string(action) + " allowed=" + std::to_string(allowed) +
                         " count=" + std::to_string(count) + " async=" + std::to_string(asynchronous) +
-                        " secondary=" + std::to_string(secondary);
+                        " secondary=" + std::to_string(secondary) + " entry=" + std::to_string(nativeEntry) +
+                        " release-change=" + std::to_string(releaseChanges);
                     const auto directory = profile.root / (L"ole-" + std::to_wstring(scenes++));
                     fs::create_directories(directory / L"source");
                     std::vector<fs::path> files{directory / L"source/Payload.txt"};
@@ -117,12 +167,28 @@ inline void Run(std::string_view action)
                     auto source = ole_file_source_fixture::Make(files, asynchronous);
                     const POINT point{secondary ? -650L : 150L, 150};
                     const std::size_t summaryCount = asynchronous ? 1 : count;
-                    Access::BeginExternal(app, summaryCount, point);
-                    const auto preview = Access::ObserveModelPreview(app, point, static_cast<int>(gesture->keys));
+                    EnteredDrag entered;
+                    DropPreviewList preview;
+                    if (nativeEntry)
+                    {
+                        entered = Enter(app, *source.Get(), *gesture, allowed, summaryCount, point, releaseChanges);
+                        preview = entered.preview;
+                        Require(Outputs(desktop, existing).empty() && Read(Access::LayoutPath(app)) == saved &&
+                            Access::Items(app).size() == 2,
+                            "native OLE hover must preserve physical files and saved/native layout until release");
+                    }
+                    else
+                    {
+                        Access::BeginExternal(app, summaryCount, point);
+                        preview = Access::ObserveModelPreview(app, point, static_cast<int>(gesture->keys));
+                    }
                     Require(Access::Target(app) == Access::Desktop(app) && preview.landings.size() == summaryCount,
                         "native OLE fixture must observe the actual accepted desktop landing preview");
                     DWORD returned = allowed;
-                    Require(SUCCEEDED(Access::DropExternal(app, source.Get(), gesture->keys, point, returned)),
+                    const auto result = nativeEntry
+                        ? entered.adapter->Drop(source.Get(), gesture->keys, Access::ExternalPoint(point), &returned)
+                        : Access::DropExternal(app, source.Get(), gesture->keys, point, returned);
+                    Require(SUCCEEDED(result),
                         "actual native OLE adapter must return through the host drop handler");
                     if (expected)
                     {
@@ -209,6 +275,6 @@ inline void Run(std::string_view action)
                     for (const auto& file : existing) fs::remove(file);
                 }
     std::cout << scenes << " actual native OLE " << action << " file/effect/placement scenes passed; "
-        << completions << " file/read completions dispatched\n";
+        << completions << " file/read completions dispatched; native entry=" << nativeEntry << '\n';
 }
 }
