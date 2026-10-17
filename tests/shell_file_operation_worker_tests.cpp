@@ -21,6 +21,7 @@
 #include "drag_drop/widget_displacement_cases.h"
 #include "drag_drop/dock_model_cases.h"
 #include "drag_drop/dock_return_cases.h"
+#include "drag_drop/dock_file_action_cases.h"
 #include <wincodec.h>
 
 #include <algorithm>
@@ -776,7 +777,7 @@ int wmain(int argc, wchar_t** argv)
         const std::wstring mode(argv[1]);
         if (mode == L"--async-slot-transfer-tests" || mode == L"--drop-placement-tests" ||
             mode == L"--member-order-tests" || mode == L"--right-drag-file-tests" || mode == L"--pipeline-decision-tests" ||
-            mode == L"--group-membership-tests" || mode == L"--group-release-tests" || mode == L"--widget-displacement-tests" || mode == L"--dock-model-tests" || mode == L"--dock-return-tests")
+            mode == L"--group-membership-tests" || mode == L"--group-release-tests" || mode == L"--widget-displacement-tests" || mode == L"--dock-model-tests" || mode == L"--dock-return-tests" || mode == L"--dock-file-action-tests")
         {
             const HRESULT initialized = OleInitialize(nullptr);
             Expect(SUCCEEDED(initialized), "async transfer test owns an STA");
@@ -792,6 +793,7 @@ int wmain(int argc, wchar_t** argv)
                 else if (mode == L"--widget-displacement-tests") widget_displacement_cases::Run(root);
                 else if (mode == L"--dock-model-tests") dock_model_cases::Run(root);
                 else if (mode == L"--dock-return-tests") dock_return_cases::Run(root);
+                else if (mode == L"--dock-file-action-tests") dock_file_action_cases::Run(root);
                 else async_slot_transfer_cases::Run(root);
             }
             catch (const std::exception& error)

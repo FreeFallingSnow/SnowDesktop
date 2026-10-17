@@ -267,6 +267,60 @@ struct Harness
         pipeline.collectionTitle = L"Collection"; pipeline.filesTitle = L"Desktop files";
         return pipeline;
     }
+    decltype(drop_pipeline::Services::files) FileExecutor(Batch& batch,
+        decltype(file_drop_execution::Services::fileName) fileName = {},
+        decltype(file_drop_execution::Services::pin) pin = {},
+        decltype(file_drop_execution::Services::savePins) afterPin = {})
+    {
+        if (!fileName) fileName = [](const auto& path) { return std::filesystem::path(path).filename().wstring(); };
+        return [this, &batch, fileName = std::move(fileName), pin = std::move(pin), afterPin = std::move(afterPin)](const DragSourceList& sources, const DropPreviewList& preview,
+            auto done, bool sync, auto outputs) {
+            ++batch.executions;
+            if (batch.capturePlan) batch.capturePlan(sources, preview);
+            desktop_file_materialization::Services materialization;
+            materialization.enqueue = [&](auto request, auto finishedRequest) {
+                return files.Enqueue(std::move(request), [&, finishedRequest](bool success) {
+                    if (batch.reverseOutputs) std::reverse(batch.result->outputs.begin(), batch.result->outputs.end());
+                    auto completion = std::make_unique<ShellFileOperationUiCompletion>();
+                    completion->callback = finishedRequest;
+                    PostShellFileOperationCompletion(window.hwnd, completedMessage, std::move(completion), success);
+                });
+            };
+            materialization.isStaging = [](const auto&) { return false; };
+            materialization.pathsEqual = [](const auto& a, const auto& b) { return _wcsicmp(a.c_str(), b.c_str()) == 0; };
+            materialization.normalize = Normalize;
+            materialization.copyName = [](const auto& stem, const auto& extension, int index) {
+                return stem + L" copy " + std::to_wstring(index) + extension;
+            };
+            materialization.shortcutName = L"Shortcut";
+            file_drop_execution::Services execution;
+            execution.snapshotDesktopKeys = [&] { return batch.existingDesktopKeys; };
+            execution.folderPlacement = [normalize = materialization.normalize](const auto& widget, size_t index, const DragSourceList* list) {
+                return pending_drop::BuildFolder(widget, index, list, widget.id, {},
+                    normalize,
+                    [](const auto& path) { return std::filesystem::path(path).filename().wstring(); });
+            };
+            execution.fileName = fileName;
+            execution.pathsEqual = materialization.pathsEqual;
+            execution.desktop = [&, materialization](const auto& list, DropAction action, bool duplicate,
+                auto finishedRequest, bool synchronous, auto result) {
+                return desktop_file_materialization::Materialize(list, action, duplicate, batch.destination.wstring(),
+                    reservations, materialization, nullptr, std::move(finishedRequest), synchronous, std::move(result));
+            };
+            execution.folder = [materialization](const auto& list, const auto& directory, DropAction action,
+                auto finishedRequest, bool synchronous, auto result) {
+                return desktop_file_materialization::MaterializeFolder(list, directory, action, materialization,
+                    std::move(finishedRequest), synchronous, std::move(result));
+            };
+            execution.pin = pin;
+            execution.savePins = afterPin;
+            execution.forgetMovedKeys = [&](const auto& keys) { batch.forgottenKeys = keys; };
+            execution.refresh = [&] { ++batch.refreshes; };
+            return file_drop_execution::Execute(sources, preview, *batch.placements,
+                std::move(execution), std::move(done), sync, std::move(outputs));
+        };
+    }
+
     DWORD Submit(Batch& batch, bool async = true, HWND target = nullptr)
     {
         external_slot_transfer::Callbacks callbacks;
@@ -336,52 +390,7 @@ struct Harness
                     "accepted Dock pin persists the actual committed entries atomically");
             };
             services.fileName = [](const auto& path) { return std::filesystem::path(path).filename().wstring(); };
-            auto executeFiles = [&, fileName = services.fileName, pin = services.pinExisting, afterPin = services.afterPin](const DragSourceList& sources, const DropPreviewList& preview,
-                auto done, bool sync, auto outputs) {
-                ++batch.executions;
-                if (batch.capturePlan) batch.capturePlan(sources, preview);
-                desktop_file_materialization::Services materialization;
-                materialization.enqueue = [&](auto request, auto finishedRequest) {
-                    return files.Enqueue(std::move(request), [&, finishedRequest](bool success) {
-                        if (batch.reverseOutputs) std::reverse(batch.result->outputs.begin(), batch.result->outputs.end());
-                        auto completion = std::make_unique<ShellFileOperationUiCompletion>();
-                        completion->callback = finishedRequest;
-                        PostShellFileOperationCompletion(window.hwnd, completedMessage, std::move(completion), success);
-                    });
-                };
-                materialization.isStaging = [](const auto&) { return false; };
-                materialization.pathsEqual = [](const auto& a, const auto& b) { return _wcsicmp(a.c_str(), b.c_str()) == 0; };
-                materialization.normalize = Normalize;
-                materialization.copyName = [](const auto& stem, const auto& extension, int index) {
-                    return stem + L" copy " + std::to_wstring(index) + extension;
-                };
-                materialization.shortcutName = L"Shortcut";
-                file_drop_execution::Services execution;
-                execution.snapshotDesktopKeys = [&] { return batch.existingDesktopKeys; };
-                execution.folderPlacement = [normalize = materialization.normalize](const auto& widget, size_t index, const DragSourceList* list) {
-                    return pending_drop::BuildFolder(widget, index, list, widget.id, {},
-                        normalize,
-                        [](const auto& path) { return std::filesystem::path(path).filename().wstring(); });
-                };
-                execution.fileName = fileName;
-                execution.pathsEqual = materialization.pathsEqual;
-                execution.desktop = [&, materialization](const auto& list, DropAction action, bool duplicate,
-                    auto finishedRequest, bool synchronous, auto result) {
-                    return desktop_file_materialization::Materialize(list, action, duplicate, batch.destination.wstring(),
-                        reservations, materialization, nullptr, std::move(finishedRequest), synchronous, std::move(result));
-                };
-                execution.folder = [materialization](const auto& list, const auto& directory, DropAction action,
-                    auto finishedRequest, bool synchronous, auto result) {
-                    return desktop_file_materialization::MaterializeFolder(list, directory, action, materialization,
-                        std::move(finishedRequest), synchronous, std::move(result));
-                };
-                execution.pin = pin;
-                execution.savePins = afterPin;
-                execution.forgetMovedKeys = [&](const auto& keys) { batch.forgottenKeys = keys; };
-                execution.refresh = [&] { ++batch.refreshes; };
-                return file_drop_execution::Execute(sources, preview, *batch.placements,
-                    std::move(execution), std::move(done), sync, std::move(outputs));
-            };
+            auto executeFiles = FileExecutor(batch, services.fileName, services.pinExisting, services.afterPin);
             services.execute = [&, executeFiles](const auto& sources, const auto& preview, auto done, bool sync, auto outputs) {
                 auto pipeline = PipelineServices(batch, executeFiles);
                 return drop_pipeline::Execute(sources, preview, batch.widgets, batch.dock, pipeline,

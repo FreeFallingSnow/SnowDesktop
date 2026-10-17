@@ -13,6 +13,7 @@
 #include "app/app.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "dock/dock_desktop_return.h"
+#include "drag_drop/desktop_drop_dispatch.h"
 #include "common/types.h"
 #include "common/constants.h"
 #include "common/utils.h"
@@ -192,10 +193,17 @@ void DesktopGrid::OnItemsDropped(const std::vector<Item*>& sourceItems, Containe
 
     if (dynamic_cast<DockContainer*>(origin))
     {
-        GridCell target = app_->ResolveDesktopRequestCell(
-            app_->dragSession_.SourceList(),
-            app_->dragSession_.CurrentPoint());
-        app_->MoveDockItemsToDesktop(sourceItems, target);
+        const auto sourceList = app_->BuildDragSourceList(sourceItems, origin);
+        snowdesktop::desktop_drop_dispatch::Dock(true, sourceList, mods,
+            [&] {
+                const auto target = app_->ResolveDesktopRequestCell(sourceList, app_->dragSession_.CurrentPoint());
+                app_->MoveDockItemsToDesktop(sourceItems, target);
+                return true;
+            }, [&](const auto& sources, int modifiers) {
+                const auto preview = app_->BuildDropPreviewList(sources, this, targetSlot, region, modifiers,
+                    app_->dragSession_.CurrentPoint());
+                return app_->ExecuteDropPipeline(sources, preview);
+            });
         return;
     }
 
