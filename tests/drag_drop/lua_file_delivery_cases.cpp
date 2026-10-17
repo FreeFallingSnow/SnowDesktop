@@ -89,7 +89,8 @@ public:
         Require(items.size() == expected.size(), "callback receives one read reference per distinct captured source");
         for (size_t index = 0; index < items.size(); ++index)
         {
-            Require(items[index].path == expected[index] && items[index].access == WidgetFilesystemHandleAccess::Read,
+            Require(std::filesystem::equivalent(items[index].path, expected[index]) &&
+                items[index].access == WidgetFilesystemHandleAccess::Read,
                 "real grants preserve selected order and point to the original read-only sources");
             handles.push_back(items[index].handle);
         }
