@@ -666,12 +666,6 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             if (!mode || !theme) throw std::runtime_error("shared processing mode/theme selectors are missing");
             if (mode.Items().Size() != 3 || theme.SelectedIndex() != 6)
                 throw std::runtime_error("new per-icon editor must default to global theme with three independent strategies");
-            c::ComboBox globalMode{nullptr};
-            Walk(shell->FindName(L"PageCards").as<x::DependencyObject>(), [&](const x::DependencyObject& node) {
-                if (const auto combo = node.try_as<c::ComboBox>(); combo &&
-                    x::Automation::AutomationProperties::GetName(combo) == _LW("iconStyle.strategy")) globalMode = combo;
-            });
-            if (!globalMode || globalMode.Items().Size() != 2) throw std::runtime_error("global processing must expose exactly two strategies");
             mode.SelectedIndex(2);
             appearanceFixture->globalSettings = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassDark);
             appearanceFixture->globalSettings.mode = 1;
@@ -679,6 +673,13 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             globalChange.values.desktop.iconBeautify = appearanceFixture->globalSettings;
             if (!shell->ApplySnapshot(globalChange)) throw std::runtime_error("live global theme update rejected");
             Settle(editor);
+            // Enabling the global theme first realizes its dependent strategy control.
+            c::ComboBox globalMode{nullptr};
+            Walk(shell->FindName(L"PageCards").as<x::DependencyObject>(), [&](const x::DependencyObject& node) {
+                if (const auto combo = node.try_as<c::ComboBox>(); combo &&
+                    x::Automation::AutomationProperties::GetName(combo) == _LW("iconStyle.strategy")) globalMode = combo;
+            });
+            if (!globalMode || globalMode.Items().Size() != 2) throw std::runtime_error("global processing must expose exactly two strategies");
             if (theme.SelectedIndex() != 6 || mode.SelectedIndex() != 2)
                 throw std::runtime_error("global theme update overwrote independent processing or theme inheritance");
             captureAppearance(editor, L"icon-appearance-follow-global.png");
