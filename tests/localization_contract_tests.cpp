@@ -1,5 +1,6 @@
 #include "common/json_value.h"
 #include "common/l10n.h"
+#include "localization/source_references.h"
 
 #include <windows.h>
 
@@ -29,18 +30,12 @@ using References =
     std::map<std::string, std::vector<std::string>>;
 
 int failures = 0;
-std::vector<std::string> warnings;
 
 void Check(bool condition, const std::string& message)
 {
     if (condition) return;
     ++failures;
     std::cerr << "FAILED: " << message << '\n';
-}
-
-void Warn(const std::string& message)
-{
-    warnings.push_back(message);
 }
 
 std::string ReadFile(const fs::path& path)
@@ -476,9 +471,9 @@ References CollectReferences(
     const fs::path& root,
     bool lua)
 {
-    const std::regex pattern(lua
-        ? R"KEY(\bl10n\.tr\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)")KEY"
-        : R"KEY(\b(?:_L(?:FW|F|W)?|L10N_KEY|L)\s*\(\s*"([^"\\]*(?:\\.[^"\\]*)*)")KEY");
+    using namespace snowdesktop::localization_audit;
+    const std::set<std::string> calls = lua ? std::set<std::string>{"tr"} :
+        std::set<std::string>{"_L", "_LW", "_LF", "_LFW", "L10N_KEY", "L", "Tr", "TrW", "Localize"};
     References references;
     for (const fs::path& path : files)
     {
@@ -487,19 +482,26 @@ References CollectReferences(
             PathLabel(path, root) +
                 ": source file must be valid UTF-8");
         if (!IsValidUtf8(text)) continue;
-        for (std::sregex_iterator found(
-                 text.begin(), text.end(), pattern),
-             end;
-             found != end; ++found)
+        const auto tokens = Lex(text, lua);
+        for (size_t index = 0; index + 2 < tokens.size(); ++index)
         {
-            const std::string key =
-                DecodeEscapedKey((*found)[1].str());
-            references[key].push_back(
-                PathLabel(path, root) + ":" +
-                std::to_string(LineNumberAt(
-                    text,
-                    static_cast<size_t>(
-                        found->position()))));
+            if (tokens[index].kind != TokenKind::Identifier || !calls.contains(tokens[index].value) ||
+                tokens[index + 1].value != "(") continue;
+            if (lua && (index < 2 || tokens[index - 1].value != "." || tokens[index - 2].value != "l10n")) continue;
+            int depth = 0;
+            for (size_t argument = index + 2; argument < tokens.size(); ++argument)
+            {
+                const auto& token = tokens[argument];
+                if ((token.value == ")" || token.value == ",") && depth == 0) break;
+                if (token.value == "(") ++depth;
+                if (token.value == ")") --depth;
+                if (token.kind != TokenKind::String) continue;
+                // A literal fragment next to concatenation is not a complete key.
+                if ((argument > 0 && (tokens[argument - 1].value == "+" || tokens[argument - 1].value == ".")) ||
+                    (argument + 1 < tokens.size() && (tokens[argument + 1].value == "+" || tokens[argument + 1].value == "."))) continue;
+                const auto key = DecodeEscapedKey(token.value);
+                references[key].push_back(PathLabel(path, root) + ":" + std::to_string(token.line));
+            }
         }
     }
     return references;
@@ -513,6 +515,113 @@ void MergeReferences(
         destination[key].insert(
             destination[key].end(),
             locations.begin(), locations.end());
+}
+
+void TestReferenceAuditContracts()
+{
+    namespace audit = snowdesktop::localization_audit;
+    const std::set<std::string> keys{"ui.direct", "ui.table", "ui.dead", "ui.comment", "ui.added"};
+    const std::vector<audit::Source> sources{{"fixture.cpp", audit::Lex(R"CPP(
+        // _LW("ui.comment");
+        /* _LW("ui.comment"); */
+        const char* unused = "ui.dead";
+        constexpr const char* orphan[] = {"ui.dead"};
+        const char* labels[] = {"ui.table"};
+        Render(labels[0]);
+        _LW("ui.direct");
+        "ui.dead";
+        char quote = '\"';
+    )CPP")}};
+    const auto references = audit::CollectLiteralBindings(sources, keys);
+    Check(references.contains("ui.direct") && references.contains("ui.table"),
+        "direct and table-driven keys retain their source references");
+    Check(audit::Unused(keys, references) == std::vector<std::string>{"ui.added", "ui.comment", "ui.dead"},
+        "new keys, comments, unused constants and standalone strings must not pass the unused-key gate");
+    const std::vector<audit::Source> removed{{"fixture.cpp", audit::Lex("const char* labels[] = {\"ui.table\"};")}};
+    Check(!audit::CollectLiteralBindings(removed, keys).contains("ui.table"),
+        "removing the table consumer makes its translation unused");
+    const auto lua = audit::Lex("-- l10n.tr('ui.comment')\nl10n.tr('ui.direct')", true);
+    Check(lua.size() == 6 && lua[4].value == "ui.direct",
+        "Lua strings are collected without treating comments as references");
+    const std::vector<audit::Source> luaSources{{"fixture.lua", audit::Lex(
+        "local unused = 'ui.dead'\nlocal labels = {'ui.table'}\nrender(labels[1])\nl10n.tr('ui.direct')", true), true}};
+    const auto luaBindings = audit::CollectLiteralBindings(luaSources, keys);
+    Check(luaBindings.contains("ui.direct") && luaBindings.contains("ui.table") && !luaBindings.contains("ui.dead"),
+        "Lua tables retain consumers while unused assignments do not consume following statements");
+}
+
+References CollectGlobalBindings(const std::vector<fs::path>& files,
+    const fs::path& root, const std::map<std::string, Catalog>& catalogs)
+{
+    namespace audit = snowdesktop::localization_audit;
+    std::set<std::string> keys;
+    for (const auto& [language, catalog] : catalogs)
+    {
+        (void)language;
+        for (const auto& [key, value] : catalog) { (void)value; keys.insert(key); }
+    }
+    std::vector<audit::Source> sources;
+    for (const auto& path : files)
+        sources.push_back({PathLabel(path, root), audit::Lex(ReadFile(path))});
+    auto bridgeFiles = SortedFiles(root / "steam_bridge" / "src", IsCppSource);
+    for (const auto& path : bridgeFiles)
+        sources.push_back({PathLabel(path, root), audit::Lex(ReadFile(path))});
+    sources.push_back({"CMakeLists.txt", audit::Lex(ReadFile(root / "CMakeLists.txt"))});
+    auto references = audit::CollectLiteralBindings(sources, keys);
+    const auto add = [&](const std::string& key, const std::string& location) {
+        references[key].push_back(location);
+    };
+    for (const auto& source : sources)
+    {
+        std::set<std::string> strings;
+        for (const auto& token : source.tokens)
+            if (token.kind == audit::TokenKind::String) strings.insert(token.value);
+        if (source.path == "src/winui/edge_light_editor.h" && strings.contains("edgeLight.") && strings.contains(".description"))
+        {
+            std::set<std::string> withoutHelp;
+            for (size_t at = 2; at < source.tokens.size(); ++at)
+                if (source.tokens[at].kind == audit::TokenKind::String &&
+                    source.tokens[at - 1].value == "=" && source.tokens[at - 2].value == "!")
+                    withoutHelp.insert(source.tokens[at].value);
+            // Domain comes from actual Number(parent, name, ...) calls, not
+            // every catalog entry sharing this prefix. Removing a row removes
+            // the reference; the help guard excludes the three label-only rows.
+            for (const auto& name : audit::CallStrings(source, "Number", 1))
+            {
+                const auto key = "edgeLight." + name;
+                add(key, source.path + ":Number(" + name + ")");
+                if (!withoutHelp.contains(key)) add(key + ".description", source.path + ":Number help(" + name + ")");
+            }
+        }
+        if (source.path == "src/winui/desktop_style_page_presenter.cpp" && strings.contains("settings.desktopStyle."))
+            for (const auto& preset : audit::InitializerStrings(source, "kPresets"))
+                for (const std::string suffix : {".title", ".description", ".changes"})
+                    if (strings.contains(suffix)) add("settings.desktopStyle." + preset + suffix, source.path + ":kPresets/" + preset + suffix);
+        if (source.path == "src/winui/calendar_page_presenter.cpp" && strings.contains("settings.calendar.weekday."))
+            for (int weekday = 1; weekday <= 7; ++weekday)
+                add("settings.calendar.weekday." + std::to_string(weekday), source.path + ":weekday[1,7]");
+    }
+    // Workshop Manager resolves English UI values through its production
+    // catalog adapter. Its source root and value-based calls are part of the
+    // shipped product, even though they live outside src/.
+    if (const auto english = catalogs.find("en-US"); english != catalogs.end())
+    {
+        std::map<std::string, std::string> managerByEnglish;
+        std::map<std::string, std::string> ordered(english->second.begin(), english->second.end());
+        for (const auto& [key, value] : ordered)
+            if (key.starts_with("workshop_manager.")) managerByEnglish.emplace(value, key);
+        for (const auto& source : sources)
+        {
+            if (source.path != "steam_bridge/src/manager_main.cpp") continue;
+            auto values = audit::CallStrings(source, "T", 1);
+            const auto direct = audit::CallStrings(source, "Translate", 0);
+            values.insert(values.end(), direct.begin(), direct.end());
+            for (const auto& value : values)
+                if (const auto found = managerByEnglish.find(value); found != managerByEnglish.end())
+                    add(found->second, source.path + ":T/Translate English value");
+        }
+    }
+    return references;
 }
 
 struct StringLiteral
@@ -849,18 +958,20 @@ void TestGlobalSourceContract(
     for (const auto& [key, value] : baseline->second)
     {
         (void)value;
-        if (!references.contains(key)) ++unused;
+        if (!references.contains(key))
+        {
+            ++unused;
+            Check(false, "unused global translation key: " + key +
+                " (defined in lang/" + baseline->first + ".json)");
+        }
     }
     if (unused != 0)
     {
         const std::string message =
             std::to_string(unused) +
             " global translation keys are not referenced by literal C/C++ localization calls";
-        if (strictUnused)
-            Check(false, message);
-        else
-            Warn(message +
-                " (run SnowDesktopLocalizationContractTests with --strict-unused to make this an error)");
+        (void)strictUnused;
+        std::cerr << message << '\n';
     }
 }
 
@@ -1143,6 +1254,18 @@ size_t TestWidgetManifests(
         const auto baseline = catalogs.contains("zh-CN")
             ? catalogs.find("zh-CN")
             : catalogs.begin();
+        std::set<std::string> packageKeys;
+        for (const auto& [key, value] : baseline->second)
+        {
+            (void)value;
+            packageKeys.insert(key);
+        }
+        std::vector<snowdesktop::localization_audit::Source> packageSources;
+        for (const auto& luaPath : packageLuaFiles)
+            packageSources.push_back({PathLabel(luaPath, root),
+                snowdesktop::localization_audit::Lex(ReadFile(luaPath), true), true});
+        MergeReferences(references,
+            snowdesktop::localization_audit::CollectLiteralBindings(packageSources, packageKeys));
         for (const auto& [language, catalog] : catalogs)
         {
             Check(globalCatalogs.contains(language),
@@ -1201,17 +1324,19 @@ size_t TestWidgetManifests(
         for (const auto& [key, value] : baseline->second)
         {
             (void)value;
-            if (!references.contains(key)) ++unused;
+            if (!references.contains(key))
+            {
+                ++unused;
+                Check(false, label + ": unused widget locale key: " + key);
+            }
         }
         if (unused != 0)
         {
             const std::string message = label + ": " +
                 std::to_string(unused) +
                 " widget locale keys are unused";
-            if (strictUnused)
-                Check(false, message);
-            else
-                Warn(message);
+            (void)strictUnused;
+            std::cerr << message << '\n';
         }
         referenceCount += references.size();
     }
@@ -1367,6 +1492,7 @@ int wmain(int argc, wchar_t* argv[])
     }
     const bool strictUnused = argc == 3;
     CheckFormatSignatureRules();
+    TestReferenceAuditContracts();
 
     const fs::path projectRoot = argv[1];
     const fs::path languageDirectory =
@@ -1434,8 +1560,8 @@ int wmain(int argc, wchar_t* argv[])
     Check(!luaFiles.empty(),
         "at least one Lua widget source file must exist");
 
-    const References globalReferences =
-        CollectReferences(cppFiles, projectRoot, false);
+    References globalReferences = CollectGlobalBindings(cppFiles, projectRoot, catalogs);
+    MergeReferences(globalReferences, CollectReferences(cppFiles, projectRoot, false));
     TestGlobalSourceContract(
         catalogs, globalReferences, strictUnused);
     TestNoHardcodedChinese(
@@ -1460,8 +1586,6 @@ int wmain(int argc, wchar_t* argv[])
     TestRuntimeCatalogMatrix(
         languageDirectory, catalogs);
 
-    for (const std::string& warning : warnings)
-        std::cout << "WARNING: " << warning << '\n';
     std::cout << "Checked " <<
         cppFiles.size() + luaFiles.size() <<
         " source files, " <<

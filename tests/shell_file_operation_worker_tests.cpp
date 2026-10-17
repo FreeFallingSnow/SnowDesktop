@@ -10,6 +10,7 @@
 #include "shell_clipboard_cases.h"
 #include "drag_drop/file_backed_drop_request.h"
 #include "drag_drop/ole_drag_rules.h"
+#include "drag_drop/external_desktop_cases.h"
 #include <wincodec.h>
 
 #include <algorithm>
@@ -685,6 +686,7 @@ int RunFileBackedDropRegression(bool links, bool effects)
         }
         if (effects)
         {
+            external_desktop_cases::Run(root);
             struct Case { DWORD allowed; DWORD keys; DWORD expected; DWORD preferred = DROPEFFECT_MOVE; };
             constexpr DWORD all = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
             const Case cases[]{{DROPEFFECT_COPY, MK_SHIFT, DROPEFFECT_NONE},

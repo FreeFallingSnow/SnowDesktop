@@ -4,6 +4,7 @@
 #include "drag_drop/drag_input_rules.h"
 #include "drag_drop/virtual_file_drop.h"
 #include "drag_drop/external_drop_content.h"
+#include "drag_drop/delayed_desktop_file_drop.h"
 #include "widgets/lua_logical_slot.h"
 
 // OLE drag-enter/over/leave/drop session handling.
@@ -1444,23 +1445,18 @@ HRESULT DesktopApp::HandleOleDrop(
     // Explorer advertises CF_HDROP before rendering its paths. Read that batch
     // on the existing STA reader and execute the selected verb through the
     // tracked file pipeline, rather than the copy-only browser/Shell fallback.
-    if (bareDesktopTarget && sourceUsesAsyncMode &&
-        snowdesktop::external_drop_content::ProbeFileSource(dataObject).available)
+    const auto delayedDesktopDrop = snowdesktop::delayed_desktop_file_drop::Dispatch(
+        dataObject, bareDesktopTarget, sourceUsesAsyncMode, keyState, *effect,
+        [&](DWORD selectedEffect) {
+            ExternalSlotDestination destination;
+            destination.preview = BuildExternalDesktopPreviewList(delayedFileTargetCell, 1);
+            destination.preview.action = DropActionFromMods(static_cast<int>(
+                snowdesktop::ole_drag_rules::ModifiersForDropEffect(selectedEffect)));
+            return DropExternalSlotContent(dataObject, destination, selectedEffect, true, {});
+        });
+    if (delayedDesktopDrop)
     {
-        const DWORD selectedEffect = snowdesktop::ole_drag_rules::ChooseDropEffect(
-            keyState, *effect, DROPEFFECT_COPY);
-        if (selectedEffect == DROPEFFECT_NONE)
-        {
-            *effect = DROPEFFECT_NONE;
-            EndDragSession();
-            return S_OK;
-        }
-        ExternalSlotDestination destination;
-        destination.preview = BuildExternalDesktopPreviewList(delayedFileTargetCell, 1);
-        destination.preview.action = DropActionFromMods(static_cast<int>(
-            snowdesktop::ole_drag_rules::ModifiersForDropEffect(selectedEffect)));
-        *effect = DropExternalSlotContent(dataObject, destination,
-            selectedEffect, true, {});
+        *effect = *delayedDesktopDrop;
         EndDragSession();
         return S_OK;
     }
