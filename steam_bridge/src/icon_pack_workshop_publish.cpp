@@ -6,6 +6,7 @@
 #include "../../src/data/atomic_file.h"
 #include <windows.h>
 #include <fstream>
+#include <limits>
 
 namespace snowdesktop::steam_bridge
 {
@@ -63,7 +64,9 @@ bool BuildIconPackPublishPlan(const std::filesystem::path& directory,const std::
     plan.packageId=JsonString(value,"packageId").value_or("");plan.title=JsonString(value,"title").value_or("");
     plan.description=JsonString(value,"description").value_or("");plan.snapshotHash=JsonString(value,"snapshotHash").value_or("");
     plan.packageSha256=JsonString(value,"packageSha256").value_or("");plan.coverSha256=JsonString(value,"coverSha256").value_or("");
-    plan.preparedAt=static_cast<std::int64_t>(JsonUnsigned(value,"preparedAt").value_or(0));
+    const auto preparedAt=JsonUnsigned(value,"preparedAt").value_or(0);
+    if(!preparedAt||preparedAt>static_cast<std::uint64_t>((std::numeric_limits<std::int64_t>::max)())){error="stalePreparation";return false;}
+    plan.preparedAt=static_cast<std::int64_t>(preparedAt);
     if(plan.packageId.size()!=38||!plan.packageId.starts_with("group-")||plan.packageId.find_first_not_of("0123456789abcdef",6)!=plan.packageId.npos||
         plan.title.empty()||plan.title.size()>128||plan.description.size()>=8000||plan.snapshotHash.size()!=64||
         IconPackFileHash(plan.package)!=plan.packageSha256||plan.packageSha256.size()!=64||
@@ -104,7 +107,7 @@ bool ExecuteIconPackPublishPlan(const IconPackPublishPlan& plan,bool confirmCrea
     if(!BuildIconPackPublishPlan(plan.directory,plan.association.parent_path().parent_path().parent_path(),current,detail)||
         current.packageId!=plan.packageId||current.association!=plan.association||
         current.packageSha256!=plan.packageSha256||current.coverSha256!=plan.coverSha256||current.snapshotHash!=plan.snapshotHash||
-        current.preparationSha256!=plan.preparationSha256||
+        current.preparationSha256!=plan.preparationSha256||current.preparedAt!=plan.preparedAt||
         current.title!=plan.title||current.description!=plan.description||current.publishedFileId!=plan.publishedFileId||
         now<plan.preparedAt||now-plan.preparedAt>1800)return Fail(error,"stalePreparation");
     if(confirmCreate==confirmUpdate||(plan.publishedFileId?!confirmUpdate:!confirmCreate))return Fail(error,"confirmationRequired");

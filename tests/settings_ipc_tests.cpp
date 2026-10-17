@@ -739,6 +739,14 @@ void TestIconLibraryPaging()
     expected.revision = 72; expected.session = 9; expected.succeeded = true;
     expected.target = L"item:paged"; expected.targetName = L"Target";
     expected.groups.push_back({"pack", L"Large pack"});
+    for(unsigned i=0;i<1200;++i)
+    {
+        const auto suffix=std::to_string(i);
+        snowdesktop::IconLibraryGroup group;group.id="group-"+std::string(32-suffix.size(),'0')+suffix;group.name=L"Same pack title";
+        group.license=std::wstring(8000,L'a');group.workshopItem=std::to_string(100000+i);group.accounts={"321","654"};
+        expected.groups.push_back(std::move(group));
+    }
+    Reject([&] { (void)Pack(expected.groups); },"valid per-pack licenses can exceed a frame even before adding icon entries");
     expected.imported = {"last"}; expected.importedGroupId = "pack";
     expected.failures = {L"unsupported resource"};
     expected.workshopAvailable=true;expected.coverPath=L"C:\\preview\\cover.png";expected.preparationId="456-789";expected.progress=2;
@@ -781,9 +789,12 @@ void TestIconLibraryPaging()
             bool entriesMatch = result.entries.size() == expected.entries.size();
             if (entriesMatch) for (std::size_t i = 0; i < result.entries.size(); ++i)
                 if (Pack(result.entries[i]) != Pack(expected.entries[i])) { entriesMatch = false; break; }
+            bool groupsMatch=result.groups.size()==expected.groups.size();
+            if(groupsMatch)for(std::size_t i=0;i<result.groups.size();++i)
+                if(Pack(result.groups[i])!=Pack(expected.groups[i])){groupsMatch=false;break;}
             Check(entriesMatch && result.revision == 72 && result.session == 9 && result.succeeded &&
                 result.target == expected.target && result.targetName == expected.targetName &&
-                Pack(result.groups) == Pack(expected.groups) && result.imported == expected.imported &&
+                groupsMatch && result.imported == expected.imported &&
                 result.importedGroupId == expected.importedGroupId && result.failures == expected.failures &&
                 result.workshopAvailable && result.coverPath==expected.coverPath && result.preparationId==expected.preparationId &&
                 result.operationId==expected.operationId && result.completedAction==expected.completedAction && result.progress==2 && result.publishedUrl==expected.publishedUrl,

@@ -44,8 +44,12 @@ int RunIconWorkshopWorkflowTests(const std::filesystem::path& root)
         "optional sharing form changes invalidate the same preview without making confirmation mandatory");
     sharing.rightsConfirmed=false;library.Invoke(sharing);
     auto many=package;many.title=std::string(150,'W')+" 图标 アイコン 아이콘";
-    while(many.images.size()<40)many.images.push_back(many.images.front());
-    check(icon_workshop::RenderCover(many,data/L"many.png",error)&&std::filesystem::file_size(data/L"many.png")<1024*1024,
+    for(unsigned i=1;i<40;++i)
+    {
+        auto svg="<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"64\" height=\"64\"><circle cx=\"32\" cy=\"32\" r=\"24\" fill=\"rgb("+std::to_string(i*5)+",80,160)\"/></svg>";
+        many.images.push_back({icon_package::Hash(svg)+".svg","Icon "+std::to_string(i),std::move(svg)});
+    }
+    check(icon_package::Validate(many,error)&&icon_workshop::RenderCover(many,data/L"many.png",error)&&std::filesystem::file_size(data/L"many.png")<1024*1024,
         "cover bounds real icon grid to 36 while rendering long multilingual title and total count");
     check(themes::preview::NormalizeCover(prepared.coverPath,data/L"custom.png",error)&&
         icon_image::Decode(data/L"custom.png",1024,image,error)&&image.width==1024&&image.height==1024,
@@ -59,6 +63,9 @@ int RunIconWorkshopWorkflowTests(const std::filesystem::path& root)
     atomic_file::WriteAll(directory/L"icon-pack-preparation.json",bridge::WriteJson(changed));
     bridge::IconPackPublishPlan oversizedTitle;
     check(!bridge::BuildIconPackPublishPlan(directory,data,oversizedTitle,error),"prepared titles enforce the existing Steam UTF-8 byte boundary");
+    bridge::ParseJson(descriptor,changed,parseError);changed.object["preparedAt"]=bridge::JsonValue::Number(1e20);
+    atomic_file::WriteAll(directory/L"icon-pack-preparation.json",bridge::WriteJson(changed));
+    check(!bridge::BuildIconPackPublishPlan(directory,data,oversizedTitle,error),"out-of-range preparation dates cannot overflow publication expiry checks");
     atomic_file::WriteAll(directory/L"icon-pack-preparation.json",descriptor);
     bridge::ThemePublishTransport transport;
     transport.status=[](auto&)->std::optional<bridge::SteamStatus>{bridge::SteamStatus s;s.loggedOn=true;s.appId=5080330;s.steamId="321";return s;};
