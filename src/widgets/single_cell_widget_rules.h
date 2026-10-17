@@ -26,6 +26,11 @@ inline bool IsDesktopSingleCell(const DesktopWidget& widget) noexcept
     return widget.gridCell.pageId != kDockPageId && IsSingleCell(widget);
 }
 
+inline bool IsIconMode(const DesktopWidget& widget) noexcept
+{
+    return widget.singleCellIconMode && IsDesktopSingleCell(widget);
+}
+
 struct ArcHandle
 {
     float centerX = 0;
@@ -42,10 +47,10 @@ inline ArcHandle ResolveArc(RECT icon, float scale) noexcept
     scale = std::max(0.1f, scale);
     // The quarter circle sits outside the icon; its radius leaves a visible
     // gap even at the rounded ends of the stroke.
-    const float radius = std::min(edge * 0.25f, 8.0f * scale);
+    const float radius = std::min(edge * 0.25f, 5.0f * scale);
     return {static_cast<float>(icon.right), static_cast<float>(icon.bottom),
         radius, std::min(edge * 0.09f, 2.5f * scale),
-        std::min(edge * 0.18f, 6.0f * scale)};
+        std::min(edge * 0.18f, 3.0f * scale)};
 }
 
 inline RECT ArcBounds(const ArcHandle& arc, bool hitTarget = false) noexcept

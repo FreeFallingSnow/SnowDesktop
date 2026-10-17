@@ -584,6 +584,8 @@ void DesktopApp::OnMouseMoveAt(
         if (std::abs(current.x - mouseDownPoint_.x) > thresholdX ||
             std::abs(current.y - mouseDownPoint_.y) > thresholdY)
         {
+            if (pendingWidgetButtonAction_ == WidgetHit::CollectionOpenBtn)
+                pendingWidgetButtonAction_ = WidgetHit::None;
             Container* source = mouseDownHit_->GetContainer();
             std::vector<Item*> sourceItems =
                 source ==
@@ -613,7 +615,9 @@ void DesktopApp::OnMouseMoveAt(
                 std::all_of(sourceItems.begin(), sourceItems.end(), [](Item* item) {
                     const auto* icon = dynamic_cast<const DesktopIcon*>(item);
                     const auto* data = icon ? icon->GetDesktopItem() : nullptr;
-                    return data && !data->largeIcon;
+                    const auto* widget = dynamic_cast<const WidgetContainer*>(item);
+                    return (data && !data->largeIcon) ||
+                        (widget && widget->IsSingleCellIconMode());
                 }));
             for (Item* item : sourceItems)
             {

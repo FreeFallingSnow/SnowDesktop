@@ -980,6 +980,73 @@ void TestDockGroupPayload()
     }
 }
 
+void TestDesktopWidgetIconsInMixedSelection()
+{
+    namespace contract = snowdesktop::slot_contract;
+    ContractContainer desktop(BarStyle::VBar, contract::SlotSurfaceKind::Desktop);
+    ContractContainer dock(BarStyle::VBar, contract::SlotSurfaceKind::Dock);
+    ContractContainer collection(BarStyle::VBar, contract::SlotSurfaceKind::Collection);
+    ContractContainer folder(BarStyle::VBar, contract::SlotSurfaceKind::FolderMapping);
+    for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::FileCategories,
+            DesktopWidgetType::FileGroup, DesktopWidgetType::CollectionGroup, DesktopWidgetType::FolderMapping})
+    {
+        // Real stable source metadata produced by the native entrance path;
+        // only the platform/container boundary is substituted here.
+        DragSourceList source;
+        source.BindRuntimeOrigin(&desktop);
+        source.hasWidgets = true;
+        source.hasDesktopIcons = true;
+        DragSourceEntry widget;
+        widget.kind = DropSourceKind::Widget;
+        widget.desktopWidgetIcon = true;
+        widget.widgetType = type;
+        widget.widgetId = L"entrance";
+        widget.originalCell = {L"page", 1, 2};
+        widget.originalSpan = {1, 1};
+        DragSourceEntry file;
+        file.kind = DropSourceKind::DesktopIcon;
+        file.sourceIndex = 1;
+        file.desktopKey = L"document";
+        file.filePath = L"C:\\Desktop\\document.txt";
+        source.entries = {widget, file};
+        Check(DragTargetResolver::AcceptsInternal(desktop, source) &&
+                DragTargetResolver::AcceptsInternal(dock, source),
+            "all five native icon families can accompany files to the desktop or Dock");
+        Check(DragTargetResolver::AcceptsInternal(collection, source) &&
+                DragTargetResolver::AcceptsInternal(folder, source) &&
+                collection.observedCount == 1 && dock.observedCount == 2,
+            "an unsupported native entrance must not block the eligible file in a mixed drop");
+        const auto filtered = source.WithoutDesktopWidgetIcons();
+        Check(filtered.entries.size() == 1 && filtered.entries.front().sourceIndex == 1 &&
+                !filtered.hasWidgets && filtered.DesktopKeys() == std::vector<std::wstring>{L"document"} &&
+                source.entries.size() == 2 && source.entries.front().widgetId == L"entrance" &&
+                source.entries.front().originalCell.column == 1 && source.SupportsDesktopShellHandoff(),
+            "filtering keeps the file's original landing identity and leaves the entrance source intact");
+
+        std::vector<std::unique_ptr<Container>> targets;
+        targets.push_back(std::make_unique<ContractContainer>(BarStyle::VBar, contract::SlotSurfaceKind::Desktop));
+        targets.push_back(std::make_unique<ContractContainer>(BarStyle::VBar, contract::SlotSurfaceKind::Collection));
+        const auto mixedTarget = DragTargetResolver::ResolveInternal(targets, {50, 50}, source);
+        Check(mixedTarget.container == targets.back().get() && mixedTarget.region != HitRegion::Blocked,
+            "a mixed drag resolves to the visible component for its eligible file subset");
+
+        source.entries.pop_back();
+        source.hasDesktopIcons = false;
+        Check(!DragTargetResolver::AcceptsInternal(collection, source) &&
+                !source.SupportsDesktopShellHandoff() && source.WithoutDesktopWidgetIcons().Empty(),
+            "an entrance alone cannot enter a file container or be exported as a file");
+        const auto rejected = DragTargetResolver::ResolveInternal(targets, {50, 50}, source);
+        Check(rejected.container == targets.back().get() && rejected.region == HitRegion::Blocked,
+            "a rejected entrance cannot fall through its visible component target onto the desktop");
+
+        source.entries.front().desktopWidgetIcon = false;
+        source.entries.push_back(file);
+        source.hasDesktopIcons = true;
+        Check(!DragTargetResolver::AcceptsInternal(desktop, source),
+            "the native entrance exception never enables unrelated mixed widget payloads");
+    }
+}
+
 void TestDockPayloadSurvivesPageTurnWithoutSelection()
 {
     using snowdesktop::drag_source_rebind::ResolveRecordedDockItems;
@@ -3659,6 +3726,7 @@ int wmain(int argc, wchar_t** argv)
     TestDockPayloadSurvivesPageTurnWithoutSelection();
     TestDesktopFilesDockPayload();
     TestDockGroupPayload();
+    TestDesktopWidgetIconsInMixedSelection();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestRuntimeSourceTargetMatrix();
     TestExternalDropContentRegressions();

@@ -1084,6 +1084,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
     if (pendingWidgetButtonAction_ != WidgetHit::None)
     {
         const WidgetHit pendingAction = pendingWidgetButtonAction_;
+        const bool closedPopupByPress = pendingWidgetButtonClosedPopup_;
         const size_t widgetIndex = mouseDownWidgetIndex_;
         WidgetContainer* buttonOwner = nullptr;
         if (widgetIndex < widgets_.size())
@@ -1100,12 +1101,14 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             }
         }
         const bool invoke = buttonOwner &&
-            (pendingAction != WidgetHit::CollectionOpenBtn || widgetAction_ == WidgetAction::PendingMove) &&
+            (pendingAction != WidgetHit::CollectionOpenBtn ||
+                (widgetAction_ == WidgetAction::None && !dragSession_.IsActive())) &&
             buttonOwner->HitTestWidget(upPoint) == pendingAction;
         const RECT widgetBounds = widgetIndex < widgets_.size()
             ? widgets_[widgetIndex].bounds : RECT{};
 
         pendingWidgetButtonAction_ = WidgetHit::None;
+        pendingWidgetButtonClosedPopup_ = false;
         if (pendingAction == WidgetHit::CollectionOpenBtn)
             widgetAction_ = WidgetAction::None;
         mouseDown_ = false;
@@ -1121,7 +1124,7 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             return;
         if (pendingAction == WidgetHit::CollectionOpenBtn)
         {
-            OpenCollectionPopupAt(widgetIndex, upPoint, L"");
+            OpenCollectionPopupAt(widgetIndex, upPoint, L"", closedPopupByPress);
             return;
         }
         if (pendingAction == WidgetHit::CollapseToggleBtn)

@@ -2520,7 +2520,7 @@ private:
      */
     GridCell FindBestDropCell(const DragSourceList& sourceList, GridCell targetCell) const;
     /** @brief 待处理的网格移动项（索引 + 目标单元格）。 */
-    struct PendingGridMove { size_t index; GridCell cell; };
+    struct PendingGridMove { size_t index; GridCell cell; bool widget = false; };
     /**
      * @brief 构建选中项的移动计划。
      * @param targetCell 目标单元格
@@ -2844,6 +2844,8 @@ private:
     void DrawItemText(ID2D1RenderTarget* ctx, RECT bounds,
         const std::wstring& text, bool selected, float opacity = 1.0f,
         bool lightTheme = false, bool componentPanel = false, int titleLines = 0);
+    void DrawItemSelectionBackground(ID2D1RenderTarget* ctx, RECT bounds,
+        int state, bool lightTheme, float opacity = 1.0f, int titleLines = 0);
     int ResolveItemTitleLines(const DesktopWidget* widget = nullptr, bool popupHosted = false) const;
     /**
      * @brief 快捷导航大图标下标签的自绘文本（不依赖桌面 DrawItemText）。
@@ -4327,6 +4329,7 @@ private:
     POINT mouseDownPoint_{};
     Item* mouseDownHit_ = nullptr;
     WidgetHit pendingWidgetButtonAction_ = WidgetHit::None;
+    bool pendingWidgetButtonClosedPopup_ = false;
     bool marqueeActive_ = false;
     bool marqueeFullPresentPending_ = false;
     RECT marqueeRect_{};

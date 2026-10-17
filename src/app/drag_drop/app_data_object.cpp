@@ -267,7 +267,8 @@ std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
     const GridPage* page = FindGridPage(gridPages_, targetCell.pageId);
     if (!page) return landings;
 
-    bool desktopToDesktopMove = internalMove && sourceList.hasDesktopIcons &&
+    bool desktopToDesktopMove = internalMove &&
+        (sourceList.hasDesktopIcons || sourceList.HasDesktopWidgetIcons()) &&
         !containers_.empty() && sourceList.origin == containers_.front().get();
     if (desktopToDesktopMove)
     {
@@ -277,7 +278,11 @@ std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
         for (const auto& entry : sourceList.entries)
         {
             auto it = std::find_if(moves.begin(), moves.end(),
-                [&](const PendingGridMove& move) { return move.index == entry.desktopIndex; });
+                [&](const PendingGridMove& move) {
+                    return entry.desktopWidgetIcon
+                        ? move.widget && move.index == FindWidgetIndexById(entry.widgetId)
+                        : !move.widget && move.index == entry.desktopIndex;
+                });
             if (it == moves.end()) continue;
             DropLanding landing;
             landing.kind = DropLandingKind::DesktopCell;

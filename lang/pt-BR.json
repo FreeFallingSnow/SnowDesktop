@@ -787,7 +787,7 @@
   "app.widget_preview.setting_search_box": "Caixa de pesquisa",
   "app.widget_preview.setting_hide": "Desativado",
   "app.widget_preview.setting_show": "Ativado",
-  "app.widget_preview.collection_intro": "Reúna os itens mais usados em uma coleção. Escolha um widget compacto, um ícone ou uma predefinição maior e ajuste o tamanho depois de adicionar.",
+  "app.widget_preview.collection_intro": "Reúna os itens frequentes em uma coleção. Escolha um modelo grande, um widget de uma célula ou o modo de ícone e redimensione após adicionar.",
   "app.widget_preview.collection_compact": "Coleção compacta",
   "app.widget_preview.collection_compact_hint": "Mantenha uma entrada de coleção simples na área de trabalho e clique nela para visualizar o conteúdo.",
   "app.widget_preview.collection_scroll_grid": "Grande coleção",
@@ -2865,5 +2865,6 @@
   "iconWorkshop.agreementRequired": "Aceite primeiro o acordo do Workshop no Steam.",
   "iconWorkshop.creationUncertain": "O resultado da criação anterior é incerto. Confira seus itens antes de criar outro.",
   "iconWorkshop.titleTooLong": "O título é muito longo. Encurte-o e tente novamente.",
-  "iconWorkshop.descriptionTooLong": "A descrição é muito longa. Encurte-a e tente novamente."
+  "iconWorkshop.descriptionTooLong": "A descrição é muito longa. Encurte-a e tente novamente.",
+  "app.widget_preview.single_cell_component": "Widget de uma célula"
 }

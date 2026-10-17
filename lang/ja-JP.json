@@ -787,7 +787,7 @@
   "app.widget_preview.setting_search_box": "検索ボックス",
   "app.widget_preview.setting_hide": "オフ",
   "app.widget_preview.setting_show": "オン",
-  "app.widget_preview.collection_intro": "よく使う項目をコレクションにまとめます。コンパクトなウィジェット、アイコン、大きなプリセットから選び、追加後にサイズを変更できます。",
+  "app.widget_preview.collection_intro": "よく使う項目をコレクションにまとめます。大きいサイズ、1マスウィジェット、アイコンモードから選べます。追加後にサイズを変更できます。",
   "app.widget_preview.collection_compact": "コンパクトコレクション",
   "app.widget_preview.collection_compact_hint": "デスクトップ上に単純なコレクション エントリを保持し、それをクリックして内容を表示します。",
   "app.widget_preview.collection_scroll_grid": "大コレクション",
@@ -2865,5 +2865,6 @@
   "iconWorkshop.agreementRequired": "先に Steam でワークショップ利用規約を確認してください。",
   "iconWorkshop.creationUncertain": "前回の作成結果が不明です。重複作成を避けるため、先に作品一覧を確認してください。",
   "iconWorkshop.titleTooLong": "共有タイトルが長すぎます。短くしてから再試行してください。",
-  "iconWorkshop.descriptionTooLong": "共有の説明が長すぎます。短くしてから再試行してください。"
+  "iconWorkshop.descriptionTooLong": "共有の説明が長すぎます。短くしてから再試行してください。",
+  "app.widget_preview.single_cell_component": "1マスウィジェット"
 }

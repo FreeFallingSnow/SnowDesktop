@@ -787,7 +787,7 @@
     "app.widget_preview.setting_search_box": "搜索框",
     "app.widget_preview.setting_hide": "关闭",
     "app.widget_preview.setting_show": "开启",
-    "app.widget_preview.collection_intro": "把常用项目收纳在一个集合中。可选择紧凑组件、图标或大尺寸预设，添加后可调整大小。",
+    "app.widget_preview.collection_intro": "把常用项目收纳在一个集合中。可选择大尺寸、单格组件或图标模式，添加后可调整大小。",
     "app.widget_preview.collection_compact": "紧凑集合",
     "app.widget_preview.collection_compact_hint": "在桌面上保留一个简洁入口，点击即可查看集合内容。",
     "app.widget_preview.collection_scroll_grid": "大尺寸集合",
@@ -2865,5 +2865,6 @@
   "iconWorkshop.agreementRequired": "请先在 Steam 中完成创意工坊协议确认。",
   "iconWorkshop.creationUncertain": "上次创建结果尚未确定，请先检查工坊作品，避免重复创建。",
   "iconWorkshop.titleTooLong": "分享标题过长，请缩短后重试。",
-  "iconWorkshop.descriptionTooLong": "分享简介过长，请缩短后重试。"
+  "iconWorkshop.descriptionTooLong": "分享简介过长，请缩短后重试。",
+  "app.widget_preview.single_cell_component": "单格组件"
 }

@@ -1978,8 +1978,8 @@ int main(int argc, char** argv)
         Check(!single::IsDesktopSingleCell(dockPopup),
             "the internal Dock directory popup is never treated as a compact desktop entrance");
         const auto arc = single::ResolveArc({0, 0, 64, 64}, 1.0f);
-        Check(arc.centerX == 64 && arc.centerY == 64 && arc.radius == 8 &&
-            single::HitArc(arc, {72, 64}) && single::HitArc(arc, {70, 70}) &&
+        Check(arc.centerX == 64 && arc.centerY == 64 && arc.radius == 5 &&
+            single::HitArc(arc, {69, 64}) && single::HitArc(arc, {68, 68}) &&
             !single::HitArc(arc, {63, 63}) && !single::HitArc(arc, {64, 64}) &&
             !single::HitArc(arc, {32, 32}),
             "the resize arc stays outside the icon without capturing the icon or its hollow corner");

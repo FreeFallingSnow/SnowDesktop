@@ -787,7 +787,7 @@
   "app.widget_preview.setting_search_box": "搜尋框",
   "app.widget_preview.setting_hide": "關閉",
   "app.widget_preview.setting_show": "開啟",
-  "app.widget_preview.collection_intro": "把常用項目收納在一個集合中。可選擇緊湊元件、圖示或大尺寸預設，新增後可調整大小。",
+  "app.widget_preview.collection_intro": "將常用項目收納在一個集合中。可選擇大尺寸、單格元件或圖示模式，新增後可調整大小。",
   "app.widget_preview.collection_compact": "緊湊集合",
   "app.widget_preview.collection_compact_hint": "在桌面上保留一個簡潔入口，點選即可查看集合內容。",
   "app.widget_preview.collection_scroll_grid": "大尺寸集合",
@@ -2865,5 +2865,6 @@
   "iconWorkshop.agreementRequired": "請先在 Steam 中完成工作坊協議確認。",
   "iconWorkshop.creationUncertain": "上次建立結果尚未確定，請先檢查工作坊作品，避免重複建立。",
   "iconWorkshop.titleTooLong": "分享標題過長，請縮短後重試。",
-  "iconWorkshop.descriptionTooLong": "分享簡介過長，請縮短後重試。"
+  "iconWorkshop.descriptionTooLong": "分享簡介過長，請縮短後重試。",
+  "app.widget_preview.single_cell_component": "單格元件"
 }

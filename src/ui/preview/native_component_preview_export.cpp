@@ -438,21 +438,19 @@ DesktopApp::ExportNativeComponentPreviews(
         Variant hoveredIcon{ "icon-hover", filename(component, "icon-hover"), 2 };
         hoveredIcon.hovered = true;
         variants.push_back(std::move(hoveredIcon));
-        if (component != "collection")
-            variants.push_back({ "compact", filename(component, "compact"), 1 });
+        variants.push_back({ "compact", filename(component, "compact"), 1 });
         if (component == "collection")
         {
-            variants.push_back({ "compact", L"collection-compact.png", 0 });
             variants.push_back({ "large-folder",
-                L"collection-large-folder.png", 1, false, false });
+                L"collection-large-folder.png", 0, false, false });
             variants.push_back({ "large-folder-titleless",
-                L"collection-large-folder-titleless.png", 1,
+                L"collection-large-folder-titleless.png", 0,
                 false, false, std::nullopt, std::nullopt,
                 std::nullopt, true });
             variants.push_back({ "scroll-grid",
-                L"collection-scroll-grid.png", 1, true, false });
+                L"collection-scroll-grid.png", 0, true, false });
             variants.push_back({ "scroll-list",
-                L"collection-scroll-list.png", 1, true, true });
+                L"collection-scroll-list.png", 0, true, true });
             return variants;
         }
         if (component == "collection-group")

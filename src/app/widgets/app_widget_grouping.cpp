@@ -331,6 +331,11 @@ void DesktopApp::ConfigureWidgetGridLimits(DesktopWidget& widget) const
 GridSpan DesktopApp::ClampWidgetGridSpan(const DesktopWidget& widget, GridSpan span,
     int availableColumns, int availableRows) const
 {
+    // A resize pointer can pass the fixed top-left cell. Normalize that
+    // overshoot before choosing the compact preset, rather than applying
+    // the larger scrolling panel's two-cell minimum to a zero/negative span.
+    span.columns = std::max(1, span.columns);
+    span.rows = std::max(1, span.rows);
     if (span.columns == 1 && span.rows == 1 &&
         IsWidgetDockEntryType(DockEntryTypeForWidget(widget.type))) return span;
 

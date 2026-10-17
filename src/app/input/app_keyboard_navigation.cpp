@@ -955,7 +955,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     }
 
     // Collection 弹窗打开时，按弹窗实际列数进行 2D 导航
-    if (widget.type == DesktopWidgetType::Collection &&
+    if ((widget.type == DesktopWidgetType::Collection ||
+            widget.type == DesktopWidgetType::FileCategories) &&
         popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
         popupWidgetIndex_ < widgets_.size())
     {
@@ -1011,6 +1012,9 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                 break;
             }
         }
+        if (popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
+            !UsesCategorizedPopupControls(widget))
+            visibleKeys = GetPopupItemKeys(widget);
         memberCount = visibleKeys.size();
     }
     else if (widget.type == DesktopWidgetType::FolderMapping)

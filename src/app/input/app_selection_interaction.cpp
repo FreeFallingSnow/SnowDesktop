@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "shell/shell_extension_service.h"
 #include "drag_drop/drag_input_rules.h"
+#include "widgets/single_cell_widget_rules.h"
 
 // Selection projection, keyboard focus sync and marquee selection.
 
@@ -21,7 +22,8 @@ std::wstring FolderSelectionKey(
 std::vector<SelectionController::Target>
 DesktopApp::GetDesktopSelectionTargets(const std::wstring& pageId)
 {
-    std::vector<DesktopItem*> ordered;
+    struct TargetPosition { GridCell cell; SelectionController::Target target; };
+    std::vector<TargetPosition> ordered;
     for (auto& item : items_)
     {
         if (item.name.empty() || IsRectEmptyRect(item.bounds) ||
@@ -35,21 +37,25 @@ DesktopApp::GetDesktopSelectionTargets(const std::wstring& pageId)
                     return page.id == item.gridCell.pageId;
                 }))
             continue;
-        ordered.push_back(&item);
+        ordered.push_back({item.gridCell, {DesktopSelectionKey(item), &item.selected}});
+    }
+    for (auto& widget : widgets_)
+    {
+        if (!snowdesktop::single_cell_widget::IsIconMode(widget) ||
+            IsGroupedWidget(widget) || IsRectEmptyRect(widget.bounds) ||
+            (desktopIconsHidden_ && !widget.keepWhenDesktopHidden) ||
+            (!pageId.empty() && widget.gridCell.pageId != pageId)) continue;
+        ordered.push_back({widget.gridCell, {L"widget:" + widget.id, &widget.selected}});
     }
     // Match desktop keyboard traversal: top to bottom, then the next column.
-    std::sort(ordered.begin(), ordered.end(), [](const auto* a, const auto* b) {
-        if (a->gridCell.pageId != b->gridCell.pageId)
-            return a->gridCell.pageId < b->gridCell.pageId;
-        if (a->gridCell.column != b->gridCell.column)
-            return a->gridCell.column < b->gridCell.column;
-        if (a->gridCell.row != b->gridCell.row)
-            return a->gridCell.row < b->gridCell.row;
-        return a->layoutKey < b->layoutKey;
+    std::sort(ordered.begin(), ordered.end(), [](const auto& a, const auto& b) {
+        if (a.cell.pageId != b.cell.pageId) return a.cell.pageId < b.cell.pageId;
+        if (a.cell.column != b.cell.column) return a.cell.column < b.cell.column;
+        if (a.cell.row != b.cell.row) return a.cell.row < b.cell.row;
+        return a.target.key < b.target.key;
     });
     std::vector<SelectionController::Target> targets;
-    for (auto* item : ordered)
-        targets.push_back({ DesktopSelectionKey(*item), &item->selected });
+    for (const auto& item : ordered) targets.push_back(item.target);
     return targets;
 }
 
@@ -149,6 +155,11 @@ std::vector<SelectionController::Target> DesktopApp::GetPopupSelectionTargets()
 
 std::wstring DesktopApp::GetItemSelectionKey(Item* item) const
 {
+    if (const auto* widget = dynamic_cast<const WidgetContainer*>(item);
+        widget && widget->GetWidgetData() &&
+        snowdesktop::single_cell_widget::IsIconMode(*widget->GetWidgetData()) &&
+        !IsGroupedWidget(*widget->GetWidgetData()))
+        return L"widget:" + widget->GetWidgetData()->id;
     if (auto* icon = dynamic_cast<DesktopIcon*>(item);
         icon && icon->GetDesktopItem())
         return DesktopSelectionKey(*icon->GetDesktopItem());
@@ -183,6 +194,8 @@ size_t DesktopApp::GetSelectionWidgetIndex() const
         return keyboardNavWidgetIndex_;
     for (size_t index = 0; index < widgets_.size(); ++index)
         if (!IsGroupedWidget(widgets_[index]) &&
+            (!snowdesktop::single_cell_widget::IsIconMode(widgets_[index]) ||
+                (IsCollectionPopupInteractive() && popupWidgetIndex_ == index)) &&
             (widgets_[index].selected || HasSelectedFilesInWidget(index)))
             return index;
     return static_cast<size_t>(-1);
@@ -549,7 +562,10 @@ void DesktopApp::ClearSelectionOutsideDesktop()
     }
     for (auto& widget : widgets_)
     {
-        widget.selected = false;
+        if (!widget.singleCellIconMode ||
+            !snowdesktop::single_cell_widget::IsDesktopSingleCell(widget) ||
+            IsGroupedWidget(widget))
+            widget.selected = false;
         for (auto& entry : widget.folderEntries)
             entry.selected = false;
     }
@@ -759,6 +775,16 @@ void DesktopApp::UpdateMarqueeSelection(POINT current)
             RECT selectionRect = item->largeIcon ? GetLargeIconFrameRect(*item)
                 : GetItemSelectionRect(item->bounds, false);
             item->selected = RectsIntersect(selectionRect, marqueeRect_);
+        }
+        for (auto& widget : widgets_)
+        {
+            if (!widget.singleCellIconMode ||
+                !snowdesktop::single_cell_widget::IsDesktopSingleCell(widget) ||
+                IsGroupedWidget(widget) || IsRectEmptyRect(widget.bounds) ||
+                (desktopIconsHidden_ && !widget.keepWhenDesktopHidden))
+                continue;
+            widget.selected = RectsIntersect(
+                GetItemSelectionRect(widget.bounds, false), marqueeRect_);
         }
     }
 }

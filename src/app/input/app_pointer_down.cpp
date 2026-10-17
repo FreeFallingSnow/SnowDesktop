@@ -27,6 +27,7 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
     ClearPopupMouseDownItem();
     ClearPopupDragTarget();
     pendingWidgetButtonAction_ = WidgetHit::None;
+    pendingWidgetButtonClosedPopup_ = false;
     POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
     if (DockTrayPopupPointerDown(pt))
     {
@@ -301,7 +302,10 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
                 dockFolderPopupWidget_);
         if (!PtInRect(&popup, pt) &&
             !pressedOpenPopupFolderToggle)
+        {
             CloseCollectionPopup();
+            collectionPopupClosedByPointerDown = true;
+        }
     }
 
     const bool quickNavigationWasOpen =
@@ -940,6 +944,43 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         WidgetHit wh = wc->HitTestWidget(pt);
         if (wh == WidgetHit::None) continue;
 
+        if (widgets_[wi].singleCellIconMode && wc->IsSingleCellDesktopPoint(pt) &&
+            wh != WidgetHit::ResizeHandle)
+        {
+            auto& widget = widgets_[wi];
+            const std::wstring scope = L"desktop:" + widget.gridCell.pageId;
+            const std::wstring key = GetItemSelectionKey(wc);
+            if (shift)
+            {
+                if (ctrl) ClearSelectionOutsideDesktop();
+                ExtendPointerSelection(scope,
+                    GetDesktopSelectionTargets(widget.gridCell.pageId), key, ctrl);
+            }
+            else if (ctrl)
+            {
+                ClearSelectionOutsideDesktop();
+                if (widget.selected) pendingCtrlToggleWidgetItem_ = wc;
+                else widget.selected = true;
+            }
+            else if (!widget.selected)
+            {
+                ClearSelection();
+                widget.selected = true;
+            }
+            else ClearSelectionOutsideDesktop();
+            if (!shift) selectionController_.RememberAnchor(scope, key);
+            pendingWidgetButtonAction_ = wh == WidgetHit::CollectionOpenBtn &&
+                !ctrl && !shift
+                ? WidgetHit::CollectionOpenBtn : WidgetHit::None;
+            pendingWidgetButtonClosedPopup_ = collectionPopupClosedByPointerDown;
+            mouseDownHit_ = wc;
+            mouseDownWidgetIndex_ = wi;
+            SyncKeyboardNavFromSelection();
+            SetCapture(hwnd_);
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+
         if (!wc->IsCollapsed() && wh != WidgetHit::CollapseToggleBtn &&
             wh != WidgetHit::ResizeHandle &&
             wh != WidgetHit::MoveHandle)
@@ -1145,25 +1186,6 @@ void DesktopApp::OnLeftButtonDown(WPARAM wp, LPARAM lp)
         else if (wh == WidgetHit::CollectionOpenBtn)
         {
             SelectWidgetOnly(wi);
-            if (wc->IsSingleCellIconMode())
-            {
-                // Match desktop icons: drag the entrance to move it; release
-                // a click to open it. The separate corner arc owns resizing.
-                pendingWidgetButtonAction_ = collectionPopupClosedByPointerDown
-                    ? WidgetHit::None : WidgetHit::CollectionOpenBtn;
-                widgetAction_ = WidgetAction::PendingMove;
-                InvalidateDragStaticScene();
-                widgetDragOriginalCell_ = widgets_[wi].gridCell;
-                widgetDragOriginalSpan_ = widgets_[wi].gridSpan;
-                widgetPreviewCell_ = widgetDragOriginalCell_;
-                widgetPreviewSpan_ = widgetDragOriginalSpan_;
-                widgetDragAnchor_ = CaptureGridDragAnchor(widgets_[wi].bounds, pt);
-                mouseDownWidgetIndex_ = wi;
-                mouseDownHit_ = nullptr;
-                SetCapture(hwnd_);
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                return;
-            }
             OpenCollectionPopupAt(
                 wi, pt, L"",
                 collectionPopupClosedByPointerDown);

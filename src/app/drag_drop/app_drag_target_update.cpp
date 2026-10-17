@@ -219,6 +219,43 @@ void DesktopApp::RebindDragSourceAfterRebuild()
                 GetHostedSelectedItemsForSource(
                     oldSourceList.originWidgetId)
             : source->GetSelectedItems();
+    if (oldSourceList.HasDesktopWidgetIcons())
+    {
+        reboundItems.clear();
+        for (const auto& entry : oldSourceList.entries)
+        {
+            Item* item = nullptr;
+            if (entry.desktopWidgetIcon)
+            {
+                for (const auto& container : containers_)
+                {
+                    auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+                    if (widget && widget->GetWidgetData() &&
+                        widget->GetWidgetData()->id == entry.widgetId)
+                    {
+                        item = widget;
+                        break;
+                    }
+                }
+            }
+            else for (const auto& object : items_oo_)
+            {
+                auto* icon = dynamic_cast<DesktopIcon*>(object.get());
+                if (icon && icon->GetDesktopItem() &&
+                    PathsEqualInsensitive(icon->GetDesktopItem()->layoutKey, entry.desktopKey))
+                {
+                    item = icon;
+                    break;
+                }
+            }
+            if (!item)
+            {
+                EndDragSession();
+                return;
+            }
+            reboundItems.push_back(item);
+        }
+    }
 
     // When the page turn replaces the page on the same physical monitor,
     // the source widget is rebuilt after its model bounds become empty.  A

@@ -78,6 +78,7 @@ void DesktopApp::BeginRenameSelected(
         RECT handle = frame;
         bool foundContainer = false;
         bool leftAligned = false;
+        bool desktopIconTitle = false;
         float fontSize = ScaleWidgetFontCu(itemFontSizeCu_,
             GetGridCuScaleForBounds(gridPages_, frame));
         int fontWeight = FW_NORMAL;
@@ -171,10 +172,19 @@ void DesktopApp::BeginRenameSelected(
                 {
                     frame = wc->GetFrameRect();
                     handle = wc->GetTitleRect();
-                    leftAligned = !wc->UsesTopTitleBar();
-                    fontSize = wc->FontCu(wc->GetBarHeight() *
-                        (wc->UsesTopTitleBar() ? 18.0f / 34.0f : 0.542f));
-                    fontWeight = wc->UsesTopTitleBar() ? FW_SEMIBOLD : GetItemFontWeight();
+                    desktopIconTitle = wc->IsSingleCellIconMode();
+                    leftAligned = !desktopIconTitle && !wc->UsesTopTitleBar();
+                    if (desktopIconTitle)
+                    {
+                        handle = GetItemRenameRect(frame);
+                        fontWeight = FW_NORMAL;
+                    }
+                    else
+                    {
+                        fontSize = wc->FontCu(wc->GetBarHeight() *
+                            (wc->UsesTopTitleBar() ? 18.0f / 34.0f : 0.542f));
+                        fontWeight = wc->UsesTopTitleBar() ? FW_SEMIBOLD : GetItemFontWeight();
+                    }
                     foundContainer = true;
                     break;
                 }
@@ -201,7 +211,7 @@ void DesktopApp::BeginRenameSelected(
         MapWindowPoints(hwnd_, nullptr, reinterpret_cast<POINT*>(&screenRect), 2);
 
         const DWORD editStyle = snowdesktop::rename_edit_layout::EditStyle(
-            leftAligned);
+            leftAligned, desktopIconTitle);
         renameInputWindow_ = CreateWindowExW(
              WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
             snowdesktop::text_input::WindowClass(),

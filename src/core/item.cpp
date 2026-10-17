@@ -144,7 +144,10 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
             rect, iconRect, app_->GetItemLayoutScale(rect))
         : rect;
 
-    if (hovered && !selected)
+    const bool desktopHighlight = !quickNavLayout && !iconOnlyHighlight;
+    if (desktopHighlight)
+        app_->DrawItemSelectionBackground(context, rect, state, lightTheme, alpha, componentTitleLines);
+    if (hovered && !selected && !desktopHighlight)
     {
         const float radius = quickNavLayout
             ? static_cast<float>(app_->QuickNavScale(6))
@@ -164,7 +167,7 @@ void DesktopIcon::Draw(ID2D1RenderTarget* context, RECT rect, int state, bool li
         ? std::wstring_view(item_->parsingName)
         : std::wstring_view(item_->layoutKey);
 
-    if (selected && !dragged)
+    if (selected && !dragged && !desktopHighlight)
     {
         RECT sel = iconOnlyHighlight
             ? highlightRect

@@ -51,6 +51,11 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
     bool executeSynchronously,
     std::shared_ptr<snowdesktop::ShellFileOperationResult> result)
 {
+    if (sourceList.HasDesktopWidgetIcons() &&
+        (requestedPreview.targetKind != DropTargetKind::Desktop ||
+            requestedPreview.action != DropAction::Move))
+        return ExecuteDropPipeline(sourceList.WithoutDesktopWidgetIcons(), requestedPreview,
+            std::move(completion), executeSynchronously, std::move(result));
     DropPreviewList preview = requestedPreview;
     bool convertedGroup = false;
     std::unique_ptr<Widget> convertedView;
@@ -313,7 +318,18 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
         {
             auto it = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
                 [&](const DragSourceEntry& entry) { return entry.sourceIndex == landing.sourceIndex; });
-            if (it == sourceList.entries.end() || it->desktopIndex >= items_.size()) continue;
+            if (it == sourceList.entries.end()) continue;
+            if (it->desktopWidgetIcon)
+            {
+                const size_t index = FindWidgetIndexById(it->widgetId);
+                if (index < widgets_.size())
+                {
+                    widgets_[index].gridCell = landing.cell;
+                    changed = true;
+                }
+                continue;
+            }
+            if (it->desktopIndex >= items_.size()) continue;
             items_[it->desktopIndex].gridCell = landing.cell;
             items_[it->desktopIndex].slot = SlotFromCell(gridPages_, landing.cell);
             changed = true;

@@ -191,22 +191,45 @@ bool Widget::IsSelected() const { return data_ && data_->selected; }
  */
 void Widget::SetSelected(bool selected) { if (data_) data_->selected = selected; }
 /**
- * @brief 获取父容器指针（Widget 基类不属于容器）
- * @return nullptr
+ * @brief 图标入口参与桌面选择与拖放，其他组件保留独立容器语义
  */
-Container* Widget::GetContainer() const { return nullptr; }
+Container* Widget::GetContainer() const
+{
+    return app_ && data_ && data_->singleCellIconMode &&
+        snowdesktop::single_cell_widget::IsDesktopSingleCell(*data_) &&
+        !app_->IsGroupedWidget(*data_)
+        ? app_->GetDesktopGrid() : nullptr;
+}
 
 /**
- * @brief 绘制组件（Widget 基类为空操作，由子类覆盖）
+ * @brief 绘制桌面图标入口；其他组件由子类实现
  * @param context D2D 设备上下文
  * @param rect 绘制区域
  * @param state 绘制状态（0=普通, 1=悬停, 2=选中, 3=拖拽中）
  */
 void Widget::Draw(ID2D1DeviceContext* context, RECT rect, int state)
 {
-    (void)context;
-    (void)rect;
-    (void)state;
+    if (!context || !app_ || !data_ || !data_->singleCellIconMode ||
+        !snowdesktop::single_cell_widget::IsDesktopSingleCell(*data_)) return;
+    // Ordinary desktop icons use wallpaper-facing title/highlight colors.
+    const bool light = false;
+    app_->DrawItemSelectionBackground(context, rect, state, light);
+    const RECT icon = app_->GetItemIconRect(rect);
+    const bool dragged = state == 3;
+    if (dragged)
+        context->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), nullptr,
+            D2D1_ANTIALIAS_MODE_PER_PRIMITIVE, D2D1::Matrix3x2F::Identity(), .6f), nullptr);
+    DockEntry entrance;
+    entrance.type = DockEntryTypeForWidget(data_->type);
+    entrance.reference = data_->id;
+    app_->DrawDockEntry(context, entrance, icon, 0,
+        icon.right - icon.left, data_, GetPreviewScene());
+    if (dragged) context->PopLayer();
+    const bool renaming = app_->renameController_.IsWidget() &&
+        app_->renameController_.Index() < app_->widgets_.size() &&
+        &app_->widgets_[app_->renameController_.Index()] == data_;
+    if (!dragged && !renaming)
+        app_->DrawItemText(context, rect, data_->title, state == 2, 1.0f, light);
 }
 
 /**
@@ -757,8 +780,14 @@ WidgetHit WidgetContainer::HitTestWidget(POINT pt) const
     RECT frame = GetFrameRect();
     if (IsRectEmpty(&frame)) return WidgetHit::None;
     if (IsSingleCellIconMode())
-        return HitResizeHandle(pt) ? WidgetHit::ResizeHandle
-            : PtInRect(&frame, pt) ? WidgetHit::CollectionOpenBtn : WidgetHit::None;
+    {
+        if (HitResizeHandle(pt)) return WidgetHit::ResizeHandle;
+        const RECT icon = GetSingleCellIconRect();
+        if (PtInRect(&icon, pt)) return WidgetHit::CollectionOpenBtn;
+        const RECT title = GetTitleRect();
+        return PtInRect(&frame, pt) || PtInRect(&title, pt)
+            ? WidgetHit::IconTitle : WidgetHit::None;
+    }
 
     if (!PtInRect(&frame, pt)) return WidgetHit::None;
 
@@ -2858,16 +2887,8 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         const RECT frame = IsPreviewRendering() ? GetFrameRect() : data_->bounds;
         const RECT icon = GetSingleCellIconRect();
         if (IsRectEmpty(&frame) || IsRectEmpty(&icon)) return;
-        if (data_->selected)
-            app_->DrawD2DRoundedRectangle(context, frame, static_cast<float>(Cu(7.0f)),
-                D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.18f), D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.55f));
-        DockEntry entrance;
-        entrance.type = DockEntryTypeForWidget(data_->type);
-        entrance.reference = data_->id;
-        app_->DrawDockEntry(context, entrance, icon, 0,
-            icon.right - icon.left, data_, GetPreviewScene());
-        app_->DrawItemText(context, frame, data_->title, data_->selected, 1.0f,
-            app_->IsLightContentTheme());
+        Widget::Draw(context, frame,
+            data_->selected ? 2 : PtInRect(&frame, mousePt) ? 1 : 0);
 
         const auto arc = snowdesktop::single_cell_widget::ResolveArc(icon, GetCellScale());
         const bool handleHovered = PtInRect(&frame, mousePt) ||

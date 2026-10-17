@@ -175,10 +175,15 @@ void DesktopApp::DrawStaticBackground(
                     widgetAction_ == WidgetAction::Move,
                     widgetAction_ == WidgetAction::Resize,
                     isPreviewSource);
+        const bool iconEntranceDragged = dragSession_.IsActive() &&
+            std::any_of(dragSession_.SourceList().entries.begin(),
+                dragSession_.SourceList().entries.end(), [&](const DragSourceEntry& entry) {
+                    return entry.desktopWidgetIcon && entry.widgetId == widgetData.id;
+                });
         const bool presentWidgetSurface =
             snowdesktop::widget_composition_layer_rules::
                 ShouldPresentWidgetSurface(
-                    desktopSurfaceVisible, previewSourceHidden);
+                    desktopSurfaceVisible, previewSourceHidden || iconEntranceDragged);
         if (HasDesktopWidgetComposition(widgetData.id))
             SetDesktopWidgetCompositionVisible(
                 widgetData.id, presentWidgetSurface, widgetFrame);

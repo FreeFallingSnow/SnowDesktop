@@ -556,7 +556,8 @@ DesktopApp::RenderWidgetMenuPreview(
     context->SetUnitMode(D2D1_UNIT_MODE_PIXELS);
 
     data->selected = false;
-    const RECT desktopFrame = data->singleCellIconMode && data->gridSpan.columns == 1 && data->gridSpan.rows == 1
+    const bool iconMode = data->singleCellIconMode && data->gridSpan.columns == 1 && data->gridSpan.rows == 1;
+    const RECT desktopFrame = iconMode
         ? data->bounds : GetStandaloneWidgetFrameRect(*data);
     if (IsRectEmptyRect(desktopFrame) ||
         desktopFrame.right - desktopFrame.left != width ||
@@ -632,8 +633,10 @@ DesktopApp::RenderWidgetMenuPreview(
     const RECT stageBounds{ 0, 0, width, height };
     if (!stage.transparent)
     {
+        // Desktop icon entrances have no full-cell panel backdrop. Their
+        // shared Dock renderer owns the icon material and its outline.
         snowdesktop::widget_preview::DrawStage(context.Get(), stageBounds,
-            { stage.lightTheme, stageAppearance.glassEnabled,
+            { stage.lightTheme, !iconMode && stageAppearance.glassEnabled,
                 stageAppearance.glassBlurRadius,
                 static_cast<float>(ScaleWidgetCu(
                     globalAppearance.cornerRadius, data->cellScale)) },
@@ -985,7 +988,6 @@ DesktopApp::BuildAddWidgetMenuPreview(
         const auto prototypeCard = model.cards.back();
         for (const bool iconMode : {false, true})
         {
-            if (!iconMode && prototype.type == DesktopWidgetType::Collection) continue;
             DesktopWidget singleCell = prototype;
             singleCell.id += iconMode ? L":single-icon" : L":single-component";
             singleCell.gridSpan = {1, 1};
@@ -997,7 +999,7 @@ DesktopApp::BuildAddWidgetMenuPreview(
             const auto id = singleCell.id;
             source.scene->AddWidget(std::move(singleCell));
             Card card = prototypeCard;
-            card.title = _LW(iconMode ? "app.interact.single_cell_icon" : "app.interact.single_cell_component");
+            card.title = _LW(iconMode ? "app.interact.single_cell_icon" : "app.widget_preview.single_cell_component");
             card.description.clear();
             card.columns = card.rows = 1;
             card.sizeLabel = _LFW("app.widget_preview.size", L"1", L"1");
@@ -1051,16 +1053,6 @@ DesktopApp::BuildAddWidgetMenuPreview(
     {
         model.title = _LW("app.menu.collection");
         model.introduction = _LW("app.widget_preview.collection_intro");
-        auto compactScene = makeScene(true);
-        DesktopWidget compact;
-        compact.type = DesktopWidgetType::Collection;
-        compact.title = model.title;
-        compact.gridSpan = { 1, 1 };
-        fillItemKeys(compact, *compactScene, 5);
-        addCard("app.widget_preview.collection_compact",
-            "app.widget_preview.collection_compact_hint", L"collection:compact",
-            compactScene, std::move(compact));
-
         auto scrollGridScene = makeScene(true);
         DesktopWidget scrollGrid;
         scrollGrid.type = DesktopWidgetType::Collection;
@@ -1073,7 +1065,6 @@ DesktopApp::BuildAddWidgetMenuPreview(
             std::move(scrollGrid));
         model.cards.back().options = { collectionModeOption(),
             collectionTitlelessOption(), layoutOption() };
-        model.initialCard = 1;
         appendSingleCellPresets();
         return model;
     }

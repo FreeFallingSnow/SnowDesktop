@@ -23,6 +23,7 @@
 #include "common/utils.h"
 
 #include <algorithm>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -253,6 +254,8 @@ struct DragSourceEntry
     GridCell originalCell;
     GridSpan originalSpan;
     bool protectedDesktopIcon = false;
+    bool desktopWidgetIcon = false;
+    std::optional<DesktopWidgetType> widgetType;
 };
 
 /**
@@ -295,6 +298,24 @@ struct DragSourceList
 
     bool Empty() const { return entries.empty(); }
 
+    bool HasDesktopWidgetIcons() const
+    {
+        return std::any_of(entries.begin(), entries.end(),
+            [](const DragSourceEntry& entry) { return entry.desktopWidgetIcon; });
+    }
+
+    // Keep sourceIndex stable: previews and asynchronous file operations use
+    // it to join landings back to the original mixed selection.
+    DragSourceList WithoutDesktopWidgetIcons() const
+    {
+        DragSourceList filtered = *this;
+        std::erase_if(filtered.entries,
+            [](const DragSourceEntry& entry) { return entry.desktopWidgetIcon; });
+        filtered.hasWidgets = std::any_of(filtered.entries.begin(), filtered.entries.end(),
+            [](const DragSourceEntry& entry) { return entry.kind == DropSourceKind::Widget; });
+        return filtered;
+    }
+
     /**
      * @brief 桌面放置是否直接以鼠标所在格为请求落点。
      *
@@ -317,7 +338,8 @@ struct DragSourceList
     /** @brief 当前载荷是否能够交给桌面 Shell 图标处理。 */
     bool SupportsDesktopShellHandoff() const
     {
-        return !hasWidgets;
+        return !hasWidgets || (HasDesktopWidgetIcons() &&
+            !WithoutDesktopWidgetIcons().hasWidgets && hasDesktopIcons);
     }
 
     /**
@@ -414,15 +436,17 @@ struct DragSourceList
                 auto* widget = dynamic_cast<Widget*>(entry.item);
                 DesktopWidget* data =
                     widget ? widget->GetWidgetData() : nullptr;
-                groupWidgetsOnly = groupWidgetsOnly && data && IsGroupWidgetType(data->type);
-                collectionWidgetsOnly = collectionWidgetsOnly && data &&
-                    data->type == DesktopWidgetType::Collection;
+                const auto type = entry.widgetType ? entry.widgetType : data
+                    ? std::optional<DesktopWidgetType>(data->type) : std::nullopt;
+                groupWidgetsOnly = groupWidgetsOnly && type && IsGroupWidgetType(*type);
+                collectionWidgetsOnly = collectionWidgetsOnly && type &&
+                    *type == DesktopWidgetType::Collection;
                 folderMappingWidgetsOnly =
-                    folderMappingWidgetsOnly && data &&
-                    data->type == DesktopWidgetType::FolderMapping;
-                fileSourceWidgetsOnly = fileSourceWidgetsOnly && data &&
-                    (data->type == DesktopWidgetType::FolderMapping ||
-                     data->type == DesktopWidgetType::FileCategories);
+                    folderMappingWidgetsOnly && type &&
+                    *type == DesktopWidgetType::FolderMapping;
+                fileSourceWidgetsOnly = fileSourceWidgetsOnly && type &&
+                    (*type == DesktopWidgetType::FolderMapping ||
+                     *type == DesktopWidgetType::FileCategories);
             }
             collectionWidgetsOnly = sawWidget && collectionWidgetsOnly;
             folderMappingWidgetsOnly =

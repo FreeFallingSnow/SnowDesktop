@@ -6,6 +6,25 @@
 
 // DirectWrite item text rendering.
 
+void DesktopApp::DrawItemSelectionBackground(ID2D1RenderTarget* context,
+    RECT bounds, int state, bool lightTheme, float opacity, int titleLines)
+{
+    if (!context || (state != 1 && state != 2)) return;
+    const bool selected = state == 2;
+    const RECT frame = selected ? GetItemSelectionRect(bounds, true, titleLines) : bounds;
+    const auto fill = selected
+        ? (lightTheme ? D2D1::ColorF(.20f, .40f, .70f, .18f * opacity)
+                      : D2D1::ColorF(.55f, .55f, .55f, .34f * opacity))
+        : (lightTheme ? D2D1::ColorF(0, 0, 0, .06f * opacity)
+                      : D2D1::ColorF(1, 1, 1, .08f * opacity));
+    const auto border = selected
+        ? (lightTheme ? D2D1::ColorF(.25f, .50f, .80f, .40f * opacity)
+                      : D2D1::ColorF(.78f, .78f, .78f, .55f * opacity))
+        : (lightTheme ? D2D1::ColorF(0, 0, 0, .12f * opacity)
+                      : D2D1::ColorF(1, 1, 1, .20f * opacity));
+    DrawD2DRoundedRectangle(context, frame, 6.0f * GetItemLayoutScale(bounds), fill, border);
+}
+
 void DesktopApp::DrawStyledItemTextLayout(ID2D1RenderTarget* context,
     IDWriteTextLayout* layout, const std::wstring& shadowKey,
     D2D1_POINT_2F origin, D2D1_SIZE_F layoutSize,

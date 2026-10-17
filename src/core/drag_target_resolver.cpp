@@ -7,15 +7,24 @@ DragTargetResolution Resolve(
     const std::vector<std::unique_ptr<Container>>& containers,
     POINT point,
     const DragTargetResolver::CandidateFilter& filter,
-    Accepts&& accepts)
+    Accepts&& accepts, bool blockRejected = false)
 {
     for (auto iterator = containers.rbegin();
         iterator != containers.rend(); ++iterator)
     {
         Container* candidate = iterator->get();
-        if (!candidate || (filter && !filter(*candidate)) ||
-            !accepts(*candidate))
+        if (!candidate || (filter && !filter(*candidate)))
         {
+            continue;
+        }
+        if (!accepts(*candidate))
+        {
+            if (blockRejected)
+            {
+                Slot* rejectedSlot = nullptr;
+                if (candidate->HitTestDrag(point, rejectedSlot) != HitRegion::None)
+                    return {candidate, nullptr, HitRegion::Blocked};
+            }
             continue;
         }
         Slot* slot = nullptr;
@@ -32,6 +41,30 @@ bool DragTargetResolver::AcceptsInternal(
     const DragSourceList& source)
 {
     namespace contract = snowdesktop::slot_contract;
+    if (source.HasDesktopWidgetIcons())
+    {
+        const auto files = source.WithoutDesktopWidgetIcons();
+        const auto targetSurface = target.GetSlotSurfaceKind();
+        if (targetSurface != contract::SlotSurfaceKind::Desktop &&
+            targetSurface != contract::SlotSurfaceKind::Dock)
+            return AcceptsInternal(target, files);
+        if (!files.Empty() && !AcceptsInternal(target, files)) return false;
+        for (const auto& entry : source.entries)
+        {
+            if (!entry.desktopWidgetIcon) continue;
+            DragSourceList single = source;
+            single.entries = {entry};
+            single.entries.front().desktopWidgetIcon = false;
+            single.hasDesktopIcons = single.hasFolderEntries = single.hasExternalFiles = false;
+            single.hasCollectionGroupEntries = single.hasFileGroupEntries = false;
+            single.hasFileGroupSourceLabels = false;
+            single.hasWidgets = true;
+            if (!AcceptsInternal(target, single) ||
+                !target.AcceptsDragPayload(single.SlotPayloadKind(), source.entries.size()))
+                return false;
+        }
+        return true;
+    }
     const auto payload = source.SlotPayloadKind();
     if (payload == contract::DragPayloadKind::Count)
         return false;
@@ -66,7 +99,7 @@ DragTargetResolution DragTargetResolver::ResolveInternal(
     return Resolve(containers, point, filter,
         [&](const Container& candidate) {
             return AcceptsInternal(candidate, source);
-        });
+        }, source.HasDesktopWidgetIcons());
 }
 
 DragTargetResolution DragTargetResolver::ResolveExternal(

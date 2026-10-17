@@ -787,7 +787,7 @@
   "app.widget_preview.setting_search_box": "Zone de recherche",
   "app.widget_preview.setting_hide": "Désactivé",
   "app.widget_preview.setting_show": "Activé",
-  "app.widget_preview.collection_intro": "Regroupez vos éléments courants dans une collection. Choisissez un widget compact, une icône ou un modèle plus grand, puis ajustez sa taille après l’ajout.",
+  "app.widget_preview.collection_intro": "Regroupez les éléments fréquents dans une collection. Choisissez un grand format, un widget à une case ou le mode icône, puis redimensionnez après l’ajout.",
   "app.widget_preview.collection_compact": "Collection compacte",
   "app.widget_preview.collection_compact_hint": "Conservez une simple entrée de collection sur le bureau et cliquez dessus pour afficher le contenu.",
   "app.widget_preview.collection_scroll_grid": "Grande collection",
@@ -2865,5 +2865,6 @@
   "iconWorkshop.agreementRequired": "Acceptez d’abord l’accord du Workshop dans Steam.",
   "iconWorkshop.creationUncertain": "Le résultat de la création précédente est incertain. Vérifiez vos objets avant d’en créer un autre.",
   "iconWorkshop.titleTooLong": "Le titre est trop long. Raccourcissez-le et réessayez.",
-  "iconWorkshop.descriptionTooLong": "La description est trop longue. Raccourcissez-la et réessayez."
+  "iconWorkshop.descriptionTooLong": "La description est trop longue. Raccourcissez-la et réessayez.",
+  "app.widget_preview.single_cell_component": "Widget à une case"
 }

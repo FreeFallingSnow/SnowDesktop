@@ -11,6 +11,7 @@
 #include "item.h"
 #include "widget.h"
 #include "app/app.h"
+#include "widgets/single_cell_widget_rules.h"
 #include "common/types.h"
 #include "common/constants.h"
 #include "common/utils.h"
@@ -281,7 +282,15 @@ std::vector<Item*> DesktopGrid::GetSelectedItems() const
         if (di && di->selected && !di->name.empty())
             result.push_back(icon);
     }
-    (void)dragSourceCache_; // items_oo_ owns the icons, no temp wrappers needed
+    for (const auto& container : app_->containers_)
+    {
+        auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+        const auto* data = widget ? widget->GetWidgetData() : nullptr;
+        if (data && snowdesktop::single_cell_widget::IsIconMode(*data) &&
+            !app_->IsGroupedWidget(*data) && widget->IsSelected())
+            result.push_back(widget);
+    }
+    (void)dragSourceCache_; // Runtime containers own widget entrances too.
     return result;
 }
 
@@ -325,6 +334,17 @@ HitRegion DesktopGrid::HitTestDrag(POINT pt, Slot*& outSlot)
         !app_ || !app_->dragSession_.IsActive() ||
         app_->dragSession_.SourceList().
             SupportsDesktopShellHandoff();
+    if (app_ && app_->dragSession_.IsActive() &&
+        app_->dragSession_.SourceList().HasDesktopWidgetIcons() && !supportsShellHandoff)
+    {
+        const int hit = app_->HitTestItem(pt);
+        if (hit >= 0 && !(*items_)[hit].selected)
+        {
+            RECT icon = app_->GetItemIconRect((*items_)[hit].bounds);
+            InflateRect(&icon, 4, 4);
+            if (PtInRect(&icon, pt)) return HitRegion::Blocked;
+        }
+    }
     if (region != HitRegion::None && app_ &&
         supportsShellHandoff)
     {

@@ -425,7 +425,8 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 ctx, iconRect, lt);
         return;
     }
-    if (auto* custom = widget.dockIconAssetId.empty() ? nullptr : GetDockCustomIcon(ctx, widget.dockIconAssetId, iconSize, L"widget:" + widget.id))
+    auto* custom = widget.dockIconAssetId.empty() ? nullptr : GetDockCustomIcon(ctx, widget.dockIconAssetId, iconSize, L"widget:" + widget.id);
+    if (custom)
         DrawIconBitmap(ctx, custom, iconRect, 1.f, reinterpret_cast<std::uintptr_t>(&widget));
     else
     {
@@ -495,7 +496,7 @@ void DesktopApp::DrawDockEntry(ID2D1DeviceContext* ctx,
                 DrawPlaceholderIcon(ctx, -1, cell, 1.0f);
         }
     }
-    if (IsGroupDockEntryType(entry.type) && !drawingIconAppearanceSource_) DrawDockGroupBadge(ctx, iconRect);
+    if (IsGroupDockEntryType(entry.type) && !custom && !drawingIconAppearanceSource_) DrawDockGroupBadge(ctx, iconRect);
     if (state == 2)
         DrawDockSelectionIndicator(ctx, iconRect, lt);
 }

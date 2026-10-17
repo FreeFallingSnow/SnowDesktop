@@ -954,6 +954,12 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(it->get());
             if (!wc) continue;
+            if (wc->GetWidgetData() && wc->GetWidgetData()->singleCellIconMode &&
+                wc->IsSingleCellDesktopPoint(pt) && wc->HitTestWidget(pt) != WidgetHit::None)
+            {
+                OnLeftButtonDown(wp, lp);
+                return 0;
+            }
             if (wc->HitTestWidget(pt) == WidgetHit::CollapseToggleBtn)
             {
                 // The double-click message replaces the second button-down.

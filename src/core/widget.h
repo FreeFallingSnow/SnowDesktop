@@ -78,6 +78,7 @@ enum class WidgetHit {
     DetailsModifiedDivider, ///< 详细信息：修改日期列宽分隔线
     DetailsTypeDivider, ///< 详细信息：类型列宽分隔线
     DetailsSizeDivider, ///< 详细信息：大小列宽分隔线
+    IconTitle,          ///< 单格图标入口的标题及选择区域，不打开弹窗
 };
 
 /**

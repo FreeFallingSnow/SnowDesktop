@@ -131,13 +131,6 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     POINT anchorPoint, const std::wstring& categoryId,
     bool closingStartedByCurrentPress)
 {
-    if (widgetIndex < widgets_.size() && widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping)
-    {
-        if (dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widgets_[widgetIndex].id &&
-            !popupAnimation_.IsClosing()) CloseCollectionPopup();
-        else OpenDockFolderPopupAt(static_cast<size_t>(-1), anchorPoint, widgetIndex);
-        return;
-    }
     {
         wchar_t message[320]{};
         swprintf_s(
@@ -177,9 +170,11 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
                 FindPersistentDockHost(requestedDock);
         }
     }
+    const bool mappingSource = widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping;
     const bool samePopupSource =
-        !dockFolderPopupOpen_ &&
-        popupWidgetIndex_ == widgetIndex &&
+        (mappingSource
+            ? dockFolderPopupOpen_ && dockFolderPopupMappingWidgetId_ == widgets_[widgetIndex].id
+            : !dockFolderPopupOpen_ && popupWidgetIndex_ == widgetIndex) &&
         collectionPopupDockHost_ == requestedDockHost;
     switch (snowdesktop::popup_animation_rules::
         ResolveExistingSourceAction(
@@ -218,6 +213,12 @@ void DesktopApp::OpenCollectionPopupAt(size_t widgetIndex,
     default:
         pendingCollectionPopupOpen_.reset();
         break;
+    }
+
+    if (mappingSource)
+    {
+        OpenDockFolderPopupAt(static_cast<size_t>(-1), anchorPoint, widgetIndex);
+        return;
     }
 
     // The low-level outside-click notification is posted asynchronously.

@@ -1,6 +1,8 @@
 #include "app/app.h"
 #include "layout/page_navigation_rules.h"
 #include "desktop/desktop_keyboard_rules.h"
+#include "app/popup/categorized_popup_scope.h"
+#include "widgets/single_cell_widget_rules.h"
 
 // Top-level keyboard command dispatch.
 
@@ -186,6 +188,14 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
 
     if (renameController_.IsActive()) return false;
 
+    std::optional<CategorizedPopupScope> popupLayout;
+    const bool popupNavigationKey = key == VK_RETURN || key == VK_ESCAPE || key == VK_UP ||
+        key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT || key == VK_HOME || key == VK_END || key == VK_TAB;
+    if (popupNavigationKey && !dockFolderPopupOpen_ && IsCollectionPopupInteractive())
+        if (const auto* popup = GetOpenPopupWidget())
+            if (auto* view = GetCategorizedPopupView())
+                popupLayout.emplace(view, GetCategorizedPopupFrame(GetCollectionPopupRect(*popup)));
+
     // Handle searchable widget keyboard input.
     {
         if (auto* view = GetCategorizedPopupView(); view && view->IsSearchFocused())
@@ -227,6 +237,7 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
     bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
     bool restoreFloatingDockLayer = false;
+    if (key == VK_RETURN && repeated && IsCollectionPopupInteractive()) return true;
 
     // Keyboard selection follows the whole fan's order and scrolls its window
     // as needed; the final action still opens the complete grid.
@@ -311,6 +322,49 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
             (widgetEngine_ && widgetEngine_->HasHostViewKeyboardFocus())) &&
         key != VK_ESCAPE)
         return true;
+
+    if (dockFolderPopupOpen_ && IsCollectionPopupInteractive() && !ctrl && !alt &&
+        (key == VK_UP || key == VK_DOWN || key == VK_LEFT || key == VK_RIGHT ||
+            key == VK_HOME || key == VK_END))
+    {
+        const int count = static_cast<int>(GetPopupItemCount(dockFolderPopupWidget_));
+        if (count == 0) return true;
+        int current = -1;
+        for (int index = 0; index < count; ++index)
+            if (dockFolderPopupWidget_.folderEntries[
+                    GetPopupFolderEntryIndex(dockFolderPopupWidget_, static_cast<size_t>(index))].selected)
+            {
+                current = index;
+                break;
+            }
+        const int columns = UsesCollectionPopupList(dockFolderPopupWidget_)
+            ? 1 : std::max(1, GetCollectionPopupColumnCount(popupRect_));
+        int next = current < 0 ? 0 : current;
+        if (key == VK_HOME) next = 0;
+        else if (key == VK_END) next = count - 1;
+        else if (current >= 0)
+            next = std::clamp(current + (key == VK_UP ? -columns : key == VK_DOWN ? columns :
+                key == VK_LEFT ? -1 : 1), 0, count - 1);
+        if (auto* view = GetCategorizedPopupView()) view->SetSearchFocused(false);
+        ClearSelection();
+        for (auto& entry : dockFolderPopupWidget_.folderEntries) entry.selected = false;
+        dockFolderPopupWidget_.folderEntries[GetPopupFolderEntryIndex(
+            dockFolderPopupWidget_, static_cast<size_t>(next))].selected = true;
+        keyboardNavWidgetIndex_ = FindWidgetIndexById(dockFolderPopupMappingWidgetId_);
+        keyboardNavInsideWidget_ = keyboardNavWidgetIndex_ < widgets_.size();
+        keyboardNavMemberIndex_ = next;
+        keyboardNavVisualFocus_ = true;
+        const RECT content = GetCollectionPopupContentRect(popupRect_);
+        const RECT item = GetCollectionPopupItemRect(popupRect_, static_cast<size_t>(next));
+        if (item.top < content.top) popupScrollOffset_ += item.top - content.top;
+        else if (item.bottom > content.bottom) popupScrollOffset_ += item.bottom - content.bottom;
+        popupScrollOffset_ = std::clamp(popupScrollOffset_, 0,
+            GetCollectionPopupMaxScrollOffset(dockFolderPopupWidget_, popupRect_));
+        ResetCollectionPopupAnimationCache();
+        UpdateHostInputImePosition();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return true;
+    }
 
     if (ctrl && (key == 'Z' || key == 'Y') && widgetEngine_)
     {
@@ -620,11 +674,23 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
         if (auto* popup = GetOpenPopupWidget();
             IsCollectionPopupInteractive() && popup)
         {
+            const size_t owner = dockFolderPopupOpen_
+                ? FindWidgetIndexById(dockFolderPopupMappingWidgetId_) : popupWidgetIndex_;
             const auto targets = GetPopupSelectionTargets();
             ClearSelection();
             if (dockFolderPopupOpen_)
                 for (auto& entry : popup->folderEntries) entry.selected = false;
             selectionController_.SelectAll(targets);
+            SyncKeyboardNavFromSelection();
+            if (owner < widgets_.size() && snowdesktop::single_cell_widget::IsSingleCell(widgets_[owner]) &&
+                (!keyboardNavInsideWidget_ || dockFolderPopupOpen_ ||
+                    widgets_[owner].type == DesktopWidgetType::FileCategories))
+            {
+                keyboardNavInsideWidget_ = true;
+                keyboardNavWidgetIndex_ = owner;
+                keyboardNavMemberIndex_ = targets.empty() ? -1 : 0;
+            }
+            keyboardNavVisualFocus_ = true;
             InvalidateRect(
                 hwnd_, nullptr, FALSE);
             break;
@@ -711,6 +777,9 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
     case VK_ESCAPE:
         handled = true;
         restoreFloatingDockLayer = true;
+        // Release projected geometry before a synchronous close can clear it
+        // or retire its transient source view.
+        popupLayout.reset();
         for (auto& container : containers_)
             if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get()); view && view->HasCategoryTabPress())
             {
@@ -744,7 +813,15 @@ bool DesktopApp::OnKeyDown(WPARAM key, bool repeated)
                     "escape");
         }
         else if (IsCollectionPopupInteractive())
-            CloseCollectionPopup();
+        {
+            if (keyboardNavInsideWidget_ && keyboardNavWidgetIndex_ < widgets_.size() &&
+                snowdesktop::single_cell_widget::IsSingleCell(widgets_[keyboardNavWidgetIndex_]))
+            {
+                ExitWidget();
+                if (IsCollectionPopupInteractive()) CloseCollectionPopup(false);
+            }
+            else CloseCollectionPopup();
+        }
         else if (keyboardNavInsideWidget_)
             ExitWidget();
         else

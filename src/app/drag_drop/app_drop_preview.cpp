@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "widgets/collection_group_rules.h"
 #include "drag_drop/empty_group_drop_rules.h"
+#include "widgets/single_cell_widget_rules.h"
 
 // Drag source normalization and destination preview planning.
 
@@ -102,10 +103,20 @@ DragSourceList DesktopApp::BuildDragSourceList(
                 entry.originalSpan = item.gridSpan;
             }
         }
-        else if (dynamic_cast<Widget*>(src))
+        else if (auto* widget = dynamic_cast<Widget*>(src))
         {
             entry.kind = DropSourceKind::Widget;
             list.hasWidgets = true;
+            if (const auto* data = widget->GetWidgetData())
+            {
+                entry.widgetId = data->id;
+                entry.widgetType = data->type;
+                entry.originalCell = data->gridCell;
+                entry.originalSpan = data->gridSpan;
+                entry.dockEntryType = DockEntryTypeForWidget(data->type);
+                entry.desktopWidgetIcon = origin && !containers_.empty() && origin == containers_.front().get() &&
+                    snowdesktop::single_cell_widget::IsIconMode(*data) && !IsGroupedWidget(*data);
+            }
         }
         else if (auto* groupEntry =
             dynamic_cast<CollectionGroupEntryItem*>(src))
@@ -363,7 +374,12 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
 {
     DropPreviewList preview;
     preview.targetContainer = target;
-    if (sourceList.Empty() || !target || sourceList.hasWidgets || region == HitRegion::Handoff)
+    if (target && sourceList.HasDesktopWidgetIcons() &&
+        (containers_.empty() || target != containers_.front().get() || (mods & (MK_CONTROL | MK_ALT)) != 0))
+        return BuildDropPreviewList(sourceList.WithoutDesktopWidgetIcons(),
+            target, targetSlot, region, mods, dropPoint);
+    if (sourceList.Empty() || !target ||
+        (sourceList.hasWidgets && !sourceList.HasDesktopWidgetIcons()) || region == HitRegion::Handoff)
         return preview;
     if (!DragTargetResolver::AcceptsInternal(
             *target, sourceList))
