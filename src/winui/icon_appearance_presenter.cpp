@@ -23,7 +23,7 @@ std::wstring Fold(std::wstring text)
 void SetPreview(const c::Image& image, const icon_image::Image& source, const IconBeautifySettings& style)
 {
     if (source.width <= 0 || source.height <= 0 || source.pixels.empty()) { image.Source(nullptr); return; }
-    const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(source.pixels, source.width, source.height) : std::nullopt;
+    const auto edge = style.mode != 1 ? icon_beautify::DetectPlateFill(source.pixels, source.width, source.height) : std::nullopt;
     const auto pixels = icon_beautify::Render(source.pixels, source.width, source.height, style, edge);
     x::Media::Imaging::WriteableBitmap bitmap(source.width, source.height);
     std::uint8_t* buffer = nullptr;
@@ -50,16 +50,25 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
 
     Impl(Localize l, IconAppearanceAction a) : localize(std::move(l)), action(std::move(a))
     {
-        root.Spacing(12); root.Margin({0,20,0,0}); title.FontSize(20); root.Children().Append(title);
+        root.Spacing(8); root.Margin({0,12,0,0});
+        title.FontWeight(winrt::Windows::UI::Text::FontWeights::SemiBold()); title.TextWrapping(x::TextWrapping::Wrap);
+        x::Automation::AutomationProperties::SetHeadingLevel(title, x::Automation::Peers::AutomationHeadingLevel::Level2);
+        root.Children().Append(title);
         query.Name(L"IconAppearanceSearch"); x::Automation::AutomationProperties::SetAutomationId(query, L"IconAppearanceSearch"); query.HorizontalAlignment(x::HorizontalAlignment::Stretch);
-        x::Automation::AutomationProperties::SetName(query, L("iconAppearance.search")); root.Children().Append(query);
+        x::Automation::AutomationProperties::SetName(query, L("iconAppearance.search"));
         commands.Orientation(c::Orientation::Horizontal); commands.Spacing(8);
         edit.Name(L"IconAppearanceEdit"); x::Automation::AutomationProperties::SetAutomationId(edit, L"IconAppearanceEdit"); inherit.Name(L"IconAppearanceInherit"); x::Automation::AutomationProperties::SetAutomationId(inherit, L"IconAppearanceInherit");
-        commands.Children().Append(edit); commands.Children().Append(inherit); root.Children().Append(commands);
+        commands.Children().Append(edit); commands.Children().Append(inherit);
+        c::Grid toolbar; toolbar.ColumnSpacing(8);
+        c::ColumnDefinition searchColumn, actionsColumn; actionsColumn.Width(x::GridLengthHelper::Auto());
+        toolbar.ColumnDefinitions().Append(searchColumn); toolbar.ColumnDefinitions().Append(actionsColumn);
+        query.VerticalAlignment(x::VerticalAlignment::Center); commands.VerticalAlignment(x::VerticalAlignment::Center);
+        c::Grid::SetColumn(commands, 1); toolbar.Children().Append(query); toolbar.Children().Append(commands); root.Children().Append(toolbar);
         list.Name(L"IconAppearanceList"); x::Automation::AutomationProperties::SetAutomationId(list, L"IconAppearanceList"); list.MaxHeight(420); list.SelectionMode(c::ListViewSelectionMode::Single);
         list.IsItemClickEnabled(true); list.HorizontalContentAlignment(x::HorizontalAlignment::Stretch);
         list.ItemTemplate(x::Markup::XamlReader::Load(LR"(<DataTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"><Grid Padding="8" ColumnSpacing="12"><Grid.ColumnDefinitions><ColumnDefinition Width="48"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions><Image x:Name="Preview" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Width="48" Height="48" Stretch="Uniform"/><StackPanel Grid.Column="1" Spacing="4"><TextBlock x:Name="Name" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TextTrimming="CharacterEllipsis"/><TextBlock x:Name="Detail" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" TextWrapping="Wrap" Opacity="0.7"/></StackPanel></Grid></DataTemplate>)").as<x::DataTemplate>());
-        root.Children().Append(list); root.Children().Append(empty);
+        c::Border surface; presenter_controls::StyleSettingsCard(surface); surface.Padding({0,0,0,0}); surface.Child(list);
+        root.Children().Append(surface); root.Children().Append(empty);
         feedback.IsOpen(false); presenter_controls::BindInfoBarVisibility(feedback); root.Children().Append(feedback);
         LocalizeText();
     }
@@ -93,7 +102,8 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
             else for (const auto& theme : self->snapshot.themes) if (theme.id == found->themeId) { themeName = theme.name; break; }
             const auto location = found->target.starts_with(L"control:") || found->target.starts_with(L"widget:") ? self->L("settings.nav.dock") :
                 found->target.starts_with(L"recycle-") ? self->L("settings.contextMenu.desktop") : found->target.substr(found->target.find(L':') + 1);
-            content.FindName(L"Detail").as<c::TextBlock>().Text(themeName + L" · " + self->L(found->settings.mode ? "iconStyle.shrinkAll" : "iconStyle.smart") +
+            content.FindName(L"Detail").as<c::TextBlock>().Text(themeName +
+                (found->settings.enabled ? L" · " + self->L(found->settings.mode == 2 ? "iconStyle.noUpscale" : found->settings.mode == 1 ? "iconStyle.shrinkAll" : "iconStyle.smart") : L"") +
                 (found->available ? L"" : L" · " + self->L("iconAppearance.unavailable")) + L"\n" + location);
             const auto style = found->settings;
             auto image = content.FindName(L"Preview").as<c::Image>(); image.Source(nullptr);
@@ -118,7 +128,7 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
     void LocalizeText()
     {
         title.Text(L("iconAppearance.list")); query.PlaceholderText(L("iconAppearance.search"));
-        edit.Content(winrt::box_value(L("themeLibrary.edit"))); inherit.Content(winrt::box_value(L("iconAppearance.inherit")));
+        edit.Content(winrt::box_value(L("iconAppearance.editEntry"))); inherit.Content(winrt::box_value(L("iconAppearance.inherit")));
         empty.Text(L("iconAppearance.empty"));
         x::Automation::AutomationProperties::SetName(list, title.Text()); Buttons();
     }
@@ -226,11 +236,13 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         draft->preview.HorizontalAlignment(x::HorizontalAlignment::Center); body.Children().Append(draft->preview);
         SetPreview(draft->preview, draft->source, captured.current.settings);
         draft->sourceMode.Name(L"IconAppearanceSource"); x::Automation::AutomationProperties::SetAutomationId(draft->sourceMode, L"IconAppearanceSource");
-        draft->sourceMode.Header(winrt::box_value(L("iconAppearance.source")));
+        presenter_controls::SettingRow sourceRow; sourceRow.Initialize(draft->sourceMode, 180);
+        sourceRow.SetText(L("iconAppearance.source")); presenter_controls::StyleSettingsCard(sourceRow.root);
+        x::Automation::AutomationProperties::SetName(draft->sourceMode, L("iconAppearance.source"));
         draft->sourceMode.HorizontalAlignment(x::HorizontalAlignment::Stretch);
         draft->sourceMode.Items().Append(winrt::box_value(L("iconAppearance.follow")));
         draft->sourceMode.Items().Append(winrt::box_value(L("iconAppearance.independent")));
-        draft->sourceMode.SelectedIndex(1); body.Children().Append(draft->sourceMode);
+        draft->sourceMode.SelectedIndex(1); body.Children().Append(sourceRow.root);
         const auto editorContent = draft->editor->IconBeautificationContent(); body.Children().Append(editorContent);
         editorContent.Visibility(x::Visibility::Visible);
         draft->sourceMode.SelectionChanged([weakDraft = std::weak_ptr<Draft>(draft), editorContent](const auto&, const auto&) {
@@ -238,7 +250,7 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         });
         draft->error.IsOpen(false); presenter_controls::BindInfoBarVisibility(draft->error); body.Children().Append(draft->error);
         c::ScrollViewer scroll; scroll.MaxHeight(540); scroll.HorizontalScrollBarVisibility(c::ScrollBarVisibility::Disabled); scroll.Content(body);
-        dialog = c::ContentDialog{}; dialog.XamlRoot(root.XamlRoot()); dialog.Title(winrt::box_value(captured.current.name));
+        dialog = c::ContentDialog{}; dialog.XamlRoot(root.XamlRoot()); dialog.RequestedTheme(root.ActualTheme()); dialog.Title(winrt::box_value(captured.current.name));
         dialog.Content(scroll); dialog.PrimaryButtonText(L("app.settings.apply")); dialog.CloseButtonText(L("app.settings.cancel"));
         dialog.DefaultButton(c::ContentDialogButton::Primary);
         x::Automation::AutomationProperties::SetAutomationId(dialog, L"IconAppearanceEditor");

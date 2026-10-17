@@ -381,8 +381,8 @@ static bool RenderImages(const std::filesystem::path& host, const Package& packa
                 // Theme packages own appearance, not the local processing strategy.
                 // The settings caller freezes its local strategy separately from the
                 // shared package. Offline callers default to showing every background.
-                auto style = rootTheme->icon; style.mode = iconProcessingMode == 0 ? 0 : 1;
-                const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(source, side, side) : std::nullopt;
+                auto style = rootTheme->icon; style.mode = std::clamp(iconProcessingMode, 0, 2);
+                const auto edge = style.mode != 1 ? icon_beautify::DetectPlateFill(source, side, side) : std::nullopt;
                 const auto rendered = icon_beautify::RenderPreview(source, side, side, style, edge, rasterScale);
                 const int left = (16 + sample % 3 * 80) * rasterScale, top = (16 + sample / 3 * 80) * rasterScale;
                 for (int y = 0; y < side; ++y) for (int x = 0; x < side; ++x)

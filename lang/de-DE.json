@@ -2831,5 +2831,6 @@
   "iconAppearance.source": "Darstellungseinstellungen",
   "iconAppearance.follow": "Globalen Einstellungen folgen",
   "iconAppearance.independent": "Dieses Symbol anpassen",
-  "iconAppearance.unavailable": "Ziel nicht verfügbar"
+  "iconAppearance.unavailable": "Ziel nicht verfügbar",
+  "iconAppearance.editEntry": "Bearbeiten"
 }

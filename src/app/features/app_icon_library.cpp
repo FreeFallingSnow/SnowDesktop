@@ -228,7 +228,7 @@ ID2D1Bitmap* DesktopApp::GetDockCustomIcon(ID2D1RenderTarget* context, const std
 {
     if (!snowdesktop::IsIconAssetId(id)) return nullptr;
     auto& state = EnsureIconLibrary();
-    const int edge = snowdesktop::icon_render_rules::SourcePixelsForTarget(pixels);
+    const int edge = snowdesktop::icon_control::ReplacementSourcePixels(identity, pixels);
     const auto key = id + ':' + std::to_string(edge);
     const auto found = state.bitmaps.find(key);
     if (found != state.bitmaps.end()) return found->second && found->second->bitmap ?
@@ -340,12 +340,13 @@ ID2D1Bitmap* DesktopApp::GetSmallCustomIcon(ID2D1RenderTarget* context, std::wst
     if (snowdesktop::icon_control::UsesBitmap(identity, iconAppearanceOverrides_.contains(target), ResolveIconAppearance(identity)))
     {
         const bool light = CurrentDockAppearance().contentTheme == 1;
-        const auto sourceKey = target + (light ? L":light" : L":dark");
+        const int edge = std::max(128, snowdesktop::icon_render_rules::SourcePixelsForTarget(pixels));
+        const auto sourceKey = target + (light ? L":light:" : L":dark:") + std::to_wstring(edge);
         auto& source = iconControlSources_[sourceKey];
         if (!source)
         {
             source = std::make_shared<snowdesktop::BackgroundBitmap>();
-            source->bitmap = snowdesktop::icon_image::CreateBitmap(MakeDockControlIconSource(target, light));
+            source->bitmap = snowdesktop::icon_image::CreateBitmap(snowdesktop::icon_control::MakeSource(target, light, edge));
         }
         return GetStyledD2DBitmap(context, source->bitmap, ResolveIconAppearance(identity), true);
     }

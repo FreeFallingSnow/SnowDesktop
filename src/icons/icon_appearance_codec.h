@@ -35,7 +35,7 @@ inline bool DecodeStyle(const JsonValue& json, IconBeautifySettings& settings)
     const auto* mode = json.Find("mode");
     const auto* preset = json.Find("preset");
     const auto* theme = json.Find("theme");
-    if (!mode || !mode->IsNumber() || (mode->number != 0 && mode->number != 1) ||
+    if (!mode || !mode->IsNumber() || (mode->number != 0 && mode->number != 1 && mode->number != 2) ||
         !preset || !preset->IsNumber() || !std::isfinite(preset->number) ||
         preset->number != std::floor(preset->number) ||
         (preset->number != 0 && preset->number != 1 && preset->number != 5 &&

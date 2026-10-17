@@ -4,6 +4,7 @@
 #include "icons/icon_hbitmap_pixels.h"
 #include "theme/theme_library_settings.h"
 #include <d2d1_1helper.h>
+#include <utility>
 #include "icons/icon_control_source.h"
 
 std::wstring DesktopApp::ResolveIconTarget(std::wstring_view identity) const
@@ -150,7 +151,7 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
         else if (const auto found = iconOverrides_.find(request.target); found != iconOverrides_.end()) asset = found->second;
         if (!asset.empty())
         {
-            (void)icon_image::Decode(IconAssetPath(GetDataSubdirectoryPath(L"icon-library"), asset), 128, image, error);
+            (void)icon_image::Decode(IconAssetPath(GetDataSubdirectoryPath(L"icon-library"), asset), icon_control::ReplacementSourcePixels(request.target, 128), image, error);
             if (!image.pixels.empty()) (void)icon_image::PadSquare(image);
         }
         if (image.pixels.empty() && request.target.starts_with(L"control:"))
@@ -182,32 +183,47 @@ snowdesktop::icon_image::Image DesktopApp::MakeDockControlIconSource(std::wstrin
     return snowdesktop::icon_control::MakeSource(target, light);
 }
 
-snowdesktop::icon_image::Image DesktopApp::CaptureDockIconSource(ID2D1DeviceContext* ctx, const DockEntry& entry)
+namespace
+{
+struct RawIconCapture
+{
+    bool& value; bool previous;
+    explicit RawIconCapture(bool& flag) : value(flag), previous(std::exchange(flag, true)) {}
+    ~RawIconCapture() { value = previous; }
+};
+template<class Draw>
+snowdesktop::icon_image::Image CaptureIconSource(ID2D1DeviceContext* ctx, int edge, Draw draw)
 {
     using namespace snowdesktop;
     icon_image::Image image;
-    if (!ctx || drawingIconAppearanceSource_) return image;
+    if (!ctx) return image;
     ComPtr<ID2D1Device> device; ctx->GetDevice(&device);
     ComPtr<ID2D1DeviceContext> offscreen;
     if (!device || FAILED(device->CreateDeviceContext(D2D1_DEVICE_CONTEXT_OPTIONS_NONE, &offscreen))) return image;
     ComPtr<ID2D1Bitmap1> bitmap, readable;
     auto props = D2D1::BitmapProperties1(D2D1_BITMAP_OPTIONS_TARGET,
         D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-    if (FAILED(offscreen->CreateBitmap(D2D1::SizeU(128,128), nullptr, 0, &props, &bitmap))) return image;
+    if (FAILED(offscreen->CreateBitmap(D2D1::SizeU(static_cast<UINT32>(edge),static_cast<UINT32>(edge)), nullptr, 0, &props, &bitmap))) return image;
     offscreen->SetTarget(bitmap.Get()); offscreen->BeginDraw(); offscreen->Clear(D2D1::ColorF(0,0,0,0));
-    drawingIconAppearanceSource_ = true;
-    DrawDockEntry(offscreen.Get(), entry, {0,0,128,128}, 0, 128);
-    drawingIconAppearanceSource_ = false;
+    draw(offscreen.Get());
     const auto drawn = offscreen->EndDraw(); offscreen->SetTarget(nullptr);
     if (FAILED(drawn)) return image;
     props.bitmapOptions = D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW;
-    if (FAILED(offscreen->CreateBitmap(D2D1::SizeU(128,128), nullptr, 0, &props, &readable)) ||
+    if (FAILED(offscreen->CreateBitmap(D2D1::SizeU(static_cast<UINT32>(edge),static_cast<UINT32>(edge)), nullptr, 0, &props, &readable)) ||
         FAILED(readable->CopyFromBitmap(nullptr, bitmap.Get(), nullptr))) return image;
     D2D1_MAPPED_RECT mapped{};
     if (FAILED(readable->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return image;
-    image.width = image.height = 128; image.pixels.resize(128*128);
-    for (int y=0;y<128;++y) memcpy(image.pixels.data()+static_cast<size_t>(y)*128, mapped.bits+y*mapped.pitch, 128*4);
+    image.width = image.height = edge; image.pixels.resize(static_cast<size_t>(edge)*edge);
+    for (int y=0;y<edge;++y) memcpy(image.pixels.data()+static_cast<size_t>(y)*edge, mapped.bits+y*mapped.pitch, static_cast<size_t>(edge)*4);
     readable->Unmap(); return image;
+}
+}
+
+snowdesktop::icon_image::Image DesktopApp::CaptureDockIconSource(ID2D1DeviceContext* ctx, const DockEntry& entry)
+{
+    if (drawingIconAppearanceSource_) return {};
+    RawIconCapture raw(drawingIconAppearanceSource_);
+    return CaptureIconSource(ctx, 128, [&](auto* offscreen) { DrawDockEntry(offscreen, entry, {0,0,128,128}, 0, 128); });
 }
 
 void DesktopApp::ClearDockAppearanceImages()
@@ -241,10 +257,15 @@ bool DesktopApp::DrawIndependentDockIcon(ID2D1DeviceContext* ctx, const DockEntr
         for (const auto& id : widgets_[owner].childWidgetIds)
         { const auto child = FindWidgetIndexById(id); if (child < widgets_.size()) append(widgets_[child]); if (signature.size() == 4) break; }
     else append(widgets_[owner]);
-    auto& cached = dockAppearanceImages_[key];
+    const int edge = std::max(128, snowdesktop::icon_render_rules::SourcePixelsForTarget(target.right - target.left));
+    auto& cached = dockAppearanceImages_[key + L":" + std::to_wstring(edge)];
     if (!cached.bitmap || cached.sources != signature)
     {
-        auto source = CaptureDockIconSource(ctx, entry);
+        snowdesktop::icon_image::Image source;
+        {
+            RawIconCapture raw(drawingIconAppearanceSource_);
+            source = CaptureIconSource(ctx, edge, [&](auto* offscreen) { DrawDockEntry(offscreen, entry, {0,0,edge,edge}, 0, edge); });
+        }
         if (source.pixels.empty()) return false;
         const auto bitmap = snowdesktop::icon_image::CreateBitmap(source);
         const auto style = found == iconAppearanceOverrides_.end() ? iconBeautifySettings_ : found->second.settings;

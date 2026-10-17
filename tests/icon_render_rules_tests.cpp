@@ -7,6 +7,7 @@
 #include "icons/icon_bitmap_pixels.h"
 #include "icons/icon_hbitmap_pixels.h"
 #include "icons/icon_beautify.h"
+#include "icons/icon_control_source.h"
 #include "icons/large_icon_transform.h"
 #include "icons/large_icon_settings_rules.h"
 #include "icons/large_icon_visibility_rules.h"
@@ -491,6 +492,34 @@ int main(int argc, char** argv)
     const auto contour = snowdesktop::icon_beautify::DetectPlateFill(rounded, 96, 96);
     Check(contour && contour->r == 32 && contour->g == 200 && contour->b == 112,
         "visible rounded contour survives transparent image margins and an opaque contrasting logo");
+    {
+        // The real replacement decode must preserve the same smart plate at rest
+        // and when magnified, rather than reclassifying a smaller WIC thumbnail.
+        const auto apartment = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        snowdesktop::icon_image::Image original; original.width = original.height = 96; original.pixels = rounded;
+        std::string png, error;
+        const bool encoded = snowdesktop::icon_image::EncodePng(original, png, error);
+        Check(encoded, "replacement fixture encodes through production PNG codec");
+        for (const auto identity : {L"control:start", L"control:search"})
+        {
+            snowdesktop::icon_image::Image idle, hover;
+            const bool loaded = encoded && snowdesktop::icon_image::DecodeBytes(png, snowdesktop::icon_control::ReplacementSourcePixels(identity, 48), idle, error) &&
+                snowdesktop::icon_image::DecodeBytes(png, snowdesktop::icon_control::ReplacementSourcePixels(identity, 96), hover, error);
+            Check(loaded && idle.width == 96 && hover.width == 96 && idle.pixels == hover.pixels,
+                "idle replacement preserves the clear source used by its hover rendering");
+            if (loaded)
+            {
+                const auto fill = snowdesktop::icon_beautify::DetectPlateFill(idle.pixels, idle.width, idle.height);
+                Check(fill && fill->g == 200, "idle Start/Search replacement reaches successful production smart recognition");
+                auto style = snowdesktop::icon_beautify::MakePreset(snowdesktop::IconBeautifyPreset::FrostedGlassDark);
+                Check(snowdesktop::icon_beautify::Render(idle.pixels, idle.width, idle.height, style, fill) ==
+                    snowdesktop::icon_beautify::Render(hover.pixels, hover.width, hover.height, style,
+                        snowdesktop::icon_beautify::DetectPlateFill(hover.pixels, hover.width, hover.height)),
+                    "idle and hover replacements share the same beautified pixels before Dock scaling");
+            }
+        }
+        if (SUCCEEDED(apartment)) CoUninitialize();
+    }
     for (int y = 36; y < 60; ++y) for (int x = 36; x < 60; ++x) rounded[y * 96 + x] = 0;
     Check(!snowdesktop::icon_beautify::DetectPlateFill(rounded, 96, 96), "a hollow icon silhouette is not mistaken for a solid background plate");
     config.backgroundStyle = 7;

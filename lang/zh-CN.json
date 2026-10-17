@@ -2831,5 +2831,6 @@
   "iconAppearance.source": "美化设置",
   "iconAppearance.follow": "跟随全局",
   "iconAppearance.independent": "单独设置",
-  "iconAppearance.unavailable": "目标不可用"
+  "iconAppearance.unavailable": "目标不可用",
+  "iconAppearance.editEntry": "编辑"
 }

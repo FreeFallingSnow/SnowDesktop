@@ -37,7 +37,7 @@ template<class Visit> void VisitIconThemeFlags(Visit visit)
 inline bool ValidIconTheme(const IconBeautifySettings& value)
 {
     const auto shape = static_cast<int>(value.shape);
-    bool valid = value.mode >= 0 && value.mode <= 1 && value.gradientDirection >= 0 && value.gradientDirection <= 3 &&
+    bool valid = value.mode >= 0 && value.mode <= 2 && value.gradientDirection >= 0 && value.gradientDirection <= 3 &&
         value.backgroundSource >= 0 && value.backgroundSource <= 2 && value.filterMode >= 0 && value.filterMode <= 2 &&
         ValidatePanelGradient(value.backgroundGradient) &&
         (shape == 0 || shape == 1 || shape == 2 || shape == 3 || shape == 10) && ValidateEdgeLight(value.edgeLight);

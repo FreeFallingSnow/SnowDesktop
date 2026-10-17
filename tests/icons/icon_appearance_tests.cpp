@@ -67,5 +67,30 @@ int RunIconAppearanceTests()
                 "smart beautification adds the selected theme to idle native glyphs while None preserves transparency");
         }
     }
+    const auto magnified = icon_control::MakeSource(L"control:start", false, 256);
+    check(magnified.width == 256 && magnified.height == 256 && magnified.pixels.size() == 256 * 256,
+        "magnified native control sources retain target bucket resolution instead of upscaling a fixed preview");
+    auto noUpscale = global; noUpscale.mode = 2; noUpscale.backgroundOpacity = 0;
+    noUpscale.shape = IconBeautifyShape::ContinuousRounded; noUpscale.outlineEnabled = false; noUpscale.shadowStrength = 0;
+    noUpscale.textureHighlightStrength = noUpscale.textureShadeStrength = noUpscale.textureEdgeHighlight = 0;
+    noUpscale.edgeHighlightEnabled = false; noUpscale.filterEnabled = false;
+    std::vector<std::uint32_t> sparse(64 * 64, 0);
+    for (int y = 28; y < 36; ++y) for (int x = 28; x < 36; ++x) sparse[y * 64 + x] = 0xffd02030;
+    const auto countVisible = [](const auto& pixels) { return std::count_if(pixels.begin(), pixels.end(), [](auto pixel) { return (pixel >> 24) > 0; }); };
+    const auto retained = icon_beautify::Render(sparse, 64, 64, noUpscale);
+    auto smart = noUpscale; smart.mode = 0;
+    check(countVisible(retained) == 64 && countVisible(icon_beautify::Render(sparse, 64, 64, smart)) > 64,
+        "no-enlargement retains sparse glyph dimensions while existing smart mode still normalizes them");
+    std::vector<std::uint32_t> full(64 * 64, 0xffd02030);
+    check(countVisible(icon_beautify::Render(full, 64, 64, noUpscale)) < countVisible(full),
+        "no-enlargement can still shrink oversized glyphs to the configured content bounds");
+    JsonValue local; IconBeautifySettings roundtrip;
+    check(ParseJson(rules::EncodeStyle(noUpscale), local) && rules::DecodeStyle(local, roundtrip) && roundtrip.mode == 2,
+        "no-enlargement survives layout persistence rather than becoming smart or shrink-all on restart");
+    for (const auto target : {L"control:start", L"control:search"})
+    {
+        check(icon_control::ReplacementSourcePixels(target, 48) == 256 && icon_control::ReplacementSourcePixels(target, 96) == 256,
+            "replaced Start/Search use the same classification source at rest and under magnification");
+    }
     return failures;
 }

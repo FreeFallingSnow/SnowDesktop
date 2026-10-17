@@ -1735,7 +1735,7 @@ struct DesktopPagePresenter::Impl
         const IconBeautifySettings& value = settings.iconBeautify;
         beautifyEnabled = value.enabled;
         beautifyPreset.SelectedIndex(IndexOf(kBeautifyPresets, value.preset));
-        beautifyMode.SelectedIndex(std::clamp(value.mode, 0, 1));
+        beautifyMode.SelectedIndex(std::clamp(value.mode, 0, 2));
         backgroundStart->SetColor(MakeColor(
             value.backgroundStartR,
             value.backgroundStartG,
@@ -2028,6 +2028,7 @@ struct DesktopPagePresenter::Impl
         SetComboItems(beautifyMode, {
             L("iconStyle.smart", L"Smart beautification"),
             L("iconStyle.shrinkAll", L"Shrink all with theme background"),
+            L("iconStyle.noUpscale", L"Smart beautification without enlargement"),
         }, std::max(0, beautifyMode.SelectedIndex()));
         backgroundStart->SetLabel(
             L("app.settings.default_bg", L"Background color"),

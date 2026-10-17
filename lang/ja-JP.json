@@ -2831,5 +2831,6 @@
   "iconAppearance.source": "装飾設定",
   "iconAppearance.follow": "全体設定に従う",
   "iconAppearance.independent": "個別に設定",
-  "iconAppearance.unavailable": "対象を利用できません"
+  "iconAppearance.unavailable": "対象を利用できません",
+  "iconAppearance.editEntry": "編集"
 }

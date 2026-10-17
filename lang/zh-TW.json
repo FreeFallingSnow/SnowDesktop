@@ -2831,5 +2831,6 @@
   "iconAppearance.source": "美化設定",
   "iconAppearance.follow": "跟隨全域",
   "iconAppearance.independent": "個別設定",
-  "iconAppearance.unavailable": "目標無法使用"
+  "iconAppearance.unavailable": "目標無法使用",
+  "iconAppearance.editEntry": "編輯"
 }

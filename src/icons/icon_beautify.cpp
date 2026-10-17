@@ -689,7 +689,7 @@ IconBeautifySettings Normalize(IconBeautifySettings settings)
     settings.edgeHighlightStrength = std::isfinite(settings.edgeHighlightStrength) ?
         std::clamp(settings.edgeHighlightStrength, 0.0f, 1.0f) : 0.40f;
     settings.edgeLight = NormalizeEdgeLight(settings.edgeLight);
-    settings.mode = std::clamp(settings.mode, 0, 1);
+    settings.mode = std::clamp(settings.mode, 0, 2);
     settings.backgroundSource = std::clamp(settings.backgroundSource, 0, 2);
     settings.filterMode = std::clamp(settings.filterMode, 0, 2);
     if (!ValidatePanelGradient(settings.backgroundGradient)) settings.backgroundGradient = {};
@@ -1070,10 +1070,12 @@ static std::vector<std::uint32_t> RenderAtScale(const std::vector<std::uint32_t>
         maxW = std::max(1, static_cast<int>(std::round(static_cast<float>(width) / rasterScale * settings.contentScale))) * rasterScale;
         maxH = std::max(1, static_cast<int>(std::round(static_cast<float>(height) / rasterScale * settings.contentScale))) * rasterScale;
     }
-    const float scale = std::min(static_cast<float>(maxW) / sourceW,
+    const float fit = std::min(static_cast<float>(maxW) / sourceW,
         static_cast<float>(maxH) / sourceH);
-    const int destW = std::max(1, static_cast<int>(std::round(sourceW * scale / rasterScale))) * rasterScale;
-    const int destH = std::max(1, static_cast<int>(std::round(sourceH * scale / rasterScale))) * rasterScale;
+    const float scale = settings.mode == 2 ? std::min(1.0f, fit) : fit;
+    int destW = std::max(1, static_cast<int>(std::round(sourceW * scale / rasterScale))) * rasterScale;
+    int destH = std::max(1, static_cast<int>(std::round(sourceH * scale / rasterScale))) * rasterScale;
+    if (settings.mode == 2) { destW = std::min(sourceW, destW); destH = std::min(sourceH, destH); }
     const int destLeft = (width - destW) / 2;
     const int destTop = (height - destH) / 2;
 

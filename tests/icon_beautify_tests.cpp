@@ -269,7 +269,7 @@ int main()
     invalid.filterStrength = 2.0f;
     const IconBeautifySettings normalized = beautify::Normalize(invalid);
     Check(normalized.preset == IconBeautifyPreset::Custom &&
-        normalized.mode == 1 && normalized.contentScale == 0.50f &&
+        normalized.mode == 2 && normalized.contentScale == 0.50f &&
         normalized.outlineWidth == 4.0f && normalized.outlineOpacity == 0.0f &&
         normalized.shadowStrength == 1.0f &&
         normalized.shape == IconBeautifyShape::LegacyRounded &&

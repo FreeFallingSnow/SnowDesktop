@@ -471,6 +471,7 @@ std::uintptr_t DesktopApp::GetD2DIconCacheKey(HBITMAP hbm, bool beautified) cons
 void DesktopApp::EraseD2DIconCacheForBitmap(HBITMAP hbm)
 {
     if (!hbm) return;
+    ClearDockAppearanceImages();
     for (auto it = styledIconCache_.begin(); it != styledIconCache_.end();)
         if (std::get<0>(it->first) == reinterpret_cast<std::uintptr_t>(hbm))
         { iconGlassBackdrop_.erase(it->second.Get()); iconBitmapStyles_.erase(it->second.Get()); it = styledIconCache_.erase(it); }
@@ -505,7 +506,7 @@ ComPtr<ID2D1Bitmap1> DesktopApp::CreateStyledD2DBitmap(HBITMAP hbm,
     if (style.enabled)
     {
         std::optional<snowdesktop::icon_beautify::EdgeColor> edgeFill;
-        if (style.mode == 0)
+        if (style.mode != 1)
         {
             IconBackgroundColor detected{};
             if (DetectSolidEdgeBackground(

@@ -64,6 +64,7 @@ struct IconBeautifySettings
 {
     bool enabled = false;
     IconBeautifyPreset preset = IconBeautifyPreset::None;
+    // 0 smart; 1 normalize all; 2 smart with no enlargement of visible content.
     int mode = 0;
     float backgroundOpacity = 0.65f;
     bool glassEnabled = false;

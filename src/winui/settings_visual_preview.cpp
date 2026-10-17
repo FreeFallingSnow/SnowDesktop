@@ -573,6 +573,17 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         }
         Settle(shell.as<x::FrameworkElement>());
         const auto cards = shell->FindName(L"PageCards").as<c::StackPanel>();
+        if (page == SettingsPage::Dock)
+        {
+            Walk(cards, [&](const x::DependencyObject& node) {
+                const auto button = node.try_as<c::Button>();
+                if (!button || x::Automation::AutomationProperties::GetName(button) != _LW("iconAppearance.edit")) return;
+                const auto parent = x::Media::VisualTreeHelper::GetParent(button).as<c::Grid>();
+                const auto bounds = button.TransformToVisual(parent).TransformBounds({0,0,static_cast<float>(button.ActualWidth()),static_cast<float>(button.ActualHeight())});
+                if (bounds.X < 0 || bounds.X + bounds.Width > parent.ActualWidth() + 1 || !button.Content().try_as<c::SymbolIcon>())
+                    throw std::runtime_error("Dock icon appearance action exceeds its native settings column");
+            });
+        }
         if (page == SettingsPage::AppearanceIconBeautification)
         {
             auto list = PreviewControl<c::ListView>(cards, L"IconAppearanceList");
@@ -588,7 +599,9 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                         });
                     return opened && opened.ActualWidth() > 0;
                 });
-                Settle(opened); return opened;
+                Settle(opened);
+                if (opened.ActualTheme() != shell->ActualTheme()) throw std::runtime_error("icon appearance dialog did not inherit its parent theme");
+                return opened;
             };
             const auto close = [&](const c::ContentDialog& opened) {
                 bool closed = false; const auto token = opened.Closed([&](const auto&, const auto&) { closed = true; });
@@ -613,7 +626,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 }
             });
             if (!mode || !theme) throw std::runtime_error("shared processing mode/theme selectors are missing");
-            mode.SelectedIndex(1); theme.SelectedIndex(3); Settle(editor);
+            mode.SelectedIndex(2); theme.SelectedIndex(3); Settle(editor);
             if (editor.ActualWidth() > shell->ActualWidth() || editor.ActualHeight() > shell->ActualHeight())
                 throw std::runtime_error("individual icon editor exceeds its settings window");
             x::Media::Imaging::RenderTargetBitmap bitmap; Await(bitmap.RenderAsync(editor));
@@ -626,7 +639,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
             Walk(editor, [&](const x::DependencyObject& node) { if (const auto button = node.try_as<c::Button>(); button && button.Name() == L"PrimaryButton") apply = button; });
             if (!apply) throw std::runtime_error("individual appearance Apply button is missing");
             InvokePreview(apply); PumpUntil([&] { return appearanceFixture->entries.size() == 3; }); Settle(shell.as<x::FrameworkElement>());
-            if (appearanceFixture->entries.back().target != L"control:search" || appearanceFixture->entries.back().settings.mode != 1 ||
+            if (appearanceFixture->entries.back().target != L"control:search" || appearanceFixture->entries.back().settings.mode != 2 ||
                 appearanceFixture->entries.back().settings.preset != IconBeautifyPreset::FrostedGlassDark)
                 throw std::runtime_error("Search mode/theme failed to reach the independent settings action");
             list = PreviewControl<c::ListView>(shell->FindName(L"PageCards").as<x::DependencyObject>(), L"IconAppearanceList");

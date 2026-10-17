@@ -708,9 +708,20 @@ struct DockPagePresenter::Impl
         singleClickLaunchItemsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         fullscreenPolicyRow.Initialize(fullscreenPolicyCombo);
         fullscreenPolicyRow.SetControlAlignment(mux::HorizontalAlignment::Right);
-        muxc::StackPanel startActions, searchActions;
+        muxc::Grid startActions, searchActions;
         for (const auto& panel : {startActions, searchActions})
-        { panel.Orientation(muxc::Orientation::Horizontal); panel.Spacing(8); }
+        {
+            panel.ColumnSpacing(8);
+            panel.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+            panel.ColumnDefinitions().Append(muxc::ColumnDefinition{});
+            muxc::ColumnDefinition iconColumn; iconColumn.Width(mux::GridLengthHelper::Auto()); panel.ColumnDefinitions().Append(iconColumn);
+        }
+        for (const auto& button : {startIconRestore, searchIconRestore}) muxc::Grid::SetColumn(button, 1);
+        for (const auto& button : {startIconBeautify, searchIconBeautify})
+        {
+            muxc::Grid::SetColumn(button, 2); button.Width(32); button.MinWidth(32); button.Padding({6,6,6,6});
+            button.VerticalAlignment(mux::VerticalAlignment::Center);
+        }
         startActions.Children().Append(startIconChoose); startActions.Children().Append(startIconRestore);
         searchActions.Children().Append(searchIconChoose); searchActions.Children().Append(searchIconRestore);
         startActions.Children().Append(startIconBeautify); searchActions.Children().Append(searchIconBeautify);
@@ -2923,19 +2934,22 @@ struct DockPagePresenter::Impl
         reserveScreenSpaceRow.SetText(L("settings.dock.reserveScreenSpace", L"Reserve screen space"),
             L("settings.dock.reserveScreenSpace.description", L"Keep maximized windows clear of the standalone Dock. A summon-only Dock reserves no space."));
         muxa::AutomationProperties::SetName(reserveScreenSpaceToggle, reserveScreenSpaceRow.label.Text());
-        startIconBeautify.Content(winrt::box_value(L("iconAppearance.edit", L"Adjust this icon’s appearance…")));
-        searchIconBeautify.Content(winrt::box_value(L("iconAppearance.edit", L"Adjust this icon’s appearance…")));
         for (const auto& button : {startIconBeautify, searchIconBeautify})
         {
-            muxc::TextBlock text; text.Text(L("iconAppearance.edit", L"Adjust this icon’s appearance…"));
-            text.TextWrapping(mux::TextWrapping::Wrap); text.MaxWidth(180); button.Content(text);
+            muxc::SymbolIcon icon(muxc::Symbol::Edit); button.Content(icon);
+            const auto label = L("iconAppearance.edit", L"Adjust this icon’s appearance…");
+            muxa::AutomationProperties::SetName(button, label);
+            muxc::ToolTipService::SetToolTip(button, winrt::box_value(label));
         }
         startIconRow.SetText(L("iconLibrary.startIcon", L"Start button icon"));
         searchIconRow.SetText(L("iconLibrary.searchIcon", L"Search button icon"));
-        for (const auto& button : {startIconChoose, searchIconChoose})
-            button.Content(winrt::box_value(L("iconLibrary.change", L"Change icon…")));
-        for (const auto& button : {startIconRestore, searchIconRestore})
-            button.Content(winrt::box_value(L("iconLibrary.restore", L"Restore default icon")));
+        for (const auto& button : {startIconChoose, searchIconChoose, startIconRestore, searchIconRestore})
+        {
+            const bool restore = button == startIconRestore || button == searchIconRestore;
+            muxc::TextBlock text; text.Text(L(restore ? "iconLibrary.restore" : "iconLibrary.change", restore ? L"Restore default icon" : L"Change icon…"));
+            text.TextWrapping(mux::TextWrapping::Wrap); button.Content(text); button.MinWidth(0);
+            button.HorizontalAlignment(mux::HorizontalAlignment::Stretch); button.VerticalAlignment(mux::VerticalAlignment::Center);
+        }
         showWindowsButtonRow.SetText(L(
             "app.dock.show_windows_button", L"Show Windows Button"));
         showQuickSearchButtonRow.SetText(L(
