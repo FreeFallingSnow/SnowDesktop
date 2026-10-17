@@ -559,6 +559,12 @@ void TestReferenceAuditContracts()
     const auto scopedCppKeys = audit::CollectLiteralBindings(scopedCpp, keys);
     Check(scopedCppKeys.contains("ui.direct") && !scopedCppKeys.contains("ui.dead"),
         "a used same-named variable in another C++ function cannot preserve a dead key");
+    const std::vector<audit::Source> outputBindings{{"fixture.cpp", audit::Lex(
+        "namespace { constexpr const char* labels[]{\"ui.table\"}; } "
+        "void Use(){ Render(labels[0]); } void Error(const char*& error){error=\"ui.direct\";}")}};
+    const auto outputKeys = audit::CollectLiteralBindings(outputBindings, keys);
+    Check(outputKeys.contains("ui.direct") && outputKeys.contains("ui.table"),
+        "output assignments and tables consumed outside an anonymous namespace remain live");
     const std::vector<audit::Source> scopedLua{{"fixture.lua", audit::Lex(
         "function used()\nlocal same = 'ui.direct'\nrender(same)\nend\n"
         "function dead()\nlocal same = 'ui.dead'\nend", true), true}};

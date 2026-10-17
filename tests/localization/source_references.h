@@ -158,6 +158,7 @@ inline std::vector<const Token*> LiveStrings(const Source& source,
     std::set<std::size_t> discarded;
     const size_t outside = tokens.size();
     std::vector<size_t> parent(tokens.size(), outside), scopeEnd(tokens.size(), outside), stack;
+    std::vector<bool> sharedScope(tokens.size(), false);
     for (size_t at = 0; at < tokens.size(); ++at)
     {
         const auto& token = tokens[at];
@@ -173,7 +174,17 @@ inline std::vector<const Token*> LiveStrings(const Source& source,
         const bool closing = source.lua
             ? keyword && (token.value == "end" || token.value == "until")
             : token.kind == TokenKind::Punctuation && token.value == "}";
-        if (opening) stack.push_back(at);
+        if (opening)
+        {
+            if (!source.lua)
+                for (size_t before = at; before > 0; --before)
+                {
+                    const auto& value = tokens[before - 1].value;
+                    if (value == ";" || value == "{" || value == "}") break;
+                    if (value == "namespace" || value == "class" || value == "struct") { sharedScope[at] = true; break; }
+                }
+            stack.push_back(at);
+        }
         else if (closing && !stack.empty()) { scopeEnd[stack.back()] = at; stack.pop_back(); }
     }
     // A constant with no source consumer must not keep a dead translation
@@ -195,13 +206,13 @@ inline std::vector<const Token*> LiveStrings(const Source& source,
         // declarations. Their value is consumed through the enclosing table.
         if (source.lua && (name == 0 || tokens[name - 1].value != "local")) continue;
         if (!source.lua && name > 0 && tokens[name - 1].value == ".") continue;
-        if (tokens[index].value == "{")
+        if (!source.lua)
         {
             bool declaration = false;
-            for (std::size_t before = index - 1; before > 0; --before)
+            for (std::size_t before = name; before > 0; --before)
             {
                 const auto& value = tokens[before - 1].value;
-                if (value == ";" || value == "{" || value == "}") break;
+                if (value == ";" || value == "{" || value == "}" || value == "=" || value == "return" || value == "(") break;
                 if (value == "namespace" || value == "class" || value == "struct") { declaration = false; break; }
                 if (value == "constexpr" || value == "const" || value == "auto") declaration = true;
             }
@@ -216,7 +227,8 @@ inline std::vector<const Token*> LiveStrings(const Source& source,
             for (size_t at = begin; at < end; ++at)
                 if (tokens[at].kind == TokenKind::Identifier && tokens[at].value == tokens[name].value) ++uses;
             // Header members may be consumed by out-of-line definitions.
-            if (!source.lua && (source.path.ends_with(".h") || source.path.ends_with(".hpp")))
+            if (!source.lua && ((enclosing != outside && sharedScope[enclosing]) ||
+                source.path.ends_with(".h") || source.path.ends_with(".hpp")))
                 if (const auto found = identifierUses.find(tokens[name].value); found != identifierUses.end()) uses = found->second;
         }
         else if (const auto found = identifierUses.find(tokens[name].value); found != identifierUses.end()) uses = found->second;
