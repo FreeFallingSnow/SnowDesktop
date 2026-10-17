@@ -2537,7 +2537,7 @@ private:
      * @param targetCell 目标单元格
      * @return 待处理的移动列表
      */
-    std::vector<PendingGridMove> BuildSelectedMove(GridCell targetCell) const;
+    std::vector<PendingGridMove> BuildSelectedMove(GridCell targetCell, const DragSourceList* sources = nullptr) const;
     /**
      * @brief 构建桌面区域的放置预览列表。
      * @param sourceList 拖拽源列表

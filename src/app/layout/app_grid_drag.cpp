@@ -1,7 +1,7 @@
 #include "app/app.h"
 #include "layout/page_mapping.h"
 #include "desktop/desktop_drop_search.h"
-#include "layout/selected_grid_move.h"
+#include "layout/selected_desktop_move.h"
 #include "widgets/collection_group_rules.h"
 #include "desktop/windows_desktop_layout.h"
 #include "desktop/windows_desktop_layout_rules.h"
@@ -363,39 +363,8 @@ GridCell DesktopApp::CellFromDragOrigin(POINT origin, POINT pointer) const
  */
 bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan span) const
 {
-    for (const auto& item : items_)
-    {
-        if (item.selected || item.name.empty()) continue;
-        if (item.gridCell.pageId != cell.pageId) continue;
-        const int right1 = cell.column + std::max(1, span.columns);
-        const int bottom1 = cell.row + std::max(1, span.rows);
-        const int right2 = item.gridCell.column + std::max(1, item.gridSpan.columns);
-        const int bottom2 = item.gridCell.row + std::max(1, item.gridSpan.rows);
-        if (cell.column < right2 && right1 > item.gridCell.column &&
-            cell.row < bottom2 && bottom1 > item.gridCell.row)
-        {
-            // Normalizing long layout keys is only needed for intersecting items.
-            if (!IsItemInAnyWidget(item)) return true;
-        }
-    }
-    for (const auto& w : widgets_)
-    {
-        if (w.selected && snowdesktop::single_cell_widget::IsIconMode(w) &&
-            !IsGroupedWidget(w)) continue;
-        if (!snowdesktop::collection_group_rules::
-                ShouldOccupyDesktopGrid(
-                    IsGroupedWidget(w)))
-            continue;
-        if (w.gridCell.pageId != cell.pageId) continue;
-        const int right1 = cell.column + std::max(1, span.columns);
-        const int bottom1 = cell.row + std::max(1, span.rows);
-        const int right2 = w.gridCell.column + std::max(1, w.gridSpan.columns);
-        const int bottom2 = w.gridCell.row + std::max(1, w.gridSpan.rows);
-        if (cell.column < right2 && right1 > w.gridCell.column &&
-            cell.row < bottom2 && bottom1 > w.gridCell.row)
-            return true;
-    }
-    return false;
+    return snowdesktop::selected_desktop_move::Occupied({items_, widgets_, gridPages_}, cell, span,
+        {[this](const auto& item) { return IsItemInAnyWidget(item); }, [this](const auto& widget) { return IsGroupedWidget(widget); }});
 }
 
 /**
@@ -403,44 +372,13 @@ bool DesktopApp::IsGridAreaOccupiedByUnselected(const GridCell& cell, GridSpan s
  * @param targetCell 目标单元格。
  * @return 移动计划列表，无法移动时返回空列表。
  */
-std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell targetCell) const
+std::vector<DesktopApp::PendingGridMove> DesktopApp::BuildSelectedMove(GridCell targetCell, const DragSourceList* sources) const
 {
-    // The existing grid planner operates on geometry, so project both model
-    // kinds into it and retain a stable mapping for the atomic commit.
-    std::vector<DesktopItem> geometry;
-    std::vector<std::pair<size_t, bool>> owners;
-    geometry.reserve(items_.size() + widgets_.size());
-    for (size_t index = 0; index < items_.size(); ++index)
-    {
-        const auto& item = items_[index];
-        if (!item.selected || IsItemInAnyWidget(item)) continue;
-        DesktopItem value;
-        value.selected = true;
-        value.gridCell = item.gridCell;
-        value.gridSpan = item.gridSpan;
-        if (item.largeIcon) value.largeIcon.emplace();
-        geometry.push_back(std::move(value));
-        owners.push_back({index, false});
-    }
-    for (size_t index = 0; index < widgets_.size(); ++index)
-    {
-        const auto& widget = widgets_[index];
-        if (!widget.selected || !snowdesktop::single_cell_widget::IsIconMode(widget) ||
-            IsGroupedWidget(widget)) continue;
-        DesktopItem value;
-        value.selected = true;
-        value.gridCell = widget.gridCell;
-        value.gridSpan = widget.gridSpan;
-        geometry.push_back(std::move(value));
-        owners.push_back({index, true});
-    }
-    const auto plan = snowdesktop::selected_grid_move::Build(geometry, gridPages_, std::move(targetCell),
-        [this](const GridCell& cell, GridSpan span) { return IsGridAreaOccupiedByUnselected(cell, span); });
-    std::vector<PendingGridMove> moves;
-    moves.reserve(plan.size());
-    for (const auto& move : plan)
-        moves.push_back({owners[move.index].first, move.cell, owners[move.index].second});
-    return moves;
+    const auto planned = snowdesktop::selected_desktop_move::Build({items_, widgets_, gridPages_}, std::move(targetCell),
+        {[this](const auto& item) { return IsItemInAnyWidget(item); }, [this](const auto& widget) { return IsGroupedWidget(widget); }}, sources);
+    std::vector<PendingGridMove> result;
+    for (const auto& move : planned) result.push_back({move.index, move.cell, move.widget});
+    return result;
 }
 
 /**
@@ -475,7 +413,7 @@ GridCell DesktopApp::FindBestDropCell(const DragSourceList& sourceList, GridCell
     return snowdesktop::desktop_drop_cache::FindBestCell(
         bestDropCellCache_, dragSession_.IsActive(), cacheKey,
         exactPlacement, page ? page->columns : 0, page ? page->rows : 0,
-        [this](const GridCell& cell) { return !BuildSelectedMove(cell).empty(); });
+        [this, &sourceList](const GridCell& cell) { return !BuildSelectedMove(cell, &sourceList).empty(); });
 }
 
 /**

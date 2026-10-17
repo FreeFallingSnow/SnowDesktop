@@ -524,7 +524,7 @@ std::wstring DesktopGrid::GetDragHint(Slot* slot, HitRegion region,
         return _LW("core.drag.release_move_here");
     }
 
-    if (app_->BuildSelectedMove(bestCell).empty())
+    if (app_->BuildSelectedMove(bestCell, &sourceList).empty())
         return _LW("core.drag.release_occupied");
 
     return _LW("core.drag.release_move_here");

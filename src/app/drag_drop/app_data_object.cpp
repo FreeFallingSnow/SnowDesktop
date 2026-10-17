@@ -3,6 +3,7 @@
 #include "desktop/desktop_membership_recovery.h"
 #include "drag_drop/desktop_landings.h"
 #include "layout/page_mapping.h"
+#include "layout/selected_desktop_move.h"
 
 // OLE data-object construction and desktop landing bookkeeping.
 
@@ -274,26 +275,8 @@ std::vector<DropLanding> DesktopApp::BuildDesktopLandings(
         !containers_.empty() && sourceList.origin == containers_.front().get();
     if (desktopToDesktopMove)
     {
-        std::vector<PendingGridMove> moves = BuildSelectedMove(targetCell);
-        if (moves.empty()) return landings;
-
-        for (const auto& entry : sourceList.entries)
-        {
-            auto it = std::find_if(moves.begin(), moves.end(),
-                [&](const PendingGridMove& move) {
-                    return entry.desktopWidgetIcon
-                        ? move.widget && move.index == FindWidgetIndexById(entry.widgetId)
-                        : !move.widget && move.index == entry.desktopIndex;
-                });
-            if (it == moves.end()) continue;
-            DropLanding landing;
-            landing.kind = DropLandingKind::DesktopCell;
-            landing.sourceIndex = entry.sourceIndex;
-            landing.cell = it->cell;
-            landing.span = entry.originalSpan;
-            landings.push_back(landing);
-        }
-        return landings;
+        return snowdesktop::selected_desktop_move::Landings({items_, widgets_, gridPages_}, sourceList,
+            BuildSelectedMove(targetCell, &sourceList));
     }
 
     snowdesktop::desktop_landings::Services services;
