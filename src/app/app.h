@@ -63,6 +63,7 @@
 #include "icons/website_icon.h"
 #include "icons/large_icon_motion.h"
 namespace snowdesktop::dock_drop_model { struct Services; }
+namespace snowdesktop::dock_desktop_return { struct Services; struct Landing; }
 namespace snowdesktop::large_icon_renderer { struct CardResources; }
 namespace snowdesktop::tray { struct Icon; class Service; }
 #include "navigation/navigation_settings.h"
@@ -1376,6 +1377,9 @@ private:
     snowdesktop::dock_drop_model::Services DockDropServices();
     void CommitDockDrop(const std::vector<Item*>& sourceItems, Container* origin,
         DockContainer* targetDock, size_t insertIndex, int mods);
+    snowdesktop::dock_desktop_return::Services DockDesktopReturnServices() const;
+    std::vector<snowdesktop::dock_desktop_return::Landing> PlanDockDesktopReturn(
+        const std::vector<Item*>& sourceItems, GridCell target) const;
     void MoveDockItemsToDesktop(const std::vector<Item*>& sourceItems, GridCell targetCell);
     void RestoreDockEntriesToDesktop();
     bool AddMaterializedItemsToDock(

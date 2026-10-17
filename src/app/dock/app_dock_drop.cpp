@@ -2,6 +2,7 @@
 #include "widgets/collection_group_rules.h"
 #include "desktop/desktop_source.h"
 #include "dock/dock_drop_model.h"
+#include "dock/dock_desktop_return.h"
 
 // Dock insertion, collection drops and restoration to the desktop.
 
@@ -268,104 +269,31 @@ bool DesktopApp::DropItemsIntoDockCollection(
     return ExecuteDropPipeline(sourceList, preview);
 }
 
-void DesktopApp::MoveDockItemsToDesktop(
-    const std::vector<Item*>& sourceItems, GridCell targetCell)
+snowdesktop::dock_desktop_return::Services DesktopApp::DockDesktopReturnServices() const
+{
+    snowdesktop::dock_desktop_return::Services services;
+    services.normalize = ToUpperInvariant;
+    services.grouped = [this](const auto& widget) { return IsGroupedWidget(widget); };
+    services.owned = [this](const auto& item) { return IsItemInAnyWidget(item); };
+    services.itemIndex = [this](const auto& key) { return FindItemIndexByKey(key); };
+    return services;
+}
+
+std::vector<snowdesktop::dock_desktop_return::Landing> DesktopApp::PlanDockDesktopReturn(
+    const std::vector<Item*>& sourceItems, GridCell target) const
 {
     std::vector<size_t> indices;
     for (Item* source : sourceItems)
-        if (auto* item = dynamic_cast<DockEntryItem*>(source))
-            indices.push_back(item->GetEntryIndex());
-    std::sort(indices.begin(), indices.end());
-    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
-    if (indices.empty()) return;
+        if (auto* item = dynamic_cast<DockEntryItem*>(source)) indices.push_back(item->GetEntryIndex());
+    return snowdesktop::dock_desktop_return::Plan({dockEntries_, widgets_, items_, gridPages_},
+        std::move(indices), std::move(target), DockDesktopReturnServices());
+}
 
-    std::vector<std::pair<size_t, DockEntry>> moving;
-    std::unordered_set<std::wstring> movingDesktopKeys;
-    for (size_t index : indices)
-    {
-        if (index < dockEntries_.size())
-        {
-            moving.emplace_back(index, dockEntries_[index]);
-            if (dockEntries_[index].type == DockEntryType::DesktopItem)
-                movingDesktopKeys.insert(ToUpperInvariant(dockEntries_[index].reference));
-        }
-    }
-
-    std::unordered_set<std::wstring> usedSlots;
-    for (const auto& widget : widgets_)
-        if (!IsGroupedWidget(widget) &&
-            widget.gridCell.pageId != kDockPageId)
-            MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
-    for (const auto& item : items_)
-        if (!item.name.empty() && item.gridCell.pageId != kDockPageId && !IsItemInAnyWidget(item) &&
-            !movingDesktopKeys.contains(ToUpperInvariant(item.layoutKey)))
-            MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
-
-    const GridPage* targetPage = FindGridPage(gridPages_, targetCell.pageId);
-    int startSlot = targetPage ? SlotFromCell(gridPages_, targetCell) : 0;
-    std::vector<size_t> restoredIndices;
-    for (size_t movingIndex = 0;
-        movingIndex < moving.size();
-        ++movingIndex)
-    {
-        const size_t entryIndex =
-            moving[movingIndex].first;
-        const DockEntry& entry =
-            moving[movingIndex].second;
-        GridSpan span{ 1, 1 };
-        if (IsWidgetDockEntryType(entry.type))
-        {
-            size_t widgetIndex = FindWidgetIndexById(entry.reference);
-            if (widgetIndex < widgets_.size()) span = widgets_[widgetIndex].gridSpan;
-        }
-        // 组件定位不再在被占用时寻找其他可选位置：仅当命中格的跨距
-        // 完全空闲且不越界时才放置，否则拒绝放置，不自动寻找替代落点。
-        GridCell freeCell;
-        freeCell.pageId = targetCell.pageId;
-        if (!targetPage)
-        {
-            freeCell.column = 0;
-            freeCell.row = 0;
-        }
-        else
-        {
-            freeCell.column = startSlot / std::max(1, targetPage->rows);
-            freeCell.row = startSlot % std::max(1, targetPage->rows);
-            freeCell = ClampGridCellToFitPage(
-                *targetPage, freeCell, span);
-        }
-        if (!targetPage ||
-            !GridAreaFitsPage(*targetPage, freeCell, span) ||
-            AreGridSlotsMarked(usedSlots, freeCell, span))
-            continue;
-        MarkGridArea(usedSlots, freeCell, span);
-        ++startSlot;
-        bool restored = false;
-        if (entry.type == DockEntryType::DesktopItem)
-        {
-            size_t itemIndex = FindItemIndexByKey(entry.reference);
-            if (itemIndex < items_.size())
-            {
-                items_[itemIndex].gridCell = freeCell;
-                restored = true;
-            }
-        }
-        else
-        {
-            size_t widgetIndex = FindWidgetIndexById(entry.reference);
-            if (widgetIndex < widgets_.size())
-            {
-                widgets_[widgetIndex].gridCell = freeCell;
-                restored = true;
-            }
-        }
-        if (restored)
-            restoredIndices.push_back(entryIndex);
-    }
-
-    for (auto it = restoredIndices.rbegin();
-        it != restoredIndices.rend(); ++it)
-        dockEntries_.erase(dockEntries_.begin() + static_cast<std::ptrdiff_t>(*it));
+void DesktopApp::MoveDockItemsToDesktop(
+    const std::vector<Item*>& sourceItems, GridCell targetCell)
+{
+    const auto landings = PlanDockDesktopReturn(sourceItems, std::move(targetCell));
+    snowdesktop::dock_desktop_return::Apply(dockEntries_, widgets_, items_, landings, DockDesktopReturnServices());
     NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();
     RebuildContainersAndItems();

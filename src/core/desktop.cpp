@@ -12,6 +12,7 @@
 #include "widget.h"
 #include "app/app.h"
 #include "widgets/single_cell_widget_rules.h"
+#include "dock/dock_desktop_return.h"
 #include "common/types.h"
 #include "common/constants.h"
 #include "common/utils.h"
@@ -536,7 +537,7 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
     POINT dragPoint = app_->dragSession_.CurrentPoint();
 
     // Dock 中的集合不是普通桌面图标，通用预览不会为它生成 landing。
-    // 按真实顺序和原始跨度复现 MoveDockItemsToDesktop 的可见页面落位计算。
+    // 预览与最终提交共用同一份真实落点规划。
     if (hasItemDrag && dynamic_cast<DockContainer*>(app_->dragSession_.Source()))
     {
         const bool hasWidgetEntry = std::any_of(app_->dragSession_.Items().begin(),
@@ -549,70 +550,20 @@ void DesktopGrid::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegion
         {
             GridCell requested = app_->ResolveDesktopRequestCell(
                 app_->dragSession_.SourceList(), dragPoint);
-            const GridPage* targetPage = FindGridPage(app_->gridPages_, requested.pageId);
-            if (!targetPage) return;
-
-            std::unordered_set<std::wstring> usedSlots;
-            for (const auto& widget : app_->widgets_)
-                if (!app_->IsGroupedWidget(widget) &&
-                    widget.gridCell.pageId != kDockPageId)
-                    app_->MarkGridArea(usedSlots, widget.gridCell, widget.gridSpan);
-            for (const auto& item : app_->items_)
-                if (!item.name.empty() && item.gridCell.pageId != kDockPageId &&
-                    !app_->IsItemInAnyWidget(item))
-                    app_->MarkGridArea(usedSlots, item.gridCell, item.gridSpan);
-
-            std::vector<DockEntryItem*> dockItems;
-            for (Item* item : app_->dragSession_.Items())
-                if (auto* dockItem = dynamic_cast<DockEntryItem*>(item))
-                    dockItems.push_back(dockItem);
-            std::sort(dockItems.begin(), dockItems.end(),
-                [](const DockEntryItem* lhs, const DockEntryItem* rhs) {
-                    return lhs->GetEntryIndex() < rhs->GetEntryIndex();
-                });
-
-            int startSlot = SlotFromCell(app_->gridPages_, requested);
-            for (DockEntryItem* dockItem : dockItems)
+            const auto landings = app_->PlanDockDesktopReturn(app_->dragSession_.Items(), requested);
+            for (const auto& landing : landings)
             {
-                GridSpan span{ 1, 1 };
-                if (IsWidgetDockEntryType(dockItem->GetEntryType()))
-                {
-                    size_t widgetIndex = app_->FindWidgetIndexById(dockItem->GetReference());
-                    if (widgetIndex < app_->widgets_.size())
-                        span = app_->widgets_[widgetIndex].gridSpan;
-                }
-                else
-                {
-                    // A retained desktop source can be large, but its Dock
-                    // entry has a separate, ordinary presentation.
-                    span = {1, 1};
-                }
-                span.columns = std::max(1, span.columns);
-                span.rows = std::max(1, span.rows);
-
-                GridCell landing;
-                landing.pageId = requested.pageId;
-                landing.column = startSlot / std::max(1, targetPage->rows);
-                landing.row = startSlot % std::max(1, targetPage->rows);
-                landing = ClampGridCellToFitPage(
-                    *targetPage, landing, span);
-                RECT bounds = GetGridRect(app_->gridPages_, landing, span);
-                // 与桌面组件拖拽一致：边缘处收回起点并保留原跨度。命中区域
-                // 被占用（或组件大于整页）时不寻找其他位置，绘制红色禁止框。
-                if (!GridAreaFitsPage(*targetPage, landing, span) ||
-                    app_->AreGridSlotsMarked(usedSlots, landing, span))
+                const RECT bounds = GetGridRect(app_->gridPages_, landing.cell, landing.span);
+                if (!landing.accepted)
                 {
                     app_->DrawD2DRoundedRectangle(ctx, bounds, 8.0f,
                         D2D1::ColorF(1.0f, 0.30f, 0.30f, 0.18f),
                         D2D1::ColorF(1.0f, 0.25f, 0.25f, 0.85f), 2.0f);
                     continue;
                 }
-
                 app_->DrawD2DRoundedRectangle(ctx, bounds, 8.0f,
                     D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.15f),
                     D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.78f), 2.0f);
-                app_->MarkGridArea(usedSlots, landing, span);
-                ++startSlot;
             }
             return;
         }
