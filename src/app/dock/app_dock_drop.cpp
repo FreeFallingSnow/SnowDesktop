@@ -8,6 +8,21 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
     Container* origin, DockContainer* targetDock, size_t insertIndex, int mods)
 {
     if (!targetDock || sourceItems.empty()) return;
+    if ((mods & (MK_CONTROL | MK_ALT)) != 0)
+    {
+        std::vector<Item*> files;
+        for (Item* source : sourceItems)
+        {
+            const auto* widget = dynamic_cast<const Widget*>(source);
+            const auto* data = widget ? widget->GetWidgetData() : nullptr;
+            if (!data || !snowdesktop::single_cell_widget::IsIconMode(*data)) files.push_back(source);
+        }
+        if (files.size() != sourceItems.size())
+        {
+            if (!files.empty()) CommitDockDrop(files, origin, targetDock, insertIndex, mods);
+            return;
+        }
+    }
 
     if (dynamic_cast<DockContainer*>(origin))
     {
@@ -375,6 +390,14 @@ bool DesktopApp::DropItemsIntoDockCollection(
     if (widgetIndex < widgets_.size() && IsGroupWidgetType(widgets_[widgetIndex].type))
     {
         const DragSourceList sourceList = BuildDragSourceList(sourceItems, origin);
+        if (sourceList.HasDesktopWidgetIcons())
+        {
+            for (const auto& container : containers_)
+                if (auto* group = dynamic_cast<WidgetContainer*>(container.get());
+                    group && group->GetWidgetData() == &widgets_[widgetIndex])
+                    return DropDesktopWidgetIconsIntoGroup(group, sourceList, nullptr, HitRegion::Empty, mods);
+            return false;
+        }
         const auto payload = sourceList.SlotPayloadKind();
         if (payload == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget ||
             payload == snowdesktop::slot_contract::DragPayloadKind::CollectionGroupLabel ||

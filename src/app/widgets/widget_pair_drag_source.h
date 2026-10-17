@@ -12,6 +12,22 @@ struct Source
     std::wstring groupId;
 };
 
+// A dragged entrance vacates its own cell even though its runtime container
+// stays alive. Other components (including selected ones outside the payload)
+// must retain their drop-target and occlusion semantics.
+inline bool IsCapturedDesktopIcon(const DragSourceList& list,
+    const DesktopWidget& widget)
+{
+    return single_cell_widget::IsIconMode(widget) && !widget.id.empty() &&
+        list.hasWidgets && !list.hasOriginWidget &&
+        list.SourceSurfaceKind() == slot_contract::SlotSurfaceKind::Desktop &&
+        std::any_of(list.entries.begin(), list.entries.end(), [&](const auto& entry) {
+            return entry.desktopWidgetIcon && !entry.fromDock &&
+                entry.kind == DropSourceKind::Widget && entry.widgetId == widget.id &&
+                entry.widgetType == widget.type;
+        });
+}
+
 // Resolve captured IDs instead of the active tab or runtime Item pointers:
 // dwell switching and container rebuilds must not change the dragged child.
 inline Source ResolveSource(const DragSourceList& list,

@@ -9,6 +9,7 @@
 #include "widget/runtime/widget_visibility_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "widgets/collection_group_rules.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
 
 // Desktop scene composition: static cache, dynamic overlays and frame orchestration.
 
@@ -440,7 +441,8 @@ void DesktopApp::DrawDynamicOverlays(
             GetOpenPopupWidget();
         const bool popupTarget = wc && openPopupWidget &&
             wc->GetWidgetData() == openPopupWidget &&
-            targetSlot == popupDragTarget_.Get();
+            IsPointOccludedByOpenPopup(dragSession_.CurrentPoint()) &&
+            (wc == GetGroupPopupView() || targetSlot == popupDragTarget_.Get());
         const bool targetUsesPopupLayer =
             snowdesktop::popup_drag_rules::
                 ResolveDropPreviewLayer(popupTarget) ==
@@ -450,7 +452,10 @@ void DesktopApp::DrawDynamicOverlays(
             return;
         const bool groupEntryTarget =
             wc &&
-            ((dragSession_.SourceList().
+            ((wc->GetWidgetData() && snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+                    dragSession_.SourceList(), wc->GetWidgetData()->type,
+                    DropActionToMods(dragSession_.Action()))) ||
+             (dragSession_.SourceList().
                     hasCollectionGroupEntries &&
                 dynamic_cast<CollectionGroup*>(wc)) ||
              (dragSession_.SourceList().
@@ -689,6 +694,18 @@ void DesktopApp::DrawDynamicOverlays(
                 DesktopItem* item = icon->GetDesktopItem();
                 if (!item || !item->selected || IsRectEmptyRect(item->bounds)) continue;
                 icon->Draw(ctx, item->bounds, 2);
+            }
+            // Component entrances have retained child surfaces. Their live
+            // marquee state belongs to this foreground pass just like icons;
+            // repainting only the marquee must also clear a departed entrance.
+            for (auto& widget : widgets_)
+            {
+                if (!widget.selected || !snowdesktop::single_cell_widget::IsIconMode(widget) ||
+                    IsGroupedWidget(widget) || IsRectEmptyRect(widget.bounds) ||
+                    (hiddenMode && !widget.keepWhenDesktopHidden))
+                    continue;
+                Widget entrance(&widget, this);
+                entrance.Draw(ctx, widget.bounds, 2);
             }
         }
         if (marqueeDockFolderPopup_ ||

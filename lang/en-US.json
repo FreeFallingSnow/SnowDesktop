@@ -2868,5 +2868,9 @@
   "iconWorkshop.descriptionTooLong": "The sharing description is too long. Shorten it and try again.",
   "app.widget_preview.single_cell_component": "Single-cell widget",
   "app.settings.group_component_badges": "Group component badges",
-  "iconLibrary.recommended": "Recommended"
+  "iconLibrary.recommended": "Recommended",
+  "app.widget_drop.merge_collections": "Merge into this collection",
+  "app.widget_drop.merge_desktop_files": "Merge into this desktop files widget",
+  "app.widget_drop.create_collection_group": "Create collection group",
+  "app.widget_drop.create_file_group": "Create file group"
 }

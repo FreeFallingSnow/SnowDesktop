@@ -1,4 +1,5 @@
 #include "drag_target_resolver.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
 
 namespace
 {
@@ -43,16 +44,15 @@ bool DragTargetResolver::AcceptsInternal(
     namespace contract = snowdesktop::slot_contract;
     if (source.HasDesktopWidgetIcons())
     {
-        const auto files = source.WithoutDesktopWidgetIcons();
         const auto targetSurface = target.GetSlotSurfaceKind();
-        if (targetSurface != contract::SlotSurfaceKind::Desktop &&
-            targetSurface != contract::SlotSurfaceKind::Dock)
-            return AcceptsInternal(target, files);
+        const auto eligible = snowdesktop::desktop_widget_icon_drop::Filter(source, targetSurface);
+        const auto files = eligible.WithoutDesktopWidgetIcons();
+        if (!eligible.HasDesktopWidgetIcons()) return AcceptsInternal(target, files);
         if (!files.Empty() && !AcceptsInternal(target, files)) return false;
-        for (const auto& entry : source.entries)
+        for (const auto& entry : eligible.entries)
         {
             if (!entry.desktopWidgetIcon) continue;
-            DragSourceList single = source;
+            DragSourceList single = eligible;
             single.entries = {entry};
             single.entries.front().desktopWidgetIcon = false;
             single.hasDesktopIcons = single.hasFolderEntries = single.hasExternalFiles = false;
@@ -60,7 +60,7 @@ bool DragTargetResolver::AcceptsInternal(
             single.hasFileGroupSourceLabels = false;
             single.hasWidgets = true;
             if (!AcceptsInternal(target, single) ||
-                !target.AcceptsDragPayload(single.SlotPayloadKind(), source.entries.size()))
+                !target.AcceptsDragPayload(single.SlotPayloadKind(), eligible.entries.size()))
                 return false;
         }
         return true;

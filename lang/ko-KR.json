@@ -2868,5 +2868,9 @@
   "iconWorkshop.descriptionTooLong": "공유 설명이 너무 깁니다. 줄인 후 다시 시도하세요.",
   "app.widget_preview.single_cell_component": "한 칸 위젯",
   "app.settings.group_component_badges": "그룹 구성 요소 배지",
-  "iconLibrary.recommended": "추천 결과"
+  "iconLibrary.recommended": "추천 결과",
+  "app.widget_drop.merge_collections": "이 컬렉션에 병합",
+  "app.widget_drop.merge_desktop_files": "이 바탕 화면 파일 위젯에 병합",
+  "app.widget_drop.create_collection_group": "컬렉션 그룹 만들기",
+  "app.widget_drop.create_file_group": "파일 그룹 만들기"
 }

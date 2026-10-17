@@ -1156,88 +1156,104 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
             // key transition with no intervening mouse-move message.
             OnMouseMoveAt(wp, upPoint);
             HideDragHintWindow();
-            const size_t pairTarget = HitTestWidgetPairTarget(upPoint, mouseDownWidgetIndex_);
-            const auto pairAction = pairTarget < widgets_.size()
-                ? snowdesktop::widget_pair_drop::ResolveAction(
-                    snowdesktop::widget_pair_drop::GetOptions(
-                        widgets_[mouseDownWidgetIndex_].type, widgets_[pairTarget].type),
-                    (wp & MK_CONTROL) != 0, (wp & MK_SHIFT) != 0,
-                    (GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
-                : snowdesktop::widget_pair_drop::Action::None;
-            const auto movingPayload = snowdesktop::slot_contract::
-                PayloadForWidgetType(
-                    widgets_[mouseDownWidgetIndex_].type);
-            const bool canCollectionGroup =
-                widgetCollectionGroupTargetIndex_ < widgets_.size() &&
-                widgets_[widgetCollectionGroupTargetIndex_].type ==
-                    DesktopWidgetType::CollectionGroup &&
-                snowdesktop::slot_contract::AcceptsSlotDrop(
-                    snowdesktop::slot_contract::
-                        SlotSurfaceKind::Desktop,
-                    movingPayload,
-                    snowdesktop::slot_contract::
-                        SlotSurfaceKind::CollectionGroup,
-                    snowdesktop::slot_contract::
-                        DragRelation::CrossSurface);
-            const bool canFileGroup =
-                widgetCollectionGroupTargetIndex_ < widgets_.size() &&
-                widgets_[widgetCollectionGroupTargetIndex_].type ==
-                    DesktopWidgetType::FileGroup &&
-                snowdesktop::slot_contract::AcceptsSlotDrop(
-                    snowdesktop::slot_contract::
-                        SlotSurfaceKind::Desktop,
-                    movingPayload,
-                    snowdesktop::slot_contract::
-                        SlotSurfaceKind::FileGroup,
-                    snowdesktop::slot_contract::
-                        DragRelation::CrossSurface);
-            const bool canGroup =
-                canCollectionGroup || canFileGroup;
-            DockContainer* dock = canGroup
-                ? nullptr : GetDockContainerAtPoint(upPoint);
-            const bool canDock = !canGroup && dock &&
-                snowdesktop::slot_contract::AcceptsSlotDrop(
-                    snowdesktop::slot_contract::
-                        SlotSurfaceKind::Desktop,
-                    movingPayload,
-                    snowdesktop::slot_contract::
-                        SlotSurfaceKind::Dock,
-                    snowdesktop::slot_contract::
-                        DragRelation::CrossSurface);
-            // Preserve the drag-time Dock hit geometry through the final
-            // release test, then end the gesture before any placement path
-            // rebuilds the persistent DockHost from normal interaction bounds.
-            widgetAction_ = WidgetAction::None;
-            if (pairAction != snowdesktop::widget_pair_drop::Action::None)
+            DWORD menuKeyState = MK_RBUTTON;
+            const bool commitMove = !rightDrop || ChooseRightDragDropAction(upPoint,
+                menuKeyState, DROPEFFECT_MOVE | DROPEFFECT_COPY, false);
+            const auto menuPairAction = widgetPairAction_;
+            if (commitMove && mouseDownWidgetIndex_ < widgets_.size())
             {
-                CommitWidgetPairDrop(mouseDownWidgetIndex_, pairTarget, pairAction);
-            }
-            else if (canGroup)
-            {
-                if (canCollectionGroup)
-                    AddCollectionToGroup(
-                        mouseDownWidgetIndex_,
-                        widgetCollectionGroupTargetIndex_,
-                        widgetCollectionGroupInsertIndex_);
+                if (rightDrop)
+                {
+                    wp = menuKeyState;
+                    // Menu messages can rebuild containers. Re-resolve Dock/group
+                    // bindings after the source ID has been validated and rebound.
+                    widgetAction_ = WidgetAction::Move;
+                    OnMouseMoveAt(wp, upPoint);
+                }
+                const size_t pairTarget = HitTestWidgetPairTarget(upPoint, mouseDownWidgetIndex_);
+                const auto pairAction = rightDrop ? menuPairAction : pairTarget < widgets_.size()
+                    ? snowdesktop::widget_pair_drop::ResolveAction(
+                        snowdesktop::widget_pair_drop::GetOptions(
+                            widgets_[mouseDownWidgetIndex_].type, widgets_[pairTarget].type),
+                        (wp & MK_CONTROL) != 0, (wp & MK_SHIFT) != 0,
+                        (GetAsyncKeyState(VK_MENU) & 0x8000) != 0)
+                    : snowdesktop::widget_pair_drop::Action::None;
+                const auto movingPayload = snowdesktop::slot_contract::
+                    PayloadForWidgetType(
+                        widgets_[mouseDownWidgetIndex_].type);
+                const bool canCollectionGroup =
+                    widgetCollectionGroupTargetIndex_ < widgets_.size() &&
+                    widgets_[widgetCollectionGroupTargetIndex_].type ==
+                        DesktopWidgetType::CollectionGroup &&
+                    snowdesktop::slot_contract::AcceptsSlotDrop(
+                        snowdesktop::slot_contract::
+                            SlotSurfaceKind::Desktop,
+                        movingPayload,
+                        snowdesktop::slot_contract::
+                            SlotSurfaceKind::CollectionGroup,
+                        snowdesktop::slot_contract::
+                            DragRelation::CrossSurface);
+                const bool canFileGroup =
+                    widgetCollectionGroupTargetIndex_ < widgets_.size() &&
+                    widgets_[widgetCollectionGroupTargetIndex_].type ==
+                        DesktopWidgetType::FileGroup &&
+                    snowdesktop::slot_contract::AcceptsSlotDrop(
+                        snowdesktop::slot_contract::
+                            SlotSurfaceKind::Desktop,
+                        movingPayload,
+                        snowdesktop::slot_contract::
+                            SlotSurfaceKind::FileGroup,
+                        snowdesktop::slot_contract::
+                            DragRelation::CrossSurface);
+                const bool canGroup =
+                    canCollectionGroup || canFileGroup;
+                DockContainer* dock = canGroup
+                    ? nullptr : GetDockContainerAtPoint(upPoint);
+                const bool canDock = !canGroup && dock &&
+                    snowdesktop::slot_contract::AcceptsSlotDrop(
+                        snowdesktop::slot_contract::
+                            SlotSurfaceKind::Desktop,
+                        movingPayload,
+                        snowdesktop::slot_contract::
+                            SlotSurfaceKind::Dock,
+                        snowdesktop::slot_contract::
+                            DragRelation::CrossSurface);
+                // Preserve the drag-time Dock hit geometry through the final
+                // release test, then end the gesture before any placement path
+                // rebuilds the persistent DockHost from normal interaction bounds.
+                widgetAction_ = WidgetAction::None;
+                if (pairAction != snowdesktop::widget_pair_drop::Action::None)
+                {
+                    CommitWidgetPairDrop(mouseDownWidgetIndex_, pairTarget, pairAction);
+                }
+                else if (canGroup)
+                {
+                    if (canCollectionGroup)
+                        AddCollectionToGroup(
+                            mouseDownWidgetIndex_,
+                            widgetCollectionGroupTargetIndex_,
+                            widgetCollectionGroupInsertIndex_);
+                    else
+                        AddWidgetToFileGroup(
+                            mouseDownWidgetIndex_,
+                            widgetCollectionGroupTargetIndex_,
+                            widgetCollectionGroupInsertIndex_);
+                }
+                else if (IsPointOccludedByOpenPopup(upPoint))
+                    MessageBeep(MB_ICONWARNING);
+                else if (canDock)
+                {
+                    Widget dockSource(&widgets_[mouseDownWidgetIndex_], this);
+                    int mods = rightDrop ? static_cast<int>(wp & MK_CONTROL) :
+                        (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? MK_CONTROL : 0;
+                    CommitDockDrop({ &dockSource }, nullptr, dock,
+                        widgetDockInsertIndex_, mods);
+                    SaveLayoutSlots();
+                    LayoutItems();
+                }
                 else
-                    AddWidgetToFileGroup(
-                        mouseDownWidgetIndex_,
-                        widgetCollectionGroupTargetIndex_,
-                        widgetCollectionGroupInsertIndex_);
+                    PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, true);
             }
-            else if (IsPointOccludedByOpenPopup(upPoint))
-                MessageBeep(MB_ICONWARNING);
-            else if (canDock)
-            {
-                Widget dockSource(&widgets_[mouseDownWidgetIndex_], this);
-                int mods = (GetAsyncKeyState(VK_CONTROL) & 0x8000) ? MK_CONTROL : 0;
-                CommitDockDrop({ &dockSource }, nullptr, dock,
-                    widgetDockInsertIndex_, mods);
-                SaveLayoutSlots();
-                LayoutItems();
-            }
-            else
-                PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, true);
         }
         else
         {
@@ -1246,6 +1262,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
                 PlaceWidgetWithDisplacement(mouseDownWidgetIndex_, widgetPreviewCell_, widgetPreviewSpan_, false);
         }
         // PendingMove/PendingResize: just cancel without displacement
+        widgetAction_ = WidgetAction::None;
+        rightButtonItemDrag_ = false;
         SetCursor(LoadCursorW(nullptr, IDC_ARROW));
         UpdateWidgetHandleCursor(upPoint);
         widgetDockTarget_ = false;
@@ -1413,7 +1431,8 @@ void DesktopApp::OnLeftButtonUpAt(WPARAM wp, POINT upPoint,
         goto cleanup;
     }
 
-    if (TryCommitWidgetPairDragDrop(upPoint, rightDrop ? dropPreviewMods :
+    if ((!rightDrop || widgetPairAction_ != snowdesktop::widget_pair_drop::Action::None) &&
+        TryCommitWidgetPairDragDrop(upPoint, rightDrop ? dropPreviewMods :
             static_cast<int>(wp & (MK_CONTROL | MK_SHIFT)) |
             ((GetAsyncKeyState(VK_MENU) & 0x8000) ? MK_ALT : 0)))
         goto cleanup;

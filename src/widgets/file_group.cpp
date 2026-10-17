@@ -9,6 +9,7 @@
 #include "common/types.h"
 #include "app/app.h"
 #include "core/drop_model.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
 #include "collection_group_rules.h"
 #include "widget_chrome_rules.h"
 #include "ui/menu/menu_fluent_glyphs.h"
@@ -1314,8 +1315,9 @@ size_t FileGroup::GetDropInsertIndex(
     if (targetSlot && targetSlot == sourceTabDropSlot_.get())
     {
         if (app_ &&
-            app_->dragSession_.SourceList().
-                UsesFileGroupSourceInsertion())
+            (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
+                snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+                    app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup)))
         {
             size_t index = std::min(
                 targetSlot->GetIndex(),
@@ -1625,8 +1627,9 @@ HitRegion FileGroup::HitTestDrag(
     }
 
     if (app_ &&
-        app_->dragSession_.SourceList().
-            UsesFileGroupSourceInsertion())
+        (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
+            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+                app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup)))
         return HitRegion::Empty;
 
     if (IsGroupSearchActive())
@@ -1696,8 +1699,9 @@ void FileGroup::DrawDropPreview(
 {
     if (!context) return;
     if (app_ &&
-        app_->dragSession_.SourceList().
-            UsesFileGroupSourceInsertion())
+        (app_->dragSession_.SourceList().UsesFileGroupSourceInsertion() ||
+            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(),
+                DesktopWidgetType::FileGroup, DropActionToMods(app_->dragSession_.Action()))))
     {
         if (dropPreviewSourceTab_ &&
             dropPreviewValid_ &&
@@ -1764,6 +1768,9 @@ std::wstring FileGroup::GetDragHint(
         region == HitRegion::Blocked ||
         sourceItems.empty())
         return L"";
+    if (app_ && snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+            app_->dragSession_.SourceList(), DesktopWidgetType::FileGroup, mods))
+        return _LW("widget.file_group.add_hint");
     const bool allSources = std::all_of(
         sourceItems.begin(), sourceItems.end(),
         [](Item* item) {
@@ -1795,6 +1802,12 @@ void FileGroup::OnItemsDropped(
     HitRegion region, int mods)
 {
     if (!app_ || !data_ || sourceItems.empty()) return;
+    const auto sourceListForMembership = app_->BuildDragSourceList(sourceItems, origin);
+    if (sourceListForMembership.HasDesktopWidgetIcons())
+    {
+        app_->DropDesktopWidgetIconsIntoGroup(this, sourceListForMembership, targetSlot, region, mods);
+        return;
+    }
     const bool allFileSources =
         std::all_of(
             sourceItems.begin(),

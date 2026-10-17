@@ -732,6 +732,7 @@ void DesktopApp::OnMouseMoveAt(
         if (widgetAction_ == WidgetAction::PendingMove)
         {
             widgetAction_ = WidgetAction::Move;
+            if (rightButtonItemDrag_) suppressRightButtonUp_ = true;
             if (pendingWidgetButtonAction_ == WidgetHit::CollectionOpenBtn)
                 pendingWidgetButtonAction_ = WidgetHit::None;
         }
@@ -882,7 +883,7 @@ void DesktopApp::OnMouseMoveAt(
         {
             const auto options = pair::GetOptions(movingType,
                 widgets_[widgetPairTargetIndex_].type);
-            widgetPairAction_ = pair::ResolveAction(options,
+            widgetPairAction_ = rightButtonItemDrag_ ? pair::Action::None : pair::ResolveAction(options,
                 (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0,
                 (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0,
                 (GetAsyncKeyState(VK_MENU) & 0x8000) != 0);

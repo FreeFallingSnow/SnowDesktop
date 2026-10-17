@@ -40,6 +40,7 @@
 #include "layout/selected_grid_move.h"
 #include "layout/popup_animation_rules.h"
 #include "drag_drop/ole_drag_rules.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
 
 #include <propsys.h>
 #include <propkey.h>
@@ -1045,6 +1046,53 @@ void TestDesktopWidgetIconsInMixedSelection()
         Check(!DragTargetResolver::AcceptsInternal(desktop, source),
             "the native entrance exception never enables unrelated mixed widget payloads");
     }
+}
+
+void TestDesktopWidgetIconDestinationMatrix()
+{
+    using Type = DesktopWidgetType;
+    using Surface = snowdesktop::slot_contract::SlotSurfaceKind;
+    namespace icons = snowdesktop::desktop_widget_icon_drop;
+    const Surface surfaces[] = {Surface::Desktop, Surface::Dock, Surface::Collection, Surface::FileCategories,
+        Surface::FolderMapping, Surface::CollectionGroup, Surface::FileGroup, Surface::LuaLogicalSlot, Surface::Guide};
+    for (const auto type : {Type::Collection, Type::FileCategories, Type::FolderMapping, Type::CollectionGroup, Type::FileGroup})
+        for (const auto surface : surfaces)
+            for (const int mods : {0, MK_SHIFT, MK_CONTROL, MK_ALT, MK_CONTROL | MK_SHIFT})
+            {
+                DragSourceList captured;
+                captured.hasWidgets = captured.hasOriginSurface = true;
+                captured.originSurface = Surface::Desktop;
+                DragSourceEntry icon;
+                icon.kind = DropSourceKind::Widget;
+                icon.widgetId = L"desktop-component";
+                icon.widgetType = type;
+                icon.desktopWidgetIcon = true;
+                icon.sourceIndex = 7;
+                captured.entries.push_back(icon);
+                const bool targetAccepts = surface == Surface::Desktop || surface == Surface::Dock ||
+                    (surface == Surface::CollectionGroup && type == Type::Collection) ||
+                    (surface == Surface::FileGroup && (type == Type::FileCategories || type == Type::FolderMapping));
+                const bool transfers = targetAccepts && (mods == 0 || mods == MK_SHIFT);
+                const auto nativeOnly = icons::Filter(captured, surface, mods);
+                Check(nativeOnly.entries.size() == (transfers ? 1u : 0u),
+                    "destination/action matrix filters native identities without permitting copies, shortcuts or nested groups");
+                ContractContainer target(BarStyle::VBar, surface);
+                Check(DragTargetResolver::AcceptsInternal(target, captured) == targetAccepts,
+                    "actual runtime resolver admits every compatible group and rejects every incompatible native target");
+                DragSourceEntry file;
+                file.kind = DropSourceKind::DesktopIcon;
+                file.desktopKey = L"ordinary-document";
+                file.sourceIndex = 19;
+                captured.entries.push_back(file);
+                captured.hasDesktopIcons = true;
+                const auto mixed = icons::Filter(captured, surface, mods);
+                Check(mixed.entries.size() == (transfers ? 2u : 1u) &&
+                        mixed.entries.back().sourceIndex == 19 && mixed.DesktopKeys() == std::vector<std::wstring>{L"ordinary-document"} &&
+                        captured.entries.front().widgetId == L"desktop-component" && captured.entries.size() == 2,
+                    "mixed matrix retains file landing identities and leaves unsupported component sources unchanged");
+                Check(DragTargetResolver::AcceptsInternal(target, mixed) == (surface != Surface::Guide),
+                    "eligible files continue through the real resolver when unsupported components are filtered out");
+            }
 }
 
 void TestDockPayloadSurvivesPageTurnWithoutSelection()
@@ -3764,6 +3812,7 @@ int wmain(int argc, wchar_t** argv)
     TestDesktopFilesDockPayload();
     TestDockGroupPayload();
     TestDesktopWidgetIconsInMixedSelection();
+    TestDesktopWidgetIconDestinationMatrix();
     TestDragTargetResolutionUsesContractAndZOrder();
     TestRuntimeSourceTargetMatrix();
     TestExternalDropContentRegressions();

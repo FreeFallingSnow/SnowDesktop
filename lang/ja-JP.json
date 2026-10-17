@@ -2868,5 +2868,9 @@
   "iconWorkshop.descriptionTooLong": "共有の説明が長すぎます。短くしてから再試行してください。",
   "app.widget_preview.single_cell_component": "1マスウィジェット",
   "app.settings.group_component_badges": "グループコンポーネントのバッジ",
-  "iconLibrary.recommended": "おすすめの結果"
+  "iconLibrary.recommended": "おすすめの結果",
+  "app.widget_drop.merge_collections": "このコレクションに統合",
+  "app.widget_drop.merge_desktop_files": "このデスクトップファイルウィジェットに統合",
+  "app.widget_drop.create_collection_group": "コレクショングループを作成",
+  "app.widget_drop.create_file_group": "ファイルグループを作成"
 }

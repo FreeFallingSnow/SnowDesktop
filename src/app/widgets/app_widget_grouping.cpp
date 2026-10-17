@@ -2,6 +2,8 @@
 #include "desktop/folder_mapping_visibility_rules.h"
 #include "widgets/collection_group_rules.h"
 #include "steam/steam_app_identity.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
+#include "widgets/widget_group_drop.h"
 
 #include <commctrl.h>
 #include <objbase.h>
@@ -1030,6 +1032,55 @@ bool DesktopApp::MoveFileSourcesToFileGroup(
         MoveWidgetSourcesToGroup(sourceItems, groupIndex, insertIndex);
 }
 
+bool DesktopApp::DropDesktopWidgetIconsIntoGroup(WidgetContainer* group,
+    const DragSourceList& source, Slot* targetSlot, HitRegion region, int mods)
+{
+    if (!group || !group->GetWidgetData() || !IsGroupWidgetType(group->GetWidgetData()->type)) return false;
+    const auto* target = group->GetWidgetData();
+    const std::wstring groupId = target->id;
+    const auto groupType = target->type;
+    size_t insertIndex = group->GetDropInsertIndex(targetSlot, region);
+    const bool overTab = groupType == DesktopWidgetType::CollectionGroup
+        ? !static_cast<CollectionGroup*>(group)->CategoryIdAtPoint(dragSession_.CurrentPoint()).empty()
+        : !static_cast<FileGroup*>(group)->SourceIdAtPoint(dragSession_.CurrentPoint()).empty();
+    if (!overTab) insertIndex = target->childWidgetIds.size();
+    const auto eligible = snowdesktop::desktop_widget_icon_drop::Filter(source,
+        snowdesktop::slot_contract::SurfaceForWidgetType(groupType), mods);
+    std::vector<std::wstring> movingIds;
+    for (const auto& entry : eligible.entries)
+    {
+        if (!entry.desktopWidgetIcon) continue;
+        const size_t index = FindWidgetIndexById(entry.widgetId);
+        if (index >= widgets_.size() || widgets_[index].type != *entry.widgetType ||
+            !snowdesktop::single_cell_widget::IsIconMode(widgets_[index]) || IsGroupedWidget(widgets_[index]) ||
+            widgets_[index].id == groupId) continue;
+        if (std::find(movingIds.begin(), movingIds.end(), entry.widgetId) == movingIds.end())
+            movingIds.push_back(entry.widgetId);
+    }
+    const auto files = source.WithoutDesktopWidgetIcons();
+    const auto filePreview = BuildDropPreviewList(files, group,
+        nullptr, HitRegion::Empty, mods, dragSession_.CurrentPoint());
+    if (movingIds.empty()) return !files.Empty() && ExecuteDropPipeline(files, filePreview);
+
+    // File submission can rebuild containers or create an empty group's first
+    // source. Retain IDs only across that boundary; never reuse Item/Slot pointers.
+    EndDragSession();
+    if (!files.Empty() && !filePreview.Empty() && !ExecuteDropPipeline(files, filePreview)) return false;
+    const size_t targetIndex = FindWidgetIndexById(groupId);
+    if (targetIndex >= widgets_.size() || widgets_[targetIndex].type != groupType) return false;
+    std::vector<std::unique_ptr<Widget>> wrappers;
+    std::vector<Item*> members;
+    for (const auto& id : movingIds)
+    {
+        const size_t index = FindWidgetIndexById(id);
+        if (index >= widgets_.size() || IsGroupedWidget(widgets_[index]) ||
+            !snowdesktop::single_cell_widget::IsIconMode(widgets_[index])) return false;
+        wrappers.push_back(std::make_unique<Widget>(&widgets_[index], this));
+        members.push_back(wrappers.back().get());
+    }
+    return MoveWidgetSourcesToGroup(members, targetIndex, insertIndex);
+}
+
 bool DesktopApp::MoveWidgetSourcesToGroup(
     const std::vector<Item*>& sourceItems, size_t groupIndex, size_t insertIndex)
 {
@@ -1040,9 +1091,7 @@ bool DesktopApp::MoveWidgetSourcesToGroup(
 
     const auto groupType = widgets_[groupIndex].type;
     const auto acceptsChild = [groupType](DesktopWidgetType type) {
-        return groupType == DesktopWidgetType::CollectionGroup
-            ? type == DesktopWidgetType::Collection
-            : type == DesktopWidgetType::FolderMapping || type == DesktopWidgetType::FileCategories;
+        return snowdesktop::widget_group_drop::AcceptsChild(groupType, type);
     };
 
     std::vector<std::wstring> movingIds;
@@ -1097,83 +1146,8 @@ bool DesktopApp::MoveWidgetSourcesToGroup(
     if (movingIds.empty())
         return false;
 
-    DesktopWidget& target =
-        widgets_[groupIndex];
-    const std::wstring previousActive =
-        target.activeCategoryId;
-    insertIndex = std::min(
-        insertIndex,
-        target.childWidgetIds.size());
-    size_t removedBefore = 0;
-    for (const auto& id : movingIds)
-    {
-        const auto existing =
-            std::find(
-                target.childWidgetIds.begin(),
-                target.childWidgetIds.end(),
-                id);
-        if (existing !=
-                target.childWidgetIds.end() &&
-            static_cast<size_t>(
-                std::distance(
-                    target.childWidgetIds.begin(),
-                    existing)) < insertIndex)
-            ++removedBefore;
-    }
-
-    for (auto& group : widgets_)
-    {
-        if (group.type != groupType)
-            continue;
-        for (const auto& id : movingIds)
-            std::erase(
-                group.childWidgetIds, id);
-        group.activeCategoryId =
-            snowdesktop::
-                collection_group_rules::
-                    ResolveActiveItem(
-                        group.childWidgetIds,
-                        group.activeCategoryId);
-    }
-
-    const size_t insertAt =
-        std::min(
-            insertIndex > removedBefore
-                ? insertIndex - removedBefore
-                : 0,
-            target.childWidgetIds.size());
-    target.childWidgetIds.insert(
-        target.childWidgetIds.begin() +
-            static_cast<std::ptrdiff_t>(
-                insertAt),
-        movingIds.begin(), movingIds.end());
-    target.activeCategoryId =
-        snowdesktop::
-            collection_group_rules::
-                ResolveActiveItem(
-                    target.childWidgetIds,
-                    previousActive);
-
-    const std::unordered_set<std::wstring>
-        movingSet(
-            movingIds.begin(), movingIds.end());
-    std::erase_if(
-        dockEntries_,
-        [&](const DockEntry& entry) {
-            return (entry.type == DockEntryType::Collection ||
-                    entry.type == DockEntryType::FolderMapping ||
-                    entry.type == DockEntryType::DesktopFiles) &&
-                movingSet.contains(
-                    entry.reference);
-        });
-    for (const auto& id : movingIds)
-    {
-        const size_t childIndex =
-            FindWidgetIndexById(id);
-        if (childIndex < widgets_.size())
-            widgets_[childIndex].
-                selected = false;
-    }
+    if (!snowdesktop::widget_group_drop::Apply(widgets_, dockEntries_, groupIndex, movingIds, insertIndex))
+        return false;
 
     NormalizeDockRecycleBinPosition();
     RefreshCollectedKeysCache();

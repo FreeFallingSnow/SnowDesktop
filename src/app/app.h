@@ -3216,6 +3216,8 @@ private:
         size_t insertIndex = static_cast<size_t>(-1));
     bool MoveWidgetSourcesToGroup(
         const std::vector<Item*>& sourceItems, size_t groupIndex, size_t insertIndex);
+    bool DropDesktopWidgetIconsIntoGroup(WidgetContainer* group,
+        const DragSourceList& source, Slot* targetSlot, HitRegion region, int mods);
     bool MoveFileSourcesToFileGroup(
         const std::vector<Item*>& sourceItems,
         size_t groupIndex, size_t insertIndex);

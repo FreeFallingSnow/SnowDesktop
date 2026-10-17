@@ -9,6 +9,7 @@
 #include "common/types.h"
 #include "app/app.h"
 #include "core/drop_model.h"
+#include "drag_drop/desktop_widget_icon_drop_rules.h"
 #include "collection_group_rules.h"
 #include "navigation/search_match.h"
 #include "widget_chrome_rules.h"
@@ -923,8 +924,9 @@ HitRegion CollectionGroup::HitTestDrag(
     }
 
     if (app_ &&
-        app_->dragSession_.SourceList().
-            hasCollectionGroupEntries)
+        (app_->dragSession_.SourceList().hasCollectionGroupEntries ||
+            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+                app_->dragSession_.SourceList(), DesktopWidgetType::CollectionGroup)))
         return HitRegion::Empty;
 
     return WidgetContainer::HitTestDrag(pt, outSlot);
@@ -936,9 +938,11 @@ void CollectionGroup::DrawDropPreview(
 {
     if (!ctx) return;
     if (app_ &&
-        app_->dragSession_.SourceList().
-            hasCollectionGroupEntries &&
-        region == HitRegion::Empty)
+        (app_->dragSession_.SourceList().hasCollectionGroupEntries ||
+            snowdesktop::desktop_widget_icon_drop::HasGroupMembers(app_->dragSession_.SourceList(),
+                DesktopWidgetType::CollectionGroup, DropActionToMods(app_->dragSession_.Action()))) &&
+        (region == HitRegion::Empty ||
+            (!slot && app_->dragSession_.SourceList().HasDesktopWidgetIcons())))
     {
         RECT target = GetFrameRect();
         const int padding = Cu(3.0f);
@@ -963,6 +967,9 @@ std::wstring CollectionGroup::GetDragHint(
         region == HitRegion::Blocked ||
         sourceItems.empty())
         return L"";
+    if (app_ && snowdesktop::desktop_widget_icon_drop::HasGroupMembers(
+            app_->dragSession_.SourceList(), DesktopWidgetType::CollectionGroup, mods))
+        return _LW("widget.collection_group.add_hint");
     const bool allCollections = std::all_of(
         sourceItems.begin(), sourceItems.end(),
         [](Item* item) {
@@ -985,6 +992,11 @@ void CollectionGroup::OnItemsDropped(
 {
     if (!app_ || !data_) return;
     const auto sourceListForMembership = app_->BuildDragSourceList(sourceItems, origin);
+    if (sourceListForMembership.HasDesktopWidgetIcons())
+    {
+        app_->DropDesktopWidgetIconsIntoGroup(this, sourceListForMembership, targetSlot, region, mods);
+        return;
+    }
     if (sourceListForMembership.SlotPayloadKind() == snowdesktop::slot_contract::DragPayloadKind::CollectionWidget)
     {
         const size_t insertion = CategoryIdAtPoint(app_->dragSession_.CurrentPoint()).empty()

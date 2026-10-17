@@ -2868,5 +2868,9 @@
   "iconWorkshop.descriptionTooLong": "Die Beschreibung ist zu lang. Bitte kürzen und erneut versuchen.",
   "app.widget_preview.single_cell_component": "Einzellen-Widget",
   "app.settings.group_component_badges": "Abzeichen für Gruppenkomponenten",
-  "iconLibrary.recommended": "Empfohlen"
+  "iconLibrary.recommended": "Empfohlen",
+  "app.widget_drop.merge_collections": "Mit dieser Sammlung zusammenführen",
+  "app.widget_drop.merge_desktop_files": "Mit diesem Desktop-Dateien-Widget zusammenführen",
+  "app.widget_drop.create_collection_group": "Sammlungsgruppe erstellen",
+  "app.widget_drop.create_file_group": "Dateigruppe erstellen"
 }

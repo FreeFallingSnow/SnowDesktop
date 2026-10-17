@@ -825,7 +825,8 @@ void DesktopApp::ShowItemContextMenu(
                 {
                     if (IsItemInAnyWidget(items_[index]) || items_[index].gridCell.pageId == kDockPageId) return;
                     lastContextMenuScreenPoint_ = screenPoint;
-                    AddWidgetToGrid(std::move(widget), {3, 3});
+                    widget.singleCellIconMode = true;
+                    AddWidgetToGrid(std::move(widget), {1, 1});
                 }
                 const size_t createdIndex = FindWidgetIndexById(createdId);
                 if (createdIndex < widgets_.size())

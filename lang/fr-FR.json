@@ -2868,5 +2868,9 @@
   "iconWorkshop.descriptionTooLong": "La description est trop longue. Raccourcissez-la et réessayez.",
   "app.widget_preview.single_cell_component": "Widget à une case",
   "app.settings.group_component_badges": "Badges des composants de groupe",
-  "iconLibrary.recommended": "Suggestions"
+  "iconLibrary.recommended": "Suggestions",
+  "app.widget_drop.merge_collections": "Fusionner avec cette collection",
+  "app.widget_drop.merge_desktop_files": "Fusionner avec ce widget de fichiers du bureau",
+  "app.widget_drop.create_collection_group": "Créer un groupe de collections",
+  "app.widget_drop.create_file_group": "Créer un groupe de fichiers"
 }

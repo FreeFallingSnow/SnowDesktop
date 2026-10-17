@@ -822,6 +822,10 @@ HitRegion WidgetContainer::HitTestDrag(POINT pt, Slot*& outSlot)
         return HitTestDrag(pt, outSlot);
     }
     outSlot = nullptr;
+    if (data_ && app_ && app_->dragSession_.IsActive() &&
+        snowdesktop::widget_pair_drag::IsCapturedDesktopIcon(
+            app_->dragSession_.SourceList(), *data_))
+        return HitRegion::None;
     RECT frame = GetFrameRect();
     if (!PtInRect(&frame, pt)) return HitRegion::None;
 
@@ -2887,8 +2891,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         const RECT frame = IsPreviewRendering() ? GetFrameRect() : data_->bounds;
         const RECT icon = GetSingleCellIconRect();
         if (IsRectEmpty(&frame) || IsRectEmpty(&icon)) return;
+        const bool desktopMarquee = !IsPreviewRendering() && app_->marqueeActive_ &&
+            !app_->marqueeDockFolderPopup_ && app_->marqueeWidgetIndex_ >= app_->widgets_.size();
         Widget::Draw(context, frame,
-            data_->selected ? 2 : PtInRect(&frame, mousePt) ? 1 : 0);
+            desktopMarquee ? 0 : data_->selected ? 2 : PtInRect(&frame, mousePt) ? 1 : 0);
+
+        if (desktopMarquee) return;
 
         const auto arc = snowdesktop::single_cell_widget::ResolveArc(icon, GetCellScale());
         const bool handleHovered = PtInRect(&frame, mousePt) ||

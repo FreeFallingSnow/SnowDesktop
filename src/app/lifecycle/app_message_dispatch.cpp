@@ -609,6 +609,26 @@ LRESULT DesktopApp::HandleMessage(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     {
         CancelRenameClick();
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (!IsPointOccludedByOpenPopup(pt) && !GetDockContainerAtPoint(pt))
+        {
+            for (size_t index = widgets_.size(); index-- > 0;)
+            {
+                const auto& widget = widgets_[index];
+                if (widget.type != DesktopWidgetType::FolderMapping ||
+                    !snowdesktop::single_cell_widget::IsIconMode(widget) || IsGroupedWidget(widget) ||
+                    (desktopIconsHidden_ && !widget.keepWhenDesktopHidden) || IsRectEmptyRect(widget.bounds))
+                    continue;
+                const RECT icon = GetItemIconRect(widget.bounds);
+                if (!PtInRect(&icon, pt)) continue;
+                const std::wstring path = widget.sourceFolderPath;
+                CancelPointerPressWithoutCaptureRelease();
+                ReleaseCapturePreservingPointerState();
+                CloseCollectionPopup(false);
+                if (!path.empty() && shellLaunchWorker_.Enqueue(hwnd_, path)) ClearSelection();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return 0;
+            }
+        }
         if (dockTrayPopup_ && IsPointOccludedByOpenPopup(pt))
         { OnLeftButtonDown(wp, lp); return 0; }
         if (HandleUsageGuidePointerDown(pt)) return 0;
