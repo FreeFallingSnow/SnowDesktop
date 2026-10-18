@@ -2,6 +2,8 @@
 #include "layout/page_navigation_rules.h"
 #include "core/drag_source_rebind.h"
 #include "core/transient_drag_slot.h"
+#include <map>
+#include <tuple>
 
 // Drag-target resolution, popup hit testing and page-navigation dwell.
 
@@ -276,13 +278,61 @@ void DesktopApp::RebindDragSourceAfterRebuild()
                         GetMemberItem(memberIndex)
                     : nullptr;
             });
-    if (reboundItems.empty())
+    // Selection can change while a menu or reload pumps messages. It is a UI
+    // state, not a new drag payload. Resolve only the recorded identities, in
+    // their original order, and never substitute a newly selected member.
+    const auto identity = [](const DragSourceEntry& entry) {
+        return std::tuple{entry.kind, entry.fromDock, entry.desktopWidgetIcon,
+            entry.protectedDesktopIcon, entry.widgetType, entry.dockEntryType,
+            entry.widgetId, ToUpperInvariant(entry.desktopKey),
+            ToUpperInvariant(entry.filePath), ToUpperInvariant(entry.dockReference)};
+    };
+    using Identity = decltype(identity(oldSourceList.entries.front()));
+    const auto resolveRecorded = [&](const std::vector<Item*>& candidates) {
+        std::vector<Item*> resolved;
+        const auto current = BuildDragSourceList(candidates, source);
+        if (current.SourceSurfaceKind() != oldSourceList.SourceSurfaceKind() ||
+            current.hasOriginWidget != oldSourceList.hasOriginWidget ||
+            (current.hasOriginWidget && (current.originWidgetId != oldSourceList.originWidgetId ||
+                current.originWidgetType != oldSourceList.originWidgetType))) return resolved;
+        std::map<Identity, Item*> live;
+        for (const auto& entry : current.entries)
+            if (entry.item && (!entry.desktopKey.empty() || !entry.filePath.empty() ||
+                    !entry.widgetId.empty() || !entry.dockReference.empty()))
+                live.emplace(identity(entry), entry.item);
+        std::unordered_set<Item*> used;
+        for (const auto& entry : oldSourceList.entries)
+        {
+            const auto found = live.find(identity(entry));
+            if (found == live.end() || !used.insert(found->second).second) return std::vector<Item*>{};
+            resolved.push_back(found->second);
+        }
+        return resolved;
+    };
+    auto recordedItems = resolveRecorded(reboundItems);
+    if (recordedItems.empty())
+    {
+        // An original member may no longer be highlighted but still be a live
+        // member of the same source view. Query its current wrappers without
+        // changing selection. Do not retain selected-wrapper pointers across
+        // the lazy slot build, which may replace their cache.
+        std::vector<Item*> visible;
+        std::unordered_set<Item*> added;
+        for (const auto& slot : source->GetSlots())
+            if (auto* item = slot->GetItem(); item && added.insert(item).second) visible.push_back(item);
+        for (const auto& object : items_oo_)
+            if (object->GetContainer() == source && added.insert(object.get()).second) visible.push_back(object.get());
+        recordedItems = resolveRecorded(visible);
+    }
+    if (recordedItems.empty())
     {
         EndDragSession();
         return;
     }
-    DragSourceList reboundList = BuildDragSourceList(reboundItems, source);
-    dragSession_.RebindSource(source, std::move(reboundItems), std::move(reboundList));
+    DragSourceList reboundList = BuildDragSourceList(recordedItems, source);
+    for (size_t i = 0; i < reboundList.entries.size(); ++i)
+        reboundList.entries[i].sourceIndex = oldSourceList.entries[i].sourceIndex;
+    dragSession_.RebindSource(source, std::move(recordedItems), std::move(reboundList));
 }
 
 /**

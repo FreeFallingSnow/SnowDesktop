@@ -11,10 +11,10 @@ inline void Run()
     std::size_t scenes = 0;
     for (const int source : {0, 1, 2, 3}) // desktop / collection / files / mapping
     for (const bool keepOriginal : {true, false})
-    for (const bool rebuild : {false, true})
+    for (const int sequence : {2, 0, 1}) // active rebuild first / menu selection only / menu rebuild
     {
         native_drag_commit_cases::context = "A24 source=" + std::to_string(source) + " keepOriginal=" + std::to_string(keepOriginal) +
-            " rebuild=" + std::to_string(rebuild);
+            " sequence=" + std::to_string(sequence);
         const auto root = profile.root / (L"right-capture-" + std::to_wstring(scenes++));
         const auto directory = source == 3 ? root / L"mapped" : desktop;
         fs::create_directories(directory);
@@ -35,6 +35,21 @@ inline void Run()
         auto preview = Access::ObserveModelPreview(app, point, 0);
         Require(Access::Target(app) == Access::Desktop(app) && Access::Region(app) == HitRegion::Empty,
             "A24 actual host target must be the empty desktop outside the source component");
+        const auto frozenCapture = [&] {
+            const auto& current = Access::CapturedSources(app);
+            if (current.entries.size() != 1 || !fs::equivalent(current.entries.front().filePath, files[0]))
+                std::cerr << "A24 captured-count=" << current.entries.size() << " wanted=A\n";
+            Require(current.entries.size() == 1 && current.entries.front().sourceIndex == 0 && fs::equivalent(current.entries.front().filePath, files[0]),
+                "S02: a later selection must not widen or replace the originally captured A");
+        };
+        if (sequence == 2)
+        {
+            Access::ChangeMenuFileSelection(app, keepOriginal);
+            Access::RebuildDuringMenu(app); // Actual active-drag rebuild, before entering any menu code.
+            frozenCapture();
+            Require(Access::MenuFileBindingsCurrent(app, source), "S07: active rebuild must restore the original captured A's current wrappers");
+            preview = Access::ObserveModelPreview(app, point, 0);
+        }
         int menus = 0;
         DWORD keys = MK_RBUTTON;
         const bool accepted = Access::ChooseDockFileAction(app, point, keys, [&](HMENU menu, POINT, HWND owner) {
@@ -43,14 +58,12 @@ inline void Run()
                 Outputs(desktop, files).empty() && Read(Access::LayoutPath(app)) == saved,
                 "S02: right menu cannot copy files or save a drop before the decision");
             native_right_drag_cases::Menu(menu, 7);
-            Access::ChangeMenuFileSelection(app, keepOriginal);
-            if (rebuild) Access::RebuildDuringMenu(app);
+            if (sequence != 2) Access::ChangeMenuFileSelection(app, keepOriginal);
+            if (sequence == 1) Access::RebuildDuringMenu(app);
             return 2u; // Independent user choice: copy the originally captured A.
         });
         Require(accepted && menus == 1, "S02: A still exists under the same source identity, so its captured Copy decision remains executable");
-        const auto& rebound = Access::CapturedSources(app);
-        Require(rebound.entries.size() == 1 && rebound.entries.front().sourceIndex == 0 && fs::equivalent(rebound.entries.front().filePath, files[0]),
-            "S02: a later selection must not widen or replace the originally captured A");
+        frozenCapture();
         Require(Access::MenuFileBindingsCurrent(app, source), "S02: the frozen file payload must use live current source wrappers after the menu");
         const auto modifiers = static_cast<int>(keys & (MK_CONTROL | MK_SHIFT | MK_ALT));
         preview = Access::ObserveModelPreview(app, point, modifiers);
