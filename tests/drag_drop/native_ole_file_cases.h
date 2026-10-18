@@ -136,7 +136,7 @@ inline void Run(std::string_view action, bool nativeEntry = false)
         for (const bool asynchronous : {false, true})
             for (const std::size_t count : {1u, 2u})
                 for (const bool releaseChanges : {false, true})
-                for (const DWORD allowed : {0u,1u,2u,3u,4u,5u,6u,7u})
+                for (const DWORD allowed : {7u,0u,1u,2u,3u,4u,5u,6u})
                 {
                     if (!nativeEntry && releaseChanges) continue;
                     const auto expected = gesture->effects[allowed];
@@ -190,6 +190,17 @@ inline void Run(std::string_view action, bool nativeEntry = false)
                         : Access::DropExternal(app, source.Get(), gesture->keys, point, returned);
                     Require(SUCCEEDED(result),
                         "actual native OLE adapter must return through the host drop handler");
+                    if (expected && asynchronous)
+                    {
+                        // Windows asynchronous extraction starts its lease
+                        // before returning Drop; pending work acknowledges the
+                        // chosen verb before later optimized-move cleanup.
+                        Require(returned == expected,
+                            "native OLE asynchronous Drop must acknowledge the chosen effect before returning: expected=" +
+                                std::to_string(expected) + " actual=" + std::to_string(returned));
+                        Require(source->starts == 1,
+                            "native OLE asynchronous Drop must start exactly one source lease before returning");
+                    }
                     if (expected)
                     {
                         Wait([&] { return Access::FileDropIdle(app) &&
