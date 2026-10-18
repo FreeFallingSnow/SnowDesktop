@@ -241,6 +241,72 @@ struct NativeDragIntegrationAccess
         return {(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
     }
     static const auto& DockEntries(const DesktopApp& app) { return app.dockEntries_; }
+    static void SeedDockFiles(DesktopApp& app, const std::vector<std::filesystem::path>& dockFiles,
+        const std::filesystem::path& sentinel)
+    {
+        app.items_oo_.clear(); app.containers_.clear(); app.items_.clear();
+        for (const auto& file : dockFiles) app.items_.push_back(FileItem(file));
+        auto desktop = FileItem(sentinel); desktop.gridCell = {L"__page:1", 3, 2};
+        app.items_.push_back(std::move(desktop));
+        app.RefreshDesktopItemIndexCache(); SeedDock(app);
+        for (const auto& file : dockFiles)
+        {
+            const auto index = app.FindItemIndexByKey(ToUpperInvariant(file.wstring()));
+            if (index >= app.items_.size()) throw std::runtime_error("native Dock seed requires the stable original file identity");
+            app.items_[index].gridCell = {kDockPageId, 0, 0};
+            app.dockEntries_.push_back({DockEntryType::DesktopItem, app.items_[index].layoutKey, false});
+        }
+        app.RefreshCollectedKeysCache(); app.LayoutItems();
+    }
+    static DragSourceList BeginDockFiles(DesktopApp& app, const std::vector<std::wstring>& selected,
+        POINT destination, int modifiers)
+    {
+        auto* origin = Dock(app);
+        for (const auto& slot : origin->GetSlots())
+            if (auto* entry = dynamic_cast<DockEntryItem*>(slot->GetItem()))
+                entry->SetSelected(std::find(selected.begin(), selected.end(), entry->GetReference()) != selected.end());
+        auto items = origin->GetSelectedItems();
+        if (items.size() != selected.size()) throw std::runtime_error("native Dock must capture the complete selected file entries");
+        RECT frame = items.front()->GetBounds();
+        const POINT start{(frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2};
+        for (auto* item : items) { const auto bounds = item->GetBounds(); UnionRect(&frame, &frame, &bounds); }
+        app.dragGroupOriginX_ = frame.left; app.dragGroupOriginY_ = frame.top; app.mouseDownPoint_ = start;
+        auto captured = app.BuildDragSourceList(items, origin);
+        app.dragSession_.Begin(origin, std::move(items), captured, start, destination);
+        app.dragSession_.UpdateActionFromMods(modifiers);
+        return captured;
+    }
+    static bool DockSourceBindingsCurrent(DesktopApp& app)
+    {
+        auto* dock = Dock(app);
+        const auto& slots = dock->GetSlots();
+        if (app.dragSession_.Source() != dock || app.dragSession_.Items().size() != app.dragSession_.SourceList().entries.size()) return false;
+        for (const auto& entry : app.dragSession_.SourceList().entries)
+        {
+            const auto found = std::find_if(slots.begin(), slots.end(), [&](const auto& slot) {
+                const auto* item = dynamic_cast<DockEntryItem*>(slot->GetItem());
+                return item && item->GetReference() == entry.dockReference;
+            });
+            if (found == slots.end() || entry.item != (*found)->GetItem() ||
+                entry.sourceIndex >= app.dragSession_.Items().size() || app.dragSession_.Items()[entry.sourceIndex] != (*found)->GetItem()) return false;
+        }
+        return true;
+    }
+    static bool ChooseDockFileAction(DesktopApp& app, POINT point, DWORD& keys,
+        const DesktopApp::RightDragMenuPresenter& menu)
+    { return app.ChooseRightDragDropAction(point, keys, 7, false, menu); }
+    static bool InternalMenuRetained(const DesktopApp& app)
+    { return app.dragSession_.HasContext() && !app.dragSession_.IsActive() && !app.dragSession_.SourceList().Empty(); }
+    static void DropDockFiles(DesktopApp& app, int modifiers)
+    {
+        auto* target = Target(app); auto* slot = TargetSlot(app);
+        auto* origin = app.dragSession_.Source(); const auto region = Region(app);
+        const auto items = app.dragSession_.Items();
+        if (target != Desktop(app) || region != HitRegion::Empty) throw std::runtime_error("Dock fixture requires an actual empty desktop target");
+        app.dragSession_.DeactivateForDrop();
+        target->OnItemsDropped(items, origin, slot, region, modifiers);
+        app.EndDragSession();
+    }
     static bool NoDockWindows(const DesktopApp& app)
     { return NoPresentationWindows(app) && !app.d2dDevice_ && app.persistentDockHosts_.empty(); }
     static void ThrowAsyncException() { if (asyncException) std::rethrow_exception(asyncException); }
@@ -939,6 +1005,7 @@ struct NativeDragIntegrationAccess
 #include "native_default_file_cases.h"
 #include "native_ole_dock_cases.h"
 #include "native_widget_pair_cases.h"
+#include "native_dock_return_cases.h"
 
 namespace
 {
@@ -1013,6 +1080,7 @@ int main(int argc, char** argv)
         else if (argc == 3 && std::string_view(argv[1]) == "--ole-dock-folders") native_ole_dock_cases::Run(argv[2]);
         else if (argc == 2 && std::string_view(argv[1]) == "--widget-pair-storage") native_widget_pair_cases::RunPairs();
         else if (argc == 2 && std::string_view(argv[1]) == "--group-lifecycle-storage") native_widget_pair_cases::RunLifecycle();
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-file-returns") native_dock_return_cases::Run();
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

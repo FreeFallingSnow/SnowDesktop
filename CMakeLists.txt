@@ -2738,6 +2738,11 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopNativeDragIntegrationTests --widget-pair-storage)
     add_test(NAME native_group_lifecycle_storage
         COMMAND SnowDesktopNativeDragIntegrationTests --group-lifecycle-storage)
+    add_test(NAME native_dock_file_returns
+        COMMAND SnowDesktopNativeDragIntegrationTests --dock-file-returns)
+    set_tests_properties(native_dock_file_returns PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;dock")
     set_tests_properties(native_widget_pair_storage native_group_lifecycle_storage PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;dock")
