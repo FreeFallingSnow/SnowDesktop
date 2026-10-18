@@ -115,7 +115,20 @@ inline void Run()
         auto& app = profile.Model(secondary, profile.root / prefix);
         Access::SeedDockFiles(app, seed, sentinel); Access::PrepareReload(app); Access::BindAsync(app);
         native_drag_async_reload_cases::Refresh(app);
+        // The real directory provider may finish after desktop enumeration.
+        // Capture a legal per-type Dock order, not the raw mixed seed before
+        // its folder result arrives during the later Copy/Link operation.
+        Wait([&] { return Access::DockPartitionFolderCount(app) == (selection == 2 ? 1u : 0u); },
+            "A23: real Dock source classification must finish before capturing the initial partition order");
         const auto beforeDock = DockOrder(app);
+        std::vector<std::wstring> expectedDock;
+        if (selection == 2)
+            expectedDock = {ToUpperInvariant(sources.front().wstring()), ToUpperInvariant(unselected.wstring()),
+                ToUpperInvariant(sources.back().wstring())};
+        else
+            for (const auto& path : seed) expectedDock.push_back(ToUpperInvariant(path.wstring()));
+        Require(beforeDock == expectedDock,
+            "D10/A23: the actual initial Dock must place ordinary files before the directory and preserve the supplied order within each partition");
         std::vector<std::wstring> selected;
         for (const auto& source : ordered) selected.push_back(ToUpperInvariant(source.wstring()));
         Require(Access::Save(app), "save actual native fixed-Dock baseline");
