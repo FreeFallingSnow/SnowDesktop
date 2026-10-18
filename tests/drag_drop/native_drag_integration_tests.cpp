@@ -205,6 +205,8 @@ struct NativeDragIntegrationAccess
     {
         return AsyncIdle(app) && app.shellFileOperationInFlight_ == 0 && app.pendingLandingCaches_.empty();
     }
+    static bool NoPendingFileDrop(const DesktopApp& app)
+    { return app.shellFileOperationInFlight_ == 0 && app.pendingLandingCaches_.empty(); }
     static bool FolderDropReadIdle(const DesktopApp& app)
     {
         // Directory ingestion is judged by the delivered members and their

@@ -54,7 +54,9 @@ inline void Run()
         DWORD keys = MK_RBUTTON;
         const bool accepted = Access::ChooseDockFileAction(app, point, keys, [&](HMENU menu, POINT, HWND owner) {
             ++menus;
-            const bool retained = Access::InternalMenuRetained(app), idle = Access::FileDropIdle(app);
+            // A source rebuild may enumerate while the menu pumps messages.
+            // The contract forbids submitting a file drop, not background reads.
+            const bool retained = Access::InternalMenuRetained(app), idle = Access::NoPendingFileDrop(app);
             const bool noOutputs = Outputs(desktop, files).empty(), sameLayout = Read(Access::LayoutPath(app)) == saved;
             if (menus != 1 || owner != Access::completionWindow || !retained || !idle || !noOutputs || !sameLayout)
                 std::cerr << "A24 menu-count=" << menus << " owner=" << (owner == Access::completionWindow)
