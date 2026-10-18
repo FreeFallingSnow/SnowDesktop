@@ -3,6 +3,8 @@
 #include "drag_drop/external_slot_transfer.h"
 #include "drag_drop/external_file_destination.h"
 #include "drag_drop/drop_staging.h"
+#include "drag_drop/default_file_drop_action.h"
+#include "drag_drop/ole_drag_rules.h"
 #include "widgets/lua_logical_slot.h"
 
 #include <stdexcept>
@@ -28,6 +30,37 @@ content::Paths DownloadSlotUrls(const content::Paths& urls, std::stop_token stop
     if (stop.stop_requested()) throw std::runtime_error("drop cancelled");
     return {};
 }
+}
+
+DWORD DesktopApp::ExternalFileDropPreferredEffect(POINT point) const
+{
+    const auto* target = dragSession_.TargetContainer();
+    const auto* desktop = containers_.empty() ? nullptr : containers_.front().get();
+    if (dragSession_.TargetRegion() == HitRegion::Handoff) return DROPEFFECT_MOVE;
+    if (!externalLuaFileDropAvailable_)
+        return target == desktop ? DROPEFFECT_COPY : DROPEFFECT_MOVE;
+    std::wstring directory;
+    if (target && target != desktop)
+    {
+        DragSourceList placeholder;
+        placeholder.hasExternalFiles = true;
+        DragSourceEntry entry; entry.kind = DropSourceKind::ExternalFile; entry.displayName = L"drop";
+        placeholder.entries.push_back(std::move(entry));
+        const auto preview = BuildDropPreviewList(placeholder, dragSession_.TargetContainer(),
+            dragSession_.TargetSlot(), dragSession_.TargetRegion(), MK_CONTROL, point);
+        if (preview.targetKind == DropTargetKind::FolderMapping && preview.targetWidget)
+            directory = preview.targetWidget->sourceFolderPath;
+        else if (preview.targetKind != DropTargetKind::KeyedWidget) return DROPEFFECT_MOVE;
+    }
+    if (directory.empty())
+    {
+        wchar_t path[MAX_PATH]{};
+        if (snowdesktop::desktop_source::CopyDirectory(path)) directory = path;
+    }
+    // Delayed paths are unavailable during hover. Preserve non-destructive
+    // provisional feedback; the real commit resolves them after source read.
+    return snowdesktop::default_file_drop_action::Preferred(externalFileDropPaths_, directory)
+        .value_or(DROPEFFECT_COPY);
 }
 
 std::optional<DesktopApp::ExternalSlotDestination>
@@ -75,6 +108,7 @@ DesktopApp::CaptureExternalSlotDestination(POINT point, DWORD keyState)
         result.widgetType = widget.type;
         result.folderPath = widget.sourceFolderPath;
         result.dockFolderPopup = target == dockFolderPopupContainer_.get();
+        result.volumeDefault = (keyState & (MK_CONTROL | MK_SHIFT | MK_ALT)) == 0;
     }
     // The read/download may outlive a popup, page, container tree or vector
     // reallocation. No pointers from the drag session cross that boundary.
@@ -189,11 +223,23 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     bool asynchronousSource, const std::vector<std::wstring>& knownPaths)
 {
     if (!dataObject) return DROPEFFECT_NONE;
+    const bool volumeDefault = destination.volumeDefault &&
+        (allowedEffects & (DROPEFFECT_MOVE | DROPEFFECT_COPY)) == (DROPEFFECT_MOVE | DROPEFFECT_COPY) &&
+        (!knownPaths.empty() || content::ProbeFileSource(dataObject).available);
+    std::wstring physicalDirectory = destination.preview.targetKind == DropTargetKind::FolderMapping
+        ? destination.folderPath : std::wstring{};
+    if (volumeDefault && physicalDirectory.empty())
+    {
+        wchar_t path[MAX_PATH]{};
+        if (snowdesktop::desktop_source::CopyDirectory(path)) physicalDirectory = path;
+    }
     const bool allowContent = (allowedEffects & DROPEFFECT_COPY) != 0;
     DWORD effect = destination.preview.action == DropAction::Move ? DROPEFFECT_MOVE :
         destination.preview.action == DropAction::Link ? DROPEFFECT_LINK : DROPEFFECT_COPY;
     if (destination.preview.pinMaterializedItemsToDock)
         effect = snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(allowedEffects);
+    else if (volumeDefault)
+        effect = snowdesktop::default_file_drop_action::Preferred(knownPaths, physicalDirectory).value_or(DROPEFFECT_COPY);
     if ((effect & allowedEffects) == 0) return DROPEFFECT_NONE;
 
     auto result = std::make_shared<snowdesktop::ShellFileOperationResult>();
@@ -257,9 +303,19 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         };
         return content::Read(false, true, readers);
     };
-    callbacks.commit = [this, destination, result](const content::Content& input,
+    const auto committedEffect = std::make_shared<DWORD>(effect);
+    if (volumeDefault) callbacks.committedEffect = [committedEffect] { return *committedEffect; };
+    callbacks.commit = [this, destination, result, committedEffect, volumeDefault, physicalDirectory](const content::Content& input,
         FileOperationCompletion finished, bool synchronously) {
-        return CommitExternalSlotPaths(destination, input.paths, input.owned,
+        auto resolved = destination;
+        if (volumeDefault && !input.owned && !input.copyOnly)
+        {
+            *committedEffect = snowdesktop::default_file_drop_action::Preferred(input.paths, physicalDirectory)
+                .value_or(DROPEFFECT_COPY);
+            resolved.preview.action = DropActionFromMods(static_cast<int>(
+                snowdesktop::ole_drag_rules::ModifiersForDropEffect(*committedEffect)));
+        }
+        return CommitExternalSlotPaths(resolved, input.paths, input.owned,
             input.copyOnly, std::move(finished), synchronously, result);
     };
     callbacks.completed = [](bool succeeded) {

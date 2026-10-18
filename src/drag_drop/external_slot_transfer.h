@@ -20,6 +20,9 @@ struct Callbacks
     // The commit owns its destination snapshot. It must complete after the
     // actual file/model operation, not when that operation is merely queued.
     std::function<bool(const Content&, Completion, bool)> commit;
+    // A default verb may be known only after delayed file paths are read.
+    // Report the actual committed verb when ending the existing source lease.
+    std::function<DWORD()> committedEffect;
     Completion completed;
 };
 
@@ -50,10 +53,16 @@ inline DWORD Transfer(IDataObject* source, DWORD effect, bool asynchronous,
     auto marshaled = std::make_shared<MarshaledSource>();
     if (asynchronous)
     {
+        std::function<DWORD()> resolvedEffect;
+        if (callbacks.committedEffect)
+            resolvedEffect = [resolve = callbacks.committedEffect] {
+                const DWORD selected = resolve();
+                return selected == DROPEFFECT_MOVE ? DROPEFFECT_NONE : selected;
+            };
         if (FAILED(CoMarshalInterThreadInterfaceInStream(IID_IDataObject,
                 source, &marshaled->stream)) ||
             !ole_async_operation::Prepare(source,
-                effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect, {}, oleCompletion))
+                effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect, {}, oleCompletion, std::move(resolvedEffect)))
             return DROPEFFECT_NONE;
     }
     else
@@ -71,7 +80,8 @@ inline DWORD Transfer(IDataObject* source, DWORD effect, bool asynchronous,
     {
         const bool committed = callbacks.commit(*value, finished, true);
         if (!committed) finished(false);
-        return committed ? (effect == DROPEFFECT_MOVE ? DROPEFFECT_NONE : effect) : DROPEFFECT_NONE;
+        const DWORD selected = callbacks.committedEffect ? callbacks.committedEffect() : effect;
+        return committed ? (selected == DROPEFFECT_MOVE ? DROPEFFECT_NONE : selected) : DROPEFFECT_NONE;
     }
 
     if (!window || !IsWindow(window)) return DROPEFFECT_NONE;

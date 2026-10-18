@@ -48,8 +48,8 @@ class OleAsyncFileOperationCompletion final
 {
 public:
     OleAsyncFileOperationCompletion(
-        ComPtr<IStream> stream, DWORD effect)
-        : stream_(std::move(stream)), effect_(effect)
+        ComPtr<IStream> stream, DWORD effect, std::function<DWORD()> resolvedEffect = {})
+        : stream_(std::move(stream)), effect_(effect), resolvedEffect_(std::move(resolvedEffect))
     {
     }
 
@@ -70,9 +70,10 @@ public:
         }
         if (asyncCapability)
         {
+            const DWORD effect = succeeded && resolvedEffect_ ? resolvedEffect_() : effect_;
             // A successful target-side move is optimized: the target already
             // moved/deleted the source, so the source must not delete it again.
-            if (succeeded && effect_ == DROPEFFECT_NONE)
+            if (succeeded && effect == DROPEFFECT_NONE)
             {
                 ComPtr<IDataObject> dataObject;
                 if (SUCCEEDED(asyncCapability.As(&dataObject)))
@@ -82,7 +83,7 @@ public:
             asyncCapability->EndOperation(
                 succeeded ? S_OK : E_ABORT,
                 nullptr,
-                succeeded ? effect_ : DROPEFFECT_NONE);
+                succeeded ? effect : DROPEFFECT_NONE);
         }
     }
 
@@ -90,6 +91,7 @@ private:
     std::atomic_bool finished_ = false;
     ComPtr<IStream> stream_;
     DWORD effect_ = DROPEFFECT_NONE;
+    std::function<DWORD()> resolvedEffect_;
 };
 
 
@@ -97,7 +99,8 @@ inline bool Prepare(
     IDataObject* dataObject,
     DWORD completionEffect,
     Completion completion,
-    Completion& asyncCompletion)
+    Completion& asyncCompletion,
+    std::function<DWORD()> resolvedEffect = {})
 {
     asyncCompletion = {};
     const DWORD effect = completionEffect &
@@ -132,7 +135,7 @@ inline bool Prepare(
     try
     {
         state = std::make_shared<OleAsyncFileOperationCompletion>(
-            std::move(asyncStream), effect);
+            std::move(asyncStream), effect, std::move(resolvedEffect));
         asyncCompletion = [state,
             completion = std::move(completion)](bool succeeded) mutable {
             state->Finish(succeeded);

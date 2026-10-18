@@ -5,6 +5,7 @@
 #include "drag_drop/virtual_file_drop.h"
 #include "drag_drop/external_drop_content.h"
 #include "drag_drop/delayed_desktop_file_drop.h"
+#include "drag_drop/default_file_drop_action.h"
 #include "widgets/lua_logical_slot.h"
 
 // OLE drag-enter/over/leave/drop session handling.
@@ -193,6 +194,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
     if (!effect) return E_POINTER;
     CancelPendingExternalOleDragLeave();
     externalLuaFileDropAvailable_ = false;
+    externalFileDropPaths_.clear();
 
     if (dragDropController_.IsSelfDragActive())
     {
@@ -229,6 +231,7 @@ HRESULT DesktopApp::HandleOleDragEnter(
         const bool delayedFileDrop = fileSource.asynchronous;
         const auto& paths = fileSource.paths;
         externalLuaFileDropAvailable_ = fileSource.available;
+        if (fileSource.available) externalFileDropPaths_ = paths;
         const auto virtualFiles = delayedFileDrop
             ? std::vector<snowdesktop::virtual_file_drop::
                 VirtualFileDescriptor>{}
@@ -342,8 +345,10 @@ HRESULT DesktopApp::HandleOleDragEnter(
             : externalDockMapping
                 ? snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect)
                 : snowdesktop::ole_drag_rules::ChooseDropEffect(keyState, *effect,
-                    targetContainer == GetDesktopGrid() && targetRegion != HitRegion::Handoff
-                        ? DROPEFFECT_COPY : DROPEFFECT_MOVE));
+                    snowdesktop::default_file_drop_action::Requested(keyState, *effect)
+                        ? ExternalFileDropPreferredEffect(client)
+                        : targetContainer == GetDesktopGrid() && targetRegion != HitRegion::Handoff
+                            ? DROPEFFECT_COPY : DROPEFFECT_MOVE));
     if (!externalDockMapping && !externalLogicalReference && targetEffect != DROPEFFECT_NONE)
         mods = static_cast<int>(snowdesktop::ole_drag_rules::ModifiersForDropEffect(targetEffect));
     if (externalDockMapping)
@@ -468,8 +473,10 @@ HRESULT DesktopApp::HandleOleDragOver(
             : externalDockMapping
                 ? snowdesktop::dock_drop_rules::ChooseExternalMappingEffect(*effect)
                 : snowdesktop::ole_drag_rules::ChooseDropEffect(keyState, *effect,
-                    targetContainer == GetDesktopGrid() && targetRegion != HitRegion::Handoff
-                        ? DROPEFFECT_COPY : DROPEFFECT_MOVE));
+                    snowdesktop::default_file_drop_action::Requested(keyState, *effect)
+                        ? ExternalFileDropPreferredEffect(client)
+                        : targetContainer == GetDesktopGrid() && targetRegion != HitRegion::Handoff
+                            ? DROPEFFECT_COPY : DROPEFFECT_MOVE));
     if (!externalDockMapping && !externalLogicalReference && targetEffect != DROPEFFECT_NONE)
         mods = static_cast<int>(snowdesktop::ole_drag_rules::ModifiersForDropEffect(targetEffect));
     if (externalDockMapping)
@@ -1040,7 +1047,10 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
     if (auto destination = CaptureExternalSlotDestination(clientPoint, keyState))
     {
         if (forceCopyDrop && !destination->preview.pinMaterializedItemsToDock)
+        {
             destination->preview.action = DropAction::Copy;
+            destination->volumeDefault = false;
+        }
         *effect = DropExternalSlotContent(dataObject, *destination, *effect,
             sourceUsesAsyncMode, dropPaths);
         EndDragSession();
@@ -1477,9 +1487,11 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         [&](DWORD selectedEffect) {
             ExternalSlotDestination destination;
             destination.preview = BuildExternalDesktopPreviewList(delayedFileTargetCell, 1);
+            destination.volumeDefault = snowdesktop::default_file_drop_action::Requested(keyState, *effect);
             destination.preview.action = DropActionFromMods(static_cast<int>(
                 snowdesktop::ole_drag_rules::ModifiersForDropEffect(selectedEffect)));
-            return DropExternalSlotContent(dataObject, destination, selectedEffect, true, {});
+            return DropExternalSlotContent(dataObject, destination,
+                destination.volumeDefault ? *effect : selectedEffect, true, {});
         });
     if (delayedDesktopDrop)
     {
@@ -2205,7 +2217,10 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         if (!forceCopyDrop && bareDesktopTarget)
         {
             const DWORD selectedEffect = snowdesktop::ole_drag_rules::ChooseDropEffect(
-                keyState, *effect, DROPEFFECT_COPY);
+                keyState, *effect,
+                snowdesktop::default_file_drop_action::Requested(keyState, *effect)
+                    ? snowdesktop::default_file_drop_action::Preferred(dropPaths, UserDesktopDirectory()).value_or(DROPEFFECT_COPY)
+                    : DROPEFFECT_COPY);
             if (selectedEffect == DROPEFFECT_NONE)
             {
                 *effect = DROPEFFECT_NONE;

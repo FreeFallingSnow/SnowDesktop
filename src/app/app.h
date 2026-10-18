@@ -4444,6 +4444,8 @@ private:
     size_t HitTestLuaFileDropTarget(POINT point) const;
     bool DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>& paths);
     bool externalLuaFileDropAvailable_ = false;
+    std::vector<std::wstring> externalFileDropPaths_;
+    DWORD ExternalFileDropPreferredEffect(POINT point) const;
     HRESULT HandleOleDragEnter(IDataObject* dataObject,
         DWORD keyState, POINTL point, DWORD* effect) override;
     HRESULT HandleOleDragOver(
@@ -4464,6 +4466,7 @@ private:
         std::string luaSlotId;
         size_t insertIndex = 0;
         bool dockFolderPopup = false;
+        bool volumeDefault = false;
         std::optional<WidgetEngine::FileDropTarget> fileDropTarget;
     };
     std::optional<ExternalSlotDestination> CaptureExternalSlotDestination(

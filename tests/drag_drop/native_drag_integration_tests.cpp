@@ -210,6 +210,38 @@ struct NativeDragIntegrationAccess
         // order below, not by the implementation's placement-cache lifetime.
         return AsyncIdle(app) && app.shellFileOperationInFlight_ == 0 && app.folderReadsPending_.empty();
     }
+    static void SeedDock(DesktopApp& app)
+    {
+        if (app.d2dDevice_ || app.dcompDevice_) throw std::runtime_error("Dock model requires uninitialized graphics to prevent any persistent host allocation");
+        app.generalSettings_.dockEnabled = true;
+        app.dockSettings_.showWindowsButton = false;
+        app.dockSettings_.showQuickSearchButton = false;
+        app.dockSettings_.showFrequentItems = false;
+        app.dockSettings_.showRunningApps = false;
+        app.dockSettings_.hoverEffect = 0;
+        app.dockSettings_.showOnlyWhenSummoned = false;
+        app.dockSettings_.position = DockPosition::Bottom;
+        app.dockSettings_.edgeAttached = false;
+        app.dockEntries_.clear();
+        app.dockAreas_ = {RECT{0, 200, 400, 300}};
+        app.desktopItemsReady_ = true;
+        app.LayoutItems();
+    }
+    static DockContainer* Dock(DesktopApp& app)
+    {
+        auto* dock = app.GetDockContainer();
+        if (!dock) throw std::runtime_error("actual native Dock container must exist");
+        return dock;
+    }
+    static POINT DockPoint(DesktopApp& app)
+    {
+        const auto bounds = Dock(app)->GetBounds();
+        if (IsRectEmpty(&bounds)) throw std::runtime_error("empty enabled Dock still needs a real hit frame");
+        return {(bounds.left + bounds.right) / 2, (bounds.top + bounds.bottom) / 2};
+    }
+    static const auto& DockEntries(const DesktopApp& app) { return app.dockEntries_; }
+    static bool NoDockWindows(const DesktopApp& app)
+    { return NoPresentationWindows(app) && !app.d2dDevice_ && app.persistentDockHosts_.empty(); }
     static void ThrowAsyncException() { if (asyncException) std::rethrow_exception(asyncException); }
     static DesktopApp& Scene(bool secondary)
     {
@@ -824,6 +856,7 @@ struct NativeDragIntegrationAccess
 #include "native_ole_widget_cases.h"
 #include "native_folder_delivery_cases.h"
 #include "native_default_file_cases.h"
+#include "native_ole_dock_cases.h"
 
 namespace
 {
@@ -895,6 +928,7 @@ int main(int argc, char** argv)
         else if (argc == 4 && std::string_view(argv[1]) == "--ole-widget-files") native_ole_widget_cases::Run(argv[2], argv[3]);
         else if (argc == 2 && std::string_view(argv[1]) == "--folder-delivery-after-drag") native_folder_delivery_cases::Run();
         else if (argc == 4 && std::string_view(argv[1]) == "--ole-default-files") return native_default_file_cases::Run(argv[2], argv[3]);
+        else if (argc == 3 && std::string_view(argv[1]) == "--ole-dock-folders") native_ole_dock_cases::Run(argv[2]);
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

@@ -2693,6 +2693,14 @@ if (BUILD_TESTING)
                 LABELS "integration;shell;interaction;slot;ole;data")
         endforeach()
     endforeach()
+    foreach(DOCK_VERB IN ITEMS alt_link right_link right_cancel right_dismiss)
+        add_test(NAME native_ole_dock_folders_${DOCK_VERB}
+            COMMAND SnowDesktopNativeDragIntegrationTests --ole-dock-folders ${DOCK_VERB})
+        set_tests_properties(native_ole_dock_folders_${DOCK_VERB} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            RESOURCE_LOCK snowdesktop_desktop TIMEOUT 180
+            LABELS "integration;shell;interaction;slot;ole;data;dock")
+    endforeach()
     add_test(NAME native_folder_delivery_after_drag
         COMMAND SnowDesktopNativeDragIntegrationTests --folder-delivery-after-drag)
     set_tests_properties(native_folder_delivery_after_drag PROPERTIES
