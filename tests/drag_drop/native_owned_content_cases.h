@@ -272,9 +272,11 @@ inline void Run(std::string_view targetName, bool cancel = false)
         if (cancel) Require(effect == 0 && menus == 1 && source->starts == 0 && source->ends == 0,
             "B17: cancelling owned content cannot acquire or submit a source");
         else if (scenario.count) Require(effect == 1, "D08: explicit owned-content Copy must acknowledge Copy");
-        Wait([&] { return (mapped ? Access::FolderDropReadIdle(app) : Access::FileDropIdle(app)) &&
-            (!asynchronous || source->starts == source->ends); }, "actual owned content read/materialization/file operation must finish");
         const auto destination = mapped ? original.parent_path() : desktop;
+        Wait([&] { return (mapped ? Access::FolderDropReadIdle(app) : Access::FileDropIdle(app)) &&
+            (!asynchronous || source->starts == source->ends) &&
+            ((cancel || !scenario.count) || Outputs(destination, {original}).size() >= scenario.count); },
+            "actual owned content read/materialization/file operation and published output must finish");
         const auto outputs = Outputs(destination, {original});
         const auto count = cancel ? 0u : scenario.count;
         Require(outputs.size() == count, "D08: incomplete virtual batches cannot fall back to a preview image; successful content must produce exactly its complete selected representation");
