@@ -86,9 +86,17 @@ inline void RunLabels()
         const auto captured = Access::BeginGroupLabels(app, L"surface-group", move.selected);
         Require(captured.entries.size() == move.selected.size(), "native label capture retains the complete supplied selection");
         for (std::size_t index = 0; index < move.selected.size(); ++index)
+        {
+            // Mapped labels use Widget metadata because they can also leave
+            // the group as a component. The actual entrance still has to be
+            // the real label wrapper; its metadata enum is not a UI contract.
+            const auto* fileLabel = dynamic_cast<FileGroupEntryItem*>(captured.entries[index].item);
+            const auto* collectionLabel = dynamic_cast<CollectionGroupEntryItem*>(captured.entries[index].item);
             Require(captured.entries[index].widgetId == move.selected[index] && captured.entries[index].sourceIndex == index &&
-                captured.entries[index].kind == (fileGroup ? DropSourceKind::FileGroupEntry : DropSourceKind::CollectionGroupEntry),
-                "native labels retain their actual original child identities and source order");
+                (fileGroup ? fileLabel && fileLabel->GetChildWidgetId() == move.selected[index]
+                    : collectionLabel && collectionLabel->GetCollectionId() == move.selected[index]),
+                "native labels retain their actual original child identities, label wrappers and source order");
+        }
         const auto preview = Access::GroupSurfaceLabelPreview(app, L"surface-group", move.boundary, move.after);
         Require(!preview.Empty() && !preview.fileBacked && preview.action == DropAction::Move && preview.targetWidget &&
             preview.targetWidget->id == L"surface-group" && preview.insertIndex == move.insert &&
