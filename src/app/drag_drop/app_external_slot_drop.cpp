@@ -242,6 +242,38 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         effect = snowdesktop::default_file_drop_action::Preferred(knownPaths, physicalDirectory).value_or(DROPEFFECT_COPY);
     if ((effect & allowedEffects) == 0) return DROPEFFECT_NONE;
 
+    // An explicit drop on an inactive tab activates that captured child only
+    // after a successful commit. Ordinary content drops must not undo a later
+    // user tab switch while their external source is still being read.
+    std::wstring activationGroupId;
+    DesktopWidgetType activationGroupType = DesktopWidgetType::CollectionGroup;
+    if (auto* group = dynamic_cast<CollectionGroup*>(dragSession_.TargetContainer()))
+    {
+        const auto* data = group->GetWidgetData();
+        const auto hit = group->CategoryIdAtPoint(dragSession_.CurrentPoint());
+        if (data && !hit.empty() && hit == destination.widgetId && hit != group->GetActiveCollectionId())
+        { activationGroupId = data->id; activationGroupType = data->type; }
+    }
+    else if (auto* fileGroup = dynamic_cast<FileGroup*>(dragSession_.TargetContainer()))
+    {
+        const auto* data = fileGroup->GetWidgetData();
+        const auto hit = fileGroup->SourceIdAtPoint(dragSession_.CurrentPoint());
+        if (data && !hit.empty() && hit == destination.widgetId && hit != fileGroup->GetActiveSourceId())
+        { activationGroupId = data->id; activationGroupType = data->type; }
+    }
+    const auto resolveActivationGroup = [this, activationGroupId, activationGroupType, destination]() -> DesktopWidget* {
+        const auto parent = FindWidgetIndexById(activationGroupId);
+        const auto child = FindWidgetIndexById(destination.widgetId);
+        if (parent >= widgets_.size() || child >= widgets_.size()) return nullptr;
+        auto& group = widgets_[parent];
+        const auto& target = widgets_[child];
+        if (group.type != activationGroupType || target.type != destination.widgetType ||
+            target.sourceFolderPath != destination.folderPath ||
+            std::find(group.childWidgetIds.begin(), group.childWidgetIds.end(), destination.widgetId) == group.childWidgetIds.end())
+            return nullptr;
+        return &group;
+    };
+
     // A slot pointer and its numeric index cannot survive the delayed read.
     // Keep only the indicated member identity and side; the original target
     // is independently revalidated below before its current order is used.
@@ -314,8 +346,11 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     };
     const auto committedEffect = std::make_shared<DWORD>(effect);
     if (volumeDefault) callbacks.committedEffect = [committedEffect] { return *committedEffect; };
-    callbacks.commit = [this, destination, insertionAnchor, insertAfterAnchor, result, committedEffect, volumeDefault, physicalDirectory](const content::Content& input,
+    callbacks.commit = [this, destination, activationGroupId, resolveActivationGroup, insertionAnchor, insertAfterAnchor, result, committedEffect, volumeDefault, physicalDirectory](const content::Content& input,
         FileOperationCompletion finished, bool synchronously) {
+        // The tab's original owner is part of this explicit destination. A
+        // replacement group or detached child cannot receive a pending drop.
+        if (!activationGroupId.empty() && !resolveActivationGroup()) return false;
         auto resolved = destination;
         if (!insertionAnchor.empty())
         {
@@ -344,8 +379,26 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
             resolved.preview.action = DropActionFromMods(static_cast<int>(
                 snowdesktop::ole_drag_rules::ModifiersForDropEffect(*committedEffect)));
         }
+        auto completed = [this, destination, activationGroupId, resolveActivationGroup,
+            finished = std::move(finished)](bool succeeded) mutable {
+            if (succeeded && !activationGroupId.empty())
+                if (auto* group = resolveActivationGroup())
+                {
+                    group->activeCategoryId = destination.widgetId;
+                    for (const auto& container : containers_)
+                        if (auto* view = dynamic_cast<WidgetContainer*>(container.get());
+                            view && view->GetWidgetData() == group)
+                        {
+                            if (auto* collections = dynamic_cast<CollectionGroup*>(view)) collections->InvalidateFilterCache();
+                            else if (auto* files = dynamic_cast<FileGroup*>(view)) files->InvalidateHostedView();
+                        }
+                    SaveLayoutSlots();
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                }
+            if (finished) finished(succeeded);
+        };
         return CommitExternalSlotPaths(resolved, input.paths, input.owned,
-            input.copyOnly, std::move(finished), synchronously, result);
+            input.copyOnly, std::move(completed), synchronously, result);
     };
     callbacks.completed = [](bool succeeded) {
         if (!succeeded)

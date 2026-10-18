@@ -14,6 +14,65 @@ inline std::vector<fs::path> NewPaths(const fs::path& directory, const std::vect
         })) result.push_back(entry.path());
     return result;
 }
+inline void RunParentMutation(native_drag_commit_cases::Profile& profile)
+{
+    namespace pair = native_widget_pair_cases;
+    native_drag_commit_cases::context = "D14 captured inactive parent replaced during actual external read";
+    pair::Samples samples(profile, 900);
+    auto widgets = native_group_surface_cases::SurfaceWidgets(samples, false, false, false);
+    widgets[4].activeCategoryId = L"A";
+    const auto sourcePath = samples.root / L"incoming/Late.txt";
+    Write(sourcePath, "pending-parent-original");
+    auto& app = profile.Model(false, samples.root / L"layout");
+    Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
+    Access::PrepareReload(app); Access::BindAsync(app);
+    native_drag_async_reload_cases::Refresh(app);
+    const auto original = Access::Widgets(app);
+    Require(Access::Save(app), "D14: save the real parent and inactive child before capturing a delayed drop");
+    const auto tab = Access::GroupSurfaceTabRect(app, L"surface-group", L"B");
+    Require(!IsRectEmpty(&tab), "D14: pending parent mutation requires an actual visible inactive tab");
+    const POINT point{(tab.left + tab.right) / 2, (tab.top + tab.bottom) / 2};
+    auto source = ole_file_source_fixture::Make({sourcePath}, true);
+    auto adapter = Access::ExternalAdapter(app);
+    DWORD effect = 7; Access::FreshExternalDwell(app);
+    Require(SUCCEEDED(adapter->DragEnter(source.Get(), MK_LBUTTON | MK_CONTROL, Access::ExternalPoint(point), &effect)) && effect == 1,
+        "D14: the real external source enters the original inactive group target");
+    effect = 7; Access::FreshExternalDwell(app);
+    Require(SUCCEEDED(adapter->DragOver(MK_LBUTTON | MK_CONTROL, Access::ExternalPoint(point), &effect)) && effect == 1 &&
+        Access::GroupSurfaceExternalBinding(app, point).first == L"B" &&
+        pair::Widget(app, L"surface-group").activeCategoryId == L"A",
+        "D14: hover captures original child B without activating it or retargeting active A");
+    effect = 7; Access::FreshExternalDwell(app);
+    Require(SUCCEEDED(adapter->Drop(source.Get(), MK_CONTROL, Access::ExternalPoint(point), &effect)) && effect == 1 &&
+        source->starts == 1 && source->ends == 0, "D14: the real source lease must remain owned until its delayed read is delivered");
+    HeldRead held; held.Capture();
+    Access::ReplaceGroupSurfaceIdentity(app);
+    Require(Access::Save(app), "D14: save the independent parent replacement before releasing the captured source");
+    const auto saved = Read(Access::LayoutPath(app));
+    held.Deliver();
+    Wait([&] { return source->ends == 1 && Access::FileDropIdle(app); },
+        "D14: a replaced captured parent must terminate the actual retained external task");
+    Require(source->starts == 1 && source->ends == 1 && FAILED(source->outcome) && source->endEffect == 0 &&
+        !source->wrongApartment && !source->fileReadBeforeStart && Read(sourcePath) == "pending-parent-original",
+        "D14: parent replacement cancels before physical commit and preserves the original source and lease outcome");
+    Require(Read(Access::LayoutPath(app)) == saved,
+        "D14: cancelled inactive-tab work cannot activate or persist a replacement group");
+    const auto check = [&] {
+        for (const auto& widget : original)
+            if (widget.id == L"surface-group")
+            {
+                auto expected = widget; expected.id = L"replacement-group";
+                Require(pair::Configuration(pair::Widget(app, expected.id)) == pair::Configuration(expected),
+                    "D14: replacement parent retains the user's active child, members and settings");
+            }
+            else pair::CheckChild(app, widget);
+        samples.Check();
+        Require(Read(sourcePath) == "pending-parent-original" && Access::NoIngressPopup(app),
+            "D14: rejected captured parent creates no file or presentation output");
+    };
+    check(); Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); check();
+    Access::StopModel(app); source.Reset(); samples.Cleanup();
+}
 inline void RunMutations()
 {
     native_drag_commit_cases::Profile profile;
@@ -103,7 +162,8 @@ inline void RunMutations()
         }
         Access::StopModel(app); CleanDesktop(desktop);
     }
-    std::cout << "Native captured-target changes: 5 scenes passed\n";
+    RunParentMutation(profile);
+    std::cout << "Native captured-target changes: 6 scenes passed\n";
 }
 
 class Feedback
