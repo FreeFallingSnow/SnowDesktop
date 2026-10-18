@@ -464,6 +464,10 @@ void DesktopApp::ApplyFolderRefresh(snowdesktop::shell_refresh::Snapshot& snapsh
         if (folder == snapshot.folders.end() || !folder->second.complete) continue;
         const auto oldOrder = widget.itemKeys;
         EnumerateFolderMappingEntries(widget, true, &folder->second);
+        // A folder-only result may arrive without a structural desktop reload.
+        // Reconcile the actual outputs before publishing the mapped view and
+        // saving its order; alphabetical enumeration is not the chosen drop.
+        ApplyPendingFolderPlacements(widget, widget.id, {});
         orderChanged |= oldOrder != widget.itemKeys;
         changed.insert(widget.id);
     }
