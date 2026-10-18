@@ -177,6 +177,7 @@ protected:
  */
 class WidgetContainer : public Widget, public ListContainer
 {
+    friend struct NativeDragIntegrationAccess;
 public:
     using Widget::Widget;
 

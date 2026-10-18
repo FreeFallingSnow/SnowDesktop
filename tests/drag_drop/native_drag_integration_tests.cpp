@@ -337,7 +337,14 @@ struct NativeDragIntegrationAccess
         if (app.dragSession_.Source() != current || app.dragSession_.Items().size() != app.dragSession_.SourceList().entries.size()) return false;
         std::vector<Item*> live;
         for (const auto& object : app.items_oo_) if (object->GetContainer() == current) live.push_back(object.get());
-        for (const auto& slot : current->GetSlots()) if (auto* item = slot->GetItem()) live.push_back(item);
+        if (const auto* widget = dynamic_cast<WidgetContainer*>(current))
+        {
+            // Drag wrappers and display-slot wrappers have distinct owners.
+            // Inspect ownership without rebuilding either cache under test.
+            for (const auto& item : widget->dragSourceCache_) live.push_back(item.get());
+            for (const auto& item : widget->slotItemCache_) live.push_back(item.get());
+        }
+        else for (const auto& slot : current->GetSlots()) if (auto* item = slot->GetItem()) live.push_back(item);
         for (const auto& entry : app.dragSession_.SourceList().entries)
             if (entry.sourceIndex >= app.dragSession_.Items().size() ||
                 std::none_of(live.begin(), live.end(), [&](auto* item) {
