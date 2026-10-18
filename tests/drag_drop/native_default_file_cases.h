@@ -59,13 +59,15 @@ inline int Run(std::string_view targetName, std::string_view relation)
         return 77;
     }
     std::size_t scenes = 0;
+    for (const DWORD allowed : {3u, 7u})
     for (const bool icon : {false, true})
     for (const bool asynchronous : {false, true})
     for (const std::size_t count : {1u, 2u})
     {
         if ((desktopTarget && icon) || (relation == "mixed" && count == 1)) continue;
         native_drag_commit_cases::context = "A20 target=" + std::string(targetName) + " relation=" + std::string(relation) +
-            " icon=" + std::to_string(icon) + " async=" + std::to_string(asynchronous) + " count=" + std::to_string(count);
+            " allowed=" + std::to_string(allowed) + " icon=" + std::to_string(icon) +
+            " async=" + std::to_string(asynchronous) + " count=" + std::to_string(count);
         const auto directory = profile.root / (L"default-" + std::to_wstring(scenes++));
         const auto cross = other.root / (L"default-" + std::to_wstring(scenes));
         fs::create_directories(directory / L"source"); fs::create_directories(directory / L"mapped");
@@ -98,7 +100,7 @@ inline int Run(std::string_view targetName, std::string_view relation)
         const POINT point = desktopTarget ? POINT{150, 150} : icon ? POINT{50, 50} : POINT{350, 250};
         for (const bool entering : {true, false})
         {
-            Access::FreshExternalDwell(app); DWORD feedback = 3;
+            Access::FreshExternalDwell(app); DWORD feedback = allowed;
             const auto result = entering ? adapter->DragEnter(source.Get(), MK_LBUTTON, Access::ExternalPoint(point), &feedback)
                 : adapter->DragOver(MK_LBUTTON, Access::ExternalPoint(point), &feedback);
             Require(SUCCEEDED(result) && (feedback == 1 || feedback == 2), "A20: default hover must offer a supported file action");
@@ -106,7 +108,7 @@ inline int Run(std::string_view targetName, std::string_view relation)
                 Outputs(destination, {original}).empty() && Read(Access::LayoutPath(app)) == saved,
                 "A20: hover cannot render delayed paths, lease, submit files or save layout");
         }
-        Access::FreshExternalDwell(app); DWORD returned = 3;
+        Access::FreshExternalDwell(app); DWORD returned = allowed;
         Require(SUCCEEDED(adapter->Drop(source.Get(), 0, Access::ExternalPoint(point), &returned)), "A20: real adapter default Drop must reach host");
         if (asynchronous) Require((returned == 1 || returned == 2) && source->starts == 1,
             "A20: delayed default must acknowledge accepted work and own exactly one lease before returning");

@@ -2583,6 +2583,7 @@ if (BUILD_TESTING)
     # methods. Keep XAML generation and runtime deployment in separate trees.
     set(SNOWDESKTOP_NATIVE_DRAG_SOURCES ${SNOWDESKTOP_SOURCES})
     list(REMOVE_ITEM SNOWDESKTOP_NATIVE_DRAG_SOURCES src/main.cpp)
+    get_property(SNOWDESKTOP_TESTS_BEFORE_NATIVE_DRAG DIRECTORY PROPERTY TESTS)
     snowdesktop_add_test(
         SnowDesktopNativeDragIntegrationTests
         native_drag_target_integration
@@ -2689,7 +2690,7 @@ if (BUILD_TESTING)
                 COMMAND SnowDesktopNativeDragIntegrationTests --ole-default-files ${DEFAULT_TARGET} ${VOLUME_RELATION})
             set_tests_properties(native_default_files_${DEFAULT_TARGET}_${VOLUME_RELATION} PROPERTIES
                 REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-                RESOURCE_LOCK snowdesktop_desktop TIMEOUT 180 SKIP_RETURN_CODE 77
+                TIMEOUT 180 SKIP_RETURN_CODE 77
                 LABELS "integration;shell;interaction;slot;ole;data")
         endforeach()
     endforeach()
@@ -2698,7 +2699,7 @@ if (BUILD_TESTING)
             COMMAND SnowDesktopNativeDragIntegrationTests --ole-dock-folders ${DOCK_VERB})
         set_tests_properties(native_ole_dock_folders_${DOCK_VERB} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
-            RESOURCE_LOCK snowdesktop_desktop TIMEOUT 180
+            TIMEOUT 180
             LABELS "integration;shell;interaction;slot;ole;data;dock")
     endforeach()
     add_test(NAME native_folder_delivery_after_drag
@@ -2732,6 +2733,15 @@ if (BUILD_TESTING)
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
             TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
     endforeach()
+
+    # Every mode in this fixture uses its own process, GUID storage/profile and
+    # message-only HWND. It never starts the desktop host, clipboard service or
+    # persistent Dock windows. Shell file operations touch only owned paths.
+    # Derive the set from registrations so new modes inherit this isolation
+    # contract without maintaining another list of test names.
+    get_property(SNOWDESKTOP_NATIVE_DRAG_TESTS DIRECTORY PROPERTY TESTS)
+    list(REMOVE_ITEM SNOWDESKTOP_NATIVE_DRAG_TESTS ${SNOWDESKTOP_TESTS_BEFORE_NATIVE_DRAG})
+    set_property(TEST ${SNOWDESKTOP_NATIVE_DRAG_TESTS} APPEND PROPERTY LABELS isolated-native-model)
 
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)
@@ -3194,7 +3204,8 @@ if (BUILD_TESTING)
         get_test_property(${test_name} LABELS test_labels)
         if(("shell" IN_LIST test_labels OR "window" IN_LIST test_labels OR
             "ui" IN_LIST test_labels OR "host-runtime" IN_LIST test_labels)
-            AND NOT "tools" IN_LIST test_labels)
+            AND NOT "tools" IN_LIST test_labels
+            AND NOT "isolated-native-model" IN_LIST test_labels)
             set_tests_properties(${test_name} PROPERTIES RESOURCE_LOCK snowdesktop_desktop)
         endif()
     endforeach()

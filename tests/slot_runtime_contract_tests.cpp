@@ -878,6 +878,8 @@ void TestEveryRegisteredSurfaceOriginLifecycle()
 
 void TestDropActionModifiers()
 {
+    // This verifies session state transitions for caller-supplied defaults.
+    // Physical file-volume defaults are exercised by native_default_files_*.
     struct Case { int mods; DropAction internal; DropAction external; };
     const std::array cases{
         Case{0, DropAction::Move, DropAction::Copy},
@@ -2482,41 +2484,15 @@ void TestOleDropCompletionBoundaryMatrix()
     adapter->Release();
 }
 
-void TestExternalFileDropEffectsReachNativeActions()
+void TestOleAltCombinationNegotiation()
 {
-    using namespace snowdesktop::ole_drag_rules;
-    // Explorer and the right-drag menu both enter with OLE modifiers. The
-    // native preview must execute the same verb, including Ctrl+Shift links.
-    struct Case { DWORD keys; DWORD requested; DropAction action; };
-    const std::array cases{
-        Case{0, 0, DropAction::Copy},
-        Case{MK_CONTROL, DROPEFFECT_COPY, DropAction::Copy},
-        Case{MK_SHIFT, DROPEFFECT_MOVE, DropAction::Move},
-        Case{MK_ALT, DROPEFFECT_LINK, DropAction::Link},
-        Case{MK_CONTROL | MK_SHIFT, DROPEFFECT_LINK, DropAction::Link},
-        Case{MK_CONTROL | MK_ALT, DROPEFFECT_LINK, DropAction::Link},
-        Case{MK_SHIFT | MK_ALT, DROPEFFECT_LINK, DropAction::Link},
-    };
+    // Keep the two extra Alt combinations not exercised by the native
+    // four-gesture matrix; ordinary verbs are tested through real commits.
+    for (const DWORD keys : {MK_CONTROL | MK_ALT, MK_SHIFT | MK_ALT})
     for (DWORD allowed = 0; allowed < 8; ++allowed)
-    for (const auto& test : cases)
-    {
-        const DWORD expected = test.requested != 0 ? (allowed & test.requested)
-            : (allowed & DROPEFFECT_COPY) ? DROPEFFECT_COPY
-            : (allowed & DROPEFFECT_MOVE) ? DROPEFFECT_MOVE
-            : (allowed & DROPEFFECT_LINK);
-        const DWORD selected = ChooseDropEffect(test.keys, allowed, DROPEFFECT_COPY);
-        Check(selected == expected,
-            "external desktop drops must honor explicit verbs and source restrictions, defaulting to copy");
-        if (selected == DROPEFFECT_NONE) continue;
-        DragSession session;
-        session.Begin(nullptr, {}, {}, {}, {});
-        session.UpdateActionFromMods(static_cast<int>(ModifiersForDropEffect(selected)), DropAction::Copy);
-        const DropAction expectedAction = test.requested != 0 ? test.action
-            : selected == DROPEFFECT_COPY ? DropAction::Copy
-            : selected == DROPEFFECT_MOVE ? DropAction::Move : DropAction::Link;
-        Check(session.Action() == expectedAction,
-            "the negotiated external OLE effect must survive the native action conversion");
-    }
+        Check(snowdesktop::ole_drag_rules::ChooseDropEffect(keys, allowed, DROPEFFECT_COPY) ==
+                (allowed & DROPEFFECT_LINK),
+            "OLE Alt combinations request only a source-supported link");
 }
 
 void TestOleDropButtonStateEndsWithEachGesture()
@@ -3828,7 +3804,7 @@ int wmain(int argc, wchar_t** argv)
     TestSelfOleReturnCancelsTransportBeforeNativeResume();
     TestOleAdapterOwnsComBoundary();
     TestOleDropCompletionBoundaryMatrix();
-    TestExternalFileDropEffectsReachNativeActions();
+    TestOleAltCombinationNegotiation();
     TestOleDropButtonStateEndsWithEachGesture();
     TestTrayCallbackClassification();
     TestTrayNotificationSourceAndRouting();
