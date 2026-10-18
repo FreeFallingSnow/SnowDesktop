@@ -242,6 +242,15 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
         effect = snowdesktop::default_file_drop_action::Preferred(knownPaths, physicalDirectory).value_or(DROPEFFECT_COPY);
     if ((effect & allowedEffects) == 0) return DROPEFFECT_NONE;
 
+    // A slot pointer and its numeric index cannot survive the delayed read.
+    // Keep only the indicated member identity and side; the original target
+    // is independently revalidated below before its current order is used.
+    std::wstring insertionAnchor;
+    const bool insertAfterAnchor = dragSession_.TargetRegion() == HitRegion::SortAfter;
+    if (!destination.widgetId.empty())
+        if (auto* slot = dragSession_.TargetSlot())
+            if (auto* item = slot->GetItem()) insertionAnchor = item->GetPath();
+
     auto result = std::make_shared<snowdesktop::ShellFileOperationResult>();
     auto value = content::MakeContent(result);
     const auto stop = externalSlotReadStopSource_.get_token();
@@ -305,9 +314,29 @@ DWORD DesktopApp::DropExternalSlotContent(IDataObject* dataObject,
     };
     const auto committedEffect = std::make_shared<DWORD>(effect);
     if (volumeDefault) callbacks.committedEffect = [committedEffect] { return *committedEffect; };
-    callbacks.commit = [this, destination, result, committedEffect, volumeDefault, physicalDirectory](const content::Content& input,
+    callbacks.commit = [this, destination, insertionAnchor, insertAfterAnchor, result, committedEffect, volumeDefault, physicalDirectory](const content::Content& input,
         FileOperationCompletion finished, bool synchronously) {
         auto resolved = destination;
+        if (!insertionAnchor.empty())
+        {
+            const auto index = FindWidgetIndexById(destination.widgetId);
+            const auto* target = destination.dockFolderPopup
+                ? dockFolderPopupOpen_ ? &dockFolderPopupWidget_ : nullptr
+                : index < widgets_.size() ? &widgets_[index] : nullptr;
+            if (target && target->id == destination.widgetId && target->type == destination.widgetType &&
+                target->sourceFolderPath == destination.folderPath)
+            {
+                const bool mapped = target->type == DesktopWidgetType::FolderMapping;
+                const auto count = mapped ? target->folderEntries.size() : target->itemKeys.size();
+                std::size_t anchor = 0;
+                for (; anchor < count; ++anchor)
+                {
+                    const auto& key = mapped ? target->folderEntries[anchor].fullPath : target->itemKeys[anchor];
+                    if (ToUpperInvariant(key) == ToUpperInvariant(insertionAnchor)) break;
+                }
+                resolved.preview.insertIndex = anchor == count ? count : anchor + (insertAfterAnchor ? 1u : 0u);
+            }
+        }
         if (volumeDefault && !input.owned && !input.copyOnly)
         {
             *committedEffect = snowdesktop::default_file_drop_action::Preferred(input.paths, physicalDirectory)
