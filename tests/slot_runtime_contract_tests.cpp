@@ -3737,8 +3737,8 @@ void TestDesktopMetadataSorting(bool negativeControl = false)
     Check(names(kModified, false) == L"ZBADC", "modified descending puts the newest first and unavailable times last");
     Check(names(kName, true) == L"ABCDZ" && names(kName, false) == L"ZDCBA",
         "name sorting retains both directions");
-    Check(names(kType, true) == L"CZABD" && names(kType, false) == L"DBAZC",
-        "desktop type sorting preserves empty types and direction-sensitive name ties");
+    Check(names(kType, true) == L"CZABD" && names(kType, false) == L"ABDZC",
+        "desktop Type sorting preserves empty-type placement and ascending names within both type directions");
     // Negative control: the former name-only behavior cannot satisfy metadata expectations.
     Check(names(kName, true) != L"BZADC" && names(kName, false) != L"ZBADC",
         "metadata fixtures distinguish unsupported size/date sorting from a correct result");

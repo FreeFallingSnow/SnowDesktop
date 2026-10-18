@@ -147,7 +147,10 @@ inline void Run(const std::filesystem::path& root)
         {{L"C"}, 1, {L"A", L"C", L"B", L"D"}},
     };
     for (auto type : {DesktopWidgetType::CollectionGroup, DesktopWidgetType::FileGroup})
-    for (int form : {0, 1, 2})
+    // The four expanded-body rows per group type now execute actual native
+    // capture/hit/preview/drop/storage in native_group_surface_labels. Retain
+    // the icon/Dock service representations and their dispatch assertions.
+    for (int form : {1, 2})
     for (const auto& move : reorders)
     {
         const auto path = root / (L"same-" + std::to_wstring(serial++));
