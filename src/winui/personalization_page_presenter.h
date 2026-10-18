@@ -83,6 +83,7 @@ public:
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement MenuContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement TypographyContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement WindowPinBorderContent() const noexcept;
+    [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement DockAttentionDotContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement QuickNavigationAppearanceContent() const noexcept;
     [[nodiscard]] winrt::Microsoft::UI::Xaml::UIElement WidgetCommonContent() const noexcept;
     /** Compatibility alias for TypographyContent; do not mount both. */

@@ -2544,5 +2544,9 @@
   "app.widget_drop.merge_desktop_files": "Mesclar com este widget de arquivos da área de trabalho",
   "app.widget_drop.create_collection_group": "Criar grupo de coleções",
   "app.widget_drop.create_file_group": "Criar grupo de arquivos",
-  "iconLibrary.recommended": "Recomendados"
+  "iconLibrary.recommended": "Recomendados",
+  "settings.dock.attentionDot.title": "Ponto de aviso do Dock",
+  "settings.dock.attentionDot.size": "Tamanho do ponto",
+  "settings.dock.attentionDot.position": "Posição do ponto",
+  "settings.dock.attentionDot.positionHint": "Valores negativos aproximam o ponto do centro do ícone; valores positivos o afastam. O deslocamento é uma porcentagem do tamanho do ícone."
 }

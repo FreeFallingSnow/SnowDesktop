@@ -154,6 +154,10 @@ struct PersonalizationPagePresenter::Impl
     muxc::StackPanel menuRoot;
     muxc::StackPanel widgetLayoutRoot{nullptr};
     muxc::StackPanel pinBorderRoot;
+    muxc::StackPanel dockAttentionDotRoot;
+    SettingsCard dockAttentionDotCard;
+    ContinuousControl dockAttentionDotSize;
+    ContinuousControl dockAttentionDotOffset;
     muxc::StackPanel quickThemeRoot;
     muxc::StackPanel widgetCommonRoot;
     muxc::StackPanel widgetBehaviorRoot;
@@ -287,7 +291,7 @@ struct PersonalizationPagePresenter::Impl
     SettingRow contentThemeRow;
     SettingRow contextMenuRow;
 
-    std::array<ContinuousControl*, 16> continuousControls = {
+    std::array<ContinuousControl*, 18> continuousControls = {
         &widgetAlpha,
         &borderAlpha,
         &borderWidth,
@@ -297,6 +301,8 @@ struct PersonalizationPagePresenter::Impl
         &blurRadius,
         &cornerRadius,
         &dockCornerRadius,
+        &dockAttentionDotSize,
+        &dockAttentionDotOffset,
         &barHeight,
         &categorizedTabHeight,
         &luaWidgetContentRowHeight,
@@ -659,6 +665,20 @@ struct PersonalizationPagePresenter::Impl
         presenter_controls::StyleSettingsSubrow(dockCornerRadius.row.root, false, 16.0);
         dockCornerRows.Children().Append(dockCornerRadius.row.root);
         dockThemeRoot.Children().Append(dockCornerCard);
+        InitializeCard(dockAttentionDotCard, cardStyle, dockAttentionDotRoot);
+        namespace dot = snowdesktop::dock_attention_dot;
+        InitializeContinuousControl(dockAttentionDotSize, nullptr,
+            dot::kMinimumSizeScale * 100.0, dot::kMaximumSizeScale * 100.0,
+            1.0, 0.01, dot::kDefaultSizeScale * 100.0);
+        dockAttentionDotSize.dockMember = &DockSettings::attentionDotSizeScale;
+        SetUnit(dockAttentionDotSize, L"%");
+        InitializeContinuousControl(dockAttentionDotOffset, nullptr,
+            dot::kMinimumOffset * 100.0, dot::kMaximumOffset * 100.0,
+            1.0, 0.01, dot::kDefaultOffset * 100.0);
+        dockAttentionDotOffset.dockMember = &DockSettings::attentionDotOffset;
+        SetUnit(dockAttentionDotOffset, L"%");
+        dockAttentionDotCard.content.Children().Append(dockAttentionDotSize.row.root);
+        dockAttentionDotCard.content.Children().Append(dockAttentionDotOffset.row.root);
         InitializeCard(fontCard, cardStyle, widgetLayoutRoot);
         fontPicker.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         fontPicker.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
@@ -1740,6 +1760,12 @@ struct PersonalizationPagePresenter::Impl
         dockFollowCornerRadiusRow.SetText(L("largeIcon.followComponentRadius", L"Follow component corner radius"));
         muxa::AutomationProperties::SetName(dockFollowCornerRadius, dockFollowCornerRadiusRow.label.Text());
         SetContinuousText(dockCornerRadius, "app.settings.corner_radius", L"Corner Radius");
+        SetCardText(dockAttentionDotCard, "settings.dock.attentionDot.title", L"Dock attention dot");
+        SetContinuousText(dockAttentionDotSize, "settings.dock.attentionDot.size", L"Dot size");
+        SetContinuousText(dockAttentionDotOffset, "settings.dock.attentionDot.position", L"Dot position");
+        dockAttentionDotOffset.row.SetText(
+            L("settings.dock.attentionDot.position", L"Dot position"),
+            L("settings.dock.attentionDot.positionHint", L"Negative values move toward the icon center; positive values move outward. The offset is a percentage of the icon size."));
         ReplaceComboItems(dockAppearanceCombo, {{"app.settings.taskbar_follow_global", L"Follow global theme"},
             {"app.settings.dark", L"Dark"}, {"app.settings.light", L"Light"},
             {"app.settings.dark_glass", L"Dark glass"}, {"app.settings.light_glass", L"Light glass"},
@@ -1978,6 +2004,8 @@ struct PersonalizationPagePresenter::Impl
             dockThemes->SaveContent().Visibility(dockAppearanceEditor->Content().Visibility());
             dockFollowCornerRadius.IsOn(dock.followComponentCornerRadius);
             PatchContinuous(dockCornerRadius, dock.cornerRadius);
+            PatchContinuous(dockAttentionDotSize, dock.attentionDotSizeScale);
+            PatchContinuous(dockAttentionDotOffset, dock.attentionDotOffset);
             dockCornerRadius.row.root.Visibility(dock.followComponentCornerRadius
                 ? mux::Visibility::Collapsed : mux::Visibility::Visible);
             dockRevision = snapshot.domainRevisions.dock;
@@ -2049,6 +2077,8 @@ struct PersonalizationPagePresenter::Impl
             id == "personalization.globalTheme")
             return presetCombo;
         if (id == "personalization.font") return fontPicker;
+        if (id == "dock.attentionDotSize") return dockAttentionDotSize.slider;
+        if (id == "dock.attentionDotOffset") return dockAttentionDotOffset.slider;
         if (id == "personalization.windowPinBorder.show") return pinBorderEnabled;
         if (id.starts_with("personalization.windowPinBorder."))
         {
@@ -2337,6 +2367,11 @@ mux::UIElement PersonalizationPagePresenter::TypographyContent() const noexcept
 mux::UIElement PersonalizationPagePresenter::WindowPinBorderContent() const noexcept
 {
     return impl_ ? impl_->pinBorderRoot : nullptr;
+}
+
+mux::UIElement PersonalizationPagePresenter::DockAttentionDotContent() const noexcept
+{
+    return impl_ ? impl_->dockAttentionDotRoot : nullptr;
 }
 
 mux::UIElement PersonalizationPagePresenter::QuickNavigationAppearanceContent() const noexcept

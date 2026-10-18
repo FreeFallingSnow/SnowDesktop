@@ -2544,5 +2544,9 @@
   "app.widget_drop.merge_desktop_files": "이 바탕 화면 파일 위젯에 병합",
   "app.widget_drop.create_collection_group": "컬렉션 그룹 만들기",
   "app.widget_drop.create_file_group": "파일 그룹 만들기",
-  "iconLibrary.recommended": "추천 결과"
+  "iconLibrary.recommended": "추천 결과",
+  "settings.dock.attentionDot.title": "Dock 알림 점",
+  "settings.dock.attentionDot.size": "점 크기",
+  "settings.dock.attentionDot.position": "점 위치",
+  "settings.dock.attentionDot.positionHint": "음수는 아이콘 중심 쪽으로, 양수는 바깥쪽으로 이동합니다. 이동량은 아이콘 크기에 대한 백분율입니다."
 }

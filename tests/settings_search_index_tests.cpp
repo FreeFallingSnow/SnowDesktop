@@ -344,11 +344,12 @@ int main(int argc, char* argv[])
         Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::Desktop,
             "desktop switching search results open the Desktop page with a stable focus target");
     }
-    for (const auto focus : {"personalization.font", "personalization.tooltipFontSize"})
+    for (const auto focus : {"personalization.font", "personalization.tooltipFontSize",
+            "dock.attentionDotSize", "dock.attentionDotOffset"})
     {
         const auto entry = find(focus);
         Check(entry != catalog.staticSettings.end() && entry->page == SettingsPage::AppearanceDesktopIcons,
-            "font search results open the Fonts and icons page");
+            "font and Dock attention dot search results open global appearance");
     }
     Check(find("general.quickNavigation")->page == SettingsPage::QuickNavigation && find("personalization.quickNavigationTheme")->page == SettingsPage::QuickNavigation,"the shared catalog brings navigation behavior and appearance to one page");
     Check(find("quickNav.layout.iconSize") != catalog.staticSettings.end() && find("quickNav.color.searchBg") != catalog.staticSettings.end(),"advanced navigation fields are indexed individually");

@@ -36,6 +36,7 @@
 #include "layout/item_render_layer_rules.h"
 #include "dock/dock_window_rules.h"
 #include "dock/dock_window_attention.h"
+#include "dock/dock_attention_dot.h"
 #include "dock/dock_window_preview.h"
 #include "dock/dock_window_transition.h"
 #include "dock/dock_genie_rules.h"
@@ -2008,6 +2009,36 @@ int main(int argc, char** argv)
     }
     snowdesktop::tests::dock_folder_order::Run(Check);
     snowdesktop::tests::dock_task_window_filter::Run(Check);
+    {
+        namespace dot = snowdesktop::dock_attention_dot;
+        const auto closeTo = [](float actual, float expected) { return std::abs(actual - expected) < 0.0001f; };
+        const auto defaults = dot::Resolve(48.0f, 1.0f, 0.0f);
+        Check(closeTo(defaults.radius, 4.32f) && closeTo(defaults.cornerInset, 3.416f),
+            "default attention geometry retains the existing 48-pixel icon appearance");
+        const auto smallIcon = dot::Resolve(8.0f, 1.0f, 0.0f);
+        const auto largeIcon = dot::Resolve(96.0f, 1.0f, 0.0f);
+        Check(closeTo(smallIcon.radius, 2.0f) && closeTo(smallIcon.cornerInset, 1.85f) &&
+                closeTo(largeIcon.radius, 6.0f) && closeTo(largeIcon.cornerInset, 4.55f),
+            "default attention geometry retains tiny-icon and magnified-icon bounds");
+        const auto smaller = dot::Resolve(48.0f, 0.5f, 0.0f);
+        const auto larger = dot::Resolve(48.0f, 2.0f, 0.0f);
+        Check(closeTo(smaller.radius, 2.16f) && closeTo(larger.radius, 8.64f) &&
+                smaller.cornerInset == defaults.cornerInset && larger.cornerInset == defaults.cornerInset,
+            "attention size can change from 50 to 200 percent without shifting the center");
+        const auto inward = dot::Resolve(48.0f, 1.0f, -0.25f);
+        const auto outward = dot::Resolve(48.0f, 1.0f, 0.25f);
+        Check(closeTo(inward.cornerInset, 15.416f) && closeTo(outward.cornerInset, -8.584f) &&
+                inward.radius == defaults.radius && outward.radius == defaults.radius,
+            "negative attention offsets move inward and positive offsets move outward without resizing");
+        Check(closeTo(dot::Resolve(96.0f, 1.0f, 0.25f).cornerInset, -19.45f),
+            "attention offsets follow the rendered icon size during magnification");
+        Check(dot::NormalizeSizeScale(0.0f) == 0.5f && dot::NormalizeSizeScale(10.0f) == 2.0f &&
+                dot::NormalizeOffset(-1.0f) == -0.25f && dot::NormalizeOffset(1.0f) == 0.25f &&
+                dot::NormalizeSizeScale(std::numeric_limits<float>::quiet_NaN()) == 1.0f &&
+                dot::NormalizeOffset(std::numeric_limits<float>::infinity()) == 0.0f &&
+                dot::Resolve(0.0f, 1.0f, 0.0f).radius == 0.0f,
+            "invalid attention settings stay finite and within the supported range");
+    }
     {
         namespace attention = snowdesktop::dock_window_attention;
         attention::Tracker tracker;

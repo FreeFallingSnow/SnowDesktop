@@ -2544,5 +2544,9 @@
   "app.widget_drop.merge_desktop_files": "合併至此桌面檔案元件",
   "app.widget_drop.create_collection_group": "建立集合群組",
   "app.widget_drop.create_file_group": "建立檔案群組",
-  "iconLibrary.recommended": "推薦結果"
+  "iconLibrary.recommended": "推薦結果",
+  "settings.dock.attentionDot.title": "Dock 提醒紅點",
+  "settings.dock.attentionDot.size": "紅點大小",
+  "settings.dock.attentionDot.position": "紅點位置",
+  "settings.dock.attentionDot.positionHint": "負值向圖示中心拉近，正值向外拉遠；偏移量按圖示尺寸的百分比計算。"
 }

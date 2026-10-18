@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dock_settings_rules.h"
+#include "dock_attention_dot.h"
 #include "dock_layout_settings.h"
 #include "dock_fullscreen_policy.h"
 #include "dock_tray_rules.h"
@@ -94,6 +95,8 @@ struct DockSettings : DockLayoutSettings
     bool followComponentAppearance = true;
     bool followComponentCornerRadius = true;
     float cornerRadius = 12.0f;
+    float attentionDotSizeScale = snowdesktop::dock_attention_dot::kDefaultSizeScale;
+    float attentionDotOffset = snowdesktop::dock_attention_dot::kDefaultOffset;
     int appearancePreset = kAppearancePresetCustom;
     PersonalizationSettings customAppearance;
     int hoverEffect = 2;
@@ -156,6 +159,8 @@ inline void SelectDockAppearance(DockSettings& settings, bool followGlobal,
 inline void NormalizeDockSettings(DockSettings& settings)
 {
     settings.edgeDistanceScale = ClampDockEdgeDistanceScale(settings.edgeDistanceScale);
+    settings.attentionDotSizeScale = snowdesktop::dock_attention_dot::NormalizeSizeScale(settings.attentionDotSizeScale);
+    settings.attentionDotOffset = snowdesktop::dock_attention_dot::NormalizeOffset(settings.attentionDotOffset);
     settings.cornerRadius = std::isfinite(settings.cornerRadius)
         ? std::clamp(settings.cornerRadius, 0.0f, 28.0f) : DockSettings{}.cornerRadius;
     switch (settings.appearancePreset)

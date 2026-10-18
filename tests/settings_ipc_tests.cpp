@@ -83,6 +83,13 @@ void TestPermissionAndRelocatedRoutesCodec()
 
 void TestCodec()
 {
+    for (const auto focus : {"dock.attentionDotSize", "dock.attentionDotOffset"})
+    {
+        const auto requested = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, focus);
+        const auto routed = snowdesktop::CanonicalizeSettingsRoute(Unpack<snowdesktop::SettingsRoute>(Pack(requested)));
+        Check(routed.page == snowdesktop::SettingsPage::AppearanceDesktopIcons && routed.focusId == focus,
+            "Dock attention dot search and IPC focus resolve to global appearance");
+    }
     for (const auto focus : {"personalization.windowPinBorder.show", "personalization.windowPinBorder.color",
              "personalization.windowPinBorder.width", "personalization.windowPinBorder.opacity"})
     {
@@ -405,9 +412,14 @@ void TestCodec()
     settings.values.desktop.scrollingTitleLines = 1;
     settings.values.desktop.titleEllipsis = false;
     settings.values.desktop.groupComponentBadges = false;
+    settings.values.dock.attentionDotSizeScale = 1.75f;
+    settings.values.dock.attentionDotOffset = -0.18f;
     settings.values.desktop.scrollingIconSpacingYScale = 5.0f;
     settings.values.desktop.listRowSpacingScale = 4.5f;
     const auto restored = Unpack<snowdesktop::SettingsSnapshot>(Pack(settings));
+    Check(restored.values.dock.attentionDotSizeScale == 1.75f &&
+            restored.values.dock.attentionDotOffset == -0.18f,
+        "Dock attention dot size and position cross the settings-process boundary");
     Check(!restored.values.desktop.groupComponentBadges,
         "disabled group-component badges survive the settings-process boundary");
     Check(restored.values.desktop.scrollingIconSpacingYScale == 5.0f &&

@@ -84,6 +84,8 @@ SettingsRoute SettingsRoute::ForWidget(
 
 SettingsRoute CanonicalizeSettingsRoute(SettingsRoute route)
 {
+    if (route.focusId == "dock.attentionDotSize" || route.focusId == "dock.attentionDotOffset")
+        route.page = SettingsPage::AppearanceDesktopIcons;
     const bool requestedThemeOverview = route.page == SettingsPage::AppearanceTheme;
     if ((route.page == SettingsPage::Personalization || route.page == SettingsPage::AppearanceTheme) &&
         route.focusId == "personalization.savedThemes") route.page = SettingsPage::ThemeManager;

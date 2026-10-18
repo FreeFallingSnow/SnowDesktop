@@ -34,6 +34,7 @@
 #include <optional>
 #include <sstream>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace
@@ -1290,6 +1291,18 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
         settings.followComponentCornerRadius = follow->boolean;
     if (const auto* radius = gradientDocument.Find("cornerRadius"); radius && radius->IsNumber())
         settings.cornerRadius = static_cast<float>(radius->number);
+    settings.attentionDotSizeScale = snowdesktop::dock_attention_dot::kDefaultSizeScale;
+    settings.attentionDotOffset = snowdesktop::dock_attention_dot::kDefaultOffset;
+    for (const auto& [key, member] : {
+        std::pair{"attentionDotSizeScale", &DockSettings::attentionDotSizeScale},
+        std::pair{"attentionDotOffset", &DockSettings::attentionDotOffset}})
+    {
+        if (const auto* field = gradientDocument.Find(key))
+        {
+            if (!field->IsNumber()) return false;
+            settings.*member = static_cast<float>(field->number);
+        }
+    }
     if (ReadDoubleField(text, "dockAppearancePreset", value))
         settings.appearancePreset = NormalizeAppearancePresetId(static_cast<int>(value));
     if (const auto* appearance = gradientDocument.Find("customAppearance"))
@@ -1424,6 +1437,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"followComponentAppearance\": " << (settings.followComponentAppearance ? "true" : "false") << ",\n";
     file << "  \"followComponentCornerRadius\": " << (settings.followComponentCornerRadius ? "true" : "false") << ",\n";
     file << "  \"cornerRadius\": " << settings.cornerRadius << ",\n";
+    file << "  \"attentionDotSizeScale\": " << snowdesktop::dock_attention_dot::NormalizeSizeScale(settings.attentionDotSizeScale) << ",\n";
+    file << "  \"attentionDotOffset\": " << snowdesktop::dock_attention_dot::NormalizeOffset(settings.attentionDotOffset) << ",\n";
     file << "  \"dockAppearancePreset\": " << settings.appearancePreset << ",\n";
     file << "  \"customAppearance\": " << customAppearance << ",\n";
     file << "  \"dynamicTaskbarSchemaVersion\": 1\n";

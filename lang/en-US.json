@@ -2544,5 +2544,9 @@
   "app.widget_drop.merge_desktop_files": "Merge into this desktop files widget",
   "app.widget_drop.create_collection_group": "Create collection group",
   "app.widget_drop.create_file_group": "Create file group",
-  "iconLibrary.recommended": "Recommended"
+  "iconLibrary.recommended": "Recommended",
+  "settings.dock.attentionDot.title": "Dock attention dot",
+  "settings.dock.attentionDot.size": "Dot size",
+  "settings.dock.attentionDot.position": "Dot position",
+  "settings.dock.attentionDot.positionHint": "Negative values move toward the icon center; positive values move outward. The offset is a percentage of the icon size."
 }

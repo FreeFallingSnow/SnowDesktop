@@ -552,6 +552,7 @@ set(SNOWDESKTOP_SOURCES
     src/theme/theme_preview.cpp
     src/theme/theme_workshop.cpp
     src/dock/dock_settings.cpp
+    src/dock/dock_attention_dot.h
     src/taskbar_hook/taskbar_symbol_resolver.cpp
     src/navigation/navigation_settings.cpp
     src/settings/general_settings.cpp

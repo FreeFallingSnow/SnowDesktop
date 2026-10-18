@@ -469,6 +469,10 @@ constexpr std::array kFallbackStrings{
     LocalizedFallback{"settings.personalization.colors", L"Colors and gradients"},
     LocalizedFallback{"settings.personalization.colors.description", L"Customize accents, surfaces and gradients."},
     LocalizedFallback{"settings.personalization.windowPinBorder", L"Pinned window border"},
+    LocalizedFallback{"settings.dock.attentionDot.title", L"Dock attention dot"},
+    LocalizedFallback{"settings.dock.attentionDot.size", L"Dot size"},
+    LocalizedFallback{"settings.dock.attentionDot.position", L"Dot position"},
+    LocalizedFallback{"settings.dock.attentionDot.positionHint", L"Negative values move toward the icon center; positive values move outward. The offset is a percentage of the icon size."},
     LocalizedFallback{"settings.personalization.windowPinBorder.show", L"Show pinned window border"},
     LocalizedFallback{"settings.personalization.windowPinBorder.hint", L"Hiding the border keeps the window pinned."},
     LocalizedFallback{"settings.personalization.windowPinBorder.color", L"Border color"},
@@ -2965,6 +2969,8 @@ void SettingsShell::RenderPageCards(bool forcePageCards)
         if (personalizationPage_)
         {
             PageCards().Children().Append(personalizationPage_->WindowPinBorderContent());
+            PageCards().Children().Append(personalizationPage_->DockAttentionDotContent());
+            registerPersonalizationFocus({"dock.attentionDotSize", "dock.attentionDotOffset"});
             registerPersonalizationFocus({"personalization.windowPinBorder.show", "personalization.windowPinBorder.color",
                 "personalization.windowPinBorder.width", "personalization.windowPinBorder.opacity"});
         }

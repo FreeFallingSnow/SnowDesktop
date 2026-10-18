@@ -2544,5 +2544,9 @@
   "app.widget_drop.merge_desktop_files": "Fusionner avec ce widget de fichiers du bureau",
   "app.widget_drop.create_collection_group": "Créer un groupe de collections",
   "app.widget_drop.create_file_group": "Créer un groupe de fichiers",
-  "iconLibrary.recommended": "Suggestions"
+  "iconLibrary.recommended": "Suggestions",
+  "settings.dock.attentionDot.title": "Point de notification du Dock",
+  "settings.dock.attentionDot.size": "Taille du point",
+  "settings.dock.attentionDot.position": "Position du point",
+  "settings.dock.attentionDot.positionHint": "Les valeurs négatives rapprochent le point du centre de l'icône ; les valeurs positives l'éloignent. Le décalage est un pourcentage de la taille de l'icône."
 }

@@ -137,10 +137,10 @@ void DesktopApp::DrawDockAttentionDot(
     if (!ctx || IsRectEmptyRect(iconRect) || opacity <= 0.0f) return;
     const float size = static_cast<float>(std::min(
         iconRect.right - iconRect.left, iconRect.bottom - iconRect.top));
-    const float radius = std::min(size * 0.25f, std::clamp(size * 0.09f, 3.0f, 6.0f));
-    // Keep most of the dot inside while slightly crossing the top-right edge.
-    // Use its radius so the inset follows Dock magnification.
-    const float cornerInset = radius * 0.675f + 0.5f;
+    const auto geometry = snowdesktop::dock_attention_dot::Resolve(size,
+        dockSettings_.attentionDotSizeScale, dockSettings_.attentionDotOffset);
+    const float radius = geometry.radius;
+    const float cornerInset = geometry.cornerInset;
     const auto ellipse = D2D1::Ellipse(D2D1::Point2F(
         static_cast<float>(iconRect.right) - cornerInset,
         static_cast<float>(iconRect.top) + cornerInset), radius, radius);
