@@ -326,9 +326,9 @@ inline void Run(const std::filesystem::path& root)
             "A and B keep their original component and insertion boundary after colliding physical writes");
         CheckRoundTrip(directory / L"layout.json", widgets);
     }
-    // Real partial IO: the worker records one failed copy and one successful
-    // copy. Reconciliation must publish the actual success despite false for
-    // the batch, and compact the original insertion boundary without a gap.
+    // Real partial IO: the first copy succeeds and the next copy fails.
+    // Reconciliation retains the actual successful prefix at its original
+    // insertion boundary despite the batch reporting failure.
     {
         const auto directory = root / L"partial";
         const auto selected = Seed(directory, 1);
@@ -336,8 +336,8 @@ inline void Run(const std::filesystem::path& root)
         const auto copied = directory / L"target" / L"a.txt";
         auto outputs = std::make_shared<ShellFileOperationResult>();
         ShellFileOperationRequest request; request.result = outputs;
-        request.exactFileCopies = {{missing.wstring(), (directory / L"target" / L"missing.txt").wstring()},
-            {selected.front().wstring(), copied.wstring()}};
+        request.exactFileCopies = {{selected.front().wstring(), copied.wstring()},
+            {missing.wstring(), (directory / L"target" / L"missing.txt").wstring()}};
         Require(!ShellFileOperationWorker::Execute(request) && outputs->outputs.size() == 1 &&
             Bytes(copied) == "alpha" && Bytes(selected.front()) == "alpha",
             "partial file operation really fails one member and retains the other member's successful bytes");
@@ -345,7 +345,7 @@ inline void Run(const std::filesystem::path& root)
         for (size_t index = 0; index < 2; ++index)
         {
             PendingLandingEntry entry; entry.kind = DropLandingKind::WidgetIndex; entry.widgetId = L"partial-target";
-            entry.sourcePath = (index ? selected.front() : missing).wstring(); entry.insertIndex = 1 + index;
+            entry.sourcePath = (index ? missing : selected.front()).wstring(); entry.insertIndex = 1 + index;
             snapshot.entries.push_back(entry);
         }
         pending_drop::Queue queue; pending_drop::Complete(queue, snapshot, *outputs);
