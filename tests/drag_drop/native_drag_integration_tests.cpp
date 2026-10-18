@@ -376,6 +376,63 @@ struct NativeDragIntegrationAccess
     }
     static void SortMembers(DesktopApp& app, int mode, bool ascending)
     { app.SortWidgetContents(0, mode, ascending); }
+    static void SeedGroupedMembers(DesktopApp& app, const std::vector<std::filesystem::path>& files, bool list)
+    {
+        SeedMemberModel(app, files, DesktopWidgetType::Collection, list);
+        // Release views before growing their model vector; all following views
+        // are rebuilt by the real layout after group membership exists.
+        app.items_oo_.clear(); app.containers_.clear();
+        DesktopWidget other;
+        other.id = L"other"; other.type = DesktopWidgetType::Collection;
+        other.title = other.customTitle = L"Unchanged child";
+        other.gridCell = {L"__page:1", 0, 0}; other.gridSpan = {2, 2};
+        other.listMode = !list; other.contentSortColumn = snowdesktop::list_detail_rules::Column::Size;
+        other.contentSortAscending = false;
+        app.widgets_.push_back(std::move(other));
+        DesktopWidget group;
+        group.id = L"ordered-group"; group.type = DesktopWidgetType::CollectionGroup;
+        group.title = group.customTitle = L"Ordered group";
+        group.childWidgetIds = {L"ordered", L"other"}; group.activeCategoryId = L"ordered";
+        group.gridCell = {L"__page:1", 0, 0}; group.gridSpan = {4, 3}; group.listMode = list;
+        app.widgets_.push_back(std::move(group));
+        app.LayoutItems();
+    }
+    static void SortGroupedMembers(DesktopApp& app, int mode, bool ascending)
+    { app.SortWidgetContents(2, mode, ascending); }
+    static DragSourceList BeginGroupedMembers(DesktopApp& app, const std::vector<std::wstring>& names)
+    {
+        for (auto& item : app.items_) item.selected = std::find(names.begin(), names.end(), item.name) != names.end();
+        for (auto& widget : app.widgets_) widget.selected = false;
+        auto* origin = MemberContainer(app, L"ordered-group");
+        auto items = origin->GetSelectedItems();
+        if (items.size() != names.size()) throw std::runtime_error("native active-group capture requires every selected member");
+        auto captured = app.BuildDragSourceList(items, origin);
+        const auto& slots = origin->GetSlots();
+        if (slots.empty()) throw std::runtime_error("native active-group content must expose real member slots");
+        const auto frame = slots.front()->GetBounds();
+        const POINT point{(frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2};
+        app.dragSession_.Begin(origin, std::move(items), captured, point, point);
+        return captured;
+    }
+    static DropPreviewList GroupedMemberPreview(DesktopApp& app, bool atEnd)
+    {
+        auto* target = MemberContainer(app, L"ordered-group");
+        const auto& slots = target->GetSlots();
+        return app.BuildDropPreviewList(app.dragSession_.SourceList(), target,
+            atEnd ? nullptr : slots.front().get(), atEnd ? HitRegion::SortAfter : HitRegion::SortBefore,
+            0, app.dragSession_.CurrentPoint());
+    }
+    static void DropGroupedMembers(DesktopApp& app, bool atEnd)
+    {
+        auto* target = MemberContainer(app, L"ordered-group");
+        const auto& slots = target->GetSlots();
+        auto* slot = atEnd ? nullptr : slots.front().get();
+        const auto items = app.dragSession_.Items();
+        auto* origin = app.dragSession_.Source();
+        app.dragSession_.DeactivateForDrop();
+        target->OnItemsDropped(items, origin, slot, atEnd ? HitRegion::SortAfter : HitRegion::SortBefore, 0);
+        app.EndDragSession();
+    }
     static void SeedMixedModel(DesktopApp& app, const std::vector<std::filesystem::path>& files,
         const std::vector<std::filesystem::path>& inside, DesktopWidgetType type, DesktopWidgetType targetType)
     {
@@ -634,6 +691,7 @@ struct NativeDragIntegrationAccess
 #include "native_ole_leave_cases.h"
 #include "native_member_order_cases.h"
 #include "native_mixed_selection_cases.h"
+#include "native_group_member_order_cases.h"
 
 namespace
 {
@@ -698,6 +756,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--ole-leave-lifecycle") native_ole_leave_cases::Run();
         else if (argc == 3 && std::string_view(argv[1]) == "--member-order") native_member_order_cases::Run(argv[2]);
         else if (argc == 3 && std::string_view(argv[1]) == "--mixed-selection") native_mixed_selection_cases::Run(argv[2]);
+        else if (argc == 2 && std::string_view(argv[1]) == "--group-member-order") native_group_member_order_cases::Run();
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

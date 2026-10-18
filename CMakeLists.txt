@@ -2674,6 +2674,11 @@ if (BUILD_TESTING)
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
             TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
     endforeach()
+    add_test(NAME native_group_member_order
+        COMMAND SnowDesktopNativeDragIntegrationTests --group-member-order)
+    set_tests_properties(native_group_member_order PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
 
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)
