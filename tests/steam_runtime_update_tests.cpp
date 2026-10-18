@@ -1855,16 +1855,64 @@ DWORD RunLauncherProcess(const std::filesystem::path& root, std::wstring_view ar
     startup.cb = sizeof(startup);
     startup.dwFlags = STARTF_USESHOWWINDOW;
     startup.wShowWindow = SW_HIDE;
+    // Ready lets the production launcher return before its temporary fixture
+    // host exits. Own and drain that process tree before the next scenario;
+    // otherwise a still-exiting predecessor is legitimately in use at prune.
+    const HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (!job) return GetLastError();
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    if (!SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)))
+    {
+        const auto error = GetLastError();
+        CloseHandle(job);
+        return error;
+    }
     PROCESS_INFORMATION process{};
     if (!CreateProcessW(launcher.c_str(), command.data(), nullptr, nullptr,
-            FALSE, CREATE_NO_WINDOW, nullptr, root.c_str(), &startup, &process))
-        return GetLastError();
+            FALSE, CREATE_NO_WINDOW | CREATE_SUSPENDED, nullptr, root.c_str(), &startup, &process))
+    {
+        const auto error = GetLastError();
+        CloseHandle(job);
+        return error;
+    }
+    if (!AssignProcessToJobObject(job, process.hProcess) || ResumeThread(process.hThread) == static_cast<DWORD>(-1))
+    {
+        const auto error = GetLastError();
+        TerminateProcess(process.hProcess, error);
+        TerminateJobObject(job, error);
+        WaitForSingleObject(process.hProcess, 5000);
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        CloseHandle(job);
+        return error;
+    }
     CloseHandle(process.hThread);
+    const auto started = GetTickCount64();
     const auto waited = WaitForSingleObject(process.hProcess, 30000);
     DWORD result = ERROR_TIMEOUT;
     if (waited == WAIT_OBJECT_0) GetExitCodeProcess(process.hProcess, &result);
-    else TerminateProcess(process.hProcess, ERROR_TIMEOUT);
+    else TerminateJobObject(job, ERROR_TIMEOUT);
+    for (;;)
+    {
+        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting{};
+        if (!QueryInformationJobObject(job, JobObjectBasicAccountingInformation,
+                &accounting, sizeof(accounting), nullptr))
+        {
+            result = GetLastError();
+            break;
+        }
+        if (accounting.ActiveProcesses == 0) break;
+        if (GetTickCount64() - started >= 30000)
+        {
+            result = ERROR_TIMEOUT;
+            TerminateJobObject(job, ERROR_TIMEOUT);
+            break;
+        }
+        Sleep(10);
+    }
     CloseHandle(process.hProcess);
+    CloseHandle(job);
     return result;
 }
 
