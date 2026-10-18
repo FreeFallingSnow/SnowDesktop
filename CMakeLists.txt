@@ -2752,6 +2752,32 @@ if (BUILD_TESTING)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;dock")
 
+    foreach(GROUP_SURFACE_MODE IN ITEMS labels search date inactive)
+        add_test(NAME native_group_surface_${GROUP_SURFACE_MODE}
+            COMMAND SnowDesktopNativeDragIntegrationTests --group-surfaces ${GROUP_SURFACE_MODE})
+        set_tests_properties(native_group_surface_${GROUP_SURFACE_MODE} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+    endforeach()
+    add_test(NAME native_self_ole_return
+        COMMAND SnowDesktopNativeDragIntegrationTests --ole-return)
+    add_test(NAME native_ole_completion_sequences
+        COMMAND SnowDesktopNativeDragIntegrationTests --ole-sequences)
+    add_test(NAME native_dock_generated_relations
+        COMMAND SnowDesktopNativeDragIntegrationTests --dock-generated-relations)
+    set_tests_properties(native_self_ole_return native_ole_completion_sequences native_dock_generated_relations PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;dock")
+    foreach(CONTENT_TARGET IN ITEMS desktop collection mapping dock)
+        add_test(NAME native_owned_content_${CONTENT_TARGET}
+            COMMAND SnowDesktopNativeDragIntegrationTests --owned-content ${CONTENT_TARGET})
+        add_test(NAME native_owned_content_cancel_${CONTENT_TARGET}
+            COMMAND SnowDesktopNativeDragIntegrationTests --owned-content-cancel ${CONTENT_TARGET})
+        set_tests_properties(native_owned_content_${CONTENT_TARGET} native_owned_content_cancel_${CONTENT_TARGET} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;dock")
+    endforeach()
+
     # Every mode in this fixture uses its own process, GUID storage/profile and
     # message-only HWND. It never starts the desktop host, clipboard service or
     # persistent Dock windows. Shell file operations touch only owned paths.

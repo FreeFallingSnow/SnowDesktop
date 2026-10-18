@@ -1046,6 +1046,9 @@ struct NativeDragIntegrationAccess
         app.items_oo_.clear(); app.containers_.clear(); app.items_.clear(); app.widgets_.clear();
         app.hwnd_ = nullptr;
     }
+#include "native_group_surface_access.inc"
+#include "native_ole_sequence_access.inc"
+#include "native_content_dock_access.inc"
 };
 
 #include "native_drag_commit_cases.h"
@@ -1064,6 +1067,10 @@ struct NativeDragIntegrationAccess
 #include "native_widget_pair_cases.h"
 #include "native_dock_return_cases.h"
 #include "native_right_capture_cases.h"
+#include "native_group_surface_cases.h"
+#include "native_ole_sequence_cases.h"
+#include "native_content_dock_cases.h"
+#include "native_owned_content_cases.h"
 
 namespace
 {
@@ -1140,6 +1147,12 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--group-lifecycle-storage") native_widget_pair_cases::RunLifecycle();
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-file-returns") native_dock_return_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--right-menu-capture") native_right_capture_cases::Run();
+        else if (argc == 3 && std::string_view(argv[1]) == "--group-surfaces") native_group_surface_cases::Run(argv[2]);
+        else if (argc == 2 && std::string_view(argv[1]) == "--ole-return") native_ole_sequence_cases::RunReturn();
+        else if (argc == 2 && std::string_view(argv[1]) == "--ole-sequences") native_ole_sequence_cases::RunAsync();
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-generated-relations") native_content_dock_cases::RunDockRelations();
+        else if (argc == 3 && std::string_view(argv[1]) == "--owned-content") native_owned_content_cases::Run(argv[2]);
+        else if (argc == 3 && std::string_view(argv[1]) == "--owned-content-cancel") native_owned_content_cases::Run(argv[2], true);
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }
