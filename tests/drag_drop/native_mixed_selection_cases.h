@@ -7,22 +7,54 @@ namespace native_mixed_selection_cases
 {
 using namespace native_ole_file_cases;
 
-inline std::string OriginalComponents(const DesktopApp& app)
+struct Components
 {
+    std::string configuration;
+    std::vector<std::pair<std::wstring, std::vector<fs::path>>> members;
+};
+inline Components OriginalComponents(const DesktopApp& app)
+{
+    Components result;
     std::ostringstream stream;
     std::vector<const DesktopWidget*> originals;
     for (const auto& widget : Access::Widgets(app))
         if (widget.id != L"mixed-target") originals.push_back(&widget);
     std::sort(originals.begin(), originals.end(), [](const auto* left, const auto* right) { return left->id < right->id; });
     for (const auto* widget : originals)
-        snowdesktop::widget_layout_codec::Write(stream, *widget, JsonEscapeUtf8, WideToUtf8);
-    return stream.str();
+    {
+        std::vector<fs::path> members;
+        for (const auto& key : widget->itemKeys) members.emplace_back(key);
+        result.members.emplace_back(widget->id, std::move(members));
+        auto configuration = *widget;
+        // Persisted path spelling can be normalized on reload. Membership is
+        // ordered physical identity, checked below with the real filesystem;
+        // every other persisted configuration field remains a strict comparison.
+        configuration.itemKeys.clear();
+        snowdesktop::widget_layout_codec::Write(stream, configuration, JsonEscapeUtf8, WideToUtf8);
+    }
+    result.configuration = stream.str();
+    return result;
 }
 inline void Check(DesktopApp& app, const std::vector<fs::path>& files, std::size_t count,
-    const std::string& original, DesktopWidgetType targetType)
+    const Components& original, DesktopWidgetType targetType)
 {
-    Require(OriginalComponents(app) == original,
+    const auto current = OriginalComponents(app);
+    Require(current.configuration == original.configuration && current.members.size() == original.members.size(),
         "D01: an unsupported component, its children, members, placement and settings must remain unchanged");
+    for (std::size_t i = 0; i < original.members.size(); ++i)
+    {
+        const auto& [id, members] = original.members[i];
+        const auto& [currentId, currentMembers] = current.members[i];
+        Require(currentId == id && currentMembers.size() == members.size(),
+            "D01: unsupported components must retain every original member under its stable component identity");
+        for (std::size_t j = 0; j < members.size(); ++j)
+        {
+            std::error_code error;
+            const bool same = fs::equivalent(members[j], currentMembers[j], error);
+            Require(!error && same,
+                "D01: unsupported component membership must preserve the ordered physical file identities");
+        }
+    }
     const auto* target = Access::MemberContainer(app, L"mixed-target")->GetWidgetData();
     Require(target && target->type == targetType && target->itemKeys.size() == count,
         "D01: the actual native target must receive every eligible selected file despite unsupported mixed members");
@@ -63,8 +95,9 @@ inline void Run(std::string_view typeName)
     for (const std::size_t count : {0u, 1u, 2u})
     for (const bool reverse : {false, true})
     {
-        native_drag_commit_cases::context = "mixed target=" + std::string(typeName) + " component=" +
+        const auto description = "mixed target=" + std::string(typeName) + " component=" +
             std::to_string(static_cast<int>(type)) + " files=" + std::to_string(count) + " reverse=" + std::to_string(reverse);
+        native_drag_commit_cases::context = description;
         const auto directory = profile.root / (L"mixed-" + std::to_wstring(scenes++));
         fs::create_directories(directory / L"component");
         const auto desktop = snowdesktop::debug_profile::Current().configuration.desktop;
@@ -98,12 +131,15 @@ inline void Run(std::string_view typeName)
                 "D01: eligible landing indices must retain their full-selection identities and the intended destination");
         }
         Access::DropMixed(app);
+        native_drag_commit_cases::context = description + " phase=after-drop";
         Check(app, files, count, original, targetType);
         Require(Access::Save(app), "save actual partial mixed-selection result through native host storage");
         native_drag_async_reload_cases::Refresh(app);
+        native_drag_commit_cases::context = description + " phase=after-refresh";
         Check(app, files, count, original, targetType);
         Access::Load(app);
         native_drag_async_reload_cases::Refresh(app, true);
+        native_drag_commit_cases::context = description + " phase=after-reload";
         Check(app, files, count, original, targetType);
         for (std::size_t i = 0; i < inside.size(); ++i)
             Require(Read(inside[i]) == "inside-" + std::to_string(i),
