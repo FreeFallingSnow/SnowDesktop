@@ -62,7 +62,7 @@ void DesktopApp::CommitDockDrop(const std::vector<Item*>& sourceItems,
                     !IsRecycleBinDockEntry(dockEntries_[index]))
                     indices.push_back(index);
             }
-        const auto result = snowdesktop::dock_drop_model::Reorder(dockEntries_, std::move(indices), insertIndex, DockDropServices());
+        const auto result = snowdesktop::dock_drop_model::Reorder(dockEntries_, std::move(indices), insertIndex, DockDropServices(), true);
         if (result != snowdesktop::dock_drop_model::ReorderResult::Changed)
         {
             if (result == snowdesktop::dock_drop_model::ReorderResult::MixedSections) MessageBeep(MB_ICONWARNING);

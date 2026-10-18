@@ -9,6 +9,7 @@
 #include "drag_drop/ole_drag_rules.h"
 #include "layout/page_navigation_rules.h"
 #include "app/popup/categorized_popup_scope.h"
+#include "native_item_drag_source.h"
 
 // Middle-button behavior and pointer-move drag updates.
 
@@ -572,8 +573,7 @@ void DesktopApp::OnMouseMoveAt(
         (mouseDownHit_->IsSelected() ||
             pressedDockEntryWithoutSelection))
     {
-        if (dynamic_cast<DockFrequentItem*>(mouseDownHit_) ||
-            dynamic_cast<DockRunningItem*>(mouseDownHit_))
+        if (!snowdesktop::native_item_drag_source::CanStart(mouseDownHit_))
             return;
         const bool dockItem = dynamic_cast<DockContainer*>(
             mouseDownHit_->GetContainer()) != nullptr;
@@ -586,19 +586,13 @@ void DesktopApp::OnMouseMoveAt(
         {
             if (pendingWidgetButtonAction_ == WidgetHit::CollectionOpenBtn)
                 pendingWidgetButtonAction_ = WidgetHit::None;
-            Container* source = mouseDownHit_->GetContainer();
-            std::vector<Item*> sourceItems =
-                source ==
-                    dockFolderPopupContainer_.get()
-                ? GetDockFolderPopupSelectedItems()
-                : (source
-                    ? source->GetSelectedItems()
-                    : std::vector<Item*>{});
-            if (sourceItems.empty() &&
-                pressedDockEntryWithoutSelection)
-            {
-                sourceItems.push_back(mouseDownHit_);
-            }
+            auto capturedSource = snowdesktop::native_item_drag_source::Capture(mouseDownHit_,
+                pressedDockEntryWithoutSelection, [this](Container* source) {
+                    return source == dockFolderPopupContainer_.get() ? GetDockFolderPopupSelectedItems()
+                        : source ? source->GetSelectedItems() : std::vector<Item*>{};
+                });
+            Container* source = capturedSource.source;
+            auto sourceItems = std::move(capturedSource.items);
             DragSourceList sourceList = BuildDragSourceList(sourceItems, source);
             if (sourceItems.empty())
             {

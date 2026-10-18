@@ -89,7 +89,11 @@ inline void Run()
             // baseline files remain actual filesystem/model enumeration inputs.
             order = multiple ? std::vector<std::size_t>{2, 0, 5, 3} : std::vector<std::size_t>{2, 5};
         }
-        if (rebuild) Access::RebuildDuringMenu(app);
+        if (rebuild)
+        {
+            if (pinned && multiple) Access::ReorderCapturedDockPartitions(app);
+            else Access::RebuildDuringMenu(app);
+        }
         Access::CommitDockPartition(app, tail ? Access::DockEntries(app).size() : 0, mapping ? MK_CONTROL : 0);
         native_drag_async_reload_cases::Refresh(app);
         Wait([&] { return Access::DockPartitionFolderCount(app) == (pinned ? 3u : multiple ? 2u : 1u); },

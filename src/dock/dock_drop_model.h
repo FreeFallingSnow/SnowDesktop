@@ -149,17 +149,17 @@ inline bool AddMaterialized(State state, const std::vector<std::wstring>& paths,
 enum class ReorderResult { NoChange, MixedSections, Changed };
 
 inline ReorderResult Reorder(std::vector<DockEntry>& entries, std::vector<size_t> indices,
-    size_t insertIndex, const Services& services)
+    size_t insertIndex, const Services& services, bool preserveCapturedOrder = false)
 {
     std::erase_if(indices, [&](size_t index) { return index >= entries.size() || services.recycle(entries[index]); });
-    std::sort(indices.begin(), indices.end());
-    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    if (!preserveCapturedOrder) std::sort(indices.begin(), indices.end());
+    std::unordered_set<size_t> seen;
+    std::erase_if(indices, [&](size_t index) { return !seen.insert(index).second; });
     if (indices.empty()) return ReorderResult::NoChange;
-    std::vector<DockEntry> moving;
-    for (size_t index : indices) moving.push_back(entries[index]);
-    const bool folders = std::all_of(moving.begin(), moving.end(), services.folder);
-    const bool main = std::all_of(moving.begin(), moving.end(), [&](const auto& entry) { return !services.folder(entry); });
-    if (!folders && !main) return ReorderResult::MixedSections;
+    std::vector<DockEntry> movingMain, movingFolders;
+    for (size_t index : indices)
+        (services.folder(entries[index]) ? movingFolders : movingMain).push_back(entries[index]);
+    std::sort(indices.begin(), indices.end());
     for (auto it = indices.rbegin(); it != indices.rend(); ++it)
     {
         if (*it < insertIndex) --insertIndex;
@@ -169,8 +169,12 @@ inline ReorderResult Reorder(std::vector<DockEntry>& entries, std::vector<size_t
         [&](const auto& entry) { return !services.recycle(entry) && !services.folder(entry); }));
     const size_t folderEnd = mainEnd + static_cast<size_t>(std::count_if(entries.begin(), entries.end(),
         [&](const auto& entry) { return !services.recycle(entry) && services.folder(entry); }));
-    insertIndex = folders ? std::clamp(insertIndex, mainEnd, folderEnd) : std::min(insertIndex, mainEnd);
-    entries.insert(entries.begin() + static_cast<std::ptrdiff_t>(insertIndex), moving.begin(), moving.end());
+    // Insert the later partition first: the main insertion then shifts the
+    // complete file section while preserving each partition's captured order.
+    const auto mainInsert = std::min(insertIndex, mainEnd);
+    const auto folderInsert = std::clamp(insertIndex, mainEnd, folderEnd);
+    entries.insert(entries.begin() + static_cast<std::ptrdiff_t>(folderInsert), movingFolders.begin(), movingFolders.end());
+    entries.insert(entries.begin() + static_cast<std::ptrdiff_t>(mainInsert), movingMain.begin(), movingMain.end());
     dock_folder_rules::CaptureUserOrder(entries);
     Normalize(entries, services);
     return ReorderResult::Changed;

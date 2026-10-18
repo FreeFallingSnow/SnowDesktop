@@ -27,6 +27,7 @@ struct Context
     bool handleDrag = false, nativeMove = false, itemTarget = false;
     bool luaFileDrop = false, dockRemoval = false, externalSource = false;
     bool targetDock = false, sourceDock = false, displayDockTarget = false;
+    bool externalContent = false;
     bool sourceWidgets = false, sourceDesktopIcons = false, sourceFolderEntries = false;
     bool desktopWidgetIcons = false, handoff = false, sourceHasPaths = false;
     size_t externalFileCount = 0;
@@ -41,6 +42,7 @@ inline bool Accepts(const Context& context, const Choice& choice)
     if (!context.itemTarget) return false;
     if (context.luaFileDrop) return choice.effect == DROPEFFECT_COPY;
     if (context.dockRemoval) return choice.effect == DROPEFFECT_MOVE;
+    if (context.externalSource && context.externalContent) return choice.effect == DROPEFFECT_COPY;
     if (context.targetDock)
     {
         if (context.externalSource)
@@ -80,9 +82,9 @@ std::vector<Choice> Build(const Context& context, const PairChoices& pairs)
     std::erase_if(choices, [&](const auto& choice) { return !Accepts(context, choice); });
     for (auto& choice : choices)
     {
-        if (context.externalSource && context.displayDockTarget)
+        if (context.externalSource && context.displayDockTarget && !context.externalContent)
             choice.label = "widget.base.create_shortcut";
-        else if (context.displayDockTarget && !context.luaFileDrop && !context.handoff &&
+        else if (context.displayDockTarget && !context.externalContent && !context.luaFileDrop && !context.handoff &&
             choice.effect == DROPEFFECT_COPY)
             choice.label = "app.dock.create_mapping_action";
     }

@@ -25,6 +25,22 @@
     }
     static std::size_t DockPartitionFolderCount(DesktopApp& app)
     { return app.DockFolderEntryCount(); }
+    static void ReorderCapturedDockPartitions(DesktopApp& app)
+    {
+        std::vector<std::size_t> selected;
+        for (const auto& captured : app.dragSession_.SourceList().entries)
+        {
+            const auto entry = std::find_if(app.dockEntries_.begin(), app.dockEntries_.end(), [&](const auto& current) {
+                return current.type == captured.dockEntryType && PathsEqualInsensitive(current.reference, captured.dockReference);
+            });
+            if (entry == app.dockEntries_.end()) throw std::runtime_error("captured native Dock identity must exist before intervening reorder");
+            selected.push_back(static_cast<std::size_t>(std::distance(app.dockEntries_.begin(), entry)));
+        }
+        if (selected.size() != 4) throw std::runtime_error("intervening reorder fixture requires two main and two folder captures");
+        std::swap(app.dockEntries_[selected[0]], app.dockEntries_[selected[1]]);
+        std::swap(app.dockEntries_[selected[2]], app.dockEntries_[selected[3]]);
+        app.RebuildContainersAndItems();
+    }
     static void CommitDockFolderAtFixedEntry(DesktopApp& app, const std::wstring& fixedKey, bool after)
     {
         auto* dock = Dock(app);

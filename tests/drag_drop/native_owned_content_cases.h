@@ -216,7 +216,7 @@ inline constexpr Scenario scenarios[]{
     {"image-before-url", 7, 1}, {"page-url", 8, 1}, {"resource-url", 9, 1}, {"files-before-image", 10, 1},
 };
 
-inline void Run(std::string_view targetName, bool cancel = false)
+inline void Run(std::string_view targetName, bool cancel = false, bool rightCopy = false)
 {
     const bool keyed = targetName == "collection", mapped = targetName == "mapping", dock = targetName == "dock";
     Require(targetName == "desktop" || keyed || mapped || dock, "D08: independently declared physical destination required");
@@ -227,12 +227,17 @@ inline void Run(std::string_view targetName, bool cancel = false)
     for (const bool asynchronous : {false, true})
     {
         if (cancel && scenario.kind != 0 && scenario.kind != 1 && scenario.kind != 4 && scenario.kind != 8) continue;
+        // Menu dispatch is common across owned formats; a complete multi-file
+        // virtual source checks the accepted decision through the real reader
+        // and final commit without repeating every format by every gesture.
+        if (rightCopy && scenario.kind != 4) continue;
         native_drag_commit_cases::context = "A26 owned-content target=" + std::string(targetName) + " format=" + scenario.name +
-            " async=" + std::to_string(asynchronous) + " cancel=" + std::to_string(cancel);
+            " async=" + std::to_string(asynchronous) + " cancel=" + std::to_string(cancel) + " rightCopy=" + std::to_string(rightCopy);
         const auto directory = profile.root / (L"content-" + std::to_wstring(scenes++)); fs::create_directories(directory / L"mapped");
         const auto original = (mapped ? directory / L"mapped" : desktop) / L"Existing-Target.txt";
         { std::ofstream stream(original, std::ios::binary); stream << "existing-target"; }
         const auto borrowed = directory / L"Borrowed.txt"; { std::ofstream stream(borrowed, std::ios::binary); stream << "borrowed-original"; }
+        const auto borrowedIdentity = native_dock_return_cases::Identity(borrowed);
         auto& app = profile.Model(false, directory / L"layout");
         if (keyed || mapped) Access::SeedExternalStorage(app, mapped ? DesktopWidgetType::FolderMapping : DesktopWidgetType::Collection,
             mapped ? DesktopWidgetType::FolderMapping : DesktopWidgetType::Collection, false, original);
@@ -251,15 +256,16 @@ inline void Run(std::string_view targetName, bool cancel = false)
         int menus = 0;
         Access::RightMenuBridge bridge(app, [&](HMENU menu, POINT, HWND owner) {
             ++menus;
-            Require(cancel && owner == Access::completionWindow && Access::RightMenuRetained(app) &&
+            Require((cancel || rightCopy) && owner == Access::completionWindow && Access::RightMenuRetained(app) &&
                 source->starts == 0 && (!asynchronous || source->reads == 0) && Read(Access::LayoutPath(app)) == saved && Staged() == staged,
                 "B17: content menu must not materialize, lease or save before the user decision");
-            native_right_drag_cases::Menu(menu, 1); return 4u;
+            native_right_drag_cases::Menu(menu, 1); return cancel ? 4u : 1u;
         });
-        auto adapter = cancel ? ComPtr<OleDragDropAdapter>{} : Access::ExternalAdapter(app);
-        if (cancel) adapter.Attach(new OleDragDropAdapter(&bridge));
+        const bool showMenu = cancel || rightCopy;
+        auto adapter = showMenu ? ComPtr<OleDragDropAdapter>{} : Access::ExternalAdapter(app);
+        if (showMenu) adapter.Attach(new OleDragDropAdapter(&bridge));
         const POINT point = dock ? Access::DockPoint(app) : keyed || mapped ? POINT{350, 250} : POINT{150, 150};
-        const DWORD keys = cancel ? MK_RBUTTON : MK_LBUTTON | MK_CONTROL;
+        const DWORD keys = showMenu ? MK_RBUTTON : MK_LBUTTON | MK_CONTROL;
         DWORD feedback = 1; Access::FreshExternalDwell(app);
         Require(SUCCEEDED(adapter->DragEnter(source.Get(), keys, Access::ExternalPoint(point), &feedback)), "actual adapter must route owned content Enter");
         feedback = 1; Access::FreshExternalDwell(app);
@@ -267,8 +273,9 @@ inline void Run(std::string_view targetName, bool cancel = false)
         Require(source->starts == 0 && (!asynchronous || source->reads == 0) && Staged() == staged,
             "D08: owned content hover cannot lease or render delayed data");
         DWORD effect = 1; Access::FreshExternalDwell(app);
-        Require(SUCCEEDED(adapter->Drop(source.Get(), cancel ? MK_RBUTTON | MK_CONTROL : MK_CONTROL, Access::ExternalPoint(point), &effect)),
+        Require(SUCCEEDED(adapter->Drop(source.Get(), showMenu ? MK_RBUTTON | MK_CONTROL : MK_CONTROL, Access::ExternalPoint(point), &effect)),
             "actual adapter must dispatch owned content through native host Drop");
+        Require(menus == static_cast<int>(showMenu), "D08/O02: only the right-button content gesture must present exactly one decision menu");
         if (cancel) Require(effect == 0 && menus == 1 && source->starts == 0 && source->ends == 0,
             "B17: cancelling owned content cannot acquire or submit a source");
         else if (scenario.count) Require(effect == 1, "D08: explicit owned-content Copy must acknowledge Copy");
@@ -283,6 +290,7 @@ inline void Run(std::string_view targetName, bool cancel = false)
         Require(Staged() == staged && Read(original) == "existing-target" && Read(borrowed) == "borrowed-original" &&
             !source->wrongApartment && !source->readBeforeStart,
             "D08: completion must clean owned staging, preserve borrowed sources and honor COM source lifetime");
+        native_dock_return_cases::OriginalFiles({{borrowed, "borrowed-original", borrowedIdentity}});
         if (cancel || !scenario.count) Require(Read(Access::LayoutPath(app)) == saved, "B17: rejected or cancelled content cannot change saved layout");
         for (const auto& output : outputs)
         {
@@ -306,7 +314,16 @@ inline void Run(std::string_view targetName, bool cancel = false)
                     "D08: persistent web shortcut must reference the original page URL");
             }
             else if (kind == 9) Require(Read(output) == "downloaded-resource-bytes", "D08: direct resource URL must download actual resource bytes");
-            else if (kind == 10) Require(Read(output) == "borrowed-original", "D08: complete real files must outrank image previews");
+            else if (kind == 10)
+            {
+                // B06 allows a persistent Dock reference to the original real
+                // file; its bridge format is not the owned-content contract.
+                // Both a copied file and a real Shell-link bridge must refer
+                // to the original payload, never the offered preview bitmap.
+                if (dock && _wcsicmp(output.extension().c_str(), L".lnk") == 0)
+                    Require(fs::equivalent(LinkTarget(output), borrowed), "D08/B06: the Dock bridge must resolve to the complete original file rather than its preview or staging");
+                else Require(Read(output) == "borrowed-original", "D08: complete real files must outrank image previews");
+            }
         }
         const auto checkModel = [&] {
             if (dock) native_ole_dock_cases::Check(app, outputs);

@@ -15,11 +15,13 @@ inline void Run()
     native_drag_commit_cases::Profile profile;
     const auto desktop = snowdesktop::debug_profile::Current().configuration.desktop; fs::create_directories(desktop);
     std::size_t scenes = 0;
-    for (const int kind : {0, 1, 2}) // unmatched application / matched application / unmatched Explorer folder
+    // Unmatched app, matched app, unmatched Explorer folder, existing folder
+    // shortcut: the last source retains its real identity and file partition.
+    for (const int kind : {0, 1, 2, 3})
     for (const bool mapping : {false, true})
     for (const bool retired : {false, true})
     {
-        const bool matched = kind == 1, explorer = kind == 2;
+        const bool matched = kind == 1 || kind == 3, explorer = kind >= 2;
         native_drag_commit_cases::context = "A28 running Dock queue kind=" + std::to_string(kind) +
             " mapping=" + std::to_string(mapping) + " retired=" + std::to_string(retired);
         const auto prefix = L"running-dock-" + std::to_wstring(scenes++);
@@ -49,6 +51,8 @@ inline void Run()
         Require(entries.size() == static_cast<std::size_t>(accepted), "D10: only a live running application with a matching desktop entry may be pinned");
         if (accepted)
         {
+            if (explorer) Wait([&] { return Access::DockPartitionFolderCount(app) == 1; },
+                "D10: a matched folder shortcut must reach the real file partition after Shell classification");
             Require(entries.front().type == DockEntryType::DesktopItem && entries.front().keepOnDesktop == mapping &&
                 PathsEqualInsensitive(entries.front().reference, original.wstring()), "U07: generated pin must retain the original desktop identity and requested mapping role");
             const auto& item = Find(app, ToUpperInvariant(original.wstring()));
