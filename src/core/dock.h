@@ -5,6 +5,7 @@
 #include "common/types.h"
 #include "dock/dock_magnification.h"
 #include "dock/dock_running_drag_rules.h"
+#include "dock/dock_folder_rules.h"
 #include "ui/render/inline_tooltip_backdrop.h"
 
 #include <memory>
@@ -190,6 +191,11 @@ private:
     size_t EmptyRunningDragFileSlots() const;
     bool HasOnlyRecycleBinDragSource() const;
     bool HasOnlyFolderDragSource() const;
+    bool IsFolderDragSource(Item* source) const;
+    bool HasMixedFolderDragSource() const;
+    snowdesktop::dock_folder_rules::InsertRange GetDragInsertRange() const;
+    void DrawPartitionInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex,
+        snowdesktop::dock_folder_rules::InsertRange range, bool folderSource) const;
     int ItemIconSize() const;
     int ItemPitch() const;
     int ScaledSpacing() const;

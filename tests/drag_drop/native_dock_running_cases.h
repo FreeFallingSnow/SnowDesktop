@@ -32,7 +32,11 @@ inline void Run()
         const auto original = desktop / (prefix + L"-Application.lnk");
         const auto sentinel = desktop / (prefix + L"-Sentinel.txt");
         { std::ofstream stream(sentinel, std::ios::binary); stream << "unrelated desktop"; }
-        if (matched) CreateLink(original, executable);
+        if (matched)
+        {
+            CreateLink(original, executable);
+            Require(fs::equivalent(LinkTarget(original), executable), "running fixture's existing launcher must resolve to the exact original application or directory");
+        }
         std::vector<fs::path> existing{sentinel}; if (matched) existing.push_back(original);
         std::vector<native_dock_return_cases::Original> originals;
         originals.push_back({executable, explorer ? std::string{} : Read(executable), native_dock_return_cases::Identity(executable)});

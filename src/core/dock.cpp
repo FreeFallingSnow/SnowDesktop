@@ -460,6 +460,64 @@ bool DockContainer::HasOnlyRecycleBinDragSource() const
         });
 }
 
+bool DockContainer::IsFolderDragSource(Item* source) const
+{
+    if (!app_) return false;
+    if (auto* dockItem = dynamic_cast<DockEntryItem*>(source))
+    {
+        const size_t index = dockItem->GetEntryIndex();
+        return index < app_->dockEntries_.size() &&
+            app_->IsFolderDockEntry(app_->dockEntries_[index]);
+    }
+    if (auto* widget = dynamic_cast<Widget*>(source))
+    {
+        const DesktopWidget* data = widget->GetWidgetData();
+        return data &&
+            (data->type == DesktopWidgetType::FolderMapping || data->type == DesktopWidgetType::FileCategories ||
+             data->type == DesktopWidgetType::FileGroup);
+    }
+    if (auto* groupEntry =
+            dynamic_cast<FileGroupEntryItem*>(
+                source))
+    {
+        const size_t widgetIndex =
+            app_->FindWidgetIndexById(
+                groupEntry->
+                    GetChildWidgetId());
+        return widgetIndex <
+                app_->widgets_.size() &&
+            (app_->widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping ||
+             app_->widgets_[widgetIndex].type == DesktopWidgetType::FileCategories);
+    }
+    if (auto* icon = dynamic_cast<DesktopIcon*>(source))
+    {
+        const DesktopItem* item = icon->GetDesktopItem();
+        if (!item) return false;
+        const std::wstring& reference =
+            item->layoutKey.empty()
+            ? item->parsingName
+            : item->layoutKey;
+        const DockEntry probe{
+            DockEntryType::DesktopItem,
+            reference,
+            true,
+        };
+        return app_->ResolveDockFolderTarget(
+            probe).kind !=
+                snowdesktop::item_location::FolderTargetKind::None;
+    }
+    if (auto* folderEntry =
+            dynamic_cast<FolderEntryIcon*>(source))
+    {
+        return snowdesktop::dock_drop_rules::
+            IsFolderSourceTarget(
+                snowdesktop::item_location::
+                    ResolveFolderTarget(
+                        folderEntry->GetPath()).kind);
+    }
+    return false;
+}
+
 bool DockContainer::HasOnlyFolderDragSource() const
 {
     if (!app_) return false;
@@ -479,61 +537,23 @@ bool DockContainer::HasOnlyFolderDragSource() const
              app_->widgets_[app_->mouseDownWidgetIndex_].type == DesktopWidgetType::FileCategories);
     }
     return std::all_of(sourceItems.begin(), sourceItems.end(),
-        [&](Item* source) {
-            if (auto* dockItem = dynamic_cast<DockEntryItem*>(source))
-            {
-                const size_t index = dockItem->GetEntryIndex();
-                return index < app_->dockEntries_.size() &&
-                    app_->IsFolderDockEntry(app_->dockEntries_[index]);
-            }
-            if (auto* widget = dynamic_cast<Widget*>(source))
-            {
-                const DesktopWidget* data = widget->GetWidgetData();
-                return data &&
-                    (data->type == DesktopWidgetType::FolderMapping || data->type == DesktopWidgetType::FileCategories ||
-                     data->type == DesktopWidgetType::FileGroup);
-            }
-            if (auto* groupEntry =
-                    dynamic_cast<FileGroupEntryItem*>(
-                        source))
-            {
-                const size_t widgetIndex =
-                    app_->FindWidgetIndexById(
-                        groupEntry->
-                            GetChildWidgetId());
-                return widgetIndex <
-                        app_->widgets_.size() &&
-                    (app_->widgets_[widgetIndex].type == DesktopWidgetType::FolderMapping ||
-                     app_->widgets_[widgetIndex].type == DesktopWidgetType::FileCategories);
-            }
-            if (auto* icon = dynamic_cast<DesktopIcon*>(source))
-            {
-                const DesktopItem* item = icon->GetDesktopItem();
-                if (!item) return false;
-                const std::wstring& reference =
-                    item->layoutKey.empty()
-                    ? item->parsingName
-                    : item->layoutKey;
-                const DockEntry probe{
-                    DockEntryType::DesktopItem,
-                    reference,
-                    true,
-                };
-                return app_->ResolveDockFolderTarget(
-                    probe).kind !=
-                        snowdesktop::item_location::FolderTargetKind::None;
-            }
-            if (auto* folderEntry =
-                    dynamic_cast<FolderEntryIcon*>(source))
-            {
-                return snowdesktop::dock_drop_rules::
-                    IsFolderSourceTarget(
-                        snowdesktop::item_location::
-                            ResolveFolderTarget(
-                                folderEntry->GetPath()).kind);
-            }
-            return false;
-        });
+        [this](Item* source) { return IsFolderDragSource(source); });
+}
+
+bool DockContainer::HasMixedFolderDragSource() const
+{
+    if (!app_) return false;
+    bool folders = false, main = false;
+    for (auto* source : app_->dragSession_.Items())
+        (IsFolderDragSource(source) ? folders : main) = true;
+    return folders && main;
+}
+
+snowdesktop::dock_folder_rules::InsertRange DockContainer::GetDragInsertRange() const
+{
+    const auto main = SortableEntryCount(), folders = FolderEntryCount();
+    if (HasMixedFolderDragSource()) return {0, main + folders};
+    return snowdesktop::dock_folder_rules::GroupInsertRange(HasOnlyFolderDragSource(), main, folders);
 }
 
 int DockContainer::ItemIconSize() const
@@ -1954,13 +1974,7 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
 
 size_t DockContainer::InsertIndexFor(Slot* slot, HitRegion region) const
 {
-    const bool folderSource = HasOnlyFolderDragSource();
-    const auto range =
-        snowdesktop::dock_folder_rules::
-            GroupInsertRange(
-                folderSource,
-                SortableEntryCount(),
-                FolderEntryCount());
+    const auto range = GetDragInsertRange();
     if (!slot) return range.end;
     return snowdesktop::dock_folder_rules::SlotInsertionIndex(
         range, slot->GetIndex(), region == HitRegion::SortAfter);
@@ -1968,13 +1982,7 @@ size_t DockContainer::InsertIndexFor(Slot* slot, HitRegion region) const
 
 size_t DockContainer::GetInsertIndexAtPoint(POINT pt) const
 {
-    const bool folderSource = HasOnlyFolderDragSource();
-    const auto range =
-        snowdesktop::dock_folder_rules::
-            GroupInsertRange(
-                folderSource,
-                SortableEntryCount(),
-                FolderEntryCount());
+    const auto range = GetDragInsertRange();
     const size_t begin = range.begin;
     const size_t end = range.end;
     const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
@@ -2048,12 +2056,7 @@ HitRegion DockContainer::RedirectDragToNearestInsertion(
     POINT point, Slot*& outSlot)
 {
     outSlot = nullptr;
-    const bool folderSource = HasOnlyFolderDragSource();
-    const auto range = snowdesktop::dock_folder_rules::
-        GroupInsertRange(
-            folderSource,
-            SortableEntryCount(),
-            FolderEntryCount());
+    const auto range = GetDragInsertRange();
     const size_t insertIndex = GetInsertIndexAtPoint(point);
     const auto& slots = GetSlots();
 
@@ -2081,17 +2084,22 @@ HitRegion DockContainer::RedirectDragToNearestInsertion(
     return HitRegion::Empty;
 }
 
-void DockContainer::DrawInsertionPreview(
-    ID2D1DeviceContext* context, size_t insertIndex) const
+void DockContainer::DrawInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex) const
+{
+    if (HasMixedFolderDragSource())
+    {
+        const auto main = SortableEntryCount(), folders = FolderEntryCount();
+        DrawPartitionInsertionPreview(context, std::min(insertIndex, main), {0, main}, false);
+        DrawPartitionInsertionPreview(context, std::clamp(insertIndex, main, main + folders), {main, main + folders}, true);
+        return;
+    }
+    DrawPartitionInsertionPreview(context, insertIndex, GetDragInsertRange(), HasOnlyFolderDragSource());
+}
+
+void DockContainer::DrawPartitionInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex,
+    snowdesktop::dock_folder_rules::InsertRange range, bool folderSource) const
 {
     if (!context) return;
-    const bool folderSource = HasOnlyFolderDragSource();
-    const auto range =
-        snowdesktop::dock_folder_rules::
-            GroupInsertRange(
-                folderSource,
-                SortableEntryCount(),
-                FolderEntryCount());
     const size_t begin = range.begin;
     const size_t end = range.end;
     insertIndex = std::clamp(insertIndex, begin, end);
@@ -3049,10 +3057,7 @@ void DockContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegi
     {
         DrawInsertionPreview(
             ctx,
-            HasOnlyFolderDragSource()
-                ? FolderEntryBegin() +
-                    FolderEntryCount()
-                : SortableEntryCount());
+            GetDragInsertRange().end);
         return;
     }
     if (region == HitRegion::Handoff)

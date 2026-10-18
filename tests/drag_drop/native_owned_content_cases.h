@@ -1,5 +1,7 @@
 #pragma once
 
+#include <restartmanager.h>
+
 #include "drag_drop/drop_staging.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -208,6 +210,59 @@ inline std::set<fs::path> Staged()
     return result;
 }
 
+inline std::string LockOwners(const fs::path& path)
+{
+    const HMODULE module = LoadLibraryW(L"rstrtmgr.dll");
+    if (!module) return "RestartManager unavailable";
+    const auto start = reinterpret_cast<decltype(&RmStartSession)>(GetProcAddress(module, "RmStartSession"));
+    const auto add = reinterpret_cast<decltype(&RmRegisterResources)>(GetProcAddress(module, "RmRegisterResources"));
+    const auto list = reinterpret_cast<decltype(&RmGetList)>(GetProcAddress(module, "RmGetList"));
+    const auto end = reinterpret_cast<decltype(&RmEndSession)>(GetProcAddress(module, "RmEndSession"));
+    std::string result = "current=" + std::to_string(GetCurrentProcessId()) + " holders=";
+    DWORD session = 0; wchar_t key[CCH_RM_SESSION_KEY + 1]{};
+    if (start && add && list && end && start(&session, 0, key) == ERROR_SUCCESS)
+    {
+        const wchar_t* resources[]{path.c_str()};
+        if (add(session, 1, resources, 0, nullptr, 0, nullptr) == ERROR_SUCCESS)
+        {
+            UINT needed = 0, count = 0; DWORD reasons = 0;
+            if (list(session, &needed, &count, nullptr, &reasons) == ERROR_MORE_DATA)
+            {
+                std::vector<RM_PROCESS_INFO> processes(needed); count = needed;
+                if (list(session, &needed, &count, processes.data(), &reasons) == ERROR_SUCCESS)
+                    for (UINT index = 0; index < count; ++index) result += std::to_string(processes[index].Process.dwProcessId) + ",";
+            }
+        }
+        end(session);
+    }
+    FreeLibrary(module);
+    return result;
+}
+
+inline void RemoveOwnedOutput(const fs::path& desktop, const fs::path& path)
+{
+    Require(fs::canonical(path).parent_path() == fs::canonical(desktop), "content cleanup requires one owned direct desktop child");
+    HANDLE handle = INVALID_HANDLE_VALUE;
+    bool reported = false;
+    // Stop cancels BackgroundWork delivery without joining its Shell provider.
+    // Await actual resource retirement, then issue one delete by that handle.
+    Wait([&] {
+        handle = CreateFileW(path.c_str(), DELETE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            nullptr, OPEN_EXISTING, 0, nullptr);
+        if (handle != INVALID_HANDLE_VALUE) return true;
+        const auto error = GetLastError();
+        Require(error == ERROR_SHARING_VIOLATION || error == ERROR_LOCK_VIOLATION,
+            "owned output cleanup may wait only for an existing reader's sharing lifetime");
+        if (!reported) { std::cerr << "A26 cleanup sharing " << error << ' ' << LockOwners(path) << '\n'; reported = true; }
+        return false;
+    }, "actual Shell readers must retire before owned content cleanup");
+    FILE_DISPOSITION_INFO disposition{TRUE};
+    const bool removed = SetFileInformationByHandle(handle, FileDispositionInfo, &disposition, sizeof(disposition)) != FALSE;
+    CloseHandle(handle);
+    Require(removed, "delete owned content exactly once through its acquired resource handle");
+    Wait([&] { return !fs::exists(path); }, "owned output deletion must complete after Shell readers retire");
+}
+
 struct Scenario { const char* name; int kind; std::size_t count; };
 inline constexpr Scenario scenarios[]{
     {"incomplete-virtual-preview", 6, 0}, // First: the known desktop fallback risk.
@@ -259,7 +314,7 @@ inline void Run(std::string_view targetName, bool cancel = false, bool rightCopy
             Require((cancel || rightCopy) && owner == Access::completionWindow && Access::RightMenuRetained(app) &&
                 source->starts == 0 && (!asynchronous || source->reads == 0) && Read(Access::LayoutPath(app)) == saved && Staged() == staged,
                 "B17: content menu must not materialize, lease or save before the user decision");
-            native_right_drag_cases::Menu(menu, 1); return cancel ? 4u : 1u;
+            native_right_drag_cases::Menu(menu, 1); return cancel ? 4u : 2u;
         });
         const bool showMenu = cancel || rightCopy;
         auto adapter = showMenu ? ComPtr<OleDragDropAdapter>{} : Access::ExternalAdapter(app);
@@ -354,7 +409,7 @@ inline void Run(std::string_view targetName, bool cancel = false, bool rightCopy
         Access::StopModel(app); source.Reset();
         if (!mapped)
         {
-            for (const auto& output : outputs) native_dock_return_cases::RemoveOwnedEntry(desktop, output);
+            for (const auto& output : outputs) RemoveOwnedOutput(desktop, output);
             native_dock_return_cases::RemoveOwnedEntry(desktop, original);
         }
     }

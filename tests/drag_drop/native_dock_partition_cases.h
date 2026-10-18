@@ -32,6 +32,54 @@ inline void Run()
     native_drag_commit_cases::Profile profile;
     const auto desktop = snowdesktop::debug_profile::Current().configuration.desktop; fs::create_directories(desktop);
     std::size_t scenes = 0;
+    for (const bool mapping : {false, true})
+    for (const bool lastFixed : {false, true})
+    for (const bool after : {false, true})
+    for (const bool multiple : {false, true})
+    {
+        native_drag_commit_cases::context = "A27 folder over fixed area mapping=" + std::to_string(mapping) +
+            " lastFixed=" + std::to_string(lastFixed) + " after=" + std::to_string(after) +
+            " multiple=" + std::to_string(multiple);
+        const auto prefix = L"dock-leading-folder-" + std::to_wstring(scenes++);
+        std::vector<fs::path> files;
+        for (int index = 0; index < 6; ++index)
+        {
+            const auto file = desktop / (prefix + L"-" + std::to_wstring(index) + (index < 3 ? L".txt" : L"-folder"));
+            if (index < 3) { std::ofstream stream(file, std::ios::binary); stream << "leading-" << index; }
+            else { fs::create_directory(file); std::ofstream stream(file / L"nested.txt", std::ios::binary); stream << "leading-" << index; }
+            files.push_back(file);
+        }
+        std::vector<native_dock_return_cases::Original> originals;
+        for (std::size_t index = 0; index < files.size(); ++index)
+        {
+            originals.push_back({files[index], index < 3 ? Read(files[index]) : std::string{}, native_dock_return_cases::Identity(files[index])});
+            if (index >= 3) originals.push_back({files[index] / L"nested.txt", Read(files[index] / L"nested.txt"), native_dock_return_cases::Identity(files[index] / L"nested.txt")});
+        }
+        auto& app = profile.Model(false, profile.root / prefix); Access::SeedDockPartitions(app, files, true, mapping);
+        Access::PrepareReload(app); Access::BindAsync(app); native_drag_async_reload_cases::Refresh(app);
+        Wait([&] { return Access::DockPartitionFolderCount(app) == 3; },
+            "actual Shell classification must separate main and file sections before crossing the fixed area");
+        std::vector<std::wstring> keys; std::vector<GridCell> originalCells;
+        for (const auto& file : files) { keys.push_back(ToUpperInvariant(file.wstring())); originalCells.push_back(Find(app, keys.back()).gridCell); }
+        const std::vector<std::wstring> selected = multiple ? std::vector<std::wstring>{keys[4], keys[5]}
+            : std::vector<std::wstring>{keys[5]};
+        const auto captured = Access::BeginDockFiles(app, selected, {150, 250}, 0);
+        Require(captured.entries.size() == selected.size(), "folder-only native capture must retain every selected identity");
+        Access::CommitDockFolderAtFixedEntry(app, keys[lastFixed ? 2 : 0], after);
+        native_drag_async_reload_cases::Refresh(app);
+        const auto order = multiple ? std::vector<std::size_t>{0, 1, 2, 4, 5, 3}
+            : std::vector<std::size_t>{0, 1, 2, 5, 3, 4};
+        std::vector<std::wstring> expected; for (const auto index : order) expected.push_back(keys[index]);
+        Check(app, expected, mapping, originalCells, files);
+        native_dock_return_cases::OriginalFiles(originals);
+        Require(Outputs(desktop, files).empty(), "fixed-area folder insertion must not create, move or copy any physical source");
+        Require(Access::Save(app), "save native folder insertion at the file section beginning");
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true);
+        Check(app, expected, mapping, originalCells, files);
+        native_dock_return_cases::OriginalFiles(originals); Access::StopModel(app);
+        for (const auto& file : files) native_dock_return_cases::RemoveOwnedEntry(desktop, file);
+    }
+    std::cout << scenes << " fixed-area native folder insertion/commit/reload scenes passed\n";
     for (const bool pinned : {true, false})
     for (const bool mapping : {false, true})
     for (const bool tail : {false, true})
@@ -118,53 +166,6 @@ inline void Run()
                 return entry.keepOnDesktop == mapping && PathsEqualInsensitive(entry.reference, key);
             }), "D10: native mixed ingress partition order must survive actual disk reload");
         }
-        native_dock_return_cases::OriginalFiles(originals); Access::StopModel(app);
-        for (const auto& file : files) native_dock_return_cases::RemoveOwnedEntry(desktop, file);
-    }
-    for (const bool mapping : {false, true})
-    for (const bool lastFixed : {false, true})
-    for (const bool after : {false, true})
-    for (const bool multiple : {false, true})
-    {
-        native_drag_commit_cases::context = "A27 folder over fixed area mapping=" + std::to_string(mapping) +
-            " lastFixed=" + std::to_string(lastFixed) + " after=" + std::to_string(after) +
-            " multiple=" + std::to_string(multiple);
-        const auto prefix = L"dock-leading-folder-" + std::to_wstring(scenes++);
-        std::vector<fs::path> files;
-        for (int index = 0; index < 6; ++index)
-        {
-            const auto file = desktop / (prefix + L"-" + std::to_wstring(index) + (index < 3 ? L".txt" : L"-folder"));
-            if (index < 3) { std::ofstream stream(file, std::ios::binary); stream << "leading-" << index; }
-            else { fs::create_directory(file); std::ofstream stream(file / L"nested.txt", std::ios::binary); stream << "leading-" << index; }
-            files.push_back(file);
-        }
-        std::vector<native_dock_return_cases::Original> originals;
-        for (std::size_t index = 0; index < files.size(); ++index)
-        {
-            originals.push_back({files[index], index < 3 ? Read(files[index]) : std::string{}, native_dock_return_cases::Identity(files[index])});
-            if (index >= 3) originals.push_back({files[index] / L"nested.txt", Read(files[index] / L"nested.txt"), native_dock_return_cases::Identity(files[index] / L"nested.txt")});
-        }
-        auto& app = profile.Model(false, profile.root / prefix); Access::SeedDockPartitions(app, files, true, mapping);
-        Access::PrepareReload(app); Access::BindAsync(app); native_drag_async_reload_cases::Refresh(app);
-        Wait([&] { return Access::DockPartitionFolderCount(app) == 3; },
-            "actual Shell classification must separate main and file sections before crossing the fixed area");
-        std::vector<std::wstring> keys; std::vector<GridCell> originalCells;
-        for (const auto& file : files) { keys.push_back(ToUpperInvariant(file.wstring())); originalCells.push_back(Find(app, keys.back()).gridCell); }
-        const std::vector<std::wstring> selected = multiple ? std::vector<std::wstring>{keys[4], keys[5]}
-            : std::vector<std::wstring>{keys[5]};
-        const auto captured = Access::BeginDockFiles(app, selected, {150, 250}, 0);
-        Require(captured.entries.size() == selected.size(), "folder-only native capture must retain every selected identity");
-        Access::CommitDockFolderAtFixedEntry(app, keys[lastFixed ? 2 : 0], after);
-        native_drag_async_reload_cases::Refresh(app);
-        const auto order = multiple ? std::vector<std::size_t>{0, 1, 2, 4, 5, 3}
-            : std::vector<std::size_t>{0, 1, 2, 5, 3, 4};
-        std::vector<std::wstring> expected; for (const auto index : order) expected.push_back(keys[index]);
-        Check(app, expected, mapping, originalCells, files);
-        native_dock_return_cases::OriginalFiles(originals);
-        Require(Outputs(desktop, files).empty(), "fixed-area folder insertion must not create, move or copy any physical source");
-        Require(Access::Save(app), "save native folder insertion at the file section beginning");
-        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true);
-        Check(app, expected, mapping, originalCells, files);
         native_dock_return_cases::OriginalFiles(originals); Access::StopModel(app);
         for (const auto& file : files) native_dock_return_cases::RemoveOwnedEntry(desktop, file);
     }

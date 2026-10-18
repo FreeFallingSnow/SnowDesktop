@@ -235,6 +235,8 @@ HRESULT DesktopApp::HandleOleDragEnter(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
     if (!effect) return E_POINTER;
+    CancelCollectionPopupDwell();
+    CancelCollectionGroupTabDwell();
     CancelPendingExternalOleDragLeave();
     externalLuaFileDropAvailable_ = false;
     externalOwnedContent_ = false;

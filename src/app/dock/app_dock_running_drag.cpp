@@ -272,6 +272,10 @@ void DesktopApp::QueueDockRunningPin(std::shared_ptr<DockRunningDragState> state
             })) AdoptDockRunningPresentation(state->running.identityKey, desktop);
         SaveLayoutSlots(); ApplyPageMapping(); LayoutItems(); InvalidateDockRects();
     };
+    // An Explorer folder target names that exact directory. Its launcher may
+    // also resolve to Explorer.exe; application matching must not substitute
+    // an unrelated Explorer shortcut or classify a pending folder as Main.
+    if (!(state->explorer && position.area == drag::Area::Files))
     if (const auto desktop = FindDesktopItemForDockRunningApp(*live); desktop && *desktop < items_.size())
     {
         const bool folder = IsFolderDockEntry({DockEntryType::DesktopItem, items_[*desktop].layoutKey, true});
