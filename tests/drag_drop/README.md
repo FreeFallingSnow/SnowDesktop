@@ -2,6 +2,8 @@
 
 本文件是测试模型的维护入口。增加类型、状态、动作、修饰或传输方式时，先更新对应因素域、约束和独立预期，再接入测试。以下分析中的“待定义”和“未接入”均为覆盖缺口，不计为通过。
 
+最终协作批次 `daf8abacb3df46c5803c323eeac9203d` 已完成标准 Release 与应用测试构建，均无编译或链接警告；应用全量 323 项执行一次，321 通过、两项失败，CTest 535.59 秒，无重试、无跳过，输入起止摘要一致。原始失败 `native_dock_file_returns` 与 `shell_drop_placement_storage` 及 JUnit `.build/Testing/test-run-c155c7459b2749c9b6c5b41fc2ed74e9.xml` 保持不变。后续只处理失败项与实际受影响条目，补验批次为 `b58d6b08c81b4343aefd83168bae643b`，以其实际结果为准，不将分次结果写成一次全量通过。当前补验不修改产品源码、CMake、预设、语言资源或已通过的其他模式输入；同一测试 EXE 重新链接不等于其全部模式的行为输入都发生变化，复用边界须结合实际调用的用例和依赖审阅。
+
 本轮 D07–D15 的已知实现与定向校验已闭合；标准 Release 与应用全量由协作批次 `daf8abacb3df46c5803c323eeac9203d` 统一执行，以该批次的实际日志和结果为准。当前 ABI 的 39 项首次定向执行为 29 通过、10 失败；随后仅补 13 项失败、新增或受影响入口，10 通过、3 失败。原记录分别为 `.build/verification/matrix-native-parallel-matrix-e7b536a5364c47cb9170e37aa7af5639.json` 与 `.build/verification/matrix-native-targeted-supplement-a9d9b58b046b456896cd005a03014049.json`，均保持原始失败状态。最终四项定向记录 `.build/verification/matrix-native-targeted-supplement-960e44e81db342e5bfdf79fcec144842.json` 为4/4通过，22.85秒，覆盖 Dock 分区42、大图标三条旅程、命名空间拒绝32及映射内容28；两TU匹配编译30.45秒、零警告。这些分次结果不改写成一次完整全量。
 
 此前交付基线为 `.build/verification/matrix-parallel-delivery-4b988c7f4aca41478eac585b22c6a77b.json`：应用 280 项与工具 9 项已由一次完整选集运行及两项定向补验覆盖。完整运行 606.22 秒，287 项通过、两项失败；仅修正这两个测试夹具后，补验 2/2 通过、6.88 秒，未重跑其余 287 项。已核对其 287 个测试可执行文件哈希未变，生产源码、CMake 和预设在补验中未改；另行完成输出隔离检查。两轮均无编译或链接警告，无自动重试。这不是修正后单轮 289/289 的全量报告。实机界面及发行交付仍未验证，未知卷身份的产品策略仍待确认。
