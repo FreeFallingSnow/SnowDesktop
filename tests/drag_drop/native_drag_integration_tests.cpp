@@ -336,6 +336,85 @@ struct NativeDragIntegrationAccess
     }
 
     static bool Save(DesktopApp& app) { return app.SaveLayoutSlots(false); }
+    static WidgetContainer* MemberContainer(DesktopApp& app, const std::wstring& id)
+    {
+        for (const auto& container : app.containers_)
+            if (auto* widget = dynamic_cast<WidgetContainer*>(container.get());
+                widget && widget->GetWidgetData()->id == id) return widget;
+        throw std::runtime_error("native member fixture requires its real container");
+    }
+    static void SeedMemberModel(DesktopApp& app, const std::vector<std::filesystem::path>& files,
+        DesktopWidgetType type, bool list)
+    {
+        DesktopWidget widget;
+        widget.id = L"ordered"; widget.type = type; widget.title = L"Ordered members";
+        widget.gridCell = {L"__page:1", 0, 0}; widget.gridSpan = {4, 3};
+        widget.listMode = list; widget.autoCollect = false;
+        widget.activeCategoryId = L"all";
+        if (type == DesktopWidgetType::FolderMapping)
+        {
+            widget.sourceFolderPath = files.front().parent_path().wstring();
+            auto snapshot = snowdesktop::shell_refresh::ReadFolder(widget.sourceFolderPath, false);
+            if (!snapshot.complete) throw std::runtime_error("read actual mapped member fixture");
+            widget.folderEntries = std::move(snapshot.entries);
+        }
+        else for (const auto& path : files)
+        {
+            auto item = FileItem(path);
+            WIN32_FILE_ATTRIBUTE_DATA attributes{};
+            if (!GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &attributes))
+                throw std::runtime_error("read actual native member metadata");
+            item.fileSize = (static_cast<std::uint64_t>(attributes.nFileSizeHigh) << 32) | attributes.nFileSizeLow;
+            item.modifiedTime = attributes.ftLastWriteTime;
+            widget.itemKeys.push_back(item.layoutKey);
+            app.items_.push_back(std::move(item));
+        }
+        app.widgets_.push_back(std::move(widget));
+        app.desktopItemsReady_ = true;
+        app.RefreshDesktopItemIndexCache();
+        app.LayoutItems();
+    }
+    static void SortMembers(DesktopApp& app, int mode, bool ascending)
+    { app.SortWidgetContents(0, mode, ascending); }
+    static DragSourceList BeginMembers(DesktopApp& app, const std::vector<std::wstring>& names)
+    {
+        const auto selected = [&](const auto& name) { return std::find(names.begin(), names.end(), name) != names.end(); };
+        for (auto& item : app.items_) item.selected = selected(item.name);
+        for (auto& entry : app.widgets_.front().folderEntries) entry.selected = selected(entry.name);
+        auto* origin = MemberContainer(app, L"ordered");
+        auto items = origin->GetSelectedItems();
+        if (items.size() != names.size()) throw std::runtime_error("native member capture must retain the complete selected set");
+        auto source = app.BuildDragSourceList(items, origin);
+        app.dragSession_.Begin(origin, std::move(items), source, {50, 50}, {50, 50});
+        return source;
+    }
+    static DropPreviewList MemberPreview(DesktopApp& app, bool atEnd)
+    {
+        auto* target = MemberContainer(app, L"ordered");
+        const auto& slots = target->GetSlots();
+        if (slots.empty()) throw std::runtime_error("native member preview requires real content slots");
+        return app.BuildDropPreviewList(app.dragSession_.SourceList(), target,
+            atEnd ? nullptr : slots.front().get(), atEnd ? HitRegion::SortAfter : HitRegion::SortBefore, 0, {50, 50});
+    }
+    static void DropMembers(DesktopApp& app, bool atEnd)
+    {
+        auto* target = MemberContainer(app, L"ordered");
+        const auto& slots = target->GetSlots();
+        auto* slot = atEnd ? nullptr : slots.front().get();
+        const auto items = app.dragSession_.Items();
+        auto* origin = app.dragSession_.Source();
+        app.dragSession_.DeactivateForDrop();
+        target->OnItemsDropped(items, origin, slot, atEnd ? HitRegion::SortAfter : HitRegion::SortBefore, 0);
+        app.EndDragSession();
+    }
+    static void DateHeaders(DesktopApp& app, bool enabled)
+    {
+        app.widgets_.front().dateHeaders = enabled;
+        auto* container = MemberContainer(app, L"ordered");
+        if (auto* categories = dynamic_cast<FileCategories*>(container)) categories->InvalidateCategoryCache();
+        else if (auto* mapping = dynamic_cast<FolderMapping*>(container)) mapping->InvalidateFilterCache();
+        else container->InvalidateSlots();
+    }
     static bool GuardSave(DesktopApp& app, int guard)
     {
         const bool ready = app.desktopItemsReady_;
@@ -473,6 +552,7 @@ struct NativeDragIntegrationAccess
 #include "native_drag_async_reload_cases.h"
 #include "native_ole_file_cases.h"
 #include "native_ole_leave_cases.h"
+#include "native_member_order_cases.h"
 
 namespace
 {
@@ -535,6 +615,7 @@ int main(int argc, char** argv)
         else if (argc == 3 && std::string_view(argv[1]) == "--ole-files") native_ole_file_cases::Run(argv[2]);
         else if (argc == 3 && std::string_view(argv[1]) == "--ole-gesture-files") native_ole_file_cases::Run(argv[2], true);
         else if (argc == 2 && std::string_view(argv[1]) == "--ole-leave-lifecycle") native_ole_leave_cases::Run();
+        else if (argc == 3 && std::string_view(argv[1]) == "--member-order") native_member_order_cases::Run(argv[2]);
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

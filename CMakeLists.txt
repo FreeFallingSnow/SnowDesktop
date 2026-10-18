@@ -2660,6 +2660,14 @@ if (BUILD_TESTING)
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
 
+    foreach(MEMBER_TYPE IN ITEMS collection files mapping)
+        add_test(NAME native_member_order_${MEMBER_TYPE}
+            COMMAND SnowDesktopNativeDragIntegrationTests --member-order ${MEMBER_TYPE})
+        set_tests_properties(native_member_order_${MEMBER_TYPE} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+    endforeach()
+
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)
     set_tests_properties(icon_bitmap_rendering PROPERTIES
