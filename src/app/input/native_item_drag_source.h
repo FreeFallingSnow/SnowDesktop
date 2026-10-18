@@ -12,8 +12,7 @@ namespace snowdesktop::native_item_drag_source
 // payload that the actual pointer-start route would refuse to capture.
 inline bool CanStart(const Item* pressed)
 {
-    return pressed && !dynamic_cast<const DockFrequentItem*>(pressed) &&
-        !dynamic_cast<const DockRunningItem*>(pressed);
+    return pressed && !dynamic_cast<const DockRunningItem*>(pressed);
 }
 struct Captured
 {
