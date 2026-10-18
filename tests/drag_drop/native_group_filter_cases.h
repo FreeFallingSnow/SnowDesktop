@@ -169,6 +169,7 @@ inline void RunType(std::string_view name)
         Access::SeedFilterSurface(app, members, surface.type, list, surface.grouped);
         Access::PrepareReload(app); Access::BindAsync(app);
         native_drag_async_reload_cases::Refresh(app);
+        Access::ReadyGroupTypeMetadata(app);
         const auto before = Access::Widgets(app);
         if (surface.grouped) Access::SortGroupedMembers(app, order::sort::kType, ascending);
         else Access::SortMembers(app, order::sort::kType, ascending);
@@ -187,8 +188,8 @@ inline void RunType(std::string_view name)
                 "Type sort preserves both real directories and does not create desktop presentation windows");
         };
         check(); Require(Access::Save(app), "save actual native Type sort");
-        native_drag_async_reload_cases::Refresh(app); check();
-        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); check();
+        native_drag_async_reload_cases::Refresh(app); Access::ReadyGroupTypeMetadata(app); check();
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); Access::ReadyGroupTypeMetadata(app); check();
         const auto sorted = Access::Widgets(app);
         const std::vector<std::wstring> selected{ascending ? L"C.snowdesktop_type_a" : L"D.snowdesktop_type_z"};
         const auto captured = surface.grouped ? Access::BeginGroupedMembers(app, selected) : Access::BeginMembers(app, selected);
@@ -208,8 +209,8 @@ inline void RunType(std::string_view name)
             Require(fs::is_empty(members[4]) && fs::is_empty(members[5]), "Type-to-manual reorder cannot move or fill the original directories");
         };
         checkManual(); Require(Access::Save(app), "save native manual result after Type ordering");
-        native_drag_async_reload_cases::Refresh(app); checkManual();
-        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); checkManual();
+        native_drag_async_reload_cases::Refresh(app); Access::ReadyGroupTypeMetadata(app); checkManual();
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); Access::ReadyGroupTypeMetadata(app); checkManual();
         Access::StopModel(app);
         if (surface.type != DesktopWidgetType::FolderMapping) for (const auto& member : members) fs::remove(member);
     }
@@ -303,6 +304,7 @@ inline void RunTypeSearch()
         Access::SeedSearchTypeSurface(app, {a, c, p, ta}, mapped, list);
         Access::PrepareReload(app); Access::BindAsync(app);
         native_drag_async_reload_cases::Refresh(app);
+        Access::ReadyGroupTypeMetadata(app);
         const auto original = Access::Widgets(app);
         Access::FilterSurfaceQuery(app, true, L"needle");
         Access::SortGroupedMembers(app, order::sort::kType, ascending);
@@ -327,8 +329,10 @@ inline void RunTypeSearch()
         };
         check(); Require(Access::Save(app), "save actual mixed search Type settings");
         native_drag_async_reload_cases::Refresh(app);
+        Access::ReadyGroupTypeMetadata(app);
         Access::FilterSurfaceQuery(app, true, L"needle"); check();
         Access::Load(app); native_drag_async_reload_cases::Refresh(app, true);
+        Access::ReadyGroupTypeMetadata(app);
         Access::FilterSurfaceQuery(app, true, L"needle"); check();
         Access::StopModel(app); for (const auto& path : {a, c, p, ta}) fs::remove(path);
     }

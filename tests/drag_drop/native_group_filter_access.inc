@@ -24,6 +24,29 @@
         if (!view) throw std::runtime_error("filter fixture requires its real native scrolling surface");
         view->SetSearchText(query);
     }
+    static void ReadyGroupTypeMetadata(DesktopApp& app)
+    {
+        // The windowless host intentionally does not start the icon loader.
+        // Supply only its independent Shell metadata boundary, never an order:
+        // actual type strings and a real folder snapshot are consumed by the
+        // production refresh projector and the actual sort command.
+        const auto typeFor = [](const std::wstring& path) {
+            SHFILEINFOW info{};
+            if (SHGetFileInfoW(path.c_str(), 0, &info, sizeof(info), SHGFI_TYPENAME) == 0 || !info.szTypeName[0])
+                throw std::runtime_error("native Type fixture requires ready actual Shell type metadata");
+            return std::wstring(info.szTypeName);
+        };
+        for (auto& item : app.items_) item.typeName = typeFor(item.parsingName);
+        for (auto& widget : app.widgets_)
+            if (widget.type == DesktopWidgetType::FolderMapping)
+            {
+                auto snapshot = snowdesktop::shell_refresh::ReadFolder(widget.sourceFolderPath, false);
+                if (!snapshot.complete) throw std::runtime_error("read actual Type folder metadata snapshot");
+                for (auto& entry : snapshot.entries) entry.typeName = typeFor(entry.fullPath);
+                app.EnumerateFolderMappingEntries(widget, false, &snapshot);
+            }
+        app.RebuildContainersAndItems();
+    }
     static Slot* FilterSurfaceBoundary(DesktopApp& app, bool grouped, const std::wstring& name)
     {
         auto* view = MemberContainer(app, grouped ? L"ordered-group" : L"ordered");
