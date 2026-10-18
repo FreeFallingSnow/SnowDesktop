@@ -2734,6 +2734,14 @@ if (BUILD_TESTING)
             TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
     endforeach()
 
+    add_test(NAME native_widget_pair_storage
+        COMMAND SnowDesktopNativeDragIntegrationTests --widget-pair-storage)
+    add_test(NAME native_group_lifecycle_storage
+        COMMAND SnowDesktopNativeDragIntegrationTests --group-lifecycle-storage)
+    set_tests_properties(native_widget_pair_storage native_group_lifecycle_storage PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;dock")
+
     # Every mode in this fixture uses its own process, GUID storage/profile and
     # message-only HWND. It never starts the desktop host, clipboard service or
     # persistent Dock windows. Shell file operations touch only owned paths.

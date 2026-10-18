@@ -1,6 +1,7 @@
 #include "app/app.h"
 #include "app/shell/shell_refresh_snapshot.h"
 #include "desktop/desktop_namespace_registry.h"
+#include "app/widgets/widget_pair_drag_source.h"
 
 #include <cstdlib>
 #include <exception>
@@ -813,6 +814,83 @@ struct NativeDragIntegrationAccess
         return false;
     }
     static const auto& Widgets(const DesktopApp& app) { return app.widgets_; }
+    static void SeedWidgetTransactions(DesktopApp& app, std::vector<DesktopWidget> widgets,
+        const std::vector<std::filesystem::path>& files, const std::vector<std::wstring>& dockIds = {})
+    {
+        app.items_oo_.clear(); app.containers_.clear(); app.items_.clear();
+        app.widgets_ = std::move(widgets);
+        auto& page = app.gridPages_.front();
+        page.columns = 12; page.rows = 8;
+        page.bounds = page.workArea = page.visualWorkArea = RECT{0, 0, 1200, 800};
+        app.savedPageColumns_[page.id] = 12; app.savedPageRows_[page.id] = 8;
+        for (const auto& file : files) app.items_.push_back(FileItem(file));
+        if (!dockIds.empty())
+        {
+            SeedDock(app);
+            for (const auto& id : dockIds)
+            {
+                const auto index = app.FindWidgetIndexById(id);
+                if (index >= app.widgets_.size()) throw std::runtime_error("native Dock seed requires the actual component identity");
+                app.widgets_[index].gridCell = {kDockPageId, 0, 0};
+                app.dockEntries_.push_back({DockEntryTypeForWidget(app.widgets_[index].type), id, false});
+            }
+        }
+        app.desktopItemsReady_ = true;
+        app.RefreshDesktopItemIndexCache(); app.LayoutItems();
+    }
+    static DragSourceList BeginWidgetEntrance(DesktopApp& app, const std::wstring& id,
+        const std::wstring& groupId = {}, bool dock = false)
+    {
+        for (auto& item : app.items_) item.selected = false;
+        for (auto& widget : app.widgets_) widget.selected = widget.id == id;
+        Container* origin = !groupId.empty() ? MemberContainer(app, groupId)
+            : dock ? static_cast<Container*>(Dock(app)) : static_cast<Container*>(Desktop(app));
+        auto items = origin->GetSelectedItems();
+        if (items.size() != 1) throw std::runtime_error("native entrance capture must expose exactly the selected component");
+        auto captured = app.BuildDragSourceList(items, origin);
+        app.dragSession_.Begin(origin, std::move(items), captured, {50, 50}, {50, 50});
+        const auto decoded = app.GetWidgetPairDragSource();
+        if (decoded.widgetIndex >= app.widgets_.size() || app.widgets_[decoded.widgetIndex].id != id || decoded.groupId != groupId)
+            throw std::runtime_error("actual pair source decoder must recover the captured entrance identity and owner");
+        return captured;
+    }
+    static bool CommitWidgetPair(DesktopApp& app, const std::wstring& sourceId,
+        const std::wstring& targetId, bool merge, bool captured)
+    {
+        const auto source = captured ? app.GetWidgetPairDragSource()
+            : snowdesktop::widget_pair_drag::Source{app.FindWidgetIndexById(sourceId), {}};
+        const auto target = app.FindWidgetIndexById(targetId);
+        if (source.widgetIndex >= app.widgets_.size() || target >= app.widgets_.size()) return false;
+        const auto options = snowdesktop::widget_pair_drop::GetOptions(app.widgets_[source.widgetIndex].type, app.widgets_[target].type);
+        const auto action = snowdesktop::widget_pair_drop::ResolveAction(options, !merge, merge, false);
+        // The real release ends the captured session before vector mutation.
+        // The target identity and body source are explicit commit-boundary inputs;
+        // native pointer hit testing would consult the user's desktop windows.
+        app.EndDragSession();
+        return app.CommitWidgetPairDrop(source.widgetIndex, target, action, source.groupId);
+    }
+    static DragSourceList BeginGroupLabels(DesktopApp& app, const std::wstring& groupId,
+        const std::vector<std::wstring>& selected)
+    {
+        for (auto& item : app.items_) item.selected = false;
+        for (auto& widget : app.widgets_)
+            widget.selected = std::find(selected.begin(), selected.end(), widget.id) != selected.end();
+        auto* origin = MemberContainer(app, groupId);
+        auto items = origin->GetSelectedItems();
+        if (items.size() != selected.size()) throw std::runtime_error("native group must expose every selected label");
+        auto captured = app.BuildDragSourceList(items, origin);
+        app.dragSession_.Begin(origin, std::move(items), captured, {50, 50}, {-100, -100});
+        return captured;
+    }
+    static void DropGroupLabels(DesktopApp& app, const std::wstring& targetId)
+    {
+        auto* target = MemberContainer(app, targetId);
+        auto* origin = app.dragSession_.Source();
+        const auto items = app.dragSession_.Items();
+        app.dragSession_.DeactivateForDrop();
+        target->OnItemsDropped(items, origin, nullptr, HitRegion::SortAfter, 0);
+    }
+    static void FinishGroups(DesktopApp& app) { app.FinishWidgetGroupTransitions(); }
     static const auto& Pages(const DesktopApp& app) { return app.gridPages_; }
     static std::wstring LayoutPath(const DesktopApp& app) { return app.GetLayoutPath(); }
     static bool Ready(const DesktopApp& app) { return app.desktopItemsReady_; }
@@ -857,6 +935,7 @@ struct NativeDragIntegrationAccess
 #include "native_folder_delivery_cases.h"
 #include "native_default_file_cases.h"
 #include "native_ole_dock_cases.h"
+#include "native_widget_pair_cases.h"
 
 namespace
 {
@@ -929,6 +1008,8 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--folder-delivery-after-drag") native_folder_delivery_cases::Run();
         else if (argc == 4 && std::string_view(argv[1]) == "--ole-default-files") return native_default_file_cases::Run(argv[2], argv[3]);
         else if (argc == 3 && std::string_view(argv[1]) == "--ole-dock-folders") native_ole_dock_cases::Run(argv[2]);
+        else if (argc == 2 && std::string_view(argv[1]) == "--widget-pair-storage") native_widget_pair_cases::RunPairs();
+        else if (argc == 2 && std::string_view(argv[1]) == "--group-lifecycle-storage") native_widget_pair_cases::RunLifecycle();
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }
