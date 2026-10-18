@@ -396,6 +396,9 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                 dockFolderPopupContainer_.get())
                 CommitDockFolderPopupStateToSource();
             targetWidget->InvalidateSlots();
+            if (reorderActiveCollection)
+                if (auto* group = dynamic_cast<CollectionGroup*>(sourceList.origin))
+                    group->InvalidateFilterCache();
             return true;
         }
 
