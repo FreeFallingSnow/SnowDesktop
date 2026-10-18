@@ -15,6 +15,7 @@
 #include "dock/dock_folder_rules.h"
 #include "dock/dock_refresh_cache.h"
 #include "dock/dock_folder_order_cases.h"
+#include "dock/dock_insertion_cases.h"
 #include "dock/dock_task_window_filter_tests.h"
 #include "dock/dock_process_snapshot.h"
 #include "common/bounded_lru_cache.h"
@@ -5389,6 +5390,7 @@ int main(int argc, char** argv)
             folderRange.begin == 3 &&
             folderRange.end == 8,
         "Dock insertion ranges must isolate main and folder ordering");
+    snowdesktop::tests::dock_insertion::Run(Check);
     Check(
         dockDrop::ShouldPreferMetadataReorder(
             true, false, false) &&

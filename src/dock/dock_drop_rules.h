@@ -59,6 +59,18 @@ inline bool ShouldDrawSortableInsertionIndicator(
     return !fixedPlacementSource;
 }
 
+// The Recycle Bin always follows Search, including when Search is hidden and
+// its synthetic slot has zero length. This trailing boundary is outside the
+// scrollable entries and must not be clamped to their viewport.
+inline RECT RecycleBinInsertionIndicatorBounds(
+    RECT dockBounds, RECT searchBounds, bool vertical) noexcept
+{
+    const LONG axis = vertical ? searchBounds.bottom : searchBounds.right;
+    return vertical
+        ? RECT{dockBounds.left + 10, axis - 2, dockBounds.right - 10, axis + 2}
+        : RECT{axis - 2, dockBounds.top + 10, axis + 2, dockBounds.bottom - 10};
+}
+
 // Dock controls and generated running/frequent items are not sortable slots.
 // Partition their pointer area by the midpoints of the current sortable group
 // so every otherwise inert surface resolves to a real insertion boundary.

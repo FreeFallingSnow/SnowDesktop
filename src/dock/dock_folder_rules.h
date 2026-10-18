@@ -130,6 +130,18 @@ constexpr InsertRange GroupInsertRange(
         : InsertRange{ 0, mainCount };
 }
 
+constexpr std::size_t SlotInsertionIndex(
+    InsertRange range,
+    std::size_t slotIndex,
+    bool after)
+{
+    // Resolve the hit slot's edge before constraining it to the source group.
+    // Clamping first would turn the right half of any preceding fixed icon
+    // into an insertion after the first file icon.
+    if (after && slotIndex < range.end) ++slotIndex;
+    return std::clamp(slotIndex, range.begin, range.end);
+}
+
 constexpr bool OpenPopupNeedsRefreshAfterDrop(
     bool popupOpen,
     bool targetContainerIsPopup,
