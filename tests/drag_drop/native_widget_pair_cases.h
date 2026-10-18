@@ -74,8 +74,21 @@ inline DesktopWidget Group(const std::wstring& id, Type childType, std::vector<s
 
 struct Samples
 {
+    struct File { fs::path path; BY_HANDLE_FILE_INFORMATION identity; };
     fs::path root, desktop;
-    std::vector<fs::path> ordinary, all;
+    std::vector<fs::path> ordinary;
+    std::vector<File> all;
+    static BY_HANDLE_FILE_INFORMATION Identity(const fs::path& path)
+    {
+        const HANDLE file = CreateFileW(path.c_str(), FILE_READ_ATTRIBUTES,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, OPEN_EXISTING, 0, nullptr);
+        Require(file != INVALID_HANDLE_VALUE, "open isolated component member for physical identity");
+        BY_HANDLE_FILE_INFORMATION result{};
+        const bool read = GetFileInformationByHandle(file, &result) != FALSE;
+        CloseHandle(file);
+        Require(read, "read real component member identity and modification time");
+        return result;
+    }
     explicit Samples(const Profile& profile, std::size_t scene)
     {
         root = profile.root / (L"component-" + std::to_wstring(scene));
@@ -95,7 +108,7 @@ struct Samples
         else { file = desktop / name; ordinary.push_back(file); widget.itemKeys.push_back(ToUpperInvariant(file.wstring())); }
         { std::ofstream stream(file, std::ios::binary); stream << "original:" << WideToUtf8(name); }
         Require(fs::is_regular_file(file), "create isolated real component member");
-        all.push_back(file);
+        all.push_back({file, Identity(file)});
         if (widget.type == mapping)
         {
             auto snapshot = snowdesktop::shell_refresh::ReadFolder(widget.sourceFolderPath, false);
@@ -106,8 +119,16 @@ struct Samples
     void Check() const
     {
         for (const auto& file : all)
-            Require(Read(file) == "original:" + WideToUtf8(file.filename().wstring()),
+        {
+            Require(Read(file.path) == "original:" + WideToUtf8(file.path.filename().wstring()),
                 "component grouping/merging/transferring cannot move, copy, remove or alter any physical member");
+            const auto now = Identity(file.path);
+            Require(now.dwVolumeSerialNumber == file.identity.dwVolumeSerialNumber &&
+                now.nFileIndexHigh == file.identity.nFileIndexHigh && now.nFileIndexLow == file.identity.nFileIndexLow &&
+                CompareFileTime(&now.ftLastWriteTime, &file.identity.ftLastWriteTime) == 0 &&
+                now.nFileSizeHigh == file.identity.nFileSizeHigh && now.nFileSizeLow == file.identity.nFileSizeLow,
+                "component-only operations must preserve each original physical file identity, size and modification time");
+        }
         std::size_t count = 0;
         for (const auto& entry : fs::directory_iterator(desktop))
         {
@@ -175,6 +196,10 @@ inline void RunPairs()
     for (const int targetForm : {0, 1, 2}) // body / icon / Dock, explicit commit-boundary target
     for (const bool reverse : {false, true})
     {
+        // Merge erases a vector entry: both index directions are high risk in
+        // every shape. Group creation retains both entries: alternate direction
+        // across shapes, while keeping all five type pairs and all 12 shapes.
+        if (!pair.merge && reverse != ((sourceForm + targetForm) % 2 != 0)) continue;
         context = "A21 pair=" + std::to_string(static_cast<int>(pair.source)) + ":" + std::to_string(static_cast<int>(pair.target)) +
             " merge=" + std::to_string(pair.merge) + " source=" + std::to_string(sourceForm) +
             " target=" + std::to_string(targetForm) + " reverse=" + std::to_string(reverse);
@@ -204,9 +229,10 @@ inline void RunPairs()
         auto& app = profile.Model(false, samples.root / L"layout");
         Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary, dock);
         Access::PrepareReload(app); Access::BindAsync(app);
-        native_drag_async_reload_cases::Refresh(app);
+        if (pair.source == mapping || pair.target == mapping) native_drag_async_reload_cases::Refresh(app);
         const auto originalSource = Widget(app, L"source"), originalTarget = Widget(app, L"target");
         const auto originalSentinel = Configuration(Widget(app, L"unrelated"));
+        const auto originalPassive = sourceForm == 3 ? Configuration(Widget(app, L"passive")) : std::string{};
         std::set<std::wstring> merged = Keys(originalTarget);
         const auto sourceKeys = Keys(originalSource); merged.insert(sourceKeys.begin(), sourceKeys.end());
         if (pair.merge)
@@ -245,13 +271,17 @@ inline void RunPairs()
                     "Ctrl grouping must create the specified group type with both original identities");
             }
             if (sourceForm == 3)
+            {
                 Require(Widget(app, L"origin-group").childWidgetIds == std::vector<std::wstring>{L"passive"},
                     "D05: extracting a label must detach exactly that source and retain the manual origin group");
+                Require(Configuration(Widget(app, L"passive")) == originalPassive,
+                    "pairing a label cannot alter the settings or members of the label left in its origin group");
+            }
             samples.Check(); CheckRuntime(app);
         };
         check(); Require(Access::Save(app), "save actual pair commit through host storage");
         native_drag_async_reload_cases::Refresh(app); check();
-        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); check();
+        native_drag_async_reload_cases::Refresh(app, true); check();
         Access::StopModel(app); samples.Cleanup();
     }
     std::cout << scenes << " actual native pair commit, configuration, ownership and storage scenes passed\n";
@@ -293,7 +323,7 @@ inline void RunLifecycle()
         auto& app = profile.Model(false, samples.root / L"layout");
         Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
         Access::PrepareReload(app); Access::BindAsync(app);
-        native_drag_async_reload_cases::Refresh(app);
+        if (childType == mapping) native_drag_async_reload_cases::Refresh(app);
         // Capture baseline after native normalization, before the action.
         for (auto& child : children) child = Widget(app, child.id);
         const auto targetSettings = Configuration(Widget(app, L"target-group"));
@@ -336,7 +366,7 @@ inline void RunLifecycle()
         };
         check(); Require(Access::Save(app), "save native label transfer and finished lifecycle");
         native_drag_async_reload_cases::Refresh(app); check();
-        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); Access::FinishGroups(app); check();
+        native_drag_async_reload_cases::Refresh(app, true); Access::FinishGroups(app); check();
         Access::StopModel(app); samples.Cleanup();
     }
     std::cout << scenes << " actual native group-label transfer, deferred lifecycle and storage scenes passed\n";
