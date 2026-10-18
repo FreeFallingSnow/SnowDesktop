@@ -1080,6 +1080,7 @@ struct NativeDragIntegrationAccess
 #include "native_desktop_compat_access.inc"
 #include "native_namespace_rejection_access.inc"
 #include "../icons/native_icon_customization_access.inc"
+#include "../dock/native_preview_order_access.inc"
 };
 
 #include "native_drag_commit_cases.h"
@@ -1112,6 +1113,7 @@ struct NativeDragIntegrationAccess
 #include "native_namespace_rejection_cases.h"
 #include "native_external_namespace_cases.h"
 #include "../icons/native_icon_customization_cases.h"
+#include "../dock/native_preview_order_cases.h"
 
 namespace
 {
@@ -1167,7 +1169,11 @@ int main(int argc, char** argv)
 {
     try
     {
-        if (argc == 1) RunTargets();
+        if (argc == 1) { RunTargets(); native_preview_order_cases::Run(); }
+        else if (argc == 4 && std::string_view(argv[1]) == "--dock-preview-fixture")
+            return native_preview_order_cases::RunFixture(argv[2], argv[3]);
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-preview-order") native_preview_order_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-preview-order-proxy") native_preview_order_cases::Run(1);
         else if (argc == 2 && std::string_view(argv[1]) == "--commit-storage") native_drag_commit_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--reload-storage") native_drag_reload_cases::Run();
         else if (argc == 2 && std::string_view(argv[1]) == "--async-reload-storage") native_drag_async_reload_cases::Run();

@@ -1,4 +1,5 @@
 #include "app/app.h"
+#include "dock/dock_window_order.h"
 #include "dock/dock_window_source_cloak.h"
 #include "dock_platform_helpers.h"
 #include "dock_taskbar_diagnostics.h"
@@ -477,6 +478,11 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
+    auto& previewOrder = snowdesktop::dock_window_order::Current();
+    if (event == EVENT_OBJECT_DESTROY)
+        previewOrder.Forget(window);
+    else
+        previewOrder.Observe(window);
     if (dockWindowTransition_)
     {
         if (event == EVENT_SYSTEM_MINIMIZESTART)
@@ -552,6 +558,7 @@ void DesktopApp::RefreshDockRunningWindows(
     snowdesktop::performance::Scope performanceScope("dock", "running.discovery");
     PruneDockPendingCloseWindows();
     const DWORD observedWindowStateTick = dockWindowListChangedTick_.load();
+    snowdesktop::dock_window_order::Current().Prune();
     dockWindowAppIds_.Retain([](HWND window) { return IsWindow(window) != FALSE; });
     struct DockWindowTarget
     {
@@ -674,6 +681,7 @@ void DesktopApp::RefreshDockRunningWindows(
                 return TRUE;
             }
             auto [pathIt, inserted] = context->processPaths.try_emplace(processId);
+            snowdesktop::dock_window_order::Current().Observe(window);
             if (inserted)
                 pathIt->second = QueryDockWindowExecutablePath(window);
             auto [ancestorIt, ancestorsInserted] =

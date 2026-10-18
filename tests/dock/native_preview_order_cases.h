@@ -1,0 +1,218 @@
+#pragma once
+
+// Refs #26: exercise the actual WinEvent -> host dispatcher -> preview collector.
+// Only OS event input is supplied explicitly. Windows, identities, Z order and
+// enumeration are real. No SnowDesktop desktop window is created or operated.
+namespace native_preview_order_cases
+{
+using Access = NativeDragIntegrationAccess;
+inline constexpr wchar_t kClass[] = L"SnowDesktopPreviewOrderFixture";
+inline constexpr UINT kCreate = WM_APP + 21;
+inline constexpr UINT kRaise = WM_APP + 22;
+inline constexpr UINT kShow = WM_APP + 23;
+inline constexpr UINT kDestroy = WM_APP + 24;
+inline constexpr UINT kRename = WM_APP + 25;
+inline HWND controller = nullptr;
+inline std::vector<HWND> fixtureWindows;
+
+inline void Require(bool value, const char* message)
+{
+    if (!value) throw std::runtime_error(message);
+}
+
+inline LRESULT CALLBACK FixtureProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
+{
+    switch (message)
+    {
+    case kCreate:
+    {
+        const bool proxy = lp != 0;
+        const std::wstring title = L"Preview " + std::to_wstring(wp);
+        const HWND created = CreateWindowExW(proxy
+                ? WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_WINDOWEDGE
+                : WS_EX_APPWINDOW | WS_EX_NOACTIVATE,
+            kClass, title.c_str(), proxy ? WS_POPUP | WS_CAPTION : WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+            -16000, -16000, 300, 180, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
+        if (created) fixtureWindows.push_back(created);
+        return reinterpret_cast<LRESULT>(created);
+    }
+    case kRaise:
+        return SetWindowPos(reinterpret_cast<HWND>(wp), HWND_TOP, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    case kShow:
+        ShowWindow(reinterpret_cast<HWND>(wp), static_cast<int>(lp));
+        return TRUE;
+    case kDestroy:
+        return DestroyWindow(reinterpret_cast<HWND>(wp));
+    case kRename:
+        return SetWindowTextW(reinterpret_cast<HWND>(wp), L"Renamed preview");
+    case WM_CLOSE:
+        if (window == controller)
+        {
+            for (const HWND fixture : fixtureWindows)
+                if (IsWindow(fixture)) DestroyWindow(fixture);
+            DestroyWindow(window);
+            PostQuitMessage(0);
+            return 0;
+        }
+        break;
+    }
+    return DefWindowProcW(window, message, wp, lp);
+}
+
+inline int RunFixture(const char* mappingText, const char* readyText)
+{
+    const HANDLE mapping = reinterpret_cast<HANDLE>(std::stoull(mappingText));
+    const HANDLE ready = reinterpret_cast<HANDLE>(std::stoull(readyText));
+    WNDCLASSW cls{};
+    cls.hInstance = GetModuleHandleW(nullptr);
+    cls.lpfnWndProc = FixtureProc;
+    cls.lpszClassName = kClass;
+    if (!RegisterClassW(&cls)) return 2;
+    controller = CreateWindowExW(0, kClass, L"Preview order controller", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, cls.hInstance, nullptr);
+    if (!controller) return 3;
+    auto* shared = static_cast<HWND*>(MapViewOfFile(mapping, FILE_MAP_WRITE, 0, 0, sizeof(HWND)));
+    if (!shared) return 4;
+    *shared = controller;
+    UnmapViewOfFile(shared);
+    SetEvent(ready);
+    CloseHandle(mapping);
+    CloseHandle(ready);
+    MSG message{};
+    while (GetMessageW(&message, nullptr, 0, 0) > 0)
+    {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+    return 0;
+}
+
+struct Fixture
+{
+    HANDLE mapping = nullptr;
+    HANDLE ready = nullptr;
+    HANDLE process = nullptr;
+    HWND target = nullptr;
+    std::wstring executable;
+    void Start()
+    {
+        SECURITY_ATTRIBUTES attributes{sizeof(attributes), nullptr, TRUE};
+        mapping = CreateFileMappingW(INVALID_HANDLE_VALUE, &attributes, PAGE_READWRITE, 0, sizeof(HWND), nullptr);
+        ready = CreateEventW(&attributes, TRUE, FALSE, nullptr);
+        Require(mapping && ready, "create isolated preview fixture handshake");
+        wchar_t path[32768]{};
+        Require(GetModuleFileNameW(nullptr, path, static_cast<DWORD>(std::size(path))) != 0,
+            "resolve preview fixture executable");
+        executable = path;
+        std::wstring command = L"\"" + executable + L"\" --dock-preview-fixture " +
+            std::to_wstring(reinterpret_cast<std::uintptr_t>(mapping)) + L" " +
+            std::to_wstring(reinterpret_cast<std::uintptr_t>(ready));
+        STARTUPINFOW startup{sizeof(startup)};
+        PROCESS_INFORMATION child{};
+        Require(CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr, TRUE,
+            CREATE_NO_WINDOW, nullptr, nullptr, &startup, &child) != FALSE,
+            "start owned preview fixture process");
+        process = child.hProcess;
+        CloseHandle(child.hThread);
+        const HANDLE waits[]{ready, process};
+        Require(WaitForMultipleObjects(2, waits, FALSE, 10000) == WAIT_OBJECT_0,
+            "owned preview fixture must signal readiness before exiting");
+        const auto* shared = static_cast<const HWND*>(MapViewOfFile(mapping, FILE_MAP_READ, 0, 0, sizeof(HWND)));
+        Require(shared != nullptr, "read owned preview fixture controller");
+        target = *shared;
+        UnmapViewOfFile(shared);
+        Require(IsWindow(target) != FALSE, "owned preview fixture controller exists");
+    }
+    ~Fixture()
+    {
+        if (target) PostMessageW(target, WM_CLOSE, 0, 0);
+        if (process)
+        {
+            // Only the child launched above may be terminated on fixture failure.
+            if (WaitForSingleObject(process, 5000) == WAIT_TIMEOUT)
+            {
+                TerminateProcess(process, 5);
+                WaitForSingleObject(process, 5000);
+            }
+            CloseHandle(process);
+        }
+        if (mapping) CloseHandle(mapping);
+        if (ready) CloseHandle(ready);
+    }
+    DWORD_PTR Send(UINT message, WPARAM wp = 0, LPARAM lp = 0)
+    {
+        DWORD_PTR result = 0;
+        Require(SendMessageTimeoutW(target, message, wp, lp, SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                5000, &result) != 0, "owned preview fixture command completes");
+        Require(result != 0, "owned preview fixture command succeeds");
+        return result;
+    }
+    HWND Create(unsigned index, bool proxy)
+    {
+        const HWND window = reinterpret_cast<HWND>(Send(kCreate, index, proxy));
+        Require(window != nullptr, "create a real off-screen application/proxy window");
+        return window;
+    }
+};
+
+inline void Run(int onlyVariant = -1)
+{
+    native_drag_commit_cases::Profile profile;
+    for (const bool proxy : {false, true})
+    {
+        if (onlyVariant != -1 && onlyVariant != static_cast<int>(proxy)) continue;
+        auto& app = profile.Model(false, profile.root / (proxy ? L"proxy-order" : L"window-order"));
+        Access::PreparePreviewOrder(app);
+        Fixture fixture;
+        fixture.Start();
+        std::vector<HWND> owned;
+        for (unsigned index = 0; index < 3; ++index)
+        {
+            owned.push_back(fixture.Create(index, proxy));
+            Access::NotifyPreviewWindow(app, owned.back(), EVENT_OBJECT_CREATE);
+        }
+        const auto expect = [&](std::initializer_list<HWND> expected, const char* message) {
+            std::vector<HWND> actual;
+            for (const auto& item : Access::PreviewItems(app, fixture.executable))
+                if (std::find(owned.begin(), owned.end(), item.window) != owned.end()) actual.push_back(item.window);
+            Require(actual == std::vector<HWND>(expected), message);
+        };
+        fixture.Send(kRaise, reinterpret_cast<WPARAM>(owned[0]));
+        fixture.Send(kRaise, reinterpret_cast<WPARAM>(owned[1]));
+        // The literal expected order comes from creation calls, never EnumWindows.
+        expect({owned[0], owned[1], owned[2]}, proxy
+            ? "document proxies must retain opening order before the first preview"
+            : "regular windows must retain opening order before the first preview");
+        fixture.Send(kRaise, reinterpret_cast<WPARAM>(owned[2]));
+        Access::NotifyPreviewWindow(app, owned[2], EVENT_SYSTEM_FOREGROUND);
+        expect({owned[0], owned[1], owned[2]}, "foreground/Z-order changes must not reorder preview cards");
+        Require(fixture.Send(kRename, reinterpret_cast<WPARAM>(owned[1])) != 0, "rename fixture window");
+        const auto renamed = Access::PreviewItems(app, fixture.executable);
+        Require(std::any_of(renamed.begin(), renamed.end(), [&](const auto& item) {
+            return item.window == owned[1] && item.title == L"Renamed preview";
+        }), "stable preview order must still refresh window titles");
+        if (!proxy)
+        {
+            fixture.Send(kShow, reinterpret_cast<WPARAM>(owned[1]), SW_HIDE);
+            Access::NotifyPreviewWindow(app, owned[1], EVENT_OBJECT_HIDE);
+            expect({owned[0], owned[2]}, "hiding a window removes only its current preview");
+            fixture.Send(kShow, reinterpret_cast<WPARAM>(owned[1]), SW_SHOWNOACTIVATE);
+            Access::NotifyPreviewWindow(app, owned[1], EVENT_OBJECT_SHOW);
+            expect({owned[0], owned[1], owned[2]}, "showing a surviving HWND restores its original position");
+            fixture.Send(kShow, reinterpret_cast<WPARAM>(owned[1]), SW_SHOWMINNOACTIVE);
+            Access::NotifyPreviewWindow(app, owned[1], EVENT_SYSTEM_MINIMIZESTART);
+            expect({owned[0], owned[1], owned[2]}, "minimizing must retain the opening order");
+            fixture.Send(kShow, reinterpret_cast<WPARAM>(owned[1]), SW_SHOWNOACTIVATE);
+            Access::NotifyPreviewWindow(app, owned[1], EVENT_SYSTEM_MINIMIZEEND);
+            expect({owned[0], owned[1], owned[2]}, "restoring must retain the opening order");
+        }
+        Require(fixture.Send(kDestroy, reinterpret_cast<WPARAM>(owned[1])) != 0, "destroy fixture window");
+        Access::NotifyPreviewWindow(app, owned[1], EVENT_OBJECT_DESTROY);
+        owned.push_back(fixture.Create(3, proxy));
+        Access::NotifyPreviewWindow(app, owned.back(), EVENT_OBJECT_CREATE);
+        expect({owned[0], owned[2], owned[3]}, "a newly opened window appends after survivors, including recycled HWNDs");
+    }
+    std::cout << "actual host preview opening-order cases passed\n";
+}
+}
