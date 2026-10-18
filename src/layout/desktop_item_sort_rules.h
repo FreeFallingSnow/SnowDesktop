@@ -7,11 +7,13 @@ namespace snowdesktop::desktop_item_sort_rules
 // Desktop namespace items and directories can lack size/time metadata.
 // Keep unavailable values last in both directions; ties use stable name order.
 template<class Item>
-inline bool Less(const Item& a, const Item& b, int mode, bool ascending)
+inline bool Less(const Item& a, const Item& b, int mode, bool ascending,
+    bool directoryA = false, bool directoryB = false)
 {
     int comparison = 0;
     if (mode == folder_sort_rules::kType)
     {
+        if (directoryA != directoryB) return directoryA;
         const bool hasA = !a.typeName.empty();
         const bool hasB = !b.typeName.empty();
         if (hasA != hasB) return hasA;
@@ -40,17 +42,18 @@ inline bool Less(const Item& a, const Item& b, int mode, bool ascending)
 }
 
 template<class Item>
-inline bool LessOnDesktop(const Item& a, const Item& b, int mode, bool ascending)
+inline bool LessOnDesktop(const Item& a, const Item& b, int mode, bool ascending,
+    bool directoryA = false, bool directoryB = false)
 {
-    // Preserve the free desktop's existing type/name order in both directions.
-    // Collections keep their existing missing-type and name-tie rules above.
+    // Preserve the desktop's existing missing-type placement. The Type
+    // direction applies to type blocks; names within each block stay ascending.
     if (mode == folder_sort_rules::kType)
     {
-        int comparison = folder_sort_rules::CompareInsensitive(a.typeName, b.typeName);
-        if (comparison == 0)
-            comparison = folder_sort_rules::CompareInsensitive(a.name, b.name);
-        return ascending ? comparison < 0 : comparison > 0;
+        if (directoryA != directoryB) return directoryA;
+        const int comparison = folder_sort_rules::CompareInsensitive(a.typeName, b.typeName);
+        if (comparison != 0) return ascending ? comparison < 0 : comparison > 0;
+        return folder_sort_rules::CompareInsensitive(a.name, b.name) < 0;
     }
-    return Less(a, b, mode, ascending);
+    return Less(a, b, mode, ascending, directoryA, directoryB);
 }
 } // namespace snowdesktop::desktop_item_sort_rules

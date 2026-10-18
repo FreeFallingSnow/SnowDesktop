@@ -6,6 +6,23 @@
 
 namespace
 {
+std::unordered_set<size_t> TypeDirectoryIndices(const std::vector<DesktopItem>& items,
+    const std::vector<size_t>& indices, int mode)
+{
+    std::unordered_set<size_t> result;
+    if (mode != snowdesktop::folder_sort_rules::kType) return result;
+    // Sample each physical item once before comparison. Shell namespace items
+    // may not have filesystem attributes and keep their existing type order.
+    for (const size_t index : indices)
+        if (index < items.size())
+        {
+            const DWORD attributes = GetFileAttributesW(items[index].parsingName.c_str());
+            if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
+                result.insert(index);
+        }
+    return result;
+}
+
 snowdesktop::list_detail_rules::Column ContentSortColumnForMode(int mode)
 {
     switch (mode)
@@ -38,9 +55,10 @@ void DesktopApp::SortIcons(int mode, bool ascending)
                 order.push_back(i);
         }
 
-        std::stable_sort(order.begin(), order.end(), [this, mode, ascending](size_t a, size_t b) {
+        const auto directories = TypeDirectoryIndices(items_, order, mode);
+        std::stable_sort(order.begin(), order.end(), [this, mode, ascending, &directories](size_t a, size_t b) {
             return snowdesktop::desktop_item_sort_rules::LessOnDesktop(
-                items_[a], items_[b], mode, ascending);
+                items_[a], items_[b], mode, ascending, directories.contains(a), directories.contains(b));
         });
 
         std::unordered_set<std::wstring> usedSlots;
@@ -160,7 +178,7 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
         SaveLayoutSlots();
         InvalidateRect(hwnd_, nullptr, TRUE);
     }
-    else if (w.type == DesktopWidgetType::FileCategories)
+    else if (w.type == DesktopWidgetType::FileCategories || w.type == DesktopWidgetType::Collection)
     {
         std::vector<std::wstring> keys;
         std::unordered_set<std::wstring> seen;
@@ -171,39 +189,17 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
                 keys.push_back(rawKey);
         }
 
-        std::sort(keys.begin(), keys.end(),
-            [this, mode, ascending](const std::wstring& ka, const std::wstring& kb) {
+        std::vector<size_t> indices;
+        indices.reserve(keys.size());
+        for (const auto& key : keys) indices.push_back(FindItemIndexByKey(key));
+        const auto directories = TypeDirectoryIndices(items_, indices, mode);
+        std::stable_sort(keys.begin(), keys.end(),
+            [this, mode, ascending, &directories](const std::wstring& ka, const std::wstring& kb) {
                 size_t ia = FindItemIndexByKey(ka);
                 size_t ib = FindItemIndexByKey(kb);
                 if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
                 return snowdesktop::desktop_item_sort_rules::Less(
-                    items_[ia], items_[ib], mode, ascending);
-            });
-
-        w.itemKeys = std::move(keys);
-        LayoutItems();
-        RebuildContainersAndItems();
-        SaveLayoutSlots();
-        InvalidateRect(hwnd_, nullptr, TRUE);
-    }
-    else if (w.type == DesktopWidgetType::Collection)
-    {
-        std::vector<std::wstring> keys;
-        std::unordered_set<std::wstring> seen;
-        for (const auto& rawKey : w.itemKeys)
-        {
-            std::wstring nk = ToUpperInvariant(rawKey);
-            if (seen.insert(nk).second)
-                keys.push_back(rawKey);
-        }
-
-        std::sort(keys.begin(), keys.end(),
-            [this, mode, ascending](const std::wstring& ka, const std::wstring& kb) {
-                size_t ia = FindItemIndexByKey(ka);
-                size_t ib = FindItemIndexByKey(kb);
-                if (ia == static_cast<size_t>(-1) || ib == static_cast<size_t>(-1)) return false;
-                return snowdesktop::desktop_item_sort_rules::Less(
-                    items_[ia], items_[ib], mode, ascending);
+                    items_[ia], items_[ib], mode, ascending, directories.contains(ia), directories.contains(ib));
             });
 
         w.itemKeys = std::move(keys);
