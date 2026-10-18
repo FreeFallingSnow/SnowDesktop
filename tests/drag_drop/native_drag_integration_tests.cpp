@@ -528,7 +528,7 @@ struct NativeDragIntegrationAccess
         app.LayoutItems();
     }
     static DragSourceList BeginMixed(DesktopApp& app, const std::vector<std::filesystem::path>& files,
-        std::size_t count, bool reverse)
+        std::size_t count, bool reverse, int mods = 0)
     {
         for (auto& item : app.items_)
             item.selected = std::any_of(files.begin(), files.begin() + static_cast<std::ptrdiff_t>(count),
@@ -540,20 +540,21 @@ struct NativeDragIntegrationAccess
         if (reverse) std::reverse(items.begin(), items.end());
         auto captured = app.BuildDragSourceList(items, origin);
         app.dragSession_.Begin(origin, std::move(items), captured, {50, 50}, {250, 250});
+        app.dragSession_.UpdateActionFromMods(mods);
         return captured;
     }
-    static DropPreviewList MixedPreview(DesktopApp& app)
+    static DropPreviewList MixedPreview(DesktopApp& app, int mods = 0)
     {
         return app.BuildDropPreviewList(app.dragSession_.SourceList(), MemberContainer(app, L"mixed-target"),
-            nullptr, HitRegion::SortAfter, 0, {250, 250});
+            nullptr, HitRegion::SortAfter, mods, {250, 250});
     }
-    static void DropMixed(DesktopApp& app)
+    static void DropMixed(DesktopApp& app, int mods = 0)
     {
         auto* target = MemberContainer(app, L"mixed-target");
         const auto items = app.dragSession_.Items();
         auto* origin = app.dragSession_.Source();
         app.dragSession_.DeactivateForDrop();
-        target->OnItemsDropped(items, origin, nullptr, HitRegion::SortAfter, 0);
+        target->OnItemsDropped(items, origin, nullptr, HitRegion::SortAfter, mods);
         // Execute the real post-release persistence/layout services explicitly;
         // the pointer-message caller itself is outside this fixture boundary.
         app.SaveLayoutSlots();
@@ -806,6 +807,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--ole-leave-lifecycle") native_ole_leave_cases::Run();
         else if (argc == 3 && std::string_view(argv[1]) == "--member-order") native_member_order_cases::Run(argv[2]);
         else if (argc == 3 && std::string_view(argv[1]) == "--mixed-selection") native_mixed_selection_cases::Run(argv[2]);
+        else if (argc == 4 && std::string_view(argv[1]) == "--mixed-file-action") native_mixed_selection_cases::Run(argv[2], argv[3]);
         else if (argc == 2 && std::string_view(argv[1]) == "--group-member-order") native_group_member_order_cases::Run();
         else if (argc == 3 && std::string_view(argv[1]) == "--group-member-order") native_group_member_order_cases::Run(argv[2]);
         else if (argc == 3 && std::string_view(argv[1]) == "--right-drag-files") native_right_drag_cases::Run(argv[2]);

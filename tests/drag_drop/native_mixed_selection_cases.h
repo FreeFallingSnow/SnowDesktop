@@ -35,8 +35,7 @@ inline Components OriginalComponents(const DesktopApp& app)
     result.configuration = stream.str();
     return result;
 }
-inline void Check(DesktopApp& app, const std::vector<fs::path>& files, std::size_t count,
-    const Components& original, DesktopWidgetType targetType)
+inline void CheckComponents(const DesktopApp& app, const Components& original)
 {
     const auto current = OriginalComponents(app);
     Require(current.configuration == original.configuration && current.members.size() == original.members.size(),
@@ -55,6 +54,11 @@ inline void Check(DesktopApp& app, const std::vector<fs::path>& files, std::size
                 "D01: unsupported component membership must preserve the ordered physical file identities");
         }
     }
+}
+inline void Check(DesktopApp& app, const std::vector<fs::path>& files, std::size_t count,
+    const Components& original, DesktopWidgetType targetType)
+{
+    CheckComponents(app, original);
     const auto* target = Access::MemberContainer(app, L"mixed-target")->GetWidgetData();
     Require(target && target->type == targetType && target->itemKeys.size() == count,
         "D01: the actual native target must receive every eligible selected file despite unsupported mixed members");
@@ -82,12 +86,56 @@ inline void Check(DesktopApp& app, const std::vector<fs::path>& files, std::size
         "D01: eligible identities must be accessible through the real target member slots");
     Require(Access::NoPresentationWindows(app), "native mixed-selection tests cannot open desktop presentation windows");
 }
-inline void Run(std::string_view typeName)
+inline void CheckFileAction(DesktopApp& app, const std::vector<fs::path>& files, std::size_t count,
+    const std::vector<fs::path>& outputs, const Components& original, DesktopWidgetType targetType, bool link)
+{
+    CheckComponents(app, original);
+    const auto* target = Access::MemberContainer(app, L"mixed-target")->GetWidgetData();
+    Require(outputs.size() == count && target && target->type == targetType && target->itemKeys.size() == count,
+        "D03: only eligible ordinary files may create physical outputs and target members");
+    std::unordered_set<std::wstring> published;
+    for (std::size_t i = 0; i < files.size(); ++i)
+    {
+        const auto& source = Find(app, ToUpperInvariant(files[i].wstring()));
+        Require(Read(files[i]) == "mixed-file-" + std::to_string(i) && Access::HasVisibleIcon(app, source) &&
+            Access::HasMatchingRuntimeSlot(app, source) && source.gridCell.pageId == L"__page:1" &&
+            source.gridCell.column == static_cast<int>(i) * 2 && source.gridCell.row == 0,
+            "D03: Ctrl Copy and Alt Link must preserve every original file, bytes and visible desktop cell");
+        if (i >= count) continue;
+        const auto output = std::find_if(outputs.begin(), outputs.end(), [&](const auto& path) {
+            if (link)
+            {
+                Require(_wcsicmp(path.extension().c_str(), L".lnk") == 0,
+                    "D03: Alt Link must create persisted Shell shortcut files, not ordinary copies");
+                return fs::equivalent(LinkTarget(path), files[i]);
+            }
+            return Read(path) == "mixed-file-" + std::to_string(i);
+        });
+        Require(output != outputs.end() && !fs::equivalent(*output, files[i]),
+            "D03: every selected ordinary file needs its own actual copy or correctly targeted shortcut");
+        const auto& item = Find(app, ToUpperInvariant(output->wstring()));
+        Require(published.insert(ToUpperInvariant(item.parsingName)).second &&
+            std::count(target->itemKeys.begin(), target->itemKeys.end(), item.layoutKey) == 1 &&
+            !Access::HasVisibleIcon(app, item) && item.gridCell.pageId == target->gridCell.pageId &&
+            item.gridCell.column == target->gridCell.column && item.gridCell.row == target->gridCell.row,
+            "D03: actual outputs must belong once to the intended target without consuming originals or duplicating free-desktop icons");
+    }
+    std::unordered_set<std::wstring> accessible;
+    for (const auto& slot : Access::MemberContainer(app, L"mixed-target")->GetSlots())
+        if (const auto* item = slot->GetItem()) accessible.insert(ToUpperInvariant(item->GetPath()));
+    Require(accessible == published && Access::NoPresentationWindows(app),
+        "D03: every published identity must be accessible through actual target slots without desktop presentation windows");
+}
+inline void Run(std::string_view typeName, std::string_view verb = "move")
 {
     DesktopWidgetType targetType;
     if (typeName == "collection") targetType = DesktopWidgetType::Collection;
     else if (typeName == "files") targetType = DesktopWidgetType::FileCategories;
     else throw std::runtime_error("unknown native mixed-selection target");
+    Require(verb == "move" || verb == "copy" || verb == "link", "native mixed selection requires a declared verb");
+    const bool physical = verb != "move";
+    const int mods = verb == "copy" ? MK_CONTROL : verb == "link" ? MK_ALT : 0;
+    const auto promised = verb == "copy" ? DropAction::Copy : verb == "link" ? DropAction::Link : DropAction::Move;
     native_drag_commit_cases::Profile profile;
     std::size_t scenes = 0;
     for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::FileCategories,
@@ -95,7 +143,7 @@ inline void Run(std::string_view typeName)
     for (const std::size_t count : {0u, 1u, 2u})
     for (const bool reverse : {false, true})
     {
-        const auto description = "mixed target=" + std::string(typeName) + " component=" +
+        const auto description = "mixed target=" + std::string(typeName) + " verb=" + std::string(verb) + " component=" +
             std::to_string(static_cast<int>(type)) + " files=" + std::to_string(count) + " reverse=" + std::to_string(reverse);
         native_drag_commit_cases::context = description;
         const auto directory = profile.root / (L"mixed-" + std::to_wstring(scenes++));
@@ -116,11 +164,11 @@ inline void Run(std::string_view typeName)
         native_drag_async_reload_cases::Refresh(app);
         Require(Access::Save(app), "save original native mixed-selection model");
         const auto original = OriginalComponents(app);
-        const auto captured = Access::BeginMixed(app, files, count, reverse);
+        const auto captured = Access::BeginMixed(app, files, count, reverse, mods);
         Require(captured.hasWidgets && captured.HasDesktopWidgetIcons() && captured.entries.size() == count + 1,
             "D01: the production source capture must retain the complete mixed selection before filtering");
-        const auto preview = Access::MixedPreview(app);
-        Require(preview.landings.size() == count && (count == 0 || preview.action == DropAction::Move),
+        const auto preview = Access::MixedPreview(app, mods);
+        Require(preview.landings.size() == count && (count == 0 || preview.action == promised),
             "D01: native feedback must accept eligible members without claiming unsupported members");
         for (const auto& landing : preview.landings)
         {
@@ -130,27 +178,40 @@ inline void Run(std::string_view typeName)
                 !source->desktopKey.empty() && landing.widgetId == L"mixed-target",
                 "D01: eligible landing indices must retain their full-selection identities and the intended destination");
         }
-        Access::DropMixed(app);
+        auto baseline = files;
+        if (type != DesktopWidgetType::FolderMapping) baseline.insert(baseline.end(), inside.begin(), inside.end());
+        Access::DropMixed(app, mods);
+        if (physical) Wait([&] { return Access::FileDropIdle(app); }, "D03: actual file workers and native refresh must become idle");
+        const auto outputs = Outputs(desktop, baseline);
+        const auto check = [&] {
+            if (physical) CheckFileAction(app, files, count, outputs, original, targetType, verb == "link");
+            else Check(app, files, count, original, targetType);
+        };
         native_drag_commit_cases::context = description + " phase=after-drop";
-        Check(app, files, count, original, targetType);
+        check();
         Require(Access::Save(app), "save actual partial mixed-selection result through native host storage");
         native_drag_async_reload_cases::Refresh(app);
         native_drag_commit_cases::context = description + " phase=after-refresh";
-        Check(app, files, count, original, targetType);
+        check();
         Access::Load(app);
         native_drag_async_reload_cases::Refresh(app, true);
         native_drag_commit_cases::context = description + " phase=after-reload";
-        Check(app, files, count, original, targetType);
+        check();
         for (std::size_t i = 0; i < inside.size(); ++i)
             Require(Read(inside[i]) == "inside-" + std::to_string(i),
                 "D01: ignoring an unsupported component cannot alter any of its physical member files");
-        Require(Outputs(desktop, [&] { auto all = files; if (type != DesktopWidgetType::FolderMapping)
-            all.insert(all.end(), inside.begin(), inside.end()); return all; }()).empty(),
-            "D01: logical eligible-subset transfer cannot create extra physical file outputs");
+        Require(Outputs(desktop, baseline).size() == (physical ? count : 0),
+            "D01/D03: mixed-selection processing cannot create unpromised physical outputs");
         Access::StopModel(app);
+        for (const auto& output : outputs)
+        {
+            Require(fs::weakly_canonical(output.parent_path()) == fs::weakly_canonical(desktop),
+                "only isolated native desktop mixed-action outputs may be removed");
+            fs::remove(output);
+        }
         for (const auto& file : files) fs::remove(file);
         for (const auto& file : inside) fs::remove(file);
     }
-    std::cout << scenes << " actual native complete-selection/subset/model/storage scenes passed: " << typeName << '\n';
+    std::cout << scenes << " actual native complete-selection/subset/model/storage scenes passed: " << typeName << ' ' << verb << '\n';
 }
 }

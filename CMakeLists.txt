@@ -2680,6 +2680,13 @@ if (BUILD_TESTING)
         set_tests_properties(native_mixed_selection_${MIXED_TARGET} PROPERTIES
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
             TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+        foreach(MIXED_VERB IN ITEMS copy link)
+            add_test(NAME native_mixed_file_${MIXED_VERB}_${MIXED_TARGET}
+                COMMAND SnowDesktopNativeDragIntegrationTests --mixed-file-action ${MIXED_TARGET} ${MIXED_VERB})
+            set_tests_properties(native_mixed_file_${MIXED_VERB}_${MIXED_TARGET} PROPERTIES
+                REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+                TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+        endforeach()
     endforeach()
     add_test(NAME native_group_member_order
         COMMAND SnowDesktopNativeDragIntegrationTests --group-member-order)
