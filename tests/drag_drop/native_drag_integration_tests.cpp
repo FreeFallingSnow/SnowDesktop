@@ -823,6 +823,7 @@ struct NativeDragIntegrationAccess
 #include "native_right_drag_cases.h"
 #include "native_ole_widget_cases.h"
 #include "native_folder_delivery_cases.h"
+#include "native_default_file_cases.h"
 
 namespace
 {
@@ -893,6 +894,7 @@ int main(int argc, char** argv)
         else if (argc == 3 && std::string_view(argv[1]) == "--right-drag-files") native_right_drag_cases::Run(argv[2]);
         else if (argc == 4 && std::string_view(argv[1]) == "--ole-widget-files") native_ole_widget_cases::Run(argv[2], argv[3]);
         else if (argc == 2 && std::string_view(argv[1]) == "--folder-delivery-after-drag") native_folder_delivery_cases::Run();
+        else if (argc == 4 && std::string_view(argv[1]) == "--ole-default-files") return native_default_file_cases::Run(argv[2], argv[3]);
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

@@ -2683,6 +2683,16 @@ if (BUILD_TESTING)
                 TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;ole")
         endforeach()
     endforeach()
+    foreach(DEFAULT_TARGET IN ITEMS desktop collection files mapping collection_group file_group_files file_group_mapping)
+        foreach(VOLUME_RELATION IN ITEMS same cross mixed)
+            add_test(NAME native_default_files_${DEFAULT_TARGET}_${VOLUME_RELATION}
+                COMMAND SnowDesktopNativeDragIntegrationTests --ole-default-files ${DEFAULT_TARGET} ${VOLUME_RELATION})
+            set_tests_properties(native_default_files_${DEFAULT_TARGET}_${VOLUME_RELATION} PROPERTIES
+                REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+                RESOURCE_LOCK snowdesktop_desktop TIMEOUT 180 SKIP_RETURN_CODE 77
+                LABELS "integration;shell;interaction;slot;ole;data")
+        endforeach()
+    endforeach()
     add_test(NAME native_folder_delivery_after_drag
         COMMAND SnowDesktopNativeDragIntegrationTests --folder-delivery-after-drag)
     set_tests_properties(native_folder_delivery_after_drag PROPERTIES

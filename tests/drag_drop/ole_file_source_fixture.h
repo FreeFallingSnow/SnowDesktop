@@ -20,6 +20,9 @@ public:
     int dataReads = 0;
     HRESULT outcome = E_PENDING;
     DWORD endEffect = 0xffffffff;
+    // A virtual multi-parent selection supplies a standard CF_HDROP batch.
+    // Ordinary same-parent cases retain the real Shell provider unchanged.
+    std::vector<std::filesystem::path> multiParentPaths;
 
     void CheckThread() { wrongApartment |= GetCurrentThreadId() != owner; }
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* format, STGMEDIUM* medium) override
@@ -28,6 +31,23 @@ public:
         ++dataReads;
         if (format && format->cfFormat == CF_HDROP)
         { ++fileReads; fileReadBeforeStart |= asynchronous && starts == 0; }
+        if (format && format->cfFormat == CF_HDROP && !multiParentPaths.empty())
+        {
+            if (!medium || !(format->tymed & TYMED_HGLOBAL)) return DV_E_TYMED;
+            std::wstring names;
+            for (const auto& path : multiParentPaths) { names += path.wstring(); names.push_back(L'\0'); }
+            names.push_back(L'\0');
+            const auto bytes = sizeof(DROPFILES) + names.size() * sizeof(wchar_t);
+            HGLOBAL memory = GlobalAlloc(GMEM_MOVEABLE | GMEM_ZEROINIT, bytes);
+            if (!memory) return E_OUTOFMEMORY;
+            auto* drop = static_cast<DROPFILES*>(GlobalLock(memory));
+            if (!drop) { GlobalFree(memory); return E_OUTOFMEMORY; }
+            drop->pFiles = sizeof(DROPFILES); drop->fWide = TRUE;
+            memcpy(reinterpret_cast<std::byte*>(drop) + sizeof(DROPFILES), names.data(), names.size() * sizeof(wchar_t));
+            GlobalUnlock(memory);
+            *medium = {}; medium->tymed = TYMED_HGLOBAL; medium->hGlobal = memory;
+            return S_OK;
+        }
         return shell->GetData(format, medium);
     }
     HRESULT STDMETHODCALLTYPE GetDataHere(FORMATETC* f, STGMEDIUM* m) override
