@@ -93,6 +93,7 @@ namespace snowdesktop::tray { struct Icon; class Service; }
 #include "icons/icon_beautify.h"
 #include "icons/icon_appearance.h"
 #include "icons/icon_appearance_rules.h"
+#include "icons/icon_customization_lifecycle.h"
 #include <tuple>
 #include <map>
 #include "icons/icon_image_codec.h"
@@ -1947,7 +1948,7 @@ private:
     using RightDragMenuPresenter = std::function<UINT(HMENU, POINT, HWND)>;
     bool ChooseRightDragDropAction(POINT point, DWORD& keyState,
         DWORD allowedEffects, bool externalSource,
-        const RightDragMenuPresenter& presentMenu = {});
+        const RightDragMenuPresenter& presentMenu = {}, bool externalContent = false);
     /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
     bool OnKeyDown(WPARAM key, bool repeated = false);
     /** @brief 在当前桌面、容器或弹出窗口中按名称前缀定位文件。 */
@@ -2044,7 +2045,12 @@ private:
      * @param now 当前时间（毫秒）
      * @return 是否已打开弹出面板
      */
-    bool TryOpenDwellCollectionPopup(DWORD now);
+    // The optional presenter supplies only the final native UI request;
+    // tracking, readiness and cancellation remain host decisions.
+    using CollectionPopupRequestPresenter = std::function<void(size_t, POINT)>;
+    CollectionPopupRequestPresenter collectionPopupRequestPresenter_;
+    bool TryOpenDwellCollectionPopup(DWORD now,
+        const CollectionPopupRequestPresenter& presenter = {});
     /**
      * @brief 拖拽时优先检查集合弹窗命中（弹窗遮挡的容器不应被穿透命中）。
      * @param client 客户端坐标
@@ -3056,6 +3062,14 @@ private:
     ID2D1Bitmap* GetSmallCustomIcon(ID2D1RenderTarget* context, std::wstring_view identity, int pixels);
     std::unordered_map<std::wstring, std::string> iconOverrides_;
     std::map<std::wstring, snowdesktop::IconAppearanceRecord> iconAppearanceOverrides_;
+    snowdesktop::icon_customization::MissingTargets missingIconTargets_;
+    std::uint64_t iconCustomizationRevision_ = 0;
+    ULONGLONG nextIconCustomizationProbe_ = 0;
+    bool iconAppearanceReferencesDirty_ = false;
+    void ScheduleIconCustomizationCleanup();
+    bool FlushExpiredIconCustomizations();
+    bool SaveIconAppearanceReferences();
+    bool IsActiveIconCustomization(const std::wstring& target) const;
     snowdesktop::icon_appearance::EditPreview iconAppearancePreview_;
     std::uint64_t iconAppearanceRevision_ = 1, iconAppearanceSession_ = 0;
     std::wstring iconAppearanceTarget_;
@@ -4444,6 +4458,7 @@ private:
     size_t HitTestLuaFileDropTarget(POINT point) const;
     bool DeliverLuaFileDrop(POINT point, const std::vector<std::wstring>& paths);
     bool externalLuaFileDropAvailable_ = false;
+    bool externalOwnedContent_ = false;
     std::vector<std::wstring> externalFileDropPaths_;
     DWORD ExternalFileDropPreferredEffect(POINT point) const;
     HRESULT HandleOleDragEnter(IDataObject* dataObject,
@@ -4714,6 +4729,8 @@ private:
         dockFolderPopupMarqueeInitialSelection_;
     /** @brief 悬停打开：拖拽中悬停在集合"全部"按钮上 */
     PopupDwellController popupDwellController_;
+    std::wstring collectionPopupDwellWidgetId_;
+    std::wstring collectionPopupDwellSourceIdentity_;
     PopupHoverController popupHoverController_;
     PopupMouseLeaveController popupMouseLeaveController_;
     bool popupMouseLeaveTimerArmed_ = false;
@@ -4725,6 +4742,8 @@ private:
     size_t collectionGroupTabDwellWidgetIndex_ =
         static_cast<size_t>(-1);
     std::wstring collectionGroupTabDwellId_;
+    std::wstring collectionGroupTabDwellWidgetId_;
+    std::wstring collectionGroupTabDwellSourceIdentity_;
     DWORD collectionGroupTabDwellTick_ = 0;
     bool collectionGroupTabDwellTimerArmed_ = false;
     snowdesktop::OwnedTransientDragTarget popupDragTarget_;

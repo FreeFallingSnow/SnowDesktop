@@ -4,6 +4,7 @@
 #include "drag_drop/empty_group_drop_rules.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "drag_drop/desktop_drop_dispatch.h"
+#include "drag_drop/file_source_eligibility.h"
 #include "dock/dock_desktop_return.h"
 
 // Drag source normalization and destination preview planning.
@@ -369,12 +370,17 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
 {
     DropPreviewList preview;
     preview.targetContainer = target;
+    const auto* targetWidget = dynamic_cast<WidgetContainer*>(target);
+    const bool fileGroupSourceInsertion = sourceList.UsesFileGroupSourceInsertion() &&
+        targetWidget && targetWidget->GetWidgetData() &&
+        targetWidget->GetWidgetData()->type == DesktopWidgetType::FileGroup;
     if (target && sourceList.HasDesktopWidgetIcons() &&
         (containers_.empty() || target != containers_.front().get() || (mods & (MK_CONTROL | MK_ALT)) != 0))
         return BuildDropPreviewList(sourceList.WithoutDesktopWidgetIcons(),
             target, targetSlot, region, mods, dropPoint);
     if (sourceList.Empty() || !target ||
-        (sourceList.hasWidgets && !sourceList.HasDesktopWidgetIcons()) || region == HitRegion::Handoff)
+        (sourceList.hasWidgets && !sourceList.HasDesktopWidgetIcons() && !fileGroupSourceInsertion) ||
+        region == HitRegion::Handoff || region == HitRegion::Blocked)
         return preview;
     if (!DragTargetResolver::AcceptsInternal(
             *target, sourceList))
@@ -540,7 +546,7 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
     {
         preview.targetWidget = widget->GetWidgetData();
         if (sourceList.hasCollectionGroupEntries ||
-            sourceList.hasFileGroupEntries)
+            sourceList.hasFileGroupEntries || fileGroupSourceInsertion)
         {
             const DesktopWidgetType expectedGroup =
                 sourceList.hasCollectionGroupEntries
@@ -571,7 +577,8 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
                         ? entry.kind ==
                             DropSourceKind::CollectionGroupEntry
                         : entry.kind ==
-                            DropSourceKind::FileGroupEntry;
+                            DropSourceKind::FileGroupEntry ||
+                            (fileGroupSourceInsertion && entry.kind == DropSourceKind::Widget);
                 if (!matchingEntry)
                     continue;
                 DropLanding landing;
@@ -615,9 +622,12 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
                 DesktopWidgetType::FileGroup)
         {
             auto* group = dynamic_cast<FileGroup*>(widget);
-            std::wstring activeId = group
-                ? group->GetActiveSourceId()
-                : preview.targetWidget->activeCategoryId;
+            std::wstring activeId;
+            if (group && group->IsGroupSearchActive() && targetSlot)
+                if (auto* source = group->GetSourceContainerForItem(targetSlot->GetItem()))
+                    if (auto* data = source->GetWidgetData()) activeId = data->id;
+            if (activeId.empty()) activeId = group
+                ? group->GetActiveSourceId() : preview.targetWidget->activeCategoryId;
             const size_t activeIndex =
                 FindWidgetIndexById(activeId);
             if (activeIndex >= widgets_.size() ||
@@ -637,6 +647,10 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             preview.targetWidget->type == DesktopWidgetType::FolderMapping
                 ? DropTargetKind::FolderMapping
                 : DropTargetKind::KeyedWidget;
+        if (preview.targetKind == DropTargetKind::FolderMapping &&
+            snowdesktop::file_source_eligibility::ContainsProtectedDesktopIcons(sourceList))
+            return BuildDropPreviewList(snowdesktop::file_source_eligibility::ForPhysicalFolder(sourceList),
+                target, targetSlot, region, mods, dropPoint);
         // 文件夹拖入自身（或自身子目录）的映射/弹窗：不生成落点计划，
         // 执行层也会拦截，避免把文件夹递归复制进自己。
         if (preview.targetKind == DropTargetKind::FolderMapping &&
@@ -657,8 +671,9 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
         }
         Container* resolvedTarget = target;
         if (auto* group = dynamic_cast<FileGroup*>(widget))
-            if (auto* active = group->GetActiveSourceContainer())
-                resolvedTarget = active;
+            if (preview.targetWidget)
+                if (auto* source = group->GetSourceContainerById(preview.targetWidget->id))
+                    resolvedTarget = source;
         if (auto* group =
                 dynamic_cast<FileGroup*>(widget);
             group && group->GetWidgetData() &&

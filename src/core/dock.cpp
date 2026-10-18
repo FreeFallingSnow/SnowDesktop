@@ -1961,12 +1961,9 @@ size_t DockContainer::InsertIndexFor(Slot* slot, HitRegion region) const
                 folderSource,
                 SortableEntryCount(),
                 FolderEntryCount());
-    const size_t begin = range.begin;
-    const size_t end = range.end;
-    if (!slot) return end;
-    size_t index = std::clamp(slot->GetIndex(), begin, end);
-    if (region == HitRegion::SortAfter) ++index;
-    return std::clamp(index, begin, end);
+    if (!slot) return range.end;
+    return snowdesktop::dock_folder_rules::SlotInsertionIndex(
+        range, slot->GetIndex(), region == HitRegion::SortAfter);
 }
 
 size_t DockContainer::GetInsertIndexAtPoint(POINT pt) const
@@ -2102,6 +2099,20 @@ void DockContainer::DrawInsertionPreview(
     ComPtr<ID2D1SolidColorBrush> brush;
     context->CreateSolidColorBrush(D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.95f), &brush);
     if (!brush) return;
+    if (HasOnlyRecycleBinDragSource())
+    {
+        const auto& slots = const_cast<DockContainer*>(this)->GetSlots();
+        if (slots.empty()) return;
+        const RECT indicator = snowdesktop::dock_drop_rules::
+            RecycleBinInsertionIndicatorBounds(
+                bounds, slots.back()->GetBounds(), IsVertical());
+        context->FillRoundedRectangle(D2D1::RoundedRect(
+            D2D1::RectF(static_cast<float>(indicator.left),
+                static_cast<float>(indicator.top),
+                static_cast<float>(indicator.right),
+                static_cast<float>(indicator.bottom)), 2.0f, 2.0f), brush.Get());
+        return;
+    }
     const RECT viewport = GetScrollViewport(bounds);
     if (folderSource)
     {
@@ -2797,6 +2808,8 @@ std::vector<Item*> DockContainer::GetSelectedItems() const
     std::vector<Item*> selected;
     for (const auto& item : entryItems_)
         if (item && item->IsSelected()) selected.push_back(item.get());
+    for (const auto& item : frequentItems_)
+        if (item && item->IsSelected()) selected.push_back(item.get());
     return selected;
 }
 
@@ -3027,7 +3040,10 @@ void DockContainer::DrawDropPreview(ID2D1DeviceContext* ctx, Slot* slot, HitRegi
         !snowdesktop::dock_drop_rules::
             ShouldDrawSortableInsertionIndicator(
                 HasOnlyRecycleBinDragSource()))
+    {
+        DrawInsertionPreview(ctx, 0);
         return;
+    }
     const auto& slots = GetSlots();
     if (!slots.empty() && slot == slots.back().get())
     {

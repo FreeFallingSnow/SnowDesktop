@@ -34,7 +34,10 @@ void DesktopApp::LayoutItems()
         auto* page = FindGridPage(gridPages_, item.gridCell.pageId);
         if (page)
         {
-            if (item.largeIcon)
+            const bool stored = snowdesktop::folder_mapping_visibility::HasExplicitOwner(item, widgets_, dockEntries_) ||
+                item.gridCell.pageId == kDockPageId;
+            if (item.largeIcon && stored) item.gridSpan = {1, 1};
+            else if (item.largeIcon)
             {
                 const GridSpan desired{std::clamp(item.largeIcon->columns, 1, page->columns),
                     std::clamp(item.largeIcon->rows, 1, page->rows)};
@@ -168,7 +171,6 @@ void DesktopApp::RebuildContainersAndItems()
                 item, widgets_, dockEntries_) || item.gridCell.pageId == kDockPageId))
         {
             if (largeIconEdit_.key == item.layoutKey) largeIconEdit_ = {};
-            item.largeIcon.reset();
             item.gridSpan = {1, 1};
             item.bounds = GetGridRect(gridPages_, item.gridCell, item.gridSpan);
         }

@@ -1,4 +1,6 @@
 #include "app/app.h"
+#include "app/dock/dock_running_drag_state.h"
+#include "app/input/native_item_drag_source.h"
 #include "app/shell/shell_refresh_snapshot.h"
 #include "desktop/desktop_namespace_registry.h"
 #include "app/widgets/widget_pair_drag_source.h"
@@ -28,6 +30,7 @@ struct NativeDragIntegrationAccess
     {
         if (asyncOwner && window == completionWindow &&
             (message == kBackgroundShellReadyMessage || message == kShellFileOperationCompletedMessage ||
+                message == kUrlDropDownloadCompletedMessage ||
                 (message == WM_TIMER && (wp == kShellChangeTimerId || wp == kExternalOleDragLeaveGraceTimerId ||
                     wp == kDesktopHostWatchTimerId))))
         {
@@ -1037,6 +1040,7 @@ struct NativeDragIntegrationAccess
     static void StopModel(DesktopApp& app)
     {
         app.StopShellFileOperationWorker();
+        app.StopUrlDropDownloadWorker();
         UnbindAsync(app);
         app.folderNotifications_.Clear();
         app.StopIconLoader();
@@ -1049,6 +1053,14 @@ struct NativeDragIntegrationAccess
 #include "native_group_surface_access.inc"
 #include "native_ole_sequence_access.inc"
 #include "native_content_dock_access.inc"
+#include "native_group_filter_access.inc"
+#include "native_popup_request_access.inc"
+#include "native_ole_pending_access.inc"
+#include "native_dock_partition_access.inc"
+#include "native_dock_running_access.inc"
+#include "native_desktop_compat_access.inc"
+#include "native_namespace_rejection_access.inc"
+#include "../icons/native_icon_customization_access.inc"
 };
 
 #include "native_drag_commit_cases.h"
@@ -1071,6 +1083,15 @@ struct NativeDragIntegrationAccess
 #include "native_ole_sequence_cases.h"
 #include "native_content_dock_cases.h"
 #include "native_owned_content_cases.h"
+#include "native_owned_content_rejection_cases.h"
+#include "native_group_filter_cases.h"
+#include "native_popup_request_cases.h"
+#include "native_ole_pending_cases.h"
+#include "native_dock_partition_cases.h"
+#include "native_dock_running_cases.h"
+#include "native_desktop_compat_cases.h"
+#include "native_namespace_rejection_cases.h"
+#include "../icons/native_icon_customization_cases.h"
 
 namespace
 {
@@ -1151,8 +1172,26 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--ole-return") native_ole_sequence_cases::RunReturn();
         else if (argc == 2 && std::string_view(argv[1]) == "--ole-sequences") native_ole_sequence_cases::RunAsync();
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-generated-relations") native_content_dock_cases::RunDockRelations();
-        else if (argc == 3 && std::string_view(argv[1]) == "--owned-content") native_owned_content_cases::Run(argv[2]);
+        else if (argc == 3 && std::string_view(argv[1]) == "--owned-content") {
+            native_owned_content_cases::Run(argv[2]); native_owned_content_rejection_cases::Run(argv[2]);
+            native_owned_content_cases::Run(argv[2], false, true);
+        }
         else if (argc == 3 && std::string_view(argv[1]) == "--owned-content-cancel") native_owned_content_cases::Run(argv[2], true);
+        else if (argc == 3 && std::string_view(argv[1]) == "--group-filter") native_group_filter_cases::RunFiltered(argv[2]);
+        else if (argc == 3 && std::string_view(argv[1]) == "--group-type") native_group_filter_cases::RunType(argv[2]);
+        else if (argc == 2 && std::string_view(argv[1]) == "--group-type-search") native_group_filter_cases::RunTypeSearch();
+        else if (argc == 2 && std::string_view(argv[1]) == "--group-dwell") native_group_filter_cases::RunDwell();
+        else if (argc == 2 && std::string_view(argv[1]) == "--popup-request") native_popup_request_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--external-dwell") native_popup_request_cases::RunExternalReplacement();
+        else if (argc == 2 && std::string_view(argv[1]) == "--ole-target-changes") native_ole_pending_cases::RunMutations();
+        else if (argc == 2 && std::string_view(argv[1]) == "--ole-partial-batch") native_ole_pending_cases::RunPartial();
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-partitions") native_dock_partition_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--dock-running-pin-storage") native_dock_running_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--shortcut-targets") native_desktop_compat_cases::RunShortcuts();
+        else if (argc == 2 && std::string_view(argv[1]) == "--folder-shortcut-handoff") native_desktop_compat_cases::RunFolderHandoff();
+        else if (argc == 2 && std::string_view(argv[1]) == "--large-icon-storage-return") native_desktop_compat_cases::RunAppearance();
+        else if (argc == 2 && std::string_view(argv[1]) == "--icon-customization") native_icon_customization_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--namespace-rejection") native_namespace_rejection_cases::Run();
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

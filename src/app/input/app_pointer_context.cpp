@@ -382,7 +382,7 @@ int DesktopApp::PointerGestureVirtualKey() const
 
 bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
     DWORD allowedEffects, bool externalSource,
-    const RightDragMenuPresenter& presentMenu)
+    const RightDragMenuPresenter& presentMenu, bool externalContent)
 {
     namespace pair = snowdesktop::widget_pair_drop;
     const bool handleDrag = !externalSource && widgetAction_ == WidgetAction::Move &&
@@ -455,6 +455,7 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
     menuContext.handleDrag = handleDrag; menuContext.nativeMove = nativeMove;
     menuContext.itemTarget = itemTarget; menuContext.luaFileDrop = luaFileDrop;
     menuContext.dockRemoval = dockRemoval; menuContext.externalSource = externalSource;
+    menuContext.externalContent = externalContent;
     menuContext.targetDock = dynamic_cast<DockContainer*>(target) != nullptr;
     menuContext.sourceDock = dynamic_cast<DockContainer*>(dragSession_.Source()) != nullptr;
     menuContext.displayDockTarget = handleDrag ? widgetDockTarget_ : menuContext.targetDock;
@@ -490,7 +491,7 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
     SetMenuItemIcon(menu, 6, sourceType == DesktopWidgetType::Collection
         ? snowdesktop::menu_fluent_glyphs::kCollectionGroup : snowdesktop::menu_fluent_glyphs::kFileGroup,
         MenuIconFont::FluentRegular);
-    if (externalSource && dynamic_cast<DockContainer*>(target))
+    if (externalSource && !externalContent && dynamic_cast<DockContainer*>(target))
     {
         // Dock ingress maps a reference even when the source only offers copy.
         for (const auto& choice : choices)

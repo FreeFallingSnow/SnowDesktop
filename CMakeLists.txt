@@ -190,6 +190,7 @@ set(SNOWDESKTOP_SOURCES
     src/icons/icon_appearance.h
     src/icons/icon_appearance_codec.h
     src/icons/icon_appearance_rules.h
+    src/icons/icon_customization_lifecycle.h
     src/icons/icon_control_source.h
     src/app/render/app_bitmap_cache.cpp
     src/app/menus/app_background_menu.cpp
@@ -204,6 +205,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/shell/app_desktop_reload.cpp
     src/app/dock/app_dock_drop.cpp
     src/app/dock/app_dock_running_drag.cpp
+    src/app/dock/dock_running_drag_state.h
     src/dock/dock_running_drag_rules.h
     src/app/dock/app_dock_launch.cpp
     src/app/dock/app_dock_tray.cpp
@@ -270,6 +272,7 @@ set(SNOWDESKTOP_SOURCES
     src/drag_drop/drop_text_rules.h
     src/app/drag_drop/app_drop_data_extraction.cpp
     src/drag_drop/external_drop_content.cpp
+    src/drag_drop/file_source_eligibility.h
     src/app/drag_drop/app_url_drop_download.cpp
     src/app/features/app_website_icon.cpp
     src/app/features/app_data_cleanup.cpp
@@ -346,6 +349,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/input/app_pointer_context.cpp
     src/app/input/app_pointer_down.cpp
     src/app/input/app_pointer_move.cpp
+    src/app/input/native_item_drag_source.h
     src/app/input/app_pointer_release.cpp
     src/app/popup/app_popup_geometry.cpp
     src/app/popup/app_popup_dwell_interaction.cpp
@@ -2778,6 +2782,48 @@ if (BUILD_TESTING)
             TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;dock")
     endforeach()
 
+    foreach(GROUP_CONTENT_SURFACE IN ITEMS collection files mapping collection_group file_group_files file_group_mapping)
+        add_test(NAME native_group_type_${GROUP_CONTENT_SURFACE}
+            COMMAND SnowDesktopNativeDragIntegrationTests --group-type ${GROUP_CONTENT_SURFACE})
+        set_tests_properties(native_group_type_${GROUP_CONTENT_SURFACE} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+        if(NOT GROUP_CONTENT_SURFACE STREQUAL "collection")
+            add_test(NAME native_group_filter_${GROUP_CONTENT_SURFACE}
+                COMMAND SnowDesktopNativeDragIntegrationTests --group-filter ${GROUP_CONTENT_SURFACE})
+            set_tests_properties(native_group_filter_${GROUP_CONTENT_SURFACE} PROPERTIES
+                REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+                TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+        endif()
+    endforeach()
+    foreach(NATIVE_ADDITIONAL_CASE IN ITEMS
+        "native_group_search_type|--group-type-search"
+        "native_group_tab_dwell|--group-dwell"
+        "native_popup_request_lifecycle|--popup-request"
+        "native_external_dwell_restart|--external-dwell"
+        "native_ole_target_changes|--ole-target-changes"
+        "native_ole_partial_batch|--ole-partial-batch"
+        "native_dock_partition_storage|--dock-partitions"
+        "native_dock_running_pin_storage|--dock-running-pin-storage"
+        "native_shortcut_final_targets|--shortcut-targets"
+        "native_folder_shortcut_handoff|--folder-shortcut-handoff"
+        "native_large_icon_storage_return|--large-icon-storage-return"
+        "native_namespace_mapping_rejection|--namespace-rejection")
+        string(REPLACE "|" ";" NATIVE_CASE_PARTS "${NATIVE_ADDITIONAL_CASE}")
+        list(GET NATIVE_CASE_PARTS 0 NATIVE_CASE_NAME)
+        list(GET NATIVE_CASE_PARTS 1 NATIVE_CASE_MODE)
+        add_test(NAME ${NATIVE_CASE_NAME} COMMAND SnowDesktopNativeDragIntegrationTests ${NATIVE_CASE_MODE})
+        set_tests_properties(${NATIVE_CASE_NAME} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+    endforeach()
+
+    add_test(NAME native_icon_customization
+        COMMAND SnowDesktopNativeDragIntegrationTests --icon-customization)
+    set_tests_properties(native_icon_customization PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 90 LABELS "integration;icon;data;rendering")
+
     # Every mode in this fixture uses its own process, GUID storage/profile and
     # message-only HWND. It never starts the desktop host, clipboard service or
     # persistent Dock windows. Shell file operations touch only owned paths.
@@ -2920,7 +2966,7 @@ if (BUILD_TESTING)
             src/core/slot.cpp
             src/common/l10n.cpp
             src/layout/item_location.cpp
-            src/shell/shell_file_operation_worker.cpp
+            tests/shell/shell_file_operation_worker_boundary.cpp
             src/drag_drop/external_drop_content.cpp
             src/data/layout_storage.cpp
             src/data/atomic_file.cpp

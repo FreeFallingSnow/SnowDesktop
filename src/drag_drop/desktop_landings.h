@@ -149,6 +149,13 @@ inline std::vector<DropLanding> Build(const DragSourceList& sourceList, GridCell
     for (const auto& entry : sourceList.entries)
     {
         GridSpan span = entry.originalSpan;
+        if (internalMove && entry.kind == DropSourceKind::DesktopIcon && !entry.desktopKey.empty())
+            for (const auto& item : items_)
+                if (services.normalize(item.layoutKey) == services.normalize(entry.desktopKey))
+                {
+                    if (item.largeIcon) span = {item.largeIcon->columns, item.largeIcon->rows};
+                    break;
+                }
         span.columns = std::max(1, span.columns);
         span.rows = std::max(1, span.rows);
 

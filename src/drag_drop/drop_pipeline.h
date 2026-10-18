@@ -2,6 +2,7 @@
 
 #include "core/drop_model.h"
 #include "empty_group_drop_rules.h"
+#include "file_source_eligibility.h"
 #include "desktop/desktop_category_item_rules.h"
 #include "shell/shortcut_category_target.h"
 #include "shell/shell_file_operation_worker.h"
@@ -98,6 +99,10 @@ inline bool Execute(const DragSourceList& sources, const DropPreviewList& reques
     std::vector<DesktopWidget>& widgets, std::vector<DockEntry>& dock, const Services& services,
     Completion completion, bool synchronously, std::shared_ptr<ShellFileOperationResult> result)
 {
+    if (requestedPreview.targetKind == DropTargetKind::FolderMapping &&
+        file_source_eligibility::ContainsProtectedDesktopIcons(sources))
+        return Execute(file_source_eligibility::ForPhysicalFolder(sources), requestedPreview,
+            widgets, dock, services, std::move(completion), synchronously, std::move(result));
     if (sources.HasDesktopWidgetIcons() &&
         (requestedPreview.targetKind != DropTargetKind::Desktop || requestedPreview.action != DropAction::Move))
         return Execute(sources.WithoutDesktopWidgetIcons(), requestedPreview, widgets, dock, services,

@@ -2,6 +2,7 @@
 #include "layout/page_navigation_rules.h"
 #include "core/drag_source_rebind.h"
 #include "core/transient_drag_slot.h"
+#include "drag_drop/file_source_eligibility.h"
 #include <map>
 #include <tuple>
 
@@ -78,6 +79,28 @@ void DesktopApp::ResolveCurrentDragTargetAt(POINT clientPoint)
         }
     }
 
+    if (!dragDropController_.IsExternalDragActive() &&
+        snowdesktop::file_source_eligibility::ContainsProtectedDesktopIcons(dragSession_.SourceList()) &&
+        snowdesktop::file_source_eligibility::ForPhysicalFolder(dragSession_.SourceList()).Empty())
+    {
+        auto* widget = dynamic_cast<WidgetContainer*>(targetContainer);
+        const DesktopWidget* data = widget ? widget->GetWidgetData() : nullptr;
+        if (auto* group = dynamic_cast<FileGroup*>(widget))
+        {
+            auto id = group->SourceIdAtPoint(clientPoint);
+            if (id.empty() && group->IsGroupSearchActive() && targetSlot)
+                if (auto* source = group->GetSourceContainerForItem(targetSlot->GetItem()))
+                    if (auto* sourceData = source->GetWidgetData()) id = sourceData->id;
+            if (id.empty()) id = group->GetActiveSourceId();
+            const auto index = FindWidgetIndexById(id);
+            data = index < widgets_.size() ? &widgets_[index] : nullptr;
+        }
+        if (data && data->type == DesktopWidgetType::FolderMapping)
+        {
+            targetSlot = nullptr;
+            targetRegion = HitRegion::Blocked;
+        }
+    }
     dragSession_.UpdateTarget(targetContainer, targetSlot, targetRegion);
 }
 
@@ -150,8 +173,8 @@ void DesktopApp::RebindDragSourceAfterRebuild()
                             dockItem->GetEntryType() == entry.dockEntryType)
                             return item;
                         auto* frequent = dynamic_cast<DockFrequentItem*>(item);
-                        if (frequent && entry.dockReference.empty() &&
-                            frequent->GetItemIndex() == entry.desktopIndex)
+                        if (frequent && entry.dockReference.empty() && !entry.desktopKey.empty() &&
+                            frequent->GetItemIndex() == FindItemIndexByKey(entry.desktopKey))
                             return item;
                     }
                     return nullptr;
@@ -164,7 +187,11 @@ void DesktopApp::RebindDragSourceAfterRebuild()
         DragSourceList reboundList = oldSourceList;
         reboundList.BindRuntimeOrigin(dock);
         for (size_t i = 0; i < reboundItems.size(); ++i)
+        {
             reboundList.entries[i].item = reboundItems[i];
+            if (!reboundList.entries[i].desktopKey.empty())
+                reboundList.entries[i].desktopIndex = FindItemIndexByKey(reboundList.entries[i].desktopKey);
+        }
         dragSession_.RebindSource(dock, std::move(reboundItems),
             std::move(reboundList));
         return;

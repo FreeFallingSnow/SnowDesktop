@@ -160,6 +160,13 @@ void DesktopApp::LoadLayoutSlots()
     iconOverrides_.clear();
     for (const auto& [target, asset] : document.iconOverrides)
         iconOverrides_[Utf8ToWide(target)] = asset;
+    missingIconTargets_.clear();
+    for (const auto& record : document.missingIconTargets)
+        missingIconTargets_[Utf8ToWide(record.target)] = record.missingSince;
+    ++iconCustomizationRevision_;
+    shellModelWork_.Cancel(L"icon-customization-cleanup");
+    nextIconCustomizationProbe_ = 0;
+    iconAppearanceReferencesDirty_ = true;
 
     if (document.dockEnabled)
         generalSettings_.dockEnabled = *document.dockEnabled;
@@ -840,6 +847,14 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
 
     snowdesktop::desktop_membership_recovery::PruneExpired(
         widgets_, snowdesktop::desktop_membership_recovery::NowSeconds());
+    // Fence background observations made before this layout transaction.
+    ++iconCustomizationRevision_;
+    shellModelWork_.Cancel(L"icon-customization-cleanup");
+    nextIconCustomizationProbe_ = 0;
+    const auto previousAppearanceCount = iconAppearanceOverrides_.size();
+    snowdesktop::icon_customization::PruneExpired(iconOverrides_, iconAppearanceOverrides_,
+        missingIconTargets_, snowdesktop::icon_customization::NowSeconds());
+    iconAppearanceReferencesDirty_ |= previousAppearanceCount != iconAppearanceOverrides_.size();
 
     if (dockFolderPopupOpen_)
     {
@@ -865,14 +880,13 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
         return false;
     };
     // Container membership is committed before this persistence boundary.
-    // Rendering a temporary drag target or sending files to an application never
-    // changes membership and therefore never reaches this conversion.
+    // Storage uses ordinary geometry while retaining the desktop appearance.
+    // Rendering a temporary drag target never changes this membership.
     RefreshCollectedKeysCache();
     for (auto& item : items_)
         if (item.largeIcon && (snowdesktop::folder_mapping_visibility::HasExplicitOwner(
                 item, widgets_, dockEntries_) || item.gridCell.pageId == kDockPageId))
         {
-            item.largeIcon.reset();
             item.gridSpan = {1, 1};
             if (largeIconEdit_.key == item.layoutKey) largeIconEdit_ = {};
         }
@@ -989,6 +1003,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
             << ",\"style\":" << snowdesktop::icon_appearance::EncodeStyle(record.settings) << "}";
     }
     appearances << "]";
+    std::vector<snowdesktop::layout_storage::MissingIconTargetRecord> missingIcons;
+    for (const auto& [target, since] : missingIconTargets_)
+        missingIcons.push_back({WideToUtf8(target), since});
     std::ostringstream file;
 
     file << "{\n  \"layoutSchemaVersion\": 1"
@@ -1000,6 +1017,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"dockLayout\": " << snowdesktop::layout_storage::SerializeDockLayout(dockSettings_)
          << ",\n  \"iconOverrides\": " << overrides.str()
          << ",\n  \"iconBeautifyOverrides\": " << appearances.str()
+         << ",\n  \"missingIconTargets\": " << snowdesktop::layout_storage::SerializeMissingIconTargets(missingIcons)
          << ",\n  \"itemFontSizeCu\": " << itemFontSizeCu_
          << ",\n  \"listItemFontSizeCu\": " << listItemFontSizeCu_
          << ",\n  \"fanTitleFontSizeCu\": " << fanTitleFontSizeCu_
