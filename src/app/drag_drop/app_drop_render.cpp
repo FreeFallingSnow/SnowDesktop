@@ -153,14 +153,10 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
         return nullptr;
     };
 
-    bool changed = false;
-    for (auto& widget : widgets_)
-    {
-        if (widget.type != DesktopWidgetType::FolderMapping)
-            continue;
-        changed = ApplyPendingFolderPlacements(
-            cache, widget, widget.id, {}) || changed;
-    }
+    // Mapped-folder snapshots arrive independently of the desktop read.
+    // Only their fresh enumeration can reconcile folder placements. Using
+    // the current widget entries here could consume a batch before its files
+    // appear in that old directory list.
     const bool entriesChanged = snowdesktop::pending_drop::ApplyEntries(cache, widgets_, items_, claimed,
         ToUpperInvariant,
         [](const DesktopItem& item, const std::wstring& sourceName) {
@@ -189,7 +185,7 @@ bool DesktopApp::ApplyPendingPlacement(PendingLandingCache& cache,
             RefreshCollectedKeysCache();
             if (auto* widget = findWidgetContainer(id)) widget->InvalidateSlots();
         });
-    return entriesChanged || changed;
+    return entriesChanged;
 }
 
 // ── 网格全局函数 ──────────────────────────────────────────

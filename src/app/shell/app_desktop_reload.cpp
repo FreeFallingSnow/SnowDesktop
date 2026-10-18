@@ -755,7 +755,11 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
                 else if (const auto folder = snapshot->folders.find(
                         snowdesktop::shell_refresh::FolderKey(widget.sourceFolderPath));
                     folder != snapshot->folders.end())
+                {
                     EnumerateFolderMappingEntries(widget, true, &folder->second);
+                    if (folder->second.complete)
+                        ApplyPendingFolderPlacements(widget, widget.id, {});
+                }
                 else if (!incremental)
                     QueueFolderRead(widget.sourceFolderPath);
             }
