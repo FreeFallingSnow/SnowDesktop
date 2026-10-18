@@ -40,10 +40,16 @@ inline void RunMutations()
         Require(Access::Save(app),"D14: save the initial real target before asynchronous capture");
         const auto point = Access::PendingAnchorPoint(app);
         auto source = ole_file_source_fixture::Make({sourcePath},true);
-        const auto preview = Submit(app,*source.Get(),point);
-        Require(preview.targetKind != DropTargetKind::Desktop && preview.targetWidget &&
-            preview.targetWidget->id == L"ordered" && preview.insertIndex == 1,
+        auto adapter = Access::ExternalAdapter(app); DWORD effect = 7;
+        Require(SUCCEEDED(adapter->DragEnter(source.Get(),MK_LBUTTON|MK_CONTROL,Access::ExternalPoint(point),&effect)) && effect == 1,
+            "D14: delayed input must enter the actual host widget target");
+        Access::FreshExternalDwell(app);
+        const auto capturedIndex = Access::PendingCapturedIndex(app,point);
+        Require(capturedIndex && *capturedIndex == 1,
             "D14: real host input must capture insertion immediately before existing middle member B");
+        effect = 7;
+        Require(SUCCEEDED(adapter->Drop(source.Get(),MK_CONTROL,Access::ExternalPoint(point),&effect)) && effect == 1 &&
+            source->starts == 1 && source->ends == 0,"D14: actual widget drop must retain its independent source lease");
         HeldRead held; held.Capture();
         if (mutation == 4) Require(fs::remove(originals[1]),"D14: remove the original mapped anchor physically");
         Access::MutatePendingTarget(app,mutation,replacement);
@@ -163,6 +169,9 @@ inline void RunPartial()
     gate.Release();
     Wait([&] { return Access::FileDropIdle(app); },"D13: actual partial Shell result and retained landing must finish refreshing");
     const auto outputs = NewPaths(desktop,files);
+    std::cerr << "D13 actual-output-count=" << outputs.size() << " source-A=" << fs::exists(files[0]) <<
+        " source-C=" << fs::exists(files[2]) << '\n';
+    for (const auto& path : outputs) std::cerr << "D13 output=" << path.filename().string() << " bytes=" << Read(path) << '\n';
     Require(outputs.size() == 1 && Read(outputs[0]) == "committed-A" && Read(files[0]) == "committed-A" &&
         Read(files[2]) == "unstarted-C",
         "D13: keep actually committed A and stop unstarted C after the second source fails");

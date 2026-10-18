@@ -35,6 +35,13 @@
             }
         throw std::runtime_error("D14: real destination must expose the captured middle anchor B");
     }
+    static std::optional<std::size_t> PendingCapturedIndex(DesktopApp& app, POINT point)
+    {
+        const auto destination = app.CaptureExternalSlotDestination(point,MK_CONTROL);
+        if (!destination || destination->widgetId != L"ordered" || destination->preview.targetKind == DropTargetKind::Desktop)
+            return std::nullopt;
+        return destination->preview.insertIndex;
+    }
     static void MutatePendingTarget(DesktopApp& app, int mutation, const std::filesystem::path& replacement)
     {
         auto& target = app.widgets_.front();
