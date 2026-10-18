@@ -679,6 +679,7 @@ struct PersonalizationPagePresenter::Impl
         SetUnit(dockAttentionDotOffset, L"%");
         dockAttentionDotCard.content.Children().Append(dockAttentionDotSize.row.root);
         dockAttentionDotCard.content.Children().Append(dockAttentionDotOffset.row.root);
+        presenter_controls::UpdateSettingsSubrows(dockAttentionDotCard.content, 0.0);
         InitializeCard(fontCard, cardStyle, widgetLayoutRoot);
         fontPicker.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         fontPicker.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
