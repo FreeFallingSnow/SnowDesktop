@@ -2,6 +2,7 @@
 #include "taskbar_hook/taskbar_failure_feedback.h"
 #include "shell/shell_file_operation_progress.h"
 #include "shell/shell_file_operation_worker.h"
+#include "shell/shell_file_operation_worker_boundary.h"
 #include "drag_drop/external_drop_resources.h"
 #include "layout/item_location.h"
 #include "../src/app/shell/shell_change_notification.h"
@@ -80,8 +81,9 @@ std::filesystem::path CreateTemporaryDirectory()
 std::string ReadContents(const std::filesystem::path& path);
 
 #include "platform/recoverable_feedback_tests.inc"
+#include "shell/file_batch_cancel_cases.h"
 
-// A failed first file must be reported even when a later file succeeds.
+// A failed first file reports its own cause and stops the unstarted copy.
 void TestFileFailureFeedback()
 {
     const auto root = CreateTemporaryDirectory();
@@ -104,16 +106,17 @@ void TestFileFailureFeedback()
     snowdesktop::operation_feedback::SetReporter({});
     const bool reported = !succeeded && failures.size() == 1 &&
         failures.front().error == ERROR_FILE_NOT_FOUND &&
-        failures.front().detail.find(missing.wstring()) != std::wstring::npos;
+        failures.front().detail.find(missing.wstring()) != std::wstring::npos &&
+        failures.front().detail.find(source.wstring()) != std::wstring::npos;
     const bool preserved = ReadContents(source) == "source preserved" &&
-        ReadContents(copied) == "source preserved";
+        !std::filesystem::exists(copied);
     std::error_code cleanupError;
     std::filesystem::remove_all(root, cleanupError);
     // Expect exits on failure: remove isolated files before evaluating either
     // a positive run or the deliberate missing-notification negative control.
     Expect(reported, "a real file-copy failure reports its target and Win32 error once");
     Expect(skipIsCancellation, "the Shell user's Skip result is cancellation, not an unexplained copy failure");
-    Expect(preserved, "partial failure preserves the successful copy and original source");
+    Expect(preserved, "first-item failure stops the unstarted copy and preserves its original source");
     Expect(!cleanupError, "local feedback fixtures are removed");
 }
 
@@ -175,8 +178,9 @@ void TestTrackedDropResults()
         ShellFileOperationRequest operation; operation.result = outputs;
         ShellFileOperationStep step{action, {source.wstring()}, (root / L"target").wstring(),
             static_cast<FILEOP_FLAGS>(FOF_NO_UI | FOF_RENAMEONCOLLISION)};
-        if (missing) step.sources.push_back((root / L"absent.txt").wstring());
         operation.steps.push_back(step);
+        if (missing)
+            operation.steps.push_back({action, {(root / L"absent.txt").wstring()}, (root / L"target").wstring(), step.flags});
         const bool ok = ShellFileOperationWorker::Execute(operation);
         check(ok == !missing && outputs->outputs.size() == 1, "tracked copy/move reports each actual success even on partial failure");
         return outputs->outputs[0].destination;
@@ -828,7 +832,15 @@ int wmain(int argc, wchar_t** argv)
             // local files, so unavailable network providers are irrelevant.
             TestFileFailureFeedback();
             TestRecoverableFailurePresentation();
+            try { file_batch_cancel_cases::Run(); }
+            catch (const std::exception& error) { std::cerr << "FAILED: " << error.what() << '\n'; return 1; }
             std::cout << "local file-operation feedback tests passed\n";
+            return 0;
+        }
+        if (mode == L"--batch-cancel-legacy-tests" || mode == L"--batch-cancel-tracked-tests")
+        {
+            try { file_batch_cancel_cases::Run(mode == L"--batch-cancel-legacy-tests", mode == L"--batch-cancel-tracked-tests"); }
+            catch (const std::exception& error) { std::cerr << "FAILED: " << error.what() << '\n'; return 1; }
             return 0;
         }
         if (mode == L"--query-network-connections") return QueryConnections();
