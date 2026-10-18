@@ -1091,8 +1091,9 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
         file << (i + 1 == pagesToWrite.size() ? "\n" : ",\n");
     }
     file << "  ],\n  \"items\": [\n";
-    // Collect widget-owned keys — items in widgets should not be saved
-    // to the desktop items array (they belong to their widget's items list)
+    // Widget lists own membership. Keep an item record when it also carries
+    // desktop appearance intent, so a stored member survives disk reload with
+    // its complete large-icon configuration and return geometry.
     std::unordered_set<std::wstring> widgetOwnedKeys;
     for (auto& w : widgets_)
     {
@@ -1106,7 +1107,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
     for (size_t i = 0; i < sorted.size(); ++i)
     {
         const auto* it = sorted[i];
-        if (widgetOwnedKeys.count(ToUpperInvariant(it->layoutKey))) continue;
+        if (widgetOwnedKeys.count(ToUpperInvariant(it->layoutKey)) && !it->largeIcon) continue;
         if (!firstItem) file << ",\n";
         firstItem = false;
         snowdesktop::layout_geometry_codec::WriteItem(file, *it, JsonEscapeUtf8);
