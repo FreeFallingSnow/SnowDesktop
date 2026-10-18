@@ -36,7 +36,6 @@ constexpr wchar_t kStateDirectory[] = L".snowdesktop";
 constexpr wchar_t kRuntimeDirectory[] = L"runtime";
 constexpr wchar_t kCurrentRuntimeFilename[] = L"current-runtime.txt";
 constexpr wchar_t kConfirmedRuntimeFilename[] = L"confirmed-runtime.txt";
-constexpr wchar_t kPreviousRuntimeFilename[] = L"previous-runtime.txt";
 constexpr wchar_t kFailedManifestFilename[] = L"failed-launch-manifest.txt";
 constexpr wchar_t kLaunchHistoryFilename[] = L"launch-history.txt";
 constexpr wchar_t kCompleteFilename[] = L".snowdesktop-runtime-complete";
@@ -1647,10 +1646,6 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot,
         std::string ignored;
         const auto current = ReadSelection(stateRoot / kCurrentRuntimeFilename, ignored);
         ignored.clear();
-        const auto confirmed = ReadSelection(stateRoot / kConfirmedRuntimeFilename, ignored);
-        ignored.clear();
-        const auto previous = ReadSelection(stateRoot / kPreviousRuntimeFilename, ignored);
-        ignored.clear();
         if (!ReadLaunchHistory(stateRoot, ignored))
         {
             // Seed legacy installations from their current selection. A corrupt
@@ -1664,13 +1659,6 @@ ApplyResult ApplyDistribution(const std::filesystem::path& installRoot,
                     "prepared", error))
                 return FailureOrFallback(stateRoot, runtimeRoot, error);
         }
-        // Preserve the last confirmed selection across several unconfirmed
-        // attempts. The initial backup also repairs a lost current pointer.
-        if ((!previous || (current && confirmed && *current == *confirmed &&
-                *current != selected.directoryId)) &&
-            !WriteTextAtomically(stateRoot / kPreviousRuntimeFilename,
-                confirmed.value_or(current.value_or(selected.directoryId)) + "\n", error))
-            return FailureOrFallback(stateRoot, runtimeRoot, error);
         if ((!current || *current != selected.directoryId) &&
             !WriteTextAtomically(stateRoot / kCurrentRuntimeFilename,
                 selected.directoryId + "\n", error))
@@ -2057,14 +2045,8 @@ PruneResult PruneInactiveRuntimes(
         result.error = "cannot inspect the confirmed runtime: " + error;
         return result;
     }
-    pointerError.clear();
-    const auto previous = ReadSelection(stateRoot / kPreviousRuntimeFilename, pointerError);
-    if (!previous)
-    {
-        result.error = "cannot read the preserved runtime selection; cleanup skipped: " + pointerError;
-        return result;
-    }
-
+    // Once this runtime has reported readiness, older runtimes no longer need
+    // to be retained for startup recovery. Ignore legacy predecessor records.
     const std::filesystem::path currentRuntime =
         currentExecutable.parent_path();
     std::vector<std::filesystem::path> inactive;
@@ -2083,8 +2065,7 @@ PruneResult PruneInactiveRuntimes(
         pathError.clear();
         const bool isCurrent = std::filesystem::equivalent(
             entry, currentRuntime, pathError);
-        if (!pathError && !isCurrent &&
-            (!previous || entry.filename().string() != *previous))
+        if (!pathError && !isCurrent)
         {
             const DWORD attributes = GetFileAttributesW(entry.c_str());
             if (attributes != INVALID_FILE_ATTRIBUTES &&

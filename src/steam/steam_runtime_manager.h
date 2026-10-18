@@ -60,8 +60,8 @@ struct LaunchAttempt
     const std::filesystem::path& failedExecutable, const LaunchAttempt& attempt);
 
 /**
- * Retire inactive runtimes only for the confirmed current executable, keeping
- * its predecessor. Occupied directories are left for the next launch.
+ * Retire every inactive runtime only after the current executable has reported
+ * readiness. Occupied directories are left for the next launch.
  */
 [[nodiscard]] PruneResult PruneInactiveRuntimes(
     const std::filesystem::path& installRoot,

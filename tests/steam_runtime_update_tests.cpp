@@ -547,18 +547,27 @@ void TestInactiveRuntimePruning(const std::filesystem::path& root)
 {
     const auto oldRuntime = PrepareRuntime(
         root, "1.0.5.0-1111111111111111", "host old", "dll old");
-    const auto preserved = PrepareRuntime(root, "1.0.5.0-3333333333333333");
+    const auto predecessor = PrepareRuntime(root, "1.0.5.0-3333333333333333");
     std::string confirmationError;
-    Check(snowdesktop::steam_runtime::ConfirmRuntimeStarted(root, preserved.executable, confirmationError),
+    Check(snowdesktop::steam_runtime::ConfirmRuntimeStarted(root, predecessor.executable, confirmationError),
         "the predecessor is confirmed before preparing the new runtime");
     const auto currentRuntime = PrepareRuntime(
         root, "1.0.5.0-2222222222222222", "host current", "dll current");
-    if (!oldRuntime.ok || !currentRuntime.ok)
+    if (!oldRuntime.ok || !predecessor.ok || !currentRuntime.ok)
         return;
+    const auto beforeReady = snowdesktop::steam_runtime::PruneInactiveRuntimes(
+        root, currentRuntime.executable);
+    Check(beforeReady.ok && beforeReady.removed == 0 &&
+            std::filesystem::exists(oldRuntime.executable) &&
+            std::filesystem::exists(predecessor.executable),
+        "preparing a new runtime keeps all predecessors until readiness");
     Check(snowdesktop::steam_runtime::ConfirmRuntimeStarted(root, currentRuntime.executable, confirmationError),
         "only a confirmed new runtime may request retirement");
 
     const auto runtimeRoot = root / L".snowdesktop" / L"runtime";
+    const auto legacyPrevious = root / L".snowdesktop" / L"previous-runtime.txt";
+    WriteText(legacyPrevious, "invalid/legacy-selection\n");
+    WriteText(root / L"data" / L"layout.json", "stable user layout");
     WriteText(oldRuntime.executable.parent_path() / L"imgui.ini",
         "unexpected runtime residue");
     WriteText(oldRuntime.executable.parent_path() / L"data" /
@@ -578,13 +587,15 @@ void TestInactiveRuntimePruning(const std::filesystem::path& root)
         const auto retained =
             snowdesktop::steam_runtime::PruneInactiveRuntimes(
                 root, currentRuntime.executable);
-        Check(retained.ok && retained.removed == 0 &&
+        Check(retained.ok && retained.removed == 1 &&
                 retained.retained == 1 &&
                 std::filesystem::exists(oldRuntime.executable) &&
+                !std::filesystem::exists(predecessor.executable.parent_path()) &&
                 std::filesystem::exists(currentRuntime.executable),
-            "runtime pruning retains an occupied old runtime without touching the current runtime");
+            "confirmed startup removes the predecessor despite a damaged legacy record and defers occupied runtimes");
     }
 
+    std::filesystem::remove(legacyPrevious);
     const auto pruned = snowdesktop::steam_runtime::PruneInactiveRuntimes(
         root, currentRuntime.executable);
     Check(pruned.ok && pruned.removed == 1 && pruned.retained == 0 &&
@@ -595,8 +606,9 @@ void TestInactiveRuntimePruning(const std::filesystem::path& root)
         "runtime pruning preserves an unrelated directory in the managed root");
     Check(std::filesystem::exists(similarUnknownDirectory / L"keep.txt"),
         "runtime pruning preserves a directory outside launcher naming rules");
-    Check(std::filesystem::exists(preserved.executable),
-        "runtime pruning preserves the last confirmed predecessor");
+    Check(ReadText(root / L"data" / L"layout.json") == "stable user layout" &&
+            ReadText(root / L"distribution" / L"SnowDesktop.exe") == "host current",
+        "retiring old runtimes leaves shared user data and the Steam distribution unchanged");
 }
 
 void CorruptDistributionLibrary(const std::filesystem::path& root)
@@ -1702,12 +1714,13 @@ void TestStartupRecoveryState(const std::filesystem::path& root)
     Check(!std::filesystem::exists(state / L"failed-launch-manifest.txt"),
         "successful readiness clears only its distribution's failure record");
     const auto pruned = PruneInactiveRuntimes(root, retry.executable);
-    Check(pruned.ok && pruned.removed == 0 && std::filesystem::exists(first.executable),
-        "confirmed startup keeps its predecessor for recovery");
+    Check(pruned.ok && pruned.removed == 1 && !std::filesystem::exists(first.executable.parent_path()) &&
+            std::filesystem::exists(retry.executable),
+        "confirmed startup retires its predecessor after the recovery boundary ends");
     WriteText(state / L"previous-runtime.txt", "invalid/selection\n");
-    const auto unsafeCleanup = PruneInactiveRuntimes(root, retry.executable);
-    Check(!unsafeCleanup.ok && unsafeCleanup.removed == 0 && std::filesystem::exists(first.executable),
-        "a damaged predecessor record prevents cleanup from discarding recovery data");
+    const auto repeatedCleanup = PruneInactiveRuntimes(root, retry.executable);
+    Check(repeatedCleanup.ok && repeatedCleanup.removed == 0 && std::filesystem::exists(retry.executable),
+        "repeated cleanup ignores obsolete predecessor metadata and keeps the confirmed runtime");
 }
 
 void TestConcurrentLaunchRecovery(const std::filesystem::path& root)
@@ -1941,12 +1954,15 @@ void TestLauncherEntry(const std::filesystem::path& root,
         "cleanup while a newer distribution is available never activates that distribution");
     Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
             ReadText(state / L"confirmed-runtime.txt") == std::string(g) + "\n" &&
-            std::filesystem::exists(runtime / a) && !std::filesystem::exists(runtime / b),
-        "successful initialization cleans old attempts while retaining the confirmed predecessor");
+            std::filesystem::exists(runtime / g) &&
+            !std::filesystem::exists(runtime / a) && !std::filesystem::exists(runtime / b) &&
+            !std::filesystem::exists(runtime / c) && !std::filesystem::exists(runtime / d) &&
+            !std::filesystem::exists(runtime / e) && !std::filesystem::exists(runtime / f),
+        "the real launcher retires every old runtime after successful initialization");
     WriteLauncherDistribution(root, host, b, "ready", false);
     Check(RunLauncherProcess(root, L"--launcher-test-host") == 0 &&
             ReadText(state / L"confirmed-runtime.txt") == std::string(g) + "\n" &&
-            std::filesystem::exists(runtime / a),
+            std::filesystem::exists(runtime / g) && std::filesystem::exists(runtime / b),
         "legacy hosts remain launchable without a fabricated readiness result or cleanup");
     Check(ReadText(root / L"data" / L"sentinel.txt") == "preserve user layout",
         "all real launcher paths preserve stable user data");
