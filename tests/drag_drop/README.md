@@ -16,6 +16,7 @@
 | `test_selection` 的 `jobs == 4` | 改写：验证公共预设为有界并行，不限制具体数值。当前 24 槽实际检查通过；只把解析到的预设输入改为串行 1 时，同一 C++ 断言拒绝，未删除并行门禁 |
 | 110 个原生模型条目的共同桌面锁 | 移除：每项均为独立进程、GUID 临时目录及 debug profile、自有 message-only HWND，不启动桌面 Host、剪贴板服务或持久 Dock 窗口；只操作自有文件。通过注册区间派生 `isolated-native-model` 标签，不另列测试清单；真实共享桌面条目继续持锁。此隔离约束改变时必须重新审查标签。测试预设采用 24 路并行，本机为 24 核、31.5 GiB 内存，实际吞吐与内存峰值随本轮运行记录；编译并行度独立保留 4 |
 | A20 来源能力 | 在既有 21 项中加入字面集合 3/7，130 扩为 260 场景；不增加 CTest 条目，不改变生产代码。联合运行中 21 项全部通过；工具调度也纳入联合运行和两项定向补验 |
+| `shell_dock_file_actions` 的 72 个服务场景 | A23 的 112 个实际原生场景及两项原始故障恢复对照合格后，移除 18 个同步同目录重复组合，保留 54 个。保留跨目录同步执行、全部强制回执逆序/排队完成场景，继续保护原生入口不控制的完成顺序与服务边界；不删除独有断言，不把原生覆盖写成全部 Dock 场景完成 |
 
 调度实测保留失败记录：`95427b41f625438aa680452b1787d141` 在测试构建阶段因主程序文件被占用而链接失败，289 项未运行。可确认新宿主进程的父进程为 Explorer，不能据此确认是自动恢复还是用户启动；`80c2df9a` 正文中“Explorer 再次启动”不代表已确认自动恢复。续修 `c49d41241c3247e4b1e4e0d71544681f` 完成无警告标准构建及测试构建后，24 路不加 CPU 预算的执行峰值为 24 个测试进程、21 个原生进程。CPU 满载，部分 90 秒条目超时，执行于 144.07 秒主动停止；无完整 JUnit，不计该轮通过，不将环境竞争超时登记为产品业务缺陷。原始日志、取消原因和内存采样分别保存。
 
@@ -610,6 +611,10 @@ D04/A20 的基线在生产默认解析未变时无警告编译：21 项中 14 �
 D05/D06 的用户决策先登记为 A21/A22，再接入同一原生程序的 `native_widget_pair_storage` 与 `native_group_lifecycle_storage` 两个入口。当前独立定向结果为 2/2、43.11 秒：108 个配对场景与 36 个真实标签转移/组收尾场景通过；配置、去重、来源移除、归属、文件身份/字节/大小/修改时间、实际刷新和磁盘重载均核对。初始 Dock 选择夹具遗漏、映射基线初始化不全，以及重载路径大小写的字节比较误报均保留原始失败，不当作产品缺陷。证据为 `.build/verification/matrix-native-widget-pair-c1ccb65417814affb23dadfb4ee1d209.json`；优化前 168+36 场景为 84.72 秒，删去建组等价索引重复与冗余读盘，合并的全部正反索引仍逐项覆盖，超时未放宽。
 
 三项故障对照在当前 ABI 的 `app_widget_grouping.cpp` 独立副本中执行真实提交/收尾：误改目标设置、遗漏来源成员、跳过组解散，各产生对应业务断言失败，均为实际退出码 1；输入、测试对象与断言未过滤，生产源码未改动。记录为 `.codex-probes/drag-drop-matrix/native-host-16922f768f014350876e870c30554adc/pair-controls-04a1f3972ad24cda8d2ec874ada981db/evidence.json`。协作批次 `9f81134a77894a67b6b6aeb37b0ecc2e` 的标准 Release 构建通过，无编译/链接警告；新增两项与桌面提交、组内排序两项共 4/4 通过，CTest 41.10 秒，四项同时启动且均只执行一次，构建加测试批次共 165.12 秒。该结果是定向验证，不能写成当轮全量；真实指针命中、悬停弹窗和桌面实机仍不在此证据范围内。汇总记录为 `.build/verification/matrix-native-widget-pair-delivery-35c44d84e60d4b1abd3e2092cbbfdc56.json`。
+
+A23 接入后发现两处原生宿主缺口：普通多选 Move 的第二项预览 `(2,1)`、实际 `(1,2)`，以及内部右键菜单期间重建后普通 Dock 文件保留旧运行时来源绑定。前者在再次刷新前即因预览一致性失败，后者在重新解引用旧指针前按稳定身份失败；不把崩溃当证据。原始记录分别为 `.build/verification/matrix-native-dock-return-489aa483b7484caf99244f5ceb600cf7.json` 与 `.build/verification/matrix-native-dock-return-57fbc2873ff24ace96b20ea1fc8faf85.json`。`6127ccdf` 的普通来源预览共用真实返回规划，`d3895bed` 的菜单恢复重绑内部条目；同一完整 112 场景通过，1/1、61.92 秒，记录 `.build/verification/matrix-native-dock-return-2e4f224e53b046dc8e4cbe2e55958868.json`。测试把文件/目录跨分区原始逆序误当可见逆序的失败另作夹具记录，最终以同分区双文件覆盖正反顺序。
+
+恢复原预览和原菜单两个翻译单元对象，并链接当前未过滤的完整 C++ 输入与断言，分别再次产生同一坐标差异和同一菜单绑定业务失败，实际退出码均为 1；其余 ABI 头文件和测试对象指纹核对，未覆盖当前工作区源码。证据为 `.codex-probes/drag-drop-matrix/native-host-16922f768f014350876e870c30554adc/dock-return-controls-b087fe3081a1457b930ad1740b8f9724/evidence.json`。合格后移除旧服务 18 个重复组合，保留 54 个通过，1/1、3.06 秒，记录 `.build/verification/matrix-dock-service-cleanup-cdb74777568842b392491e7ce94c4791.json`；该定向编译未改变已通过的原生二进制。标准 Release 与应用回归在本批开发闭合后统一执行；桌面实机与交付仍待完成，两个本地 Issue 草稿尚无远端编号。
 
 外部文件 A01/A02/A03 与 A16 的异步接受还必须在 `Drop` 返回时确认所选效果，并已对来源调用一次 `StartOperation`；实际文件与优化移动清理结果在完成后验证。此时序来自 [Windows 异步 Shell 传输契约](https://learn.microsoft.com/en-us/windows/win32/shell/datascenarios#dragging-and-dropping-shell-objects-asynchronously) 和 [StartOperation](https://learn.microsoft.com/en-us/windows/win32/api/shldisp/nf-shldisp-idataobjectasynccapability-startoperation)，效果值对应独立的用户动作；不能等待结果时超时就声称原始错误已被有效捕获。
 

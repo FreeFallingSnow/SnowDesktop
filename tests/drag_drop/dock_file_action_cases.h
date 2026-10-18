@@ -52,6 +52,12 @@ inline void Run(const std::filesystem::path& root)
     for (size_t count : {size_t{1}, size_t{2}})
     for (const auto& gesture : gestures)
     {
+        // A23 now executes the complete native same-directory gesture/menu,
+        // physical output, ownership and storage path. Retain cross-directory
+        // synchronous coverage and every queued case with forced reverse
+        // completion; repeating this synchronous/free-target class adds no
+        // separate dispatch or materialization failure boundary.
+        if (synchronous && sameDirectory) continue;
         dock_return_cases::World world(root / std::to_wstring(serial++));
         if (count == 2)
         {
@@ -207,6 +213,6 @@ inline void Run(const std::filesystem::path& root)
             Require(dock_model_cases::SameCell(world.items[index].gridCell, beforeItems[index].gridCell), "Dock file actions preserve unrelated desktop positions");
         world.Legal(); world.SaveReload(gesture.expected == DropAction::Move ? std::vector<std::wstring>{L"UNCHANGED"} : beforeDock);
     }
-    std::cout << "Dock file modifiers, right-menu verbs, real file outputs, placement and storage cases passed\n";
+    std::cout << serial << " Dock service file modifiers, right-menu verbs, real file outputs, placement and storage cases passed\n";
 }
 }
