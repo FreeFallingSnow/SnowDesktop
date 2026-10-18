@@ -274,13 +274,19 @@ inline void RunPairs()
             {
                 Require(Widget(app, L"origin-group").childWidgetIds == std::vector<std::wstring>{L"passive"},
                     "D05: extracting a label must detach exactly that source and retain the manual origin group");
+                if (Configuration(Widget(app, L"passive")) != originalPassive)
+                    std::cerr << "passive original=" << originalPassive << " current=" << Configuration(Widget(app, L"passive")) << '\n';
                 Require(Configuration(Widget(app, L"passive")) == originalPassive,
                     "pairing a label cannot alter the settings or members of the label left in its origin group");
             }
             samples.Check(); CheckRuntime(app);
         };
+        const auto sceneContext = context;
+        context = sceneContext + " phase=after-commit";
         check(); Require(Access::Save(app), "save actual pair commit through host storage");
+        context = sceneContext + " phase=after-refresh";
         native_drag_async_reload_cases::Refresh(app); check();
+        context = sceneContext + " phase=after-reload";
         native_drag_async_reload_cases::Refresh(app, true); check();
         Access::StopModel(app); samples.Cleanup();
     }
