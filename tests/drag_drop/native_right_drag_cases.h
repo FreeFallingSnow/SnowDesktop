@@ -110,6 +110,17 @@ inline void Run(std::string_view name)
         Require(SUCCEEDED(adapter->Drop(source.Get(), MK_LBUTTON | MK_CONTROL, Access::ExternalPoint(point), &returned)) &&
             bridge.dropKeys == (MK_RBUTTON | MK_CONTROL) && menuCalls == (allowed ? 1 : 0),
             "native OLE right-button ownership must reach the real host decision exactly once");
+        if (expected && asynchronous)
+        {
+            // IDataObjectAsyncCapability requires StartOperation before Drop
+            // returns. The pending operation acknowledges the chosen verb;
+            // optimized-move cleanup is reported after completion, not here.
+            Require(returned == expected,
+                ("native right-menu asynchronous Drop must acknowledge the chosen effect before returning: expected=" +
+                    std::to_string(expected) + " actual=" + std::to_string(returned)).c_str());
+            Require(source->starts == 1,
+                "native right-menu asynchronous Drop must start exactly one source lease before returning");
+        }
         if (expected)
             Wait([&] { return Access::FileDropIdle(app) && Access::Items(app).size() == 2 + count &&
                     (!asynchronous || source->ends == 1); },
