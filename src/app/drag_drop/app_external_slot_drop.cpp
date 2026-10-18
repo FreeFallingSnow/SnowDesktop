@@ -95,7 +95,7 @@ DesktopApp::CaptureExternalSlotDestination(POINT point, DWORD keyState)
         result.preview.action = DropAction::Link;
         result.preview.fileBacked = true;
         result.preview.pinMaterializedItemsToDock = true;
-        result.preview.dockInsertIndex = dock->GetDropInsertIndex(slot, region);
+        result.preview.dockInsertIndex = dock->GetExternalDropInsertIndex(slot, region);
     }
     else
     {
