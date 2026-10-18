@@ -36,8 +36,15 @@ bool DesktopApp::ExecuteDropPipeline(const DragSourceList& sourceList,
         for (const auto& container : containers_)
         {
             if (container.get() == candidate) return true;
-            if (auto* group = dynamic_cast<FileGroup*>(container.get());
-                group && group->GetActiveSourceContainer() == candidate) return true;
+            if (auto* group = dynamic_cast<FileGroup*>(container.get()))
+            {
+                // A direct drop on an inactive source tab is valid. Compare
+                // against current hosted owners without dereferencing a
+                // possibly retired candidate pointer.
+                if (const auto* data = group->GetWidgetData())
+                    for (const auto& id : data->childWidgetIds)
+                        if (group->GetSourceContainerById(id) == candidate) return true;
+            }
         }
         return false;
     };

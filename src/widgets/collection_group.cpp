@@ -1033,7 +1033,23 @@ void CollectionGroup::OnItemsDropped(
             preview.landings[i].insertIndex =
                 preview.insertIndex + i;
     }
-    app_->ExecuteDropPipeline(sourceList, preview);
+    DesktopApp* app = app_;
+    const std::wstring groupId = data_->id;
+    const std::wstring hitChild = !allCollections ? CategoryIdAtPoint(app->dragSession_.CurrentPoint()) : L"";
+    const bool activate = !hitChild.empty() && !preview.Empty() && preview.targetWidget && preview.targetWidget->id == hitChild;
+    if (!app->ExecuteDropPipeline(sourceList, preview) || !activate) return;
+    // Submission may rebuild this view. Resolve only stable IDs afterwards.
+    const size_t groupIndex = app->FindWidgetIndexById(groupId);
+    if (groupIndex >= app->widgets_.size()) return;
+    auto& group = app->widgets_[groupIndex];
+    if (group.type != DesktopWidgetType::CollectionGroup ||
+        std::find(group.childWidgetIds.begin(), group.childWidgetIds.end(), hitChild) == group.childWidgetIds.end()) return;
+    group.activeCategoryId = hitChild;
+    for (const auto& container : app->containers_)
+        if (auto* current = dynamic_cast<CollectionGroup*>(container.get()); current && current->GetWidgetData() == &group)
+            current->InvalidateFilterCache();
+    app->SaveLayoutSlots();
+    InvalidateRect(app->hwnd_, nullptr, FALSE);
 }
 
 void CollectionGroup::DrawContent(
