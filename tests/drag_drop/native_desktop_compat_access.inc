@@ -14,6 +14,8 @@
             widget.gridCell = {page.id, 4, 0}; widget.gridSpan = {3, 3};
             widget.autoCollect = false; app.widgets_.push_back(std::move(widget));
         }
+        if (!SaveGeneralSettings(GetGeneralSettingsPath().c_str(), app.generalSettings_))
+            throw std::runtime_error("D11 requires a saved normal settings baseline before large-icon upgrade");
         app.items_.front().largeIcon = config;
         app.LayoutItems();
     }

@@ -622,8 +622,8 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
                 DesktopWidgetType::FileGroup)
         {
             auto* group = dynamic_cast<FileGroup*>(widget);
-            std::wstring activeId;
-            if (group && group->IsGroupSearchActive() && targetSlot)
+            std::wstring activeId = group ? group->SourceIdAtPoint(dropPoint) : L"";
+            if (activeId.empty() && group && group->IsGroupSearchActive() && targetSlot)
                 if (auto* source = group->GetSourceContainerForItem(targetSlot->GetItem()))
                     if (auto* data = source->GetWidgetData()) activeId = data->id;
             if (activeId.empty()) activeId = group
@@ -691,6 +691,10 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
             preview.action == DropAction::Move) &&
             IsDropFileBacked(sourceList, preview.targetKind, preview.action);
         preview.insertIndex = widget->GetDropInsertIndex(targetSlot, region);
+        if (auto* group = dynamic_cast<FileGroup*>(widget);
+            group && !group->SourceIdAtPoint(dropPoint).empty() && preview.targetWidget)
+            preview.insertIndex = preview.targetWidget->type == DesktopWidgetType::FolderMapping
+                ? preview.targetWidget->folderEntries.size() : preview.targetWidget->itemKeys.size();
         if (auto* group =
                 dynamic_cast<CollectionGroup*>(widget);
             group && !group->CategoryIdAtPoint(dropPoint).empty() &&
