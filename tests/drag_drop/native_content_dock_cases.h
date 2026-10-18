@@ -73,7 +73,7 @@ inline void RunDockRelations()
         const POINT point{150, 150};
         const auto captured = Access::BeginDockRelations(app, keys, frequent, point);
         Require(captured.entries.size() == count && captured.entries.front().fromDock,
-            "A25: actual Dock selection must capture the original mapping or frequent identities");
+            "A25: real Dock runtime entries must decode the original mapping or frequent capture-boundary identities");
         if (sequence) Access::RebuildDockRelationSource(app, sequence == 2);
         Require(Access::DockRelationBindingsCurrent(app, keys),
             "S07: rebuilding or reordering enumeration must retain live Dock wrappers for the originally captured identities");

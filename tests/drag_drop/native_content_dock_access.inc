@@ -38,8 +38,14 @@
                     return PathsEqualInsensitive(item->GetPath(), key);
                 }));
         }
-        auto items = dock->GetSelectedItems();
-        if (items.size() != keys.size()) throw std::runtime_error("Dock relation fixture must capture every selected live entry");
+        Item* pressed = nullptr;
+        for (const auto& slot : dock->GetSlots())
+            if (auto* item = slot->GetItem(); item && PathsEqualInsensitive(item->GetPath(), keys.front())) pressed = item;
+        auto capture = snowdesktop::native_item_drag_source::Capture(pressed, false,
+            [](Container* source) { return source ? source->GetSelectedItems() : std::vector<Item*>{}; });
+        auto items = std::move(capture.items);
+        if (capture.source != dock || items.size() != keys.size())
+            throw std::runtime_error("B19: the actual native pointer source boundary must admit and capture every selected Dock mapping/frequent entry");
         RECT frame = items.front()->GetBounds();
         for (const auto* item : items) { const auto bounds = item->GetBounds(); UnionRect(&frame, &frame, &bounds); }
         const POINT start{(frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2};
