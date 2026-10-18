@@ -1030,6 +1030,8 @@ void FileCategories::ReorderMembers(const std::vector<size_t>& indices, size_t i
         snowdesktop::collection_group_rules::ReorderItems(
             data_->itemKeys, std::move(movingIndices),
             insertBefore);
+    data_->contentSortColumn =
+        snowdesktop::list_detail_rules::Column::None;
     InvalidateCategorySnapshot();
     InvalidateSlots();
 }

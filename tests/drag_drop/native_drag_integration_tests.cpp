@@ -376,6 +376,86 @@ struct NativeDragIntegrationAccess
     }
     static void SortMembers(DesktopApp& app, int mode, bool ascending)
     { app.SortWidgetContents(0, mode, ascending); }
+    static void SeedMixedModel(DesktopApp& app, const std::vector<std::filesystem::path>& files,
+        const std::vector<std::filesystem::path>& inside, DesktopWidgetType type, DesktopWidgetType targetType)
+    {
+        for (std::size_t i = 0; i < files.size(); ++i)
+        {
+            auto item = FileItem(files[i]);
+            item.gridCell = {L"__page:1", static_cast<int>(i) * 2, 0};
+            app.items_.push_back(std::move(item));
+        }
+        if (type != DesktopWidgetType::FolderMapping)
+            for (const auto& file : inside) app.items_.push_back(FileItem(file));
+        DesktopWidget entrance;
+        entrance.id = L"mixed-component"; entrance.title = L"Original component"; entrance.type = type;
+        entrance.customTitle = entrance.title;
+        entrance.gridCell = {L"__page:1", 0, 2}; entrance.gridSpan = {1, 1}; entrance.singleCellIconMode = true;
+        entrance.listMode = true; entrance.privacyMode = true; entrance.autoCollect = false;
+        if (type == DesktopWidgetType::FolderMapping)
+            entrance.sourceFolderPath = inside.front().parent_path().wstring();
+        else if (IsGroupWidgetType(type))
+        {
+            entrance.childWidgetIds = {L"mixed-child-0", L"mixed-child-1"};
+            entrance.activeCategoryId = L"mixed-child-0";
+        }
+        else for (const auto& file : inside) entrance.itemKeys.push_back(ToUpperInvariant(file.wstring()));
+        app.widgets_.push_back(std::move(entrance));
+        if (IsGroupWidgetType(type))
+            for (std::size_t i = 0; i < inside.size(); ++i)
+            {
+                DesktopWidget child;
+                child.id = L"mixed-child-" + std::to_wstring(i); child.title = L"Original child";
+                child.customTitle = child.title;
+                child.type = type == DesktopWidgetType::CollectionGroup ? DesktopWidgetType::Collection : DesktopWidgetType::FileCategories;
+                child.gridCell = {L"__page:1", 0, 2}; child.gridSpan = {1, 1}; child.autoCollect = false;
+                child.itemKeys = {ToUpperInvariant(inside[i].wstring())};
+                app.widgets_.push_back(std::move(child));
+            }
+        DesktopWidget target;
+        target.id = L"mixed-target"; target.title = L"Destination"; target.type = targetType;
+        target.gridCell = {L"__page:1", 1, 1}; target.gridSpan = {3, 2}; target.autoCollect = false;
+        target.activeCategoryId = L"all";
+        app.widgets_.push_back(std::move(target));
+        app.desktopItemsReady_ = true;
+        app.RefreshDesktopItemIndexCache();
+        app.LayoutItems();
+    }
+    static DragSourceList BeginMixed(DesktopApp& app, const std::vector<std::filesystem::path>& files,
+        std::size_t count, bool reverse)
+    {
+        for (auto& item : app.items_)
+            item.selected = std::any_of(files.begin(), files.begin() + static_cast<std::ptrdiff_t>(count),
+                [&](const auto& file) { return item.layoutKey == ToUpperInvariant(file.wstring()); });
+        for (auto& widget : app.widgets_) widget.selected = widget.id == L"mixed-component";
+        auto* origin = Desktop(app);
+        auto items = origin->GetSelectedItems();
+        if (items.size() != count + 1) throw std::runtime_error("native mixed capture must contain every file and the component");
+        if (reverse) std::reverse(items.begin(), items.end());
+        auto captured = app.BuildDragSourceList(items, origin);
+        app.dragSession_.Begin(origin, std::move(items), captured, {50, 50}, {250, 250});
+        return captured;
+    }
+    static DropPreviewList MixedPreview(DesktopApp& app)
+    {
+        return app.BuildDropPreviewList(app.dragSession_.SourceList(), MemberContainer(app, L"mixed-target"),
+            nullptr, HitRegion::SortAfter, 0, {250, 250});
+    }
+    static void DropMixed(DesktopApp& app)
+    {
+        auto* target = MemberContainer(app, L"mixed-target");
+        const auto items = app.dragSession_.Items();
+        auto* origin = app.dragSession_.Source();
+        app.dragSession_.DeactivateForDrop();
+        target->OnItemsDropped(items, origin, nullptr, HitRegion::SortAfter, 0);
+        // Execute the real post-release persistence/layout services explicitly;
+        // the pointer-message caller itself is outside this fixture boundary.
+        app.SaveLayoutSlots();
+        app.ClearSelection();
+        app.EndDragSession();
+        app.ApplyPageMapping();
+        app.LayoutItems();
+    }
     static DragSourceList BeginMembers(DesktopApp& app, const std::vector<std::wstring>& names)
     {
         const auto selected = [&](const auto& name) { return std::find(names.begin(), names.end(), name) != names.end(); };
@@ -553,6 +633,7 @@ struct NativeDragIntegrationAccess
 #include "native_ole_file_cases.h"
 #include "native_ole_leave_cases.h"
 #include "native_member_order_cases.h"
+#include "native_mixed_selection_cases.h"
 
 namespace
 {
@@ -616,6 +697,7 @@ int main(int argc, char** argv)
         else if (argc == 3 && std::string_view(argv[1]) == "--ole-gesture-files") native_ole_file_cases::Run(argv[2], true);
         else if (argc == 2 && std::string_view(argv[1]) == "--ole-leave-lifecycle") native_ole_leave_cases::Run();
         else if (argc == 3 && std::string_view(argv[1]) == "--member-order") native_member_order_cases::Run(argv[2]);
+        else if (argc == 3 && std::string_view(argv[1]) == "--mixed-selection") native_mixed_selection_cases::Run(argv[2]);
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

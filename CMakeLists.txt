@@ -2667,6 +2667,13 @@ if (BUILD_TESTING)
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
             TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
     endforeach()
+    foreach(MIXED_TARGET IN ITEMS collection files)
+        add_test(NAME native_mixed_selection_${MIXED_TARGET}
+            COMMAND SnowDesktopNativeDragIntegrationTests --mixed-selection ${MIXED_TARGET})
+        set_tests_properties(native_mixed_selection_${MIXED_TARGET} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+    endforeach()
 
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)
