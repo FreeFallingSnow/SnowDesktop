@@ -74,17 +74,26 @@ inline void Run()
     std::size_t scenes = 0;
     for (const auto& gesture : gestures)
     for (const bool secondary : {false, true})
-    for (const std::size_t count : {1u, 2u})
+    for (const int selection : {0, 1, 2}) // one file / two files / file plus directory
     for (const bool reverse : {false, true})
     for (const bool rebuild : {false, true})
     {
-        if ((count == 1 && reverse) || (!gesture.menu && rebuild)) continue;
-        native_drag_commit_cases::context = "A23 " + std::string(gesture.name) + " count=" + std::to_string(count) +
+        // Only same-partition files have both input orders. Directories occupy
+        // the Dock folder partition; a reverse raw seed is not a reverse visible
+        // selection. Keep that distinct object mix without an invalid order.
+        if ((selection != 1 && reverse) || (!gesture.menu && rebuild)) continue;
+        const std::size_t count = selection == 0 ? 1u : 2u;
+        native_drag_commit_cases::context = "A23 " + std::string(gesture.name) + " selection=" + std::to_string(selection) + " count=" + std::to_string(count) +
             " reverse=" + std::to_string(reverse) + " secondary=" + std::to_string(secondary) + " menuRebuild=" + std::to_string(rebuild);
         const auto prefix = L"dock-return-" + std::to_wstring(scenes++);
         std::vector<fs::path> sources{desktop / (prefix + L"-Payload.txt")};
         { std::ofstream stream(sources.front(), std::ios::binary); stream << "dock-original-A"; }
-        if (count == 2)
+        if (selection == 1)
+        {
+            sources.push_back(desktop / (prefix + L"-Other.txt"));
+            std::ofstream stream(sources.back(), std::ios::binary); stream << "dock-original-B";
+        }
+        if (selection == 2)
         {
             sources.push_back(desktop / (prefix + L"-Bundle")); fs::create_directory(sources.back());
             std::ofstream stream(sources.back() / L"nested.txt", std::ios::binary); stream << "dock-original-B";
@@ -187,7 +196,7 @@ inline void Run()
                         if (gesture.action == DropAction::Link)
                             same = _wcsicmp(output.extension().c_str(), L".lnk") == 0 && fs::equivalent(LinkTarget(output), ordered[i]);
                         else if (fs::is_directory(ordered[i])) same = fs::is_directory(output) && Read(output / L"nested.txt") == "dock-original-B";
-                        else same = fs::is_regular_file(output) && Read(output) == "dock-original-A";
+                        else same = fs::is_regular_file(output) && Read(output) == Read(ordered[i]);
                         if (same) matching.push_back(output);
                     }
                     Require(matching.size() == 1 && !fs::equivalent(matching.front(), ordered[i]),
