@@ -104,3 +104,9 @@
             throw std::runtime_error("D07 requires the native tab surface, not a synthetic child target");
         return app.BuildDropPreviewList(app.dragSession_.SourceList(), view, slot, region, 0, point);
     }
+    static std::pair<std::wstring, size_t> GroupSurfaceExternalBinding(DesktopApp& app, POINT point)
+    {
+        const auto destination = app.CaptureExternalSlotDestination(point, MK_CONTROL);
+        if (!destination) throw std::runtime_error("external inactive tab must capture its actual native destination");
+        return {destination->widgetId, destination->preview.insertIndex};
+    }

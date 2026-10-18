@@ -216,6 +216,60 @@ inline void RunType(std::string_view name)
     }
     std::cout << scenes << " native Type directory priority, real Shell names, direction and storage scenes passed: " << name << '\n';
 }
+inline void RunCategoryDwell()
+{
+    Profile profile;
+    std::size_t scenes = 0;
+    for (const auto type : {pair::files, pair::mapping})
+    {
+        context = "D12/S03 inner category target-source identity type=" + std::to_string(static_cast<int>(type));
+        pair::Samples samples(profile, scenes++);
+        std::vector<DesktopWidget> widgets;
+        for (const auto* id : {L"A", L"B"})
+        {
+            auto child = pair::Component(id, type, 0, 0, false);
+            samples.Add(child, L"keep"); widgets.push_back(std::move(child));
+        }
+        auto group = pair::Group(L"surface-group", pair::files, {L"A", L"B"}, 0, 0, false);
+        group.gridSpan = {4, 4}; widgets.push_back(std::move(group));
+        auto incoming = pair::Component(L"incoming", pair::files, 10, 6, false);
+        samples.Add(incoming, L"keep");
+        const std::vector<fs::path> selected{samples.all.back().path};
+        auto& app = profile.Model(false, samples.root / L"layout");
+        Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
+        Access::ConfigureGroupCategoryContract(app);
+        Access::PrepareReload(app); Access::BindAsync(app);
+        native_drag_async_reload_cases::Refresh(app);
+        const auto original = Access::Widgets(app);
+        Require(Access::BeginGroupSurfaceIncoming(app, selected).entries.size() == 1,
+            "inner-category dwell starts from an actual captured desktop file");
+        const POINT point = Access::GroupCategoryContractPoint(app);
+        const auto oldTick = Access::TrackGroupCategoryContract(app, point);
+        Require(Access::GroupSurfaceDwellArmed(app) && !Access::ActivateGroupSurfaceDwell(app, oldTick),
+            "a fresh actual inner category hit must arm and wait");
+        Access::ReplaceGroupCategorySource(app, point);
+        Require(!Access::ActivateGroupSurfaceDwell(app, oldTick + 10000) && !Access::GroupSurfaceDwellArmed(app) &&
+            pair::Widget(app, L"A").activeCategoryId == L"all" && pair::Widget(app, L"B").activeCategoryId == L"all",
+            "D12: replacing the hosted category target source cancels old dwell even when category ID and hit point are unchanged");
+        const auto newTick = Access::TrackGroupCategoryContract(app, point);
+        Require(!Access::ActivateGroupSurfaceDwell(app, newTick) && Access::ActivateGroupSurfaceDwell(app, newTick + 10000),
+            "the replacement source can activate its own fresh real category dwell");
+        Access::EndActualGesture(app);
+        const auto check = [&] {
+            for (auto expected : original)
+            {
+                if (expected.id == L"surface-group") expected.activeCategoryId = L"B";
+                if (expected.id == L"B") expected.activeCategoryId = L"contract-text";
+                pair::CheckChild(app, expected);
+            }
+            samples.Check(); Require(Access::NoIngressPopup(app), "category dwell cannot create a desktop presentation window");
+        };
+        check(); Require(Access::Save(app), "save accepted category on the actual replacement source");
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); check();
+        Access::StopModel(app); samples.Cleanup();
+    }
+    std::cout << scenes << " native inner category target-source identity and storage scenes passed\n";
+}
 inline void RunDwell()
 {
     Profile profile;
@@ -277,6 +331,7 @@ inline void RunDwell()
         Access::StopModel(app); samples.Cleanup();
     }
     std::cout << scenes << " native group tab dwell, cancellation, retarget, identity and storage scenes passed\n";
+    RunCategoryDwell();
 }
 inline void RunTypeSearch()
 {

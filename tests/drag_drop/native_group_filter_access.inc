@@ -108,6 +108,52 @@
         app.widgets_[index].id = L"replacement-group";
         app.RebuildContainersAndItems();
     }
+    static void ConfigureGroupCategoryContract(DesktopApp& app)
+    {
+        app.categorySettings_.rules = {{L"contract-text", L"Contract text", L".txt", true}};
+        for (auto& widget : app.widgets_)
+        {
+            if (widget.id == L"surface-group")
+            {
+                widget.activeCategoryId = L"A";
+                widget.showFileCategories = true;
+                widget.showSearchBox = false;
+            }
+            else if (widget.id == L"A" || widget.id == L"B") widget.activeCategoryId = L"all";
+        }
+        app.RebuildContainersAndItems();
+    }
+    static POINT GroupCategoryContractPoint(DesktopApp& app)
+    {
+        auto* group = dynamic_cast<FileGroup*>(MemberContainer(app, L"surface-group"));
+        if (!group) throw std::runtime_error("category dwell requires an actual native file group");
+        // Supply a point found by the real public hit function. No category
+        // activation or timer state is manufactured by this geometry search.
+        const RECT frame = group->GetBounds();
+        for (LONG y = frame.top; y < frame.bottom; y += 4)
+            for (LONG x = frame.left; x < frame.right; x += 4)
+            {
+                const POINT point{x, y};
+                if (group->CategoryIdAtPoint(point) == L"contract-text" && group->SourceIdAtPoint(point).empty())
+                    return point;
+            }
+        throw std::runtime_error("configured .txt rule must expose a real inactive inner category tab");
+    }
+    static DWORD TrackGroupCategoryContract(DesktopApp& app, POINT point)
+    {
+        app.lastMousePoint_ = point; app.dragSession_.UpdatePoint(point);
+        app.UpdateCollectionGroupTabDwell(point);
+        return app.collectionGroupTabDwellTick_;
+    }
+    static void ReplaceGroupCategorySource(DesktopApp& app, POINT point)
+    {
+        auto* group = dynamic_cast<FileGroup*>(MemberContainer(app, L"surface-group"));
+        if (!group || !group->GetWidgetData()) throw std::runtime_error("change only the actual category target source");
+        group->GetWidgetData()->activeCategoryId = L"B";
+        group->InvalidateHostedView();
+        if (group->CategoryIdAtPoint(point) != L"contract-text" || !group->SourceIdAtPoint(point).empty())
+            throw std::runtime_error("both real sources must expose the same category hit at the original point");
+    }
     static void SeedSearchTypeSurface(DesktopApp& app, const std::vector<std::filesystem::path>& desktop,
         const std::filesystem::path& mapped, bool list)
     {

@@ -223,6 +223,105 @@ inline void RunDateHeaders()
     }
     std::cout << scenes << " native file-group date-header rejection and storage scenes passed\n";
 }
+inline void RunExternalInactiveTab()
+{
+    Profile profile;
+    std::size_t scenes = 0;
+    for (const auto targetType : {collection, files, mapping})
+    {
+        context = "D07 actual external inactive tab type=" + std::to_string(static_cast<int>(targetType));
+        Samples samples(profile, scenes++);
+        auto widgets = SurfaceWidgets(samples, targetType != collection, false, false, targetType == mapping);
+        samples.Add(widgets[1], L"second"); samples.Add(widgets[1], L"third");
+        widgets[4].activeCategoryId = L"A";
+        const std::vector<fs::path> sources{samples.root / L"External-One.txt", samples.root / L"External-Two.txt"};
+        for (std::size_t i = 0; i < sources.size(); ++i)
+        { std::ofstream stream(sources[i], std::ios::binary); stream << "external-inactive-" << i; }
+        auto& app = profile.Model(false, samples.root / L"layout");
+        Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
+        Access::PrepareReload(app); Access::BindAsync(app);
+        native_drag_async_reload_cases::Refresh(app);
+        const auto original = Access::Widgets(app);
+        const auto originalB = native_widget_pair_cases::Widget(app, L"B");
+        Require(Access::Save(app), "save original external inactive-tab model before actual OLE input");
+        const auto saved = Read(Access::LayoutPath(app));
+        const RECT frame = Access::GroupSurfaceTabRect(app, L"surface-group", L"B");
+        Require(!IsRectEmpty(&frame), "external D07 input requires an actual visible inactive native tab");
+        const POINT point{(frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2};
+        auto source = ole_file_source_fixture::Make(sources, true);
+        auto adapter = Access::ExternalAdapter(app);
+        DWORD effect = DROPEFFECT_COPY | DROPEFFECT_MOVE | DROPEFFECT_LINK;
+        Access::FreshExternalDwell(app);
+        Require(SUCCEEDED(adapter->DragEnter(source.Get(), MK_LBUTTON | MK_CONTROL, Access::ExternalPoint(point), &effect)),
+            "external inactive input enters through the actual native OLE adapter");
+        Access::FreshExternalDwell(app); effect = 7;
+        Require(SUCCEEDED(adapter->DragOver(MK_LBUTTON | MK_CONTROL, Access::ExternalPoint(point), &effect)) && effect == DROPEFFECT_COPY &&
+            Access::Target(app) == Access::MemberContainer(app, L"surface-group"),
+            "external inactive hover routes to the requested real group and advertises explicit Copy");
+        const auto binding = Access::GroupSurfaceExternalBinding(app, point);
+        Require(binding.first == L"B" && binding.second == 3 && native_widget_pair_cases::Widget(app, L"surface-group").activeCategoryId == L"A" &&
+            source->starts == 0 && source->ends == 0 && source->dataReads == 0 && Read(Access::LayoutPath(app)) == saved,
+            "D07: external inactive preview binds the hit B and its real tail without early activation, extraction or save");
+        Access::FreshExternalDwell(app); effect = 7;
+        Require(SUCCEEDED(adapter->Drop(source.Get(), MK_CONTROL, Access::ExternalPoint(point), &effect)) && effect == DROPEFFECT_COPY && source->starts == 1,
+            "external inactive Copy acknowledges the chosen effect and acquires one real asynchronous source lease");
+        native_ole_file_cases::Wait([&] { return (targetType == mapping ? Access::FolderDropReadIdle(app) : Access::FileDropIdle(app)) && source->ends == 1; },
+            "external inactive delivery waits for actual source/file completion and native refresh");
+        Require(!source->wrongApartment && !source->fileReadBeforeStart && source->dataReads > 0 && SUCCEEDED(source->outcome) && source->endEffect == DROPEFFECT_COPY,
+            "external inactive input extracts on the source STA after StartOperation and completes Copy exactly once");
+        const auto destination = targetType == mapping ? fs::path(originalB.sourceFolderPath) : samples.desktop;
+        std::vector<fs::path> outputs;
+        for (const auto& path : sources) outputs.push_back(destination / path.filename());
+        const auto check = [&] {
+            Require(Access::Widgets(app).size() == original.size(), "external inactive acceptance preserves every original component");
+            for (const auto& before : original)
+                if (before.id == L"surface-group")
+                {
+                    auto expected = before; expected.activeCategoryId = L"B";
+                    Require(Configuration(native_widget_pair_cases::Widget(app, before.id)) == Configuration(expected),
+                        "D07: accepted external inactive-tab drop activates exactly the hit child and preserves all other group settings");
+                }
+                else if (before.id != L"B") CheckChild(app, before);
+            Require(Configuration(native_widget_pair_cases::Widget(app, L"B"), true, false) == Configuration(originalB, true, false),
+                "external inactive Copy preserves all target settings apart from accepted membership");
+            std::vector<fs::path> expected;
+            if (targetType == mapping) for (const auto& entry : originalB.folderEntries) expected.emplace_back(entry.fullPath);
+            else for (const auto& key : originalB.itemKeys) expected.emplace_back(key);
+            expected.insert(expected.end(), outputs.begin(), outputs.end());
+            std::vector<fs::path> observed, displayed;
+            const auto& current = native_widget_pair_cases::Widget(app, L"B");
+            if (targetType == mapping) for (const auto& entry : current.folderEntries) observed.emplace_back(entry.fullPath);
+            else for (const auto& key : current.itemKeys) observed.emplace_back(key);
+            for (const auto& slot : Access::MemberContainer(app, L"surface-group")->GetSlots())
+                if (const auto* item = slot->GetItem()) displayed.emplace_back(item->GetPath());
+            const auto sameOrder = [&](const auto& actual) {
+                return actual.size() == expected.size() && std::equal(actual.begin(), actual.end(), expected.begin(), expected.end(),
+                    [](const auto& a, const auto& b) { return fs::equivalent(a, b); });
+            };
+            Require(sameOrder(observed) && sameOrder(displayed),
+                "D07: actual external acceptance activates hit B and appends both copied files after all old members in source order");
+            for (std::size_t i = 0; i < sources.size(); ++i)
+                Require(Read(sources[i]) == "external-inactive-" + std::to_string(i) &&
+                    Read(outputs[i]) == "external-inactive-" + std::to_string(i) && !fs::equivalent(sources[i], outputs[i]),
+                    "explicit external Copy retains both source files and creates distinct real output identities with unchanged bytes");
+            for (const auto& file : samples.all)
+            {
+                const auto now = Samples::Identity(file.path);
+                Require(Read(file.path) == "original:" + WideToUtf8(file.path.filename().wstring()) && now.dwVolumeSerialNumber == file.identity.dwVolumeSerialNumber &&
+                    now.nFileIndexHigh == file.identity.nFileIndexHigh && now.nFileIndexLow == file.identity.nFileIndexLow &&
+                    CompareFileTime(&now.ftLastWriteTime, &file.identity.ftLastWriteTime) == 0,
+                    "external inactive acceptance preserves every pre-existing real member's bytes, identity and time");
+            }
+            Require(Access::NoIngressPopup(app), "external inactive model tests cannot create desktop presentation windows");
+        };
+        check(); Require(Access::Save(app), "save external inactive acceptance and active-tab result");
+        Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); check();
+        Access::StopModel(app); source.Reset();
+        for (const auto& output : outputs) fs::remove(output);
+        samples.Check(); samples.Cleanup();
+    }
+    std::cout << scenes << " actual external inactive-tab routing, Copy, activation, tail append and storage scenes passed\n";
+}
 inline void RunInactiveTab()
 {
     // D07 is the user's independently supplied policy: receive in the tab
@@ -323,6 +422,7 @@ inline void RunInactiveTab()
         Access::StopModel(app); samples.Cleanup();
     }
     std::cout << scenes << " native inactive-tab preview, activation, tail append and storage scenes passed\n";
+    RunExternalInactiveTab();
 }
 inline void Run(std::string_view mode)
 {
@@ -330,6 +430,7 @@ inline void Run(std::string_view mode)
     else if (mode == "search") RunSearch();
     else if (mode == "date") RunDateHeaders();
     else if (mode == "inactive") RunInactiveTab();
+    else if (mode == "inactive-external") RunExternalInactiveTab();
     else throw std::runtime_error("unknown native group surface mode");
 }
 }
