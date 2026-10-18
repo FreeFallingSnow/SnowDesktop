@@ -563,6 +563,8 @@ A18 首轮已保留 40/54 通过、14 项映射等待失败的原始记录。诊
 
 目录送达的独立序列：真实目录读取在拖动持有模型时完成，原模型必须保持；结束该拖动后，即使没有新的文件事件或桌面重载请求，已完成的目录结果也必须最终进入模型。生产维护计时器每两秒调用实际后台送达服务；无窗口夹具也须接入该重试服务。该序列用于核对夹具与生产维护边界，不把缺少夹具计时器导致的等待超时当作产品缺陷。新增文件与旧文件字节不变，未读完时不伪造快照，不在等待谓词中强行刷新。
 
+该受控序列在缺少维护计时器的夹具中已于最终送达断言失败，12.69 秒；原二进制保留。后续夹具在自建 message-only 窗口按生产同一两秒周期产生 `WM_TIMER`，调用生产维护处理使用的同一 `DrainBackgroundShellWork`；其文件操作、拖动、菜单与模型隔离条件保持真实执行。桌面 Host 监视和资源恢复属于另一个初始化边界，不在此运行。此前一次异步 A18 等待失败及诊断中的一次通过都保留，未据此宣称它们已被证明同因。
+
 外部文件 A01/A02/A03 与 A16 的异步接受还必须在 `Drop` 返回时确认所选效果，并已对来源调用一次 `StartOperation`；实际文件与优化移动清理结果在完成后验证。此时序来自 [Windows 异步 Shell 传输契约](https://learn.microsoft.com/en-us/windows/win32/shell/datascenarios#dragging-and-dropping-shell-objects-asynchronously) 和 [StartOperation](https://learn.microsoft.com/en-us/windows/win32/api/shldisp/nf-shldisp-idataobjectasynccapability-startoperation)，效果值对应独立的用户动作；不能等待结果时超时就声称原始错误已被有效捕获。
 
 样本 A01 至 A03 的单/多选、真实文件/目录、允许效果、同步/异步和目标类型继续由第 2 节扩展，不能只保留这些代表例子作为完整覆盖。

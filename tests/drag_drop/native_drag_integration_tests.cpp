@@ -21,15 +21,26 @@ struct NativeDragIntegrationAccess
     static inline std::uint64_t asyncShellTimers = 0;
     static inline std::uint64_t fileCompletionMessages = 0;
     static inline std::uint64_t graceTimerMessages = 0;
+    static inline std::uint64_t maintenanceTimerMessages = 0;
 
     static LRESULT CALLBACK AsyncWindowProc(HWND window, UINT message, WPARAM wp, LPARAM lp)
     {
         if (asyncOwner && window == completionWindow &&
             (message == kBackgroundShellReadyMessage || message == kShellFileOperationCompletedMessage ||
-                (message == WM_TIMER && (wp == kShellChangeTimerId || wp == kExternalOleDragLeaveGraceTimerId))))
+                (message == WM_TIMER && (wp == kShellChangeTimerId || wp == kExternalOleDragLeaveGraceTimerId ||
+                    wp == kDesktopHostWatchTimerId))))
         {
             try
             {
+                if (message == WM_TIMER && wp == kDesktopHostWatchTimerId)
+                {
+                    ++maintenanceTimerMessages;
+                    // Production OnTimer invokes this same guarded service.
+                    // The remaining desktop recovery/watch services require
+                    // an initialized host and stay outside this fixture.
+                    asyncOwner->DrainBackgroundShellWork();
+                    return 0;
+                }
                 if (message == kBackgroundShellReadyMessage) ++asyncReadMessages;
                 else if (message == WM_TIMER && wp == kExternalOleDragLeaveGraceTimerId) ++graceTimerMessages;
                 else if (message == WM_TIMER) ++asyncShellTimers;
@@ -59,16 +70,20 @@ struct NativeDragIntegrationAccess
         asyncShellTimers = 0;
         fileCompletionMessages = 0;
         graceTimerMessages = 0;
+        maintenanceTimerMessages = 0;
         previousWindowProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(completionWindow,
             GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&AsyncWindowProc)));
         if (!previousWindowProc) throw std::runtime_error("install the isolated native completion dispatcher");
         asyncOwner = &app;
+        if (!SetTimer(completionWindow, kDesktopHostWatchTimerId, kDesktopHostWatchIntervalMs, nullptr))
+            throw std::runtime_error("start the native fixture's production-period background delivery timer");
     }
     static void UnbindAsync(DesktopApp& app)
     {
         if (asyncOwner != &app) return;
         KillTimer(completionWindow, kShellChangeTimerId);
         KillTimer(completionWindow, kExternalOleDragLeaveGraceTimerId);
+        KillTimer(completionWindow, kDesktopHostWatchTimerId);
         SetWindowLongPtrW(completionWindow, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(previousWindowProc));
         previousWindowProc = nullptr;
         asyncOwner = nullptr;
