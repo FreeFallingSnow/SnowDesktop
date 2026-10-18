@@ -546,12 +546,16 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
             if (nativeIconDrag && !snowdesktop::widget_right_drag::CapturedIconsCurrent(
                     dragSession_.SourceList(), widgets_)) return false;
             if (!dragSession_.ResumeAfterDropDecision()) return false;
-            if (nativeIconDrag)
+            // The menu deactivated the session while pumping messages. A
+            // rebuild can therefore replace any internal source wrappers,
+            // including ordinary Dock files. Restore all captured internal
+            // sources by identity before returning to the release handler.
+            if (!externalSource)
             {
                 RebindDragSourceAfterRebuild();
                 if (!dragSession_.IsActive()) return false;
-                ResolveCurrentDragTargetAt(point);
             }
+            if (nativeIconDrag) ResolveCurrentDragTargetAt(point);
         }
         if (choice.pairAction != pair::Action::None)
         {
