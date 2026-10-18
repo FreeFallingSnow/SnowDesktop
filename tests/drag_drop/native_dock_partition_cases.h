@@ -1,5 +1,7 @@
 #pragma once
 
+#include "native_dock_external_partition_cases.h"
+
 namespace native_dock_partition_cases
 {
 using namespace native_ole_file_cases;
@@ -29,6 +31,7 @@ inline void Check(DesktopApp& app, const std::vector<std::wstring>& expected, bo
 }
 inline void Run()
 {
+    native_dock_external_partition_cases::Run();
     native_drag_commit_cases::Profile profile;
     const auto desktop = snowdesktop::debug_profile::Current().configuration.desktop; fs::create_directories(desktop);
     std::size_t scenes = 0;
