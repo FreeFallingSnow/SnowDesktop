@@ -2679,6 +2679,13 @@ if (BUILD_TESTING)
     set_tests_properties(native_group_member_order PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+    foreach(GROUP_MEMBER_TYPE IN ITEMS files mapping)
+        add_test(NAME native_file_group_member_order_${GROUP_MEMBER_TYPE}
+            COMMAND SnowDesktopNativeDragIntegrationTests --group-member-order ${GROUP_MEMBER_TYPE})
+        set_tests_properties(native_file_group_member_order_${GROUP_MEMBER_TYPE} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
+    endforeach()
 
     add_test(NAME icon_bitmap_rendering
         COMMAND SnowDesktopIconRenderRulesTests --icon-bitmap-rendering)

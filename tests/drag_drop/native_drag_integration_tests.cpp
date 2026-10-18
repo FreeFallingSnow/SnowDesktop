@@ -376,21 +376,24 @@ struct NativeDragIntegrationAccess
     }
     static void SortMembers(DesktopApp& app, int mode, bool ascending)
     { app.SortWidgetContents(0, mode, ascending); }
-    static void SeedGroupedMembers(DesktopApp& app, const std::vector<std::filesystem::path>& files, bool list)
+    static void SeedGroupedMembers(DesktopApp& app, const std::vector<std::filesystem::path>& files, bool list,
+        DesktopWidgetType childType = DesktopWidgetType::Collection)
     {
-        SeedMemberModel(app, files, DesktopWidgetType::Collection, list);
+        SeedMemberModel(app, files, childType, list);
         // Release views before growing their model vector; all following views
         // are rebuilt by the real layout after group membership exists.
         app.items_oo_.clear(); app.containers_.clear();
         DesktopWidget other;
-        other.id = L"other"; other.type = DesktopWidgetType::Collection;
+        other.id = L"other"; other.type = childType == DesktopWidgetType::Collection
+            ? DesktopWidgetType::Collection : DesktopWidgetType::FileCategories;
         other.title = other.customTitle = L"Unchanged child";
         other.gridCell = {L"__page:1", 0, 0}; other.gridSpan = {2, 2};
         other.listMode = !list; other.contentSortColumn = snowdesktop::list_detail_rules::Column::Size;
         other.contentSortAscending = false;
         app.widgets_.push_back(std::move(other));
         DesktopWidget group;
-        group.id = L"ordered-group"; group.type = DesktopWidgetType::CollectionGroup;
+        group.id = L"ordered-group"; group.type = childType == DesktopWidgetType::Collection
+            ? DesktopWidgetType::CollectionGroup : DesktopWidgetType::FileGroup;
         group.title = group.customTitle = L"Ordered group";
         group.childWidgetIds = {L"ordered", L"other"}; group.activeCategoryId = L"ordered";
         group.gridCell = {L"__page:1", 0, 0}; group.gridSpan = {4, 3}; group.listMode = list;
@@ -402,7 +405,12 @@ struct NativeDragIntegrationAccess
     static DragSourceList BeginGroupedMembers(DesktopApp& app, const std::vector<std::wstring>& names)
     {
         for (auto& item : app.items_) item.selected = std::find(names.begin(), names.end(), item.name) != names.end();
-        for (auto& widget : app.widgets_) widget.selected = false;
+        for (auto& widget : app.widgets_)
+        {
+            widget.selected = false;
+            for (auto& entry : widget.folderEntries)
+                entry.selected = std::find(names.begin(), names.end(), entry.name) != names.end();
+        }
         auto* origin = MemberContainer(app, L"ordered-group");
         auto items = origin->GetSelectedItems();
         if (items.size() != names.size()) throw std::runtime_error("native active-group capture requires every selected member");
@@ -761,6 +769,7 @@ int main(int argc, char** argv)
         else if (argc == 3 && std::string_view(argv[1]) == "--member-order") native_member_order_cases::Run(argv[2]);
         else if (argc == 3 && std::string_view(argv[1]) == "--mixed-selection") native_mixed_selection_cases::Run(argv[2]);
         else if (argc == 2 && std::string_view(argv[1]) == "--group-member-order") native_group_member_order_cases::Run();
+        else if (argc == 3 && std::string_view(argv[1]) == "--group-member-order") native_group_member_order_cases::Run(argv[2]);
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }
