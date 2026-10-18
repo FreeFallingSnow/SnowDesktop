@@ -77,12 +77,23 @@ inline void Check(DesktopApp& app, const Target& target, bool icon, const fs::pa
     }
     if (!icon)
     {
+        // The expanded input explicitly releases on empty space after the
+        // only old member. Preserve its position, then append the captured
+        // file/directory batch in source order, irrespective of name/type.
+        auto ordered = outputs;
+        ordered.insert(ordered.begin(), original);
+        Require(std::equal(current.begin(), current.end(), ordered.begin(), ordered.end(),
+            [](const auto& left, const auto& right) { return fs::equivalent(left, right); }),
+            "A18: empty-tail ingress must preserve the old member and captured source order");
         std::vector<fs::path> accessible;
         for (const auto& slot : Access::MemberContainer(app, L"ingress-root")->GetSlots())
             if (const auto* item = slot->GetItem(); item && !item->GetPath().empty()) accessible.emplace_back(item->GetPath());
         Require(accessible.size() == expected.size() && std::all_of(expected.begin(), expected.end(), [&](const auto& path) {
             return std::count_if(accessible.begin(), accessible.end(), [&](const auto& value) { return fs::equivalent(value, path); }) == 1; }),
             "A18: expanded target runtime slots must expose the actual accepted member identities");
+        Require(std::equal(accessible.begin(), accessible.end(), ordered.begin(), ordered.end(),
+            [](const auto& left, const auto& right) { return fs::equivalent(left, right); }),
+            "A18: expanded runtime slots must display the independently specified empty-tail batch order");
     }
     Require(Access::NoIngressPopup(app), "A18: native ingress must stay on the owned message-only window without a popup");
 }
@@ -130,7 +141,7 @@ inline void Run(std::string_view targetName, std::string_view verb)
         fs::create_directories(directory / L"source"); fs::create_directories(directory / L"mapped");
         const auto original = (target.mapped ? directory / L"mapped" : desktop) / L"Existing-Target.txt";
         { std::ofstream stream(original, std::ios::binary); stream << "existing-target"; }
-        std::vector<fs::path> files{directory / L"source/Payload.txt"};
+        std::vector<fs::path> files{directory / L"source/Alpha-Payload.txt"};
         { std::ofstream stream(files[0], std::ios::binary); stream << "ingress-file"; }
         if (count == 2)
         {
@@ -194,10 +205,12 @@ inline void Run(std::string_view targetName, std::string_view verb)
         if (!expected)
             Require(returned == 0 && source->starts == 0 && source->ends == 0 && Read(Access::LayoutPath(app)) == saved,
                 "A18: unsupported, cancelled or dismissed ingress must not lease, submit or alter saved layout");
-        Wait([&] { return Access::FileDropIdle(app) && (!expected || !asynchronous || source->ends == 1); },
+        Wait([&] { return (target.mapped ? Access::FolderDropReadIdle(app) : Access::FileDropIdle(app)) &&
+                (!expected || !asynchronous || source->ends == 1); },
             "A18: native source/read/file completion and refresh must reach idle");
         const auto outputs = Outputs(destination, {original});
         Require(outputs.size() == (expected ? count : 0), "A18: actual destination must receive exactly the selected file outputs");
+        std::vector<fs::path> orderedOutputs;
         for (std::size_t i = 0; i < files.size(); ++i)
         {
             Require(fs::exists(files[i]) == (expected != 2), "A18: only selected Move may remove original source files");
@@ -213,6 +226,7 @@ inline void Run(std::string_view targetName, std::string_view verb)
                 return path.filename() == files[i].filename();
             });
             Require(output != outputs.end(), "A18: actual output must correspond to the selected physical source identity");
+            orderedOutputs.push_back(*output);
             if (expected != 4) Require(Read(i ? *output / L"nested.txt" : *output) == (i ? "ingress-directory" : "ingress-file"),
                 "A18: actual Move/Copy output must preserve file and nested-directory content");
         }
@@ -221,12 +235,12 @@ inline void Run(std::string_view targetName, std::string_view verb)
         if (expected && asynchronous) Require(source->ends == 1 && SUCCEEDED(source->outcome) &&
             source->endEffect == (expected == 2 ? 0u : expected), "A18: exactly one successful source lease must report correct optimized-move ownership");
         if (target.mapped) Require(Outputs(desktop, {}).empty(), "A18: mapped ingress cannot accidentally materialize files on free desktop");
-        Check(app, target, icon, original, outputs, configuration);
+        Check(app, target, icon, original, orderedOutputs, configuration);
         if (expected)
         {
             Require(Access::Save(app), "A18: save accepted actual native target result");
             Access::Load(app); native_drag_async_reload_cases::Refresh(app, true);
-            Check(app, target, icon, original, outputs, configuration);
+            Check(app, target, icon, original, orderedOutputs, configuration);
         }
         Access::StopModel(app); source.Reset();
         for (const auto& output : outputs)

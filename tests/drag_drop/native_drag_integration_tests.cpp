@@ -182,6 +182,12 @@ struct NativeDragIntegrationAccess
     {
         return AsyncIdle(app) && app.shellFileOperationInFlight_ == 0 && app.pendingLandingCaches_.empty();
     }
+    static bool FolderDropReadIdle(const DesktopApp& app)
+    {
+        // Directory ingestion is judged by the delivered members and their
+        // order below, not by the implementation's placement-cache lifetime.
+        return AsyncIdle(app) && app.shellFileOperationInFlight_ == 0 && app.folderReadsPending_.empty();
+    }
     static void ThrowAsyncException() { if (asyncException) std::rethrow_exception(asyncException); }
     static DesktopApp& Scene(bool secondary)
     {
