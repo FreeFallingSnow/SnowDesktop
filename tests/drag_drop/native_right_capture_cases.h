@@ -54,8 +54,12 @@ inline void Run()
         DWORD keys = MK_RBUTTON;
         const bool accepted = Access::ChooseDockFileAction(app, point, keys, [&](HMENU menu, POINT, HWND owner) {
             ++menus;
-            Require(menus == 1 && owner == Access::completionWindow && Access::InternalMenuRetained(app) && Access::FileDropIdle(app) &&
-                Outputs(desktop, files).empty() && Read(Access::LayoutPath(app)) == saved,
+            const bool retained = Access::InternalMenuRetained(app), idle = Access::FileDropIdle(app);
+            const bool noOutputs = Outputs(desktop, files).empty(), sameLayout = Read(Access::LayoutPath(app)) == saved;
+            if (menus != 1 || owner != Access::completionWindow || !retained || !idle || !noOutputs || !sameLayout)
+                std::cerr << "A24 menu-count=" << menus << " owner=" << (owner == Access::completionWindow)
+                    << " retained=" << retained << " idle=" << idle << " noOutputs=" << noOutputs << " sameLayout=" << sameLayout << '\n';
+            Require(menus == 1 && owner == Access::completionWindow && retained && idle && noOutputs && sameLayout,
                 "S02: right menu cannot copy files or save a drop before the decision");
             native_right_drag_cases::Menu(menu, 7);
             if (sequence != 2) Access::ChangeMenuFileSelection(app, keepOriginal);
