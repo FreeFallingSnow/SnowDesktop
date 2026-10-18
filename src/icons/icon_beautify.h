@@ -145,6 +145,10 @@ const std::vector<ShapePoint>& ShapeOutline(IconBeautifyShape shape);
 // user-selected processing mode. This is render metadata, never persisted.
 enum class SourceKind { Image, NativeControl };
 
+// Beautification shapes use a square canvas. Center rectangular sources with
+// transparent padding so the chosen outline never inherits a thumbnail's ratio.
+bool PrepareCanvas(std::vector<std::uint32_t>& pixels, int& width, int& height, bool enabled);
+
 std::vector<std::uint32_t> Render(
     const std::vector<std::uint32_t>& source,
     int width,

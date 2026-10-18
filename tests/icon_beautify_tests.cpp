@@ -299,6 +299,47 @@ int main()
     Check(beautify::Render(source, 64, 64, defaults) == source,
         "disabled beautification returns source pixels unchanged");
 
+    // Production upload and the independent editor both prepare the same
+    // canvas before rendering. A video thumbnail must not turn a selected
+    // circular/square outline into an ellipse/horizontal pill.
+    for (const bool portrait : {false, true})
+    {
+        const int originalW = portrait ? 40 : 96, originalH = portrait ? 96 : 40;
+        const std::vector<std::uint32_t> thumbnail(static_cast<size_t>(originalW) * originalH, 0xffff0000);
+        auto unchanged = thumbnail; int rawW = originalW, rawH = originalH;
+        Check(beautify::PrepareCanvas(unchanged, rawW, rawH, false) && unchanged == thumbnail && rawW == originalW && rawH == originalH,
+            "turning beautification off preserves the original thumbnail dimensions and pixels");
+        for (int mode : {0, 1, 2}) for (const auto shape : shapes)
+        {
+            auto prepared = thumbnail; int width = originalW, height = originalH;
+            Check(beautify::PrepareCanvas(prepared, width, height, true) && width == 96 && height == 96,
+                "all processing modes and chosen shapes use a square canvas for non-square sources");
+            auto style = beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
+            style.mode = mode; style.shape = shape; style.backgroundSource = 0;
+            style.glassEnabled = false; style.outlineEnabled = false; style.shadowStrength = 0;
+            style.textureHighlightStrength = 0; style.textureShadeStrength = 0; style.textureEdgeHighlight = false;
+            style.backgroundStartR = style.backgroundEndR = 0;
+            style.backgroundStartG = style.backgroundEndG = 0;
+            style.backgroundStartB = style.backgroundEndB = 1;
+            style.backgroundOpacity = 1; style.gradientEnabled = false;
+            const auto rendered = beautify::Render(prepared, width, height, style);
+            int left = width, right = -1, top = height, bottom = -1;
+            int redLeft = width, redRight = -1, redTop = height, redBottom = -1;
+            for (int y = 0; y < height; ++y) for (int x = 0; x < width; ++x)
+            {
+                const auto pixel = rendered[static_cast<size_t>(y) * width + x];
+                if ((pixel >> 24) > 32) { left = std::min(left, x); right = std::max(right, x); top = std::min(top, y); bottom = std::max(bottom, y); }
+                if (((pixel >> 16) & 255) > 200 && (pixel & 255) < 30)
+                { redLeft = std::min(redLeft, x); redRight = std::max(redRight, x); redTop = std::min(redTop, y); redBottom = std::max(redBottom, y); }
+            }
+            Check(std::abs((right - left) - (bottom - top)) <= 2,
+                "the visible chosen outline keeps equal width and height for horizontal and vertical thumbnails");
+            const double redRatio = double(redRight - redLeft + 1) / std::max(1, redBottom - redTop + 1);
+            Check(redRight >= redLeft && std::abs(redRatio - double(originalW) / originalH) < .13,
+                "thumbnail content keeps its original aspect ratio inside the chosen outline");
+        }
+    }
+
     IconBeautifySettings settings = defaults;
     settings.enabled = true;
     std::set<std::uint64_t> renderHashes;

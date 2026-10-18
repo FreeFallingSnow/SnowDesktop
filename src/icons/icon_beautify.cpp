@@ -17,6 +17,21 @@
 
 namespace snowdesktop::icon_beautify
 {
+bool PrepareCanvas(std::vector<std::uint32_t>& pixels, int& width, int& height, bool enabled)
+{
+    if (width <= 0 || height <= 0 || pixels.size() != static_cast<size_t>(width) * height) return false;
+    if (!enabled || width == height) return true;
+    const int edge = std::max(width, height);
+    if (static_cast<std::uint64_t>(edge) * edge > 16ull * 1024 * 1024) return false;
+    std::vector<std::uint32_t> square(static_cast<size_t>(edge) * edge, 0);
+    const int left = (edge - width) / 2, top = (edge - height) / 2;
+    for (int y = 0; y < height; ++y)
+        std::copy_n(pixels.data() + static_cast<size_t>(y) * width, width,
+            square.data() + static_cast<size_t>(y + top) * edge + left);
+    width = height = edge; pixels = std::move(square);
+    return true;
+}
+
 InteractionAction AdvanceContinuousPreview(ContinuousPreviewState& state,
     bool changed, bool deactivatedAfterEdit, std::uint32_t now)
 {

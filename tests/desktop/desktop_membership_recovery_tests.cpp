@@ -1,9 +1,11 @@
 #include "desktop/desktop_membership_recovery.h"
+#include "icons/icon_customization_lifecycle.h"
 #include "desktop/desktop_item_reference_migration.h"
 #include "data/layout_storage.h"
 #include "widgets/widget_pair_drop.h"
 
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <sstream>
@@ -252,6 +254,40 @@ void TestMergeAndCollectionDeletion()
 
 void TestStorageContracts(const std::filesystem::path& root)
 {
+    {
+        const std::string target = "item:C:\\Desktop\\易标\"工具.lnk";
+        const auto pending = storage::SerializeMissingIconTargets({{target, 2200000000}});
+        storage::Document parsed;
+        Expect(storage::ParseDocument("{}", parsed) && parsed.missingIconTargets.empty(),
+            "legacy layouts do not invent icon-customization deletion deadlines");
+        Expect(storage::ParseDocument("{\"missingIconTargets\":" + pending + "}", parsed) &&
+            parsed.missingIconTargets.size() == 1 && parsed.missingIconTargets[0].target == target &&
+            parsed.missingIconTargets[0].missingSince == 2200000000,
+            "icon-customization deadlines round-trip Unicode, quoting and post-2038 timestamps");
+        const auto guarded = root / L"icon-customization-retention.json";
+        Expect(storage::SaveDocument(guarded, "{\"missingIconTargets\":" + pending + "}"),
+            "pending customization deadlines use the atomic layout save path");
+        for (const auto* invalid : {"null", "[1]", R"([{"target":"item:a","missingSince":0}])",
+            R"([{"target":"item:a","missingSince":-1}])", R"([{"target":"item:a","missingSince":1.5}])",
+            R"([{"target":"item:a","missingSince":"42"}])", R"([{"target":"item:a","missingSince":9007199254740992}])",
+            R"([{"target":"widget:","missingSince":42}])",
+            R"([{"target":"item:a","missingSince":42},{"target":"item:a","missingSince":43}])"})
+            Expect(!storage::SaveDocument(guarded, std::string("{\"missingIconTargets\":") + invalid + "}"),
+                "malformed or duplicate customization deadlines cannot replace valid saved state");
+        Expect(storage::LoadDocument(guarded, parsed).status == storage::LoadStatus::LoadedPrimary &&
+            parsed.missingIconTargets.size() == 1 && parsed.missingIconTargets[0].missingSince == 2200000000,
+            "restarting after a rejected save keeps the original customization expiry");
+        namespace lifecycle = snowdesktop::icon_customization;
+        const auto source = root / L"restored-icon-source.tmp";
+        { std::ofstream file(source); file << "source"; }
+        Expect(lifecycle::Probe(source) == lifecycle::Presence::Present,
+            "the worker observes an existing file independently of folder enumeration");
+        std::filesystem::remove(source);
+        Expect(lifecycle::Probe(source) == lifecycle::Presence::Missing,
+            "the worker confirms deletion of a source file on accessible local storage");
+        Expect(lifecycle::Probe(root / L"removed-tree" / L"source.tmp") == lifecycle::Presence::Missing,
+            "deleting the whole containing folder also starts expiry for its customizations");
+    }
     const std::string prefix = R"({"widgets":[{"id":"collection","page":"primary","x":0,"y":0,"missingItems":)";
     const std::string suffix = "}]}";
     storage::Document decoded;

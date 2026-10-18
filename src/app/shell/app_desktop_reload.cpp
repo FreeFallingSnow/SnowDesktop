@@ -737,6 +737,9 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
     shellReloadPending_ = false;
     shellRefreshScope_.Full();
     reloading_ = true;
+    ++iconCustomizationRevision_;
+    shellModelWork_.Cancel(L"icon-customization-cleanup");
+    nextIconCustomizationProbe_ = 0;
     dataCleanupWorker_.Cancel();
     ULONGLONG stageStarted = GetTickCount64();
     extern inline const GridPage* FindGridPage(const std::vector<GridPage>& pages, const std::wstring& pageId);
@@ -1036,6 +1039,7 @@ void DesktopApp::ReloadItems(bool reloadLayoutFromDisk,
         dataCleanupHasCompleteModel_ = true;
         SynchronizeLargeIconAssets();
         ScheduleDataCleanup();
+        ScheduleIconCustomizationCleanup();
     }
 }
 

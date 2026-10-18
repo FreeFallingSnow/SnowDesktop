@@ -7,6 +7,104 @@
 #include <utility>
 #include "icons/icon_control_source.h"
 
+bool DesktopApp::IsActiveIconCustomization(const std::wstring& target) const
+{
+    return snowdesktop::icon_customization::Visible(target, missingIconTargets_);
+}
+
+bool DesktopApp::FlushExpiredIconCustomizations()
+{
+    const auto now = snowdesktop::icon_customization::NowSeconds();
+    if (std::none_of(missingIconTargets_.begin(), missingIconTargets_.end(),
+        [now](const auto& entry) { return snowdesktop::icon_customization::Expired(entry.second, now); })) return true;
+    // Explicit edits must not clear an old deadline and revive an expired
+    // sibling customization before the asynchronous maintenance result arrives.
+    if (!SaveLayoutSlots()) return false;
+    ++iconAppearanceRevision_;
+    ClearStyledIconCache(); ClearDockAppearanceImages();
+    return true;
+}
+
+bool DesktopApp::SaveIconAppearanceReferences()
+{
+    snowdesktop::themes::Library recorded;
+    std::string error;
+    const bool saved = snowdesktop::themes::Transact(snowdesktop::themes::LibraryPath(), [&](auto& latest, auto& detail) {
+        for (auto it = latest.references.begin(); it != latest.references.end();)
+            if (it->first.starts_with("icon-object/")) it = latest.references.erase(it); else ++it;
+        for (const auto& [target, record] : iconAppearanceOverrides_)
+        {
+            if (record.themeId.empty()) continue;
+            const auto binding = "icon-object/" + WideToUtf8(target);
+            if (binding.size() > 512) continue;
+            if (!snowdesktop::themes::Select(latest, binding, record.themeId,
+                snowdesktop::themes::Kind::Icon, snowdesktop::themes::Components, detail)) return false;
+        }
+        return true;
+    }, recorded, error);
+    iconAppearanceReferencesDirty_ = !saved;
+    return saved;
+}
+
+void DesktopApp::ScheduleIconCustomizationCleanup()
+{
+    using namespace snowdesktop::icon_customization;
+    if (exitRequested_ || !desktopItemsReady_ || !dataCleanupHasCompleteModel_ || reloading_ ||
+        layoutReload_.Pending() || shellFileOperationInFlight_ || dragSession_.HasContext() ||
+        dragDropController_.IsTransportActive() || mouseDown_ || widgetAction_ != WidgetAction::None) return;
+    const auto tick = GetTickCount64();
+    if (tick < nextIconCustomizationProbe_) return;
+    nextIconCustomizationProbe_ = tick + 5000;
+    if (iconAppearanceReferencesDirty_) (void)SaveIconAppearanceReferences();
+    std::map<std::wstring, std::string> targets;
+    for (const auto& [target, record] : iconAppearanceOverrides_) { (void)record; targets.try_emplace(target); }
+    for (const auto& [target, asset] : iconOverrides_) targets[target] = asset;
+    if (targets.empty() && missingIconTargets_.empty()) return;
+    struct Request { Observation observation; std::filesystem::path path, asset; };
+    std::vector<Request> requests;
+    const auto library = std::filesystem::path(GetDataSubdirectoryPath(L"icon-library"));
+    for (const auto& [target, asset] : targets)
+    {
+        Request request;
+        request.observation.target = target;
+        request.observation.object = IsIconOverrideTarget(target) ? Presence::Present : Presence::Missing;
+        if (target.starts_with(L"item:"))
+        {
+            const std::filesystem::path path(target.substr(5));
+            if (path.is_absolute()) request.path = path;
+        }
+        if (!asset.empty()) request.asset = snowdesktop::IconAssetPath(library, asset);
+        requests.push_back(std::move(request));
+    }
+    const auto revision = iconCustomizationRevision_;
+    const auto shellRevision = shellRefreshRevision_.Current();
+    shellModelWork_.Submit(L"icon-customization-cleanup", [requests = std::move(requests)] {
+        std::vector<Observation> observations;
+        for (auto request : requests)
+        {
+            if (!request.path.empty()) request.observation.object = Probe(request.path);
+            if (!request.asset.empty()) request.observation.asset = Probe(request.asset);
+            observations.push_back(std::move(request.observation));
+        }
+        return observations;
+    }, [this, revision, shellRevision](const auto& observations) {
+        if (exitRequested_ || reloading_ || layoutReload_.Pending() || shellFileOperationInFlight_ ||
+            dragSession_.HasContext() || dragDropController_.IsTransportActive() || mouseDown_ ||
+            widgetAction_ != WidgetAction::None || revision != iconCustomizationRevision_ ||
+            !shellRefreshRevision_.IsCurrent(shellRevision)) return;
+        const auto previousAppearanceCount = iconAppearanceOverrides_.size();
+        if (!Reconcile(iconOverrides_, iconAppearanceOverrides_, missingIconTargets_, observations, NowSeconds())) return;
+        iconAppearanceReferencesDirty_ |= previousAppearanceCount != iconAppearanceOverrides_.size();
+        iconAppearancePreview_.Clear(); iconAppearanceTarget_.clear(); ++iconAppearanceSession_; ++iconAppearanceRevision_;
+        (void)SaveLayoutSlots();
+        if (iconAppearanceReferencesDirty_) (void)SaveIconAppearanceReferences();
+        ClearStyledIconCache(); ClearDockAppearanceImages();
+        InvalidateDragStaticScene(); InvalidateDockRects(TRUE);
+        if (hwnd_) InvalidateRect(hwnd_, nullptr, FALSE);
+        if (floatingPopupHwnd_) InvalidateRect(floatingPopupHwnd_, nullptr, FALSE);
+    }, controlHwnd_, kBackgroundShellReadyMessage);
+}
+
 std::wstring DesktopApp::ResolveIconTarget(std::wstring_view identity) const
 {
     using namespace snowdesktop::icon_override;
@@ -27,13 +125,14 @@ snowdesktop::IconBeautifySettings DesktopApp::ResolveIconAppearance(std::wstring
 }
 const snowdesktop::IconAppearanceRecord* DesktopApp::FindIconAppearance(std::wstring_view target) const
 {
+    if (missingIconTargets_.contains(std::wstring(target))) return nullptr;
     const auto found = iconAppearanceOverrides_.find(std::wstring(target));
     return iconAppearancePreview_.Effective(target, found == iconAppearanceOverrides_.end() ? nullptr : &found->second);
 }
 
 void DesktopApp::OpenIconAppearance(const std::wstring& target)
 {
-    if (!IsIconOverrideTarget(target)) return;
+    if (!IsIconOverrideTarget(target) || !IsActiveIconCustomization(target)) return;
     auto route = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::AppearanceIconBeautification);
     route.itemKey = target;
     ShowSettingsWindow(std::move(route));
@@ -67,7 +166,9 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
     themes::Library library; std::string error;
     if (!themes::Load(themes::LibraryPath(), library, error))
     { result.error = "iconLibrary.unavailable"; return result; }
+    if (!FlushExpiredIconCustomizations()) { result.error = "iconLibrary.saveFailed"; return result; }
     const auto previous = iconAppearanceOverrides_;
+    const auto previousMissing = missingIconTargets_;
     bool changed = false, previewChanged = false;
     if (request.action == "themes")
     {
@@ -86,7 +187,7 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
     }
     else if (request.action == "begin")
     {
-        if (!IsIconOverrideTarget(request.target)) { result.error = "iconLibrary.stale"; return result; }
+        if (!IsIconOverrideTarget(request.target) || !IsActiveIconCustomization(request.target)) { result.error = "iconLibrary.stale"; return result; }
         previewChanged = iconAppearancePreview_.Clear();
         iconAppearanceTarget_ = request.target; ++iconAppearanceSession_;
     }
@@ -97,7 +198,7 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
         const bool independent = request.action == "apply" || request.action == "previewApply";
         const bool guarded = preview || independent || request.session != 0;
         if ((guarded && !icon_appearance::CurrentEdit(request, iconAppearanceTarget_, iconAppearanceSession_, iconAppearanceRevision_)) ||
-            ((preview || independent) && !IsIconOverrideTarget(request.target)))
+            ((preview || independent) && (!IsIconOverrideTarget(request.target) || !IsActiveIconCustomization(request.target))))
         { result.error = "iconLibrary.stale"; return result; }
         if (!independent)
         {
@@ -119,30 +220,18 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
             IconAppearanceRecord record{request.target, IconOverrideTargetName(request.target),
                 icon_beautify::Normalize(request.settings), request.themeId, true, request.followGlobalTheme};
             if (preview) previewChanged = iconAppearancePreview_.Update(request, iconAppearanceTarget_, iconAppearanceSession_, iconAppearanceRevision_, std::move(record));
-            else { iconAppearanceOverrides_[request.target] = std::move(record); changed = true; }
+            else { iconAppearanceOverrides_[request.target] = std::move(record); missingIconTargets_.erase(request.target); changed = true; }
         }
     }
     else if (request.action != "read" && request.action != "preview") { result.error = "iconLibrary.invalid"; return result; }
     if (changed)
     {
         if (!SaveLayoutSlots())
-        { iconAppearanceOverrides_ = previous; result.error = "iconLibrary.saveFailed"; return result; }
-        themes::Library recorded;
-        const bool referencesSaved = themes::Transact(themes::LibraryPath(), [&](auto& latest, auto& detail) {
-            for (auto it = latest.references.begin(); it != latest.references.end();)
-                if (it->first.starts_with("icon-object/")) it = latest.references.erase(it); else ++it;
-            for (const auto& [target, record] : iconAppearanceOverrides_)
-            {
-                if (record.themeId.empty()) continue;
-                const auto binding = "icon-object/" + WideToUtf8(target);
-                if (binding.size() > 512) continue; // Layout snapshot still owns long Shell identities.
-                if (!themes::Select(latest, binding, record.themeId, themes::Kind::Icon, themes::Components, detail)) return false;
-            }
-            return true;
-        }, recorded, error);
+        { iconAppearanceOverrides_ = previous; missingIconTargets_ = previousMissing; result.error = "iconLibrary.saveFailed"; return result; }
+        const bool referencesSaved = SaveIconAppearanceReferences();
         if (!referencesSaved)
         {
-            iconAppearanceOverrides_ = previous; (void)SaveLayoutSlots();
+            iconAppearanceOverrides_ = previous; missingIconTargets_ = previousMissing; (void)SaveLayoutSlots();
             result.error = "iconLibrary.saveFailed"; return result;
         }
         ++iconAppearanceRevision_;
@@ -158,6 +247,7 @@ snowdesktop::IconAppearanceSnapshot DesktopApp::EditIconAppearance(snowdesktop::
     { result.succeeded = true; result.session = iconAppearanceSession_; result.revision = iconAppearanceRevision_; return result; }
     if (request.action != "preview") for (const auto& [target, entry] : iconAppearanceOverrides_)
     {
+        if (!IsActiveIconCustomization(target)) continue;
         auto record = entry;
         record.settings = icon_appearance::Resolve(iconBeautifySettings_, &entry, false, false);
         record.available = IsIconOverrideTarget(target);

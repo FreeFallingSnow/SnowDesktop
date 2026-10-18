@@ -42,6 +42,12 @@ struct MissingItemRecord
     std::int64_t missingSince = 0;
 };
 
+struct MissingIconTargetRecord
+{
+    std::string target;
+    std::int64_t missingSince = 0;
+};
+
 struct WidgetRecord
 {
     std::string id;
@@ -205,6 +211,7 @@ struct Document
     std::optional<float> iconBeautifyShadowStrength;
     std::vector<std::pair<std::string, std::string>> iconOverrides;
     std::vector<IconAppearanceRecord> iconBeautifyOverrides;
+    std::vector<MissingIconTargetRecord> missingIconTargets;
     std::vector<PageRecord> pages;
     std::vector<ItemRecord> items;
     std::vector<WidgetRecord> widgets;
@@ -237,6 +244,7 @@ bool SaveDocument(const std::filesystem::path& layoutPath,
     std::string_view contents, std::string* error = nullptr);
 std::string SerializeDockLayout(const DockLayoutSettings& settings);
 std::string SerializeMissingItems(const std::vector<MissingItemRecord>& items);
+std::string SerializeMissingIconTargets(const std::vector<MissingIconTargetRecord>& targets);
 // Clear placement records and reset Dock layout while preserving appearance.
 bool BuildClearedDocument(std::string_view contents, std::string& cleared,
     std::string* error = nullptr);

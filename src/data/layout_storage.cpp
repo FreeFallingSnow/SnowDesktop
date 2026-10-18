@@ -719,6 +719,22 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             return Fail(error, "iconBeautifyOverrides", "invalid or duplicate target/style");
         decoded.iconBeautifyOverrides.push_back(std::move(record));
     }
+    const JsonValue* missingIconTargets = nullptr;
+    if (!ReadObjectArray(root, "missingIconTargets", missingIconTargets, error)) return false;
+    std::set<std::string> missingTargets;
+    if (missingIconTargets) for (const auto& object : missingIconTargets->array)
+    {
+        MissingIconTargetRecord record;
+        if (!ReadRequiredString(object, "target", "missingIconTargets.target", record.target, error)) return false;
+        const auto* stamp = object.Find("missingSince");
+        if (!icon_appearance::ValidTarget(icon_appearance::ToWide(record.target)) ||
+            !missingTargets.insert(record.target).second || !stamp || !stamp->IsNumber() ||
+            !std::isfinite(stamp->number) || stamp->number <= 0 ||
+            stamp->number > 9007199254740991.0 || std::floor(stamp->number) != stamp->number)
+            return Fail(error, "missingIconTargets", "invalid or duplicate target/timestamp");
+        record.missingSince = static_cast<std::int64_t>(stamp->number);
+        decoded.missingIconTargets.push_back(std::move(record));
+    }
     std::optional<int> sourceSchemaVersion;
     if (!ReadOptionalInteger(root, "layoutSchemaVersion",
             "layoutSchemaVersion", sourceSchemaVersion, error))
@@ -1028,6 +1044,22 @@ std::string SerializeMissingItems(const std::vector<MissingItemRecord>& items)
         WriteJsonString(output, item.key);
         output << ",\"index\":" << item.index
                << ",\"missingSince\":" << item.missingSince << '}';
+    }
+    output << ']';
+    return output.str();
+}
+
+std::string SerializeMissingIconTargets(const std::vector<MissingIconTargetRecord>& targets)
+{
+    std::ostringstream output;
+    output.imbue(std::locale::classic());
+    output << '[';
+    for (size_t index = 0; index < targets.size(); ++index)
+    {
+        if (index) output << ',';
+        output << "{\"target\":";
+        WriteJsonString(output, targets[index].target);
+        output << ",\"missingSince\":" << targets[index].missingSince << '}';
     }
     output << ']';
     return output.str();

@@ -42,11 +42,14 @@ void DesktopApp::DrainIconLibrary()
 snowdesktop::IconLibrarySnapshot DesktopApp::EditIconLibrary(snowdesktop::IconLibraryRequest request)
 {
     auto& state = EnsureIconLibrary(); DrainIconLibrary();
+    if (!FlushExpiredIconCustomizations())
+    { auto result = state.snapshot; result.succeeded = false; result.error = "iconLibrary.saveFailed"; return result; }
     std::unordered_map<std::string, std::vector<std::wstring>> uses;
     const auto retain = [&](const std::string& id, const std::wstring& name) {
         if (!id.empty()) uses[id].push_back(name);
     };
-    for (const auto& [target, asset] : iconOverrides_) retain(asset, IconOverrideTargetName(target));
+    for (const auto& [target, asset] : iconOverrides_)
+        if (IsActiveIconCustomization(target)) retain(asset, IconOverrideTargetName(target));
     for (const auto& widget : widgets_) retain(widget.dockIconAssetId, widget.title);
     const auto retainLarge = [&](const auto& config, const std::wstring& name) {
         retain(config.imageAssetId, name); retain(config.foregroundImageAssetId, name);
@@ -366,7 +369,7 @@ std::wstring DesktopApp::IconOverrideTargetName(const std::wstring& target) cons
 }
 void DesktopApp::OpenIconOverrideLibrary(const std::wstring& target)
 {
-    if (!IsIconOverrideTarget(target)) return;
+    if (!IsIconOverrideTarget(target) || !IsActiveIconCustomization(target)) return;
     auto& state = EnsureIconLibrary(); state.target = target; ++state.session;
     auto route = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::IconLibrary);
     route.itemKey = target; ShowSettingsWindow(std::move(route));
@@ -374,6 +377,8 @@ void DesktopApp::OpenIconOverrideLibrary(const std::wstring& target)
 bool DesktopApp::SetIconOverride(const std::wstring& target, const std::string& assetId)
 {
     if (!IsIconOverrideTarget(target)) return false;
+    if (!assetId.empty() && !IsActiveIconCustomization(target)) return false;
+    if (!FlushExpiredIconCustomizations()) return false;
     if (target.starts_with(L"widget:")) return SetDockIconAsset(target.substr(7), assetId);
     auto& state = EnsureIconLibrary();
     if (!assetId.empty() && (state.busy || !snowdesktop::IsIconAssetId(assetId) ||
@@ -381,10 +386,13 @@ bool DesktopApp::SetIconOverride(const std::wstring& target, const std::string& 
             [&](const auto& entry) { return entry.id == assetId && !entry.missing; }))) return false;
     const auto found = iconOverrides_.find(target);
     const auto previous = found == iconOverrides_.end() ? std::string{} : found->second;
+    const auto previousMissing = missingIconTargets_;
     if (assetId.empty()) iconOverrides_.erase(target); else iconOverrides_[target] = assetId;
+    if (!assetId.empty()) missingIconTargets_.erase(target);
     if (!SaveLayoutSlots())
     {
         if (previous.empty()) iconOverrides_.erase(target); else iconOverrides_[target] = previous;
+        missingIconTargets_ = previousMissing;
         return false;
     }
     if (assetId.empty()) state.bitmaps.Forget(target);
@@ -399,7 +407,7 @@ ID2D1Bitmap* DesktopApp::GetSmallCustomIcon(ID2D1RenderTarget* context, std::wst
     if (identity.empty()) return nullptr;
     const auto target = ResolveIconTarget(identity);
     const auto found = iconOverrides_.find(target);
-    if (found != iconOverrides_.end())
+    if (found != iconOverrides_.end() && !missingIconTargets_.contains(target))
         if (auto* custom = GetDockCustomIcon(context, found->second, pixels, identity)) return custom;
     if (snowdesktop::icon_control::UsesBitmap(identity, FindIconAppearance(target) != nullptr, ResolveIconAppearance(identity)))
     {

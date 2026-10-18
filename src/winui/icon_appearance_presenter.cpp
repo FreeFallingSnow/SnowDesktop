@@ -26,10 +26,12 @@ void SetPreview(const c::Image& image, const icon_image::Image& source, const Ic
 {
     const auto& style = requested;
     if (source.width <= 0 || source.height <= 0 || source.pixels.empty()) { image.Source(nullptr); return; }
-    const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(source.pixels, source.width, source.height) : std::nullopt;
-    const auto pixels = icon_beautify::Render(source.pixels, source.width, source.height, style, edge,
+    auto prepared = source;
+    if (!icon_beautify::PrepareCanvas(prepared.pixels, prepared.width, prepared.height, style.enabled)) { image.Source(nullptr); return; }
+    const auto edge = style.mode == 0 ? icon_beautify::DetectPlateFill(prepared.pixels, prepared.width, prepared.height) : std::nullopt;
+    const auto pixels = icon_beautify::Render(prepared.pixels, prepared.width, prepared.height, style, edge,
         native ? icon_beautify::SourceKind::NativeControl : icon_beautify::SourceKind::Image);
-    x::Media::Imaging::WriteableBitmap bitmap(source.width, source.height);
+    x::Media::Imaging::WriteableBitmap bitmap(prepared.width, prepared.height);
     std::uint8_t* buffer = nullptr;
     winrt::check_hresult(bitmap.PixelBuffer().as<::Windows::Storage::Streams::IBufferByteAccess>()->Buffer(&buffer));
     memcpy(buffer, pixels.data(), pixels.size() * sizeof(std::uint32_t));
@@ -47,6 +49,7 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
     c::Grid listContent;
     c::Button edit, inherit;
     c::InfoBar feedback;
+    x::DispatcherTimer timer;
     IconAppearanceSnapshot snapshot;
     c::ContentDialog dialog{nullptr};
     std::function<void()> cancelEditor;
@@ -88,6 +91,10 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
     void Hook()
     {
         const auto weak = weak_from_this();
+        timer.Interval(std::chrono::seconds(2));
+        timer.Tick([weak](const auto&, const auto&) {
+            if (const auto self = weak.lock(); self && self->active && !self->dialog) self->Refresh();
+        });
         root.Loaded([weak](const auto&, const auto&) { if (const auto self = weak.lock()) self->OpenPending(); });
         query.TextChanged([weak](const auto&, const auto&) { if (const auto self = weak.lock()) self->Filter(); });
         list.SelectionChanged([weak](const auto&, const auto&) { if (const auto self = weak.lock()) self->Buttons(); });
@@ -151,6 +158,17 @@ struct IconAppearancePresenter::Impl : std::enable_shared_from_this<Impl>
         if (!active || !action || closed) return;
         const auto result = action({});
         if (!result.succeeded) { Error(result.error); return; }
+        if (result.revision == snapshot.revision && result.entries.size() == snapshot.entries.size() &&
+            std::equal(result.entries.begin(), result.entries.end(), snapshot.entries.begin(),
+                [](const auto& left, const auto& right) {
+                    return left.target == right.target && left.name == right.name && left.available == right.available &&
+                        left.themeId == right.themeId && left.followGlobalTheme == right.followGlobalTheme &&
+                        icon_beautify::Equal(left.settings, right.settings);
+                }) && result.themes.size() == snapshot.themes.size() &&
+            std::equal(result.themes.begin(), result.themes.end(), snapshot.themes.begin(),
+                [](const auto& left, const auto& right) {
+                    return left.id == right.id && left.name == right.name && icon_beautify::Equal(left.settings, right.settings);
+                })) return;
         snapshot = result; Filter();
     }
     void Filter()
@@ -357,7 +375,7 @@ IconAppearancePresenter::IconAppearancePresenter(Localize localize, IconAppearan
 IconAppearancePresenter::~IconAppearancePresenter() { Deactivate(); impl_->closed = true; }
 c::StackPanel IconAppearancePresenter::Content() const { return impl_->root; }
 void IconAppearancePresenter::Activate(std::wstring target)
-{ impl_->active = true; impl_->Refresh(); if (!target.empty()) impl_->RequestEdit(std::move(target)); }
+{ impl_->active = true; impl_->Refresh(); impl_->timer.Start(); if (!target.empty()) impl_->RequestEdit(std::move(target)); }
 void IconAppearancePresenter::ApplyGlobalStyle(const IconBeautifySettings& global)
 {
     if (icon_beautify::Equal(impl_->snapshot.globalSettings, global)) return;
@@ -370,6 +388,6 @@ void IconAppearancePresenter::ApplyGlobalStyle(const IconBeautifySettings& globa
     if (impl_->active) impl_->Filter();
 }
 void IconAppearancePresenter::Deactivate()
-{ impl_->active = false; impl_->pendingTarget.clear(); if (impl_->cancelEditor) { auto cancel = impl_->cancelEditor; cancel(); } }
+{ impl_->active = false; impl_->timer.Stop(); impl_->pendingTarget.clear(); if (impl_->cancelEditor) { auto cancel = impl_->cancelEditor; cancel(); } }
 void IconAppearancePresenter::RefreshLocalizedText() { impl_->LocalizeText(); impl_->Filter(); }
 }

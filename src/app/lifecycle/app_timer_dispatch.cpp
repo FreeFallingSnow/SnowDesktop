@@ -605,6 +605,7 @@ void DesktopApp::OnTimer(WPARAM timerId)
                 widgets_, snowdesktop::desktop_membership_recovery::NowSeconds()))
             SaveLayoutSlots();
         RefreshIconBitmapResolution();
+        ScheduleIconCustomizationCleanup();
         // A failed mapped-folder icon has a retry deadline. Wake a stationary
         // Dock from the existing maintenance timer too, not only from hover or
         // unrelated repaints. Read advances an expired ticket once; the async

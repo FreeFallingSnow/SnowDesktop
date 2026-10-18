@@ -1,6 +1,7 @@
 #include "icons/icon_appearance_rules.h"
 #include "icons/icon_control_source.h"
 #include "icons/icon_beautify_preview.h"
+#include "icons/icon_customization_lifecycle.h"
 #include <iostream>
 
 int RunIconAppearanceTests()
@@ -12,6 +13,56 @@ int RunIconAppearanceTests()
         if (!value) { ++failures; std::cerr << "FAILED: " << message << '\n'; }
     };
     const auto global = icon_beautify::MakePreset(IconBeautifyPreset::DefaultBeautify);
+    {
+        namespace lifecycle = icon_customization;
+        using lifecycle::Presence;
+        constexpr std::int64_t start = 1800000000;
+        const std::wstring target = L"item:C:\\Desktop\\return.lnk";
+        std::map<std::wstring, std::string> replacements{{target, "original-asset"}};
+        std::map<std::wstring, IconAppearanceRecord> appearances{{target, {}}};
+        lifecycle::MissingTargets missing;
+        const auto reconcile = [&](Presence object, Presence asset, std::int64_t now) {
+            return lifecycle::Reconcile(replacements, appearances, missing, {{target, object, asset}}, now);
+        };
+        check(!reconcile(Presence::Unknown, Presence::Present, start) && missing.empty(),
+            "failed enumeration or inaccessible storage never establishes a deletion deadline");
+        check(reconcile(Presence::Missing, Presence::Present, start) && replacements.contains(target) && appearances.contains(target),
+            "deleted targets retain both customizations during the recovery period");
+        check(!lifecycle::Visible(target, missing) && lifecycle::Visible(target, {}),
+            "confirmed missing objects are hidden while unenumerated objects keep their existing presentation until absence is confirmed");
+        check(!reconcile(Presence::Missing, Presence::Present, start + 60) && missing.at(target) == start,
+            "repeated deletion observations do not extend the original 24-hour deadline");
+        // The same persisted timestamp is supplied after a restart.
+        const auto persisted = missing;
+        missing = persisted;
+        check(reconcile(Presence::Present, Presence::Present, start + 86399) && missing.empty() &&
+            replacements.at(target) == "original-asset" && appearances.contains(target) && lifecycle::Visible(target, missing),
+            "returning before expiry restores the original image and independent style");
+        reconcile(Presence::Missing, Presence::Present, start + 90000);
+        check(reconcile(Presence::Present, Presence::Missing, start + 90001) && !replacements.contains(target) &&
+            appearances.contains(target) && missing.empty(),
+            "a removed replacement asset restores the default image while preserving the independent style");
+        replacements[target] = "new-asset";
+        reconcile(Presence::Missing, Presence::Present, start + 100000);
+        check(!reconcile(Presence::Present, Presence::Unknown, start + 100001) && missing.contains(target),
+            "an unreadable image source cannot reactivate an unverified replacement");
+        check(reconcile(Presence::Present, Presence::Present, start + 186400) && replacements.empty() && appearances.empty() && missing.empty(),
+            "returning at the exact 24-hour boundary uses defaults instead of reviving expired customizations");
+        appearances[target] = {};
+        reconcile(Presence::Missing, Presence::Unknown, start);
+        check(lifecycle::PruneExpired(replacements, appearances, missing, start + 86400) && appearances.empty(),
+            "maintenance also expires style-only objects without a desktop refresh");
+        replacements[target] = "retained"; appearances[target] = {}; missing[target] = start + 500;
+        check(lifecycle::PruneExpired(replacements, appearances, missing, start) && missing.at(target) == start,
+            "clock rollback is bounded instead of extending a future deletion timestamp indefinitely");
+        replacements.clear(); appearances.clear();
+        check(lifecycle::PruneExpired(replacements, appearances, missing, start) && missing.empty(),
+            "explicit removal of both customizations also removes the recovery metadata");
+        const std::wstring folderItem = L"item:C:\\Folder\\unopened.txt";
+        appearances[folderItem] = {};
+        check(!lifecycle::Reconcile(replacements, appearances, missing, {{folderItem, Presence::Present, Presence::Unknown}}, start) && missing.empty(),
+            "an existing file in an unloaded mapped folder never acquires a deletion deadline");
+    }
     IconAppearanceRecord own; own.target = L"control:start";
     own.settings = icon_beautify::MakePreset(IconBeautifyPreset::FrostedGlassDark); own.settings.mode = 1;
     auto disabledGlobal = global; disabledGlobal.enabled = false;

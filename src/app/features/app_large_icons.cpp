@@ -256,7 +256,7 @@ snowdesktop::LargeIconConfig DesktopApp::MakeLargeIconDefaults(size_t index)
         GetPrivateProfileStringW(L"InternetShortcut", L"URL", L"", url, static_cast<DWORD>(std::size(url)), items_[index].parsingName.c_str());
         if (snowdesktop::large_icon_steam::AppId(url)) { config.backgroundStyle = -2; config.content = 2; config.fit = 1; }
         const auto target = ResolveIconTarget(items_[index].layoutKey);
-        if (const auto replacement = iconOverrides_.find(target); replacement != iconOverrides_.end())
+        if (const auto replacement = iconOverrides_.find(target); replacement != iconOverrides_.end() && !missingIconTargets_.contains(target))
             snowdesktop::large_icon_preset_rules::UseLibraryIcon(config, replacement->second);
     }
     config.effect = snowdesktop::large_icon_preset_rules::DefaultEffect(config);

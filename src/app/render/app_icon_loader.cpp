@@ -121,6 +121,8 @@ void DesktopApp::StartDemoIconLoader()
                     result->pixels, result->width, result->height) &&
                 task.beautify.enabled)
             {
+                if (!snowdesktop::icon_beautify::PrepareCanvas(result->pixels, result->width, result->height, true))
+                    result->pixels.clear();
                 const auto edge = task.beautify.mode == 0
                     ? snowdesktop::icon_beautify::DetectEdgeFill(
                         result->pixels, result->width, result->height)
