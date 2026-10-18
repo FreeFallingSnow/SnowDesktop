@@ -257,7 +257,21 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                 preview.targetWidget &&
             collectionGroupProxy->GetActiveCollectionId() ==
                 preview.targetWidget->id;
-        if (sourceList.origin == targetWidget &&
+        // A group exposes its active collection through a proxy, while the
+        // target can resolve to that child's own runtime container. Ownership
+        // still identifies a reorder; treating it as an incoming transfer
+        // loses the removal-before-insertion adjustment for middle drops.
+        const bool reorderActiveCollection =
+            sourceList.hasOriginWidget &&
+            sourceList.originWidgetType == DesktopWidgetType::CollectionGroup &&
+            preview.targetWidget->type == DesktopWidgetType::Collection &&
+            !sourceList.entries.empty() &&
+            std::all_of(sourceList.entries.begin(), sourceList.entries.end(),
+                [&](const DragSourceEntry& entry) {
+                    return entry.kind == DropSourceKind::DesktopIcon &&
+                        entry.widgetId == preview.targetWidget->id && !entry.desktopKey.empty();
+                });
+        if ((sourceList.origin == targetWidget || reorderActiveCollection) &&
             preview.action == DropAction::Move &&
             (!collectionGroupProxy ||
                 reorderInsideCollectionGroup))
@@ -360,7 +374,21 @@ bool DesktopApp::ExecuteInternalDropPlan(const DragSourceList& sourceList,
                 return true;
             }
 
-            std::vector<size_t> indices = sourceMemberIndices();
+            std::vector<size_t> indices;
+            if (reorderActiveCollection)
+            {
+                // Bind captured identities to current membership; a refresh
+                // may have changed indices since the drag began.
+                const auto& keys = preview.targetWidget->itemKeys;
+                std::unordered_set<std::wstring> movingKeys;
+                movingKeys.reserve(sourceList.entries.size());
+                for (const auto& entry : sourceList.entries)
+                    movingKeys.insert(ToUpperInvariant(entry.desktopKey));
+                for (size_t i = 0; i < keys.size(); ++i)
+                    if (movingKeys.contains(ToUpperInvariant(keys[i]))) indices.push_back(i);
+                if (indices.empty()) return false;
+            }
+            else indices = sourceMemberIndices();
             if (indices.empty())
                 indices = targetWidget->GetSelectedMemberIndices();
             targetWidget->ReorderMembers(indices, preview.insertIndex);
