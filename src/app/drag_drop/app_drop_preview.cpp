@@ -3,6 +3,8 @@
 #include "widgets/collection_group_rules.h"
 #include "drag_drop/empty_group_drop_rules.h"
 #include "widgets/single_cell_widget_rules.h"
+#include "drag_drop/desktop_drop_dispatch.h"
+#include "dock/dock_desktop_return.h"
 
 // Drag source normalization and destination preview planning.
 
@@ -496,6 +498,36 @@ DropPreviewList DesktopApp::BuildDropPreviewList(const DragSourceList& sourceLis
         GridCell targetCell = ResolveDesktopRequestCell(
             sourceList, dropPoint);
         bool internalMove = !IsDropFileBacked(sourceList, preview.targetKind, preview.action);
+        if (internalMove && sourceList.SourceSurfaceKind() == snowdesktop::slot_contract::SlotSurfaceKind::Dock &&
+            snowdesktop::desktop_drop_dispatch::OrdinaryFiles(sourceList))
+        {
+            // DesktopGrid commits these entries through the dedicated Dock
+            // return transaction. Publish that same plan, resolved by stable
+            // references, rather than the generic file-materialization order.
+            std::vector<size_t> indices;
+            for (const auto& source : sourceList.entries)
+                for (size_t i = 0; i < dockEntries_.size(); ++i)
+                    if (dockEntries_[i].type == source.dockEntryType &&
+                        PathsEqualInsensitive(dockEntries_[i].reference, source.dockReference))
+                    { indices.push_back(i); break; }
+            const auto planned = snowdesktop::dock_desktop_return::Plan(
+                {dockEntries_, widgets_, items_, gridPages_}, std::move(indices), targetCell, DockDesktopReturnServices());
+            preview.anchorCell = targetCell;
+            preview.fileBacked = false;
+            for (const auto& result : planned)
+            {
+                if (!result.accepted) continue;
+                const auto source = std::find_if(sourceList.entries.begin(), sourceList.entries.end(),
+                    [&](const auto& entry) { return PathsEqualInsensitive(entry.dockReference, result.reference); });
+                if (source == sourceList.entries.end()) continue;
+                DropLanding landing;
+                landing.kind = DropLandingKind::DesktopCell;
+                landing.sourceIndex = source->sourceIndex;
+                landing.cell = result.cell; landing.span = result.span;
+                preview.landings.push_back(std::move(landing));
+            }
+            return preview;
+        }
         if (internalMove)
             targetCell = FindBestDropCell(sourceList, targetCell);
         preview.anchorCell = targetCell;
