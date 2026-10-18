@@ -45,7 +45,17 @@ struct NativeDragIntegrationAccess
                     asyncOwner->DrainBackgroundShellWork();
                     return 0;
                 }
-                if (message == kBackgroundShellReadyMessage) ++asyncReadMessages;
+                if (message == kBackgroundShellReadyMessage)
+                {
+                    ++asyncReadMessages;
+                    // Keep the production read/delivery services while the
+                    // isolated fixture supplies its own running-window input.
+                    // The full dispatcher also starts global window capture,
+                    // which this message-only owner does not initialize.
+                    asyncOwner->PollInitialShellRead();
+                    asyncOwner->DrainBackgroundShellWork();
+                    return 0;
+                }
                 else if (message == WM_TIMER && wp == kExternalOleDragLeaveGraceTimerId) ++graceTimerMessages;
                 else if (message == WM_TIMER) ++asyncShellTimers;
                 else ++fileCompletionMessages;
@@ -927,12 +937,21 @@ struct NativeDragIntegrationAccess
         {
             if (page.id == item.gridCell.pageId)
             {
-                if (item.gridCell.column < 0 || item.gridCell.column >= page.columns ||
-                    item.gridCell.row < 0 || item.gridCell.row >= page.rows) return false;
-                const auto index = offset + static_cast<std::size_t>(item.gridCell.column + item.gridCell.row * page.columns);
+                if (item.gridSpan.columns < 1 || item.gridSpan.rows < 1 ||
+                    item.gridCell.column < 0 || item.gridCell.column > page.columns - item.gridSpan.columns ||
+                    item.gridCell.row < 0 || item.gridCell.row > page.rows - item.gridSpan.rows) return false;
                 const auto& slots = app.containers_.front()->GetSlots();
-                if (index >= slots.size()) return false;
-                const auto frame = slots[index]->GetBounds();
+                RECT frame{};
+                for (int row = 0; row < item.gridSpan.rows; ++row)
+                    for (int column = 0; column < item.gridSpan.columns; ++column)
+                    {
+                        const auto index = offset + static_cast<std::size_t>(item.gridCell.column + column +
+                            (item.gridCell.row + row) * page.columns);
+                        if (index >= slots.size()) return false;
+                        const auto cell = slots[index]->GetBounds();
+                        if (IsRectEmpty(&cell)) return false;
+                        UnionRect(&frame, &frame, &cell);
+                    }
                 return EqualRect(&frame, &item.bounds) && frame.right > frame.left && frame.bottom > frame.top;
             }
             offset += static_cast<std::size_t>(page.columns * page.rows);
@@ -1091,6 +1110,7 @@ struct NativeDragIntegrationAccess
 #include "native_dock_running_cases.h"
 #include "native_desktop_compat_cases.h"
 #include "native_namespace_rejection_cases.h"
+#include "native_external_namespace_cases.h"
 #include "../icons/native_icon_customization_cases.h"
 
 namespace
@@ -1192,7 +1212,9 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--folder-shortcut-handoff") native_desktop_compat_cases::RunFolderHandoff();
         else if (argc == 2 && std::string_view(argv[1]) == "--large-icon-storage-return") native_desktop_compat_cases::RunAppearance();
         else if (argc == 2 && std::string_view(argv[1]) == "--icon-customization") native_icon_customization_cases::Run();
-        else if (argc == 2 && std::string_view(argv[1]) == "--namespace-rejection") native_namespace_rejection_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--namespace-rejection") {
+            native_namespace_rejection_cases::Run(); native_external_namespace_cases::Run();
+        }
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }
