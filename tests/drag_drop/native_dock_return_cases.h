@@ -194,6 +194,10 @@ inline void Run()
                         "A11: each copy/link must produce exactly one distinct output with original bytes or a resolvable source target");
                     result = &Find(app, ToUpperInvariant(matching.front().wstring()));
                 }
+                if (!SameCell(result->gridCell, landing->cell) || !Access::HasVisibleIcon(app, *result) || !Access::HasMatchingRuntimeSlot(app, *result))
+                    std::cerr << "A23 source=" << i << " expected=" << WideToUtf8(landing->cell.pageId) << ':' << landing->cell.column << ',' << landing->cell.row
+                        << " actual=" << WideToUtf8(result->gridCell.pageId) << ':' << result->gridCell.column << ',' << result->gridCell.row
+                        << " visible=" << Access::HasVisibleIcon(app, *result) << " matching-slot=" << Access::HasMatchingRuntimeSlot(app, *result) << '\n';
                 Require(SameCell(result->gridCell, landing->cell) && Access::HasVisibleIcon(app, *result) && Access::HasMatchingRuntimeSlot(app, *result),
                     "A11: actual Dock return/output placement and native runtime slots must fulfill the captured preview");
             }
@@ -204,12 +208,16 @@ inline void Run()
                 "A11: unselected desktop position and exclusive Dock entry must remain unchanged");
             Require(Access::NoDockWindows(app) && Access::NoIngressPopup(app), "native Dock return cannot allocate a desktop/popup presentation window");
         };
+        const auto sceneContext = native_drag_commit_cases::context;
+        native_drag_commit_cases::context = sceneContext + " phase=after-drop";
         check();
         if (gesture.cancel) Require(Read(Access::LayoutPath(app)) == saved, "A11: cancelled Dock menu cannot persist any change");
         else
         {
             Require(Access::Save(app), "save actual native Dock return/copy/link result");
+            native_drag_commit_cases::context = sceneContext + " phase=after-refresh";
             native_drag_async_reload_cases::Refresh(app); check();
+            native_drag_commit_cases::context = sceneContext + " phase=after-reload";
             native_drag_async_reload_cases::Refresh(app, true); check();
         }
         Access::StopModel(app);
