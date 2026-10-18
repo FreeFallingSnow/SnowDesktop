@@ -817,9 +817,15 @@ bool ShellFileOperationWorker::Execute(
             failure = operation_feedback::Failure{"app.operation.fileFailed", path, code};
     };
     bool allSucceeded = true;
+    std::vector<std::wstring> unstarted;
     if (request.result) request.result->outputs.clear();
     for (const auto& step : request.steps)
     {
+        if (!allSucceeded)
+        {
+            unstarted.insert(unstarted.end(), step.sources.begin(), step.sources.end());
+            continue;
+        }
         if (step.function == 0 || step.sources.empty())
             continue;
         attempted = true;
@@ -862,6 +868,11 @@ bool ShellFileOperationWorker::Execute(
     }
     for (const auto& copy : request.exactFileCopies)
     {
+        if (!allSucceeded)
+        {
+            if (!copy.source.empty()) unstarted.push_back(copy.source);
+            continue;
+        }
         if (copy.source.empty() || copy.destination.empty())
             continue;
         attempted = true;
@@ -878,6 +889,11 @@ bool ShellFileOperationWorker::Execute(
     }
     for (const auto& shortcut : request.shortcuts)
     {
+        if (!allSucceeded)
+        {
+            if (!shortcut.source.empty()) unstarted.push_back(shortcut.source);
+            continue;
+        }
         if (shortcut.source.empty() || shortcut.destination.empty())
             continue;
         attempted = true;
@@ -942,7 +958,12 @@ bool ShellFileOperationWorker::Execute(
         else if (request.result)
             request.result->outputs.push_back({shortcut.source, shortcut.destination, true});
     }
-    if (failure) operation_feedback::Report(std::move(*failure));
+    if (failure)
+    {
+        for (const auto& path : unstarted)
+            failure->detail += L"\n" + path;
+        operation_feedback::Report(std::move(*failure));
+    }
     return attempted && allSucceeded;
 }
 

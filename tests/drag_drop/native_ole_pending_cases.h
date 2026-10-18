@@ -75,8 +75,15 @@ inline void RunMutations()
             Require(Access::PendingTargetOrder(app,mapped) == expectedOrder,
                 "D14: disappearance of captured middle anchor must append after all surviving original members");
         }
-        else Require(Access::Widgets(app).front().itemKeys == expectedTarget.itemKeys,
-            "D14: target cancellation cannot add an item to the current unrelated object");
+        else
+        {
+            const auto& actualKeys = Access::Widgets(app).front().itemKeys;
+            std::cerr << "D14 target keys actual=" << actualKeys.size() << " expected=" << expectedTarget.itemKeys.size() << '\n';
+            for (const auto& key : actualKeys) std::wcerr << L"D14 actual-key=" << key << L'\n';
+            for (const auto& key : expectedTarget.itemKeys) std::wcerr << L"D14 expected-key=" << key << L'\n';
+            Require(actualKeys == expectedTarget.itemKeys,
+                "D14: target cancellation cannot add an item to the current unrelated object");
+        }
         Require(Read(originals[0]) == "old-A" && Read(originals[2]) == "old-C" && Read(originals[3]) == "old-D" &&
             Read(replacement/L"Unrelated.txt") == "unrelated-new-mapping",
             "D14: asynchronous target change must preserve unrelated contents");

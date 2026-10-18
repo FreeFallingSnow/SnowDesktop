@@ -77,7 +77,10 @@ inline bool ExecuteTrackedDropStep(const ShellFileOperationStep& step,
     failure = CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_INPROC_SERVER,
         IID_PPV_ARGS(&operation));
     if (FAILED(failure)) return false;
-    failure = operation->SetOperationFlags(step.flags);
+    // No-error-UI otherwise means Skip/Continue to Shell. Stop its remaining
+    // operations at the first failure; already committed outputs stay recorded.
+    failure = operation->SetOperationFlags(static_cast<DWORD>(step.flags) |
+        ((step.flags & FOF_NOERRORUI) ? FOFX_EARLYFAILURE : 0u));
     if (FAILED(failure)) return false;
 
     auto folder = std::filesystem::path(step.destination);
@@ -105,10 +108,10 @@ inline bool ExecuteTrackedDropStep(const ShellFileOperationStep& step,
         {
             if (SUCCEEDED(failure)) failure = sourceStatus;
             scheduledAll = false;
-            continue;
+            break;
         }
         auto sink = Make<DropFileProgress>();
-        if (!sink) { failure = E_OUTOFMEMORY; scheduledAll = false; continue; }
+        if (!sink) { failure = E_OUTOFMEMORY; scheduledAll = false; break; }
         sink->source = path;
         sink->sourceItem = source;
         sink->result = result;
@@ -116,10 +119,12 @@ inline bool ExecuteTrackedDropStep(const ShellFileOperationStep& step,
         const HRESULT queued = step.function == FO_MOVE
             ? operation->MoveItem(source.Get(), destination.Get(), newName, sink.Get())
             : operation->CopyItem(source.Get(), destination.Get(), newName, sink.Get());
-        if (FAILED(queued)) { failure = queued; scheduledAll = false; }
+        if (FAILED(queued)) { failure = queued; scheduledAll = false; break; }
         else sinks.push_back(std::move(sink));
     }
-    if (sinks.empty()) return false;
+    // Nothing has entered filesystem execution if preparation already failed.
+    // Releasing the operation leaves every queued-but-unstarted source intact.
+    if (sinks.empty() || !scheduledAll) return false;
     shellHandledErrors = SUCCEEDED(failure) && !(step.flags & FOF_NOERRORUI);
     const HRESULT performed = operation->PerformOperations();
     BOOL aborted = TRUE;
