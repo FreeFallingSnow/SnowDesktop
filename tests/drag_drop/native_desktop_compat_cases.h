@@ -108,7 +108,14 @@ inline void RunAppearance()
         Access::BeginModel(app, 0, 1);
         const auto target = Access::CompatAppearancePoint(app, destination);
         const auto ingress = Access::ObserveModelPreview(app, target, 0);
-        Require(!ingress.Empty() && ingress.action == DropAction::Move, "D11 original large icon enters actual logical or Dock storage");
+        if (destination == 2)
+            Require(Access::Target(app) == Access::Dock(app) && Access::Region(app) != HitRegion::None &&
+                Access::Region(app) != HitRegion::Blocked && Access::Region(app) != HitRegion::Handoff,
+                "D11 original large icon reaches the actual Dock insertion target");
+        else
+            Require(!ingress.Empty() && ingress.action == DropAction::Move && ingress.targetWidget &&
+                ingress.targetWidget->id == L"compat-target",
+                "D11 original large icon enters the intended logical storage owner");
         Access::SubmitCompatAppearance(app);
         Wait([&] { return Access::FileDropIdle(app); }, "D11 actual owner transfer and refresh must finish");
         const auto stored = [&] {
