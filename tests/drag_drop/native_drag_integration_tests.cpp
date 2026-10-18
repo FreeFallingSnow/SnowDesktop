@@ -845,6 +845,9 @@ struct NativeDragIntegrationAccess
         for (auto& widget : app.widgets_) widget.selected = widget.id == id;
         Container* origin = !groupId.empty() ? MemberContainer(app, groupId)
             : dock ? static_cast<Container*>(Dock(app)) : static_cast<Container*>(Desktop(app));
+        if (dock)
+            for (const auto& slot : origin->GetSlots())
+                if (auto* entry = dynamic_cast<DockEntryItem*>(slot->GetItem())) entry->SetSelected(entry->GetReference() == id);
         auto items = origin->GetSelectedItems();
         if (items.size() != 1) throw std::runtime_error("native entrance capture must expose exactly the selected component");
         auto captured = app.BuildDragSourceList(items, origin);
@@ -1015,7 +1018,7 @@ int main(int argc, char** argv)
     }
     catch (const std::exception& error)
     {
-        std::cerr << "FAILED: " << error.what() << '\n';
+        std::cerr << "FAILED: " << error.what() << " [" << native_drag_commit_cases::context << "]\n";
         return 1;
     }
 }

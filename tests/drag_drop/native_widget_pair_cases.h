@@ -122,6 +122,9 @@ struct Samples
 inline void CheckChild(const DesktopApp& app, const DesktopWidget& original)
 {
     const auto& child = Widget(app, original.id);
+    if (Configuration(child, false, false) != Configuration(original, false, false) || OrderedKeys(child) != OrderedKeys(original))
+        std::cerr << "child=" << WideToUtf8(child.id) << " original=" << Configuration(original, false)
+            << " current=" << Configuration(child, false) << '\n';
     Require(Configuration(child, false, false) == Configuration(original, false, false) &&
         OrderedKeys(child) == OrderedKeys(original),
         "group ownership changes must preserve each child's full settings, stable identity and ordered members");
@@ -201,6 +204,7 @@ inline void RunPairs()
         auto& app = profile.Model(false, samples.root / L"layout");
         Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary, dock);
         Access::PrepareReload(app); Access::BindAsync(app);
+        native_drag_async_reload_cases::Refresh(app);
         const auto originalSource = Widget(app, L"source"), originalTarget = Widget(app, L"target");
         const auto originalSentinel = Configuration(Widget(app, L"unrelated"));
         std::set<std::wstring> merged = Keys(originalTarget);
@@ -289,6 +293,7 @@ inline void RunLifecycle()
         auto& app = profile.Model(false, samples.root / L"layout");
         Access::SeedWidgetTransactions(app, std::move(widgets), samples.ordinary);
         Access::PrepareReload(app); Access::BindAsync(app);
+        native_drag_async_reload_cases::Refresh(app);
         // Capture baseline after native normalization, before the action.
         for (auto& child : children) child = Widget(app, child.id);
         const auto targetSettings = Configuration(Widget(app, L"target-group"));
