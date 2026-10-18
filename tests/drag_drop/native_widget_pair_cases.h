@@ -232,7 +232,8 @@ inline void RunPairs()
         if (pair.source == mapping || pair.target == mapping) native_drag_async_reload_cases::Refresh(app);
         const auto originalSource = Widget(app, L"source"), originalTarget = Widget(app, L"target");
         const auto originalSentinel = Configuration(Widget(app, L"unrelated"));
-        const auto originalPassive = sourceForm == 3 ? Configuration(Widget(app, L"passive")) : std::string{};
+        const auto originalPassive = sourceForm == 3 ? Configuration(Widget(app, L"passive"), true, false) : std::string{};
+        const auto originalPassiveKeys = sourceForm == 3 ? OrderedKeys(Widget(app, L"passive")) : std::vector<std::wstring>{};
         std::set<std::wstring> merged = Keys(originalTarget);
         const auto sourceKeys = Keys(originalSource); merged.insert(sourceKeys.begin(), sourceKeys.end());
         if (pair.merge)
@@ -274,9 +275,11 @@ inline void RunPairs()
             {
                 Require(Widget(app, L"origin-group").childWidgetIds == std::vector<std::wstring>{L"passive"},
                     "D05: extracting a label must detach exactly that source and retain the manual origin group");
-                if (Configuration(Widget(app, L"passive")) != originalPassive)
-                    std::cerr << "passive original=" << originalPassive << " current=" << Configuration(Widget(app, L"passive")) << '\n';
-                Require(Configuration(Widget(app, L"passive")) == originalPassive,
+                // Native disk loading may normalize Windows path spelling.
+                // Compare all settings byte-for-byte and ordered member
+                // identities separately, as for the participating children.
+                Require(Configuration(Widget(app, L"passive"), true, false) == originalPassive &&
+                    OrderedKeys(Widget(app, L"passive")) == originalPassiveKeys,
                     "pairing a label cannot alter the settings or members of the label left in its origin group");
             }
             samples.Check(); CheckRuntime(app);
