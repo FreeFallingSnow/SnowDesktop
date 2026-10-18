@@ -62,6 +62,21 @@ inline bool ApplyFolder(PendingLandingCache& cache, DesktopWidget& targetWidget,
             continue;
         }
 
+        // A directory read can start before this operation finishes and be
+        // delivered afterwards. Keep the entire captured batch until every
+        // successful output is visible, including paths that were overwritten.
+        // A partial snapshot must not consume the insertion boundary or apply
+        // only the first arriving members in a different order.
+        if (std::any_of(placement.createdPaths.begin(), placement.createdPaths.end(),
+                [&](const auto& path) {
+                    return std::none_of(targetWidget.folderEntries.begin(), targetWidget.folderEntries.end(),
+                        [&](const auto& entry) { return MatchesExactPath(entry.fullPath, path); });
+                }))
+        {
+            remaining.push_back(std::move(placement));
+            continue;
+        }
+
         std::vector<FolderEntry> inserted =
             snowdesktop::pending_drop_rules::ExtractMatching(
                 targetWidget.folderEntries,
@@ -115,7 +130,7 @@ inline bool ApplyFolder(PendingLandingCache& cache, DesktopWidget& targetWidget,
                 snowdesktop::list_detail_rules::Column::None;
             changed = true;
         }
-        // A successful file operation gets exactly one reconciliation pass.
+        // A successful file operation gets one complete reconciliation pass.
         // If it overwrote an existing path there is no new member to move, and
         // retaining this snapshot could capture an unrelated later file.
     }

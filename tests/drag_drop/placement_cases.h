@@ -178,6 +178,31 @@ inline void Run(const std::filesystem::path& root)
         auto& cache = queue.front();
         if (context.type == DesktopWidgetType::FolderMapping)
         {
+            // A18/S02: outputs physically exist, but an older in-flight read
+            // still contains only the old members, then only part of a batch.
+            // Neither snapshot may consume or partially reorder that batch.
+            const auto oldKeys = target.itemKeys;
+            const auto pendingPaths = cache.folderPlacements.front().createdPaths;
+            Require(!pending_drop::ApplyFolder(cache, target, target.id, {}, NoLegacyMatch, Key, SamePath) &&
+                cache.active && cache.folderPlacements.size() == 1 &&
+                cache.folderPlacements.front().createdPaths == pendingPaths && target.itemKeys == oldKeys &&
+                target.folderEntries.size() == 2 && target.folderEntries[0].fullPath == oldA.wstring() &&
+                target.folderEntries[1].fullPath == oldB.wstring(),
+                "an old directory snapshot cannot consume the captured batch or change old members/order");
+            if (count == 2)
+            {
+                const auto& output = batch.result->outputs.front();
+                FolderEntry entry; entry.fullPath = output.destination;
+                entry.name = std::filesystem::path(output.destination).filename().wstring();
+                target.folderEntries.push_back(std::move(entry));
+                Require(!pending_drop::ApplyFolder(cache, target, target.id, {}, NoLegacyMatch, Key, SamePath) &&
+                    cache.active && cache.folderPlacements.size() == 1 &&
+                    cache.folderPlacements.front().createdPaths == pendingPaths && target.itemKeys == oldKeys &&
+                    target.folderEntries.size() == 3 && target.folderEntries[0].fullPath == oldA.wstring() &&
+                    target.folderEntries[1].fullPath == oldB.wstring() &&
+                    target.folderEntries[2].fullPath == output.destination,
+                    "a partial directory snapshot cannot consume or reorder any part of the captured batch");
+            }
             // Fresh enumeration is an input boundary. Put it in reverse order
             // so the persisted insertion result cannot just mirror enumeration.
             target.folderEntries.clear();
