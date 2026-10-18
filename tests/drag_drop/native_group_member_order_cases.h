@@ -46,6 +46,17 @@ inline void Check(DesktopApp& app, const SortCase& sorted, std::wstring_view exp
             Require(name.size() == 5 && name.substr(1) == L".txt", "group content slots must expose the original real file identities");
             names += name[0];
         }
+    if (names != expected)
+    {
+        std::wstring members;
+        for (const auto& key : active->itemKeys)
+        {
+            const auto name = fs::path(key).filename().wstring();
+            if (!name.empty()) members += name[0];
+        }
+        std::cerr << "native group observed expected=" << WideToUtf8(std::wstring(expected))
+            << " display=" << WideToUtf8(names) << " stored-members=" << WideToUtf8(members) << '\n';
+    }
     Require(names == expected, "D02: active-group content must retain its independently specified manual order");
 }
 inline void Run(std::string_view typeName = "collection")

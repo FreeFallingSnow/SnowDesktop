@@ -437,13 +437,21 @@ struct NativeDragIntegrationAccess
     static void DropGroupedMembers(DesktopApp& app, bool atEnd, std::size_t before = 0)
     {
         auto* target = MemberContainer(app, L"ordered-group");
+        if (target->NeedsShellReloadAfterDrop())
+            throw std::runtime_error("group release fixture requires the actual caller's layout-without-shell-reload branch");
         const auto& slots = target->GetSlots();
         auto* slot = atEnd ? nullptr : slots.at(before).get();
         const auto items = app.dragSession_.Items();
         auto* origin = app.dragSession_.Source();
         app.dragSession_.DeactivateForDrop();
         target->OnItemsDropped(items, origin, slot, atEnd ? HitRegion::SortAfter : HitRegion::SortBefore, 0);
+        // Match the actual pointer caller's post-callback boundary. A native
+        // container callback can update data before its group slots rebuild.
+        app.SaveLayoutSlots();
+        app.ClearSelection();
         app.EndDragSession();
+        app.ApplyPageMapping();
+        app.LayoutItems();
     }
     static void SeedMixedModel(DesktopApp& app, const std::vector<std::filesystem::path>& files,
         const std::vector<std::filesystem::path>& inside, DesktopWidgetType type, DesktopWidgetType targetType)
