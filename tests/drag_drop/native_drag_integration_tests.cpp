@@ -295,6 +295,54 @@ struct NativeDragIntegrationAccess
     static bool ChooseDockFileAction(DesktopApp& app, POINT point, DWORD& keys,
         const DesktopApp::RightDragMenuPresenter& menu)
     { return app.ChooseRightDragDropAction(point, keys, 7, false, menu); }
+    static void SeedMenuFileSource(DesktopApp& app, const std::vector<std::filesystem::path>& files, int source)
+    {
+        if (!source) PopulateModel(app, files, 0);
+        else SeedMemberModel(app, files, source == 1 ? DesktopWidgetType::Collection
+            : source == 2 ? DesktopWidgetType::FileCategories : DesktopWidgetType::FolderMapping, false);
+        for (auto& widget : app.widgets_) { widget.customTitle = widget.title; widget.userRenamed = true; }
+        auto& page = app.gridPages_.front(); page.columns = 12; page.rows = 8;
+        page.bounds = page.workArea = page.visualWorkArea = RECT{0, 0, 1200, 800};
+        app.savedPageColumns_[page.id] = 12; app.savedPageRows_[page.id] = 8;
+        app.LayoutItems();
+    }
+    static DragSourceList BeginMenuFileSource(DesktopApp& app, int source, POINT destination)
+    {
+        for (auto& item : app.items_) item.selected = std::filesystem::path(item.parsingName).filename() == L"A.txt";
+        for (auto& widget : app.widgets_)
+            for (auto& entry : widget.folderEntries) entry.selected = entry.name == L"A.txt";
+        Container* origin = source ? MemberContainer(app, L"ordered") : static_cast<Container*>(Desktop(app));
+        auto items = origin->GetSelectedItems();
+        if (items.size() != 1) throw std::runtime_error("native menu source must initially capture exactly A");
+        const auto frame = items.front()->GetBounds();
+        const POINT start{(frame.left + frame.right) / 2, (frame.top + frame.bottom) / 2};
+        app.dragGroupOriginX_ = frame.left; app.dragGroupOriginY_ = frame.top; app.mouseDownPoint_ = start;
+        auto captured = app.BuildDragSourceList(items, origin);
+        app.dragSession_.Begin(origin, std::move(items), captured, start, destination);
+        return captured;
+    }
+    static void ChangeMenuFileSelection(DesktopApp& app, bool keepOriginal)
+    {
+        const auto selected = [&](const auto& name) { return name == L"B.txt" || (keepOriginal && name == L"A.txt"); };
+        for (auto& item : app.items_) item.selected = selected(std::filesystem::path(item.parsingName).filename().wstring());
+        for (auto& widget : app.widgets_)
+            for (auto& entry : widget.folderEntries) entry.selected = selected(entry.name);
+    }
+    static const auto& CapturedSources(const DesktopApp& app) { return app.dragSession_.SourceList(); }
+    static bool MenuFileBindingsCurrent(DesktopApp& app, int source)
+    {
+        Container* current = source ? MemberContainer(app, L"ordered") : static_cast<Container*>(Desktop(app));
+        if (app.dragSession_.Source() != current || app.dragSession_.Items().size() != app.dragSession_.SourceList().entries.size()) return false;
+        std::vector<Item*> live;
+        for (const auto& object : app.items_oo_) if (object->GetContainer() == current) live.push_back(object.get());
+        for (const auto& slot : current->GetSlots()) if (auto* item = slot->GetItem()) live.push_back(item);
+        for (const auto& entry : app.dragSession_.SourceList().entries)
+            if (entry.sourceIndex >= app.dragSession_.Items().size() ||
+                std::none_of(live.begin(), live.end(), [&](auto* item) {
+                    return item == entry.item && item == app.dragSession_.Items()[entry.sourceIndex] && PathsEqualInsensitive(item->GetPath(), entry.filePath);
+                })) return false;
+        return true;
+    }
     static bool InternalMenuRetained(const DesktopApp& app)
     { return app.dragSession_.HasContext() && !app.dragSession_.IsActive() && !app.dragSession_.SourceList().Empty(); }
     static void DropDockFiles(DesktopApp& app, int modifiers)
@@ -1006,6 +1054,7 @@ struct NativeDragIntegrationAccess
 #include "native_ole_dock_cases.h"
 #include "native_widget_pair_cases.h"
 #include "native_dock_return_cases.h"
+#include "native_right_capture_cases.h"
 
 namespace
 {
@@ -1081,6 +1130,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--widget-pair-storage") native_widget_pair_cases::RunPairs();
         else if (argc == 2 && std::string_view(argv[1]) == "--group-lifecycle-storage") native_widget_pair_cases::RunLifecycle();
         else if (argc == 2 && std::string_view(argv[1]) == "--dock-file-returns") native_dock_return_cases::Run();
+        else if (argc == 2 && std::string_view(argv[1]) == "--right-menu-capture") native_right_capture_cases::Run();
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }
