@@ -2659,6 +2659,13 @@ if (BUILD_TESTING)
     set_tests_properties(native_ole_leave_lifecycle PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
+    foreach(RIGHT_DECISION IN ITEMS move copy link cancel dismiss)
+        add_test(NAME native_right_drag_files_${RIGHT_DECISION}
+            COMMAND SnowDesktopNativeDragIntegrationTests --right-drag-files ${RIGHT_DECISION})
+        set_tests_properties(native_right_drag_files_${RIGHT_DECISION} PROPERTIES
+            REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+            TIMEOUT 90 LABELS "integration;interaction;slot;data;shell;ole")
+    endforeach()
 
     foreach(MEMBER_TYPE IN ITEMS collection files mapping)
         add_test(NAME native_member_order_${MEMBER_TYPE}

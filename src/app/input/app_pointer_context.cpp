@@ -381,7 +381,8 @@ int DesktopApp::PointerGestureVirtualKey() const
 }
 
 bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
-    DWORD allowedEffects, bool externalSource)
+    DWORD allowedEffects, bool externalSource,
+    const RightDragMenuPresenter& presentMenu)
 {
     namespace pair = snowdesktop::widget_pair_drop;
     const bool handleDrag = !externalSource && widgetAction_ == WidgetAction::Move &&
@@ -507,7 +508,8 @@ bool DesktopApp::ChooseRightDragDropAction(POINT point, DWORD& keyState,
     mouseDownHit_ = nullptr;
     ReleaseCapturePreservingPointerState();
     CommitDragVisualEndBeforeShellOperation();
-    const UINT command = ShowModernMenu(menu, screenPoint, hwnd_);
+    const UINT command = presentMenu ? presentMenu(menu, screenPoint, hwnd_)
+        : ShowModernMenu(menu, screenPoint, hwnd_);
     DestroyMenu(menu);
     ClearMenuIcons();
     RestoreDesktopWindowLayer();

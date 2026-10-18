@@ -100,6 +100,35 @@ struct NativeDragIntegrationAccess
         adapter.Attach(new OleDragDropAdapter(&app));
         return adapter;
     }
+    // Forward the real OLE boundary to the real host, supplying only the
+    // synchronous menu UI service. No effect, source read or commit is faked.
+    struct RightMenuBridge final : OleDragDropHandler
+    {
+        DesktopApp& app;
+        DesktopApp::RightDragMenuPresenter menu;
+        DWORD dropKeys = 0;
+        RightMenuBridge(DesktopApp& host, DesktopApp::RightDragMenuPresenter presenter)
+            : app(host), menu(std::move(presenter)) {}
+        HRESULT HandleOleDragEnter(IDataObject* data, DWORD keys, POINTL point, DWORD* effect) override
+        { return app.HandleOleDragEnter(data, keys, point, effect); }
+        HRESULT HandleOleDragOver(DWORD keys, POINTL point, DWORD* effect) override
+        { return app.HandleOleDragOver(keys, point, effect); }
+        HRESULT HandleOleDragLeave() override { return app.HandleOleDragLeave(); }
+        HRESULT HandleOleDrop(IDataObject* data, DWORD keys, POINTL point, DWORD* effect) override
+        {
+            dropKeys = keys;
+            return app.HandleOleDropWithMenu(data, keys, point, effect, menu);
+        }
+        HRESULT HandleOleQueryContinueDrag(BOOL escape, DWORD keys) override
+        { return app.HandleOleQueryContinueDrag(escape, keys); }
+        HRESULT HandleOleGiveFeedback(DWORD effect) override { return app.HandleOleGiveFeedback(effect); }
+    };
+    static bool RightMenuRetained(const DesktopApp& app)
+    {
+        return app.dragDropController_.IsExternalDragActive() && !app.dragSession_.IsActive() &&
+            app.dragSession_.HasContext() && app.dragSession_.Items().empty();
+    }
+    static void RebuildDuringMenu(DesktopApp& app) { app.RebuildContainersAndItems(); }
     static POINTL ExternalPoint(POINT point)
     {
         if (!ClientToScreen(completionWindow, &point))
@@ -712,6 +741,7 @@ struct NativeDragIntegrationAccess
 #include "native_member_order_cases.h"
 #include "native_mixed_selection_cases.h"
 #include "native_group_member_order_cases.h"
+#include "native_right_drag_cases.h"
 
 namespace
 {
@@ -778,6 +808,7 @@ int main(int argc, char** argv)
         else if (argc == 3 && std::string_view(argv[1]) == "--mixed-selection") native_mixed_selection_cases::Run(argv[2]);
         else if (argc == 2 && std::string_view(argv[1]) == "--group-member-order") native_group_member_order_cases::Run();
         else if (argc == 3 && std::string_view(argv[1]) == "--group-member-order") native_group_member_order_cases::Run(argv[2]);
+        else if (argc == 3 && std::string_view(argv[1]) == "--right-drag-files") native_right_drag_cases::Run(argv[2]);
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

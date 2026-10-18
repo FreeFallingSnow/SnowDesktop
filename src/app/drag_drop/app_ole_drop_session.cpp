@@ -564,6 +564,13 @@ HRESULT DesktopApp::HandleExternalOleDragLeave(bool pointerOnDesktopSurface)
 HRESULT DesktopApp::HandleOleDrop(
     IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect)
 {
+    return HandleOleDropWithMenu(dataObject, keyState, point, effect, {});
+}
+
+HRESULT DesktopApp::HandleOleDropWithMenu(
+    IDataObject* dataObject, DWORD keyState, POINTL point, DWORD* effect,
+    const RightDragMenuPresenter& presentMenu)
+{
     if (!effect) return E_POINTER;
     CancelPendingExternalOleDragLeave();
     HideDragHintWindow();
@@ -585,7 +592,7 @@ HRESULT DesktopApp::HandleOleDrop(
     {
         ResolveCurrentDragTargetAt(clientPoint);
         if (!ChooseRightDragDropAction(clientPoint, keyState, *effect,
-                !dragDropController_.IsSelfDragActive()))
+                !dragDropController_.IsSelfDragActive(), presentMenu))
         {
             if (dragDropController_.IsSelfDragActive())
                 dragDropController_.MarkSelfDragReturned();

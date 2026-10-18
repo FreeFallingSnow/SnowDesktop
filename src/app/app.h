@@ -1944,8 +1944,10 @@ private:
     /** @brief 处理鼠标右键释放消息（弹出上下文菜单）。 @param lp LPARAM */
     void OnRightButtonUp(LPARAM lp);
     int PointerGestureVirtualKey() const;
+    using RightDragMenuPresenter = std::function<UINT(HMENU, POINT, HWND)>;
     bool ChooseRightDragDropAction(POINT point, DWORD& keyState,
-        DWORD allowedEffects, bool externalSource);
+        DWORD allowedEffects, bool externalSource,
+        const RightDragMenuPresenter& presentMenu = {});
     /** @brief 处理键盘按键消息。 @return 消息是否由应用消费。 */
     bool OnKeyDown(WPARAM key, bool repeated = false);
     /** @brief 在当前桌面、容器或弹出窗口中按名称前缀定位文件。 */
@@ -4449,6 +4451,9 @@ private:
     HRESULT HandleOleDragLeave() override;
     HRESULT HandleOleDrop(IDataObject* dataObject,
         DWORD keyState, POINTL point, DWORD* effect) override;
+    HRESULT HandleOleDropWithMenu(IDataObject* dataObject,
+        DWORD keyState, POINTL point, DWORD* effect,
+        const RightDragMenuPresenter& presentMenu);
     struct ExternalSlotDestination
     {
         DropPreviewList preview;
