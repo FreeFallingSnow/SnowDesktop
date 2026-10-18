@@ -81,6 +81,13 @@ struct NativeDragIntegrationAccess
             !app.readyShellRefresh_ && !app.layoutReload_.Pending();
     }
     static void EndActualGesture(DesktopApp& app) { app.EndDragSession(); }
+    static void RequestMappedRead(DesktopApp& app, const std::wstring& path) { app.RequestFolderRefresh({path}); }
+    static bool FolderReaderIdle(const DesktopApp& app) { return app.folderReadsPending_.empty(); }
+    static void EndExternalModel(DesktopApp& app)
+    {
+        app.dragDropController_.EndExternalDrag();
+        app.EndDragSession();
+    }
     static void BeginExternal(DesktopApp& app, std::size_t count, POINT point)
     {
         app.dragDropController_.BeginExternalDrag({static_cast<int>(count), false, false});
@@ -800,6 +807,7 @@ struct NativeDragIntegrationAccess
 #include "native_group_member_order_cases.h"
 #include "native_right_drag_cases.h"
 #include "native_ole_widget_cases.h"
+#include "native_folder_delivery_cases.h"
 
 namespace
 {
@@ -869,6 +877,7 @@ int main(int argc, char** argv)
         else if (argc == 3 && std::string_view(argv[1]) == "--group-member-order") native_group_member_order_cases::Run(argv[2]);
         else if (argc == 3 && std::string_view(argv[1]) == "--right-drag-files") native_right_drag_cases::Run(argv[2]);
         else if (argc == 4 && std::string_view(argv[1]) == "--ole-widget-files") native_ole_widget_cases::Run(argv[2], argv[3]);
+        else if (argc == 2 && std::string_view(argv[1]) == "--folder-delivery-after-drag") native_folder_delivery_cases::Run();
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }

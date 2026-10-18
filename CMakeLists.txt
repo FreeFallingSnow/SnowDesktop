@@ -2683,6 +2683,11 @@ if (BUILD_TESTING)
                 TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;ole")
         endforeach()
     endforeach()
+    add_test(NAME native_folder_delivery_after_drag
+        COMMAND SnowDesktopNativeDragIntegrationTests --folder-delivery-after-drag)
+    set_tests_properties(native_folder_delivery_after_drag PROPERTIES
+        REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+        TIMEOUT 30 LABELS "integration;interaction;slot;widget;data;shell")
     foreach(MIXED_TARGET IN ITEMS collection files)
         add_test(NAME native_mixed_selection_${MIXED_TARGET}
             COMMAND SnowDesktopNativeDragIntegrationTests --mixed-selection ${MIXED_TARGET})
