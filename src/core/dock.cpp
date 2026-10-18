@@ -544,6 +544,13 @@ bool DockContainer::HasMixedFolderDragSource() const
 {
     if (!app_) return false;
     bool folders = false, main = false;
+    if (app_->dragDropController_.IsExternalDragActive())
+        for (const auto& path : app_->externalFileDropPaths_)
+        {
+            const bool folder = snowdesktop::item_location::ResolveFolderTarget(path).kind !=
+                snowdesktop::item_location::FolderTargetKind::None;
+            (folder ? folders : main) = true;
+        }
     for (auto* source : app_->dragSession_.Items())
         (IsFolderDragSource(source) ? folders : main) = true;
     return folders && main;
@@ -1970,6 +1977,13 @@ std::vector<std::unique_ptr<Slot>> DockContainer::BuildSlots()
     }
     slots.push_back(std::make_unique<Slot>(this, searchCell, searchIndex));
     return slots;
+}
+
+size_t DockContainer::GetExternalDropInsertIndex(Slot* slot, HitRegion region) const
+{
+    const snowdesktop::dock_folder_rules::InsertRange range{0, SortableEntryCount() + FolderEntryCount()};
+    if (!slot) return range.end;
+    return snowdesktop::dock_folder_rules::SlotInsertionIndex(range, slot->GetIndex(), region == HitRegion::SortAfter);
 }
 
 size_t DockContainer::InsertIndexFor(Slot* slot, HitRegion region) const

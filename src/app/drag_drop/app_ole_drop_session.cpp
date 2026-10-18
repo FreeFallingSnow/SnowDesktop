@@ -15,6 +15,12 @@ namespace
 {
 using DirectoryPathSet = std::unordered_set<std::wstring>;
 
+bool OffersNativeFilePaths(IDataObject* source)
+{
+    FORMATETC format{CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+    return source && source->QueryGetData(&format) == S_OK;
+}
+
 bool OffersOwnedDropContent(IDataObject* source)
 {
     if (!source) return false;
@@ -270,6 +276,20 @@ HRESULT DesktopApp::HandleOleDragEnter(
         return S_OK;
     }
 
+    const auto rejectUnsupportedSource = [&] {
+        externalLuaFileDropAvailable_ = false;
+        dragDropController_.EndExternalDrag();
+        EndDragSession();
+        *effect = DROPEFFECT_NONE;
+        PresentOleDragInteractionFrame();
+        return S_OK;
+    };
+    externalOwnedContent_ = OffersOwnedDropContent(dataObject);
+    // A Shell namespace ID is not a filesystem destination payload. Reject it
+    // before probing/rendering data, including an attached preview bitmap.
+    if (!OffersNativeFilePaths(dataObject) && !externalOwnedContent_)
+        return rejectUnsupportedSource();
+
     ExternalDragSummary externalSummary;
     if (dataObject)
     {
@@ -277,7 +297,6 @@ HRESULT DesktopApp::HandleOleDragEnter(
         const bool delayedFileDrop = fileSource.asynchronous;
         const auto& paths = fileSource.paths;
         externalLuaFileDropAvailable_ = fileSource.available;
-        externalOwnedContent_ = OffersOwnedDropContent(dataObject);
         if (fileSource.available) externalFileDropPaths_ = paths;
         const auto virtualFiles = delayedFileDrop
             ? std::vector<snowdesktop::virtual_file_drop::
@@ -325,6 +344,8 @@ HRESULT DesktopApp::HandleOleDragEnter(
     {
         externalSummary.fileCount = 1;
     }
+    if (!externalLuaFileDropAvailable_ && !externalOwnedContent_)
+        return rejectUnsupportedSource();
     dragDropController_.BeginExternalDrag(
         externalSummary);
     POINT client = ScreenPointToClient(point);
@@ -454,6 +475,14 @@ HRESULT DesktopApp::HandleOleDragOver(
         return S_OK;
     }
 
+    if (!externalLuaFileDropAvailable_ && !externalOwnedContent_)
+    {
+        dragDropController_.EndExternalDrag();
+        EndDragSession();
+        *effect = DROPEFFECT_NONE;
+        PresentOleDragInteractionFrame();
+        return S_OK;
+    }
     dragDropController_.ContinueExternalDrag();
     POINT client = ScreenPointToClient(point);
     if (!dragSession_.IsActive() || !dragSession_.Items().empty())
@@ -643,6 +672,16 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
 
     POINT clientPoint = ScreenPointToClient(point);
     const bool externalContent = !dragDropController_.IsSelfDragActive() && OffersOwnedDropContent(dataObject);
+    // Drop can arrive directly or with a different IDataObject than Enter.
+    // Recheck the actual source before offering a menu or reading a fallback.
+    if (!dragDropController_.IsSelfDragActive() && !externalContent && !OffersNativeFilePaths(dataObject))
+    {
+        externalLuaFileDropAvailable_ = false;
+        dragDropController_.EndExternalDrag();
+        EndDragSession();
+        *effect = DROPEFFECT_NONE;
+        return S_OK;
+    }
     externalOwnedContent_ = externalContent;
     if (externalContent && (*effect & DROPEFFECT_COPY) == 0)
     {
@@ -1043,11 +1082,11 @@ HRESULT DesktopApp::HandleOleDropWithMenu(
         externalDropDock &&
         dragSession_.TargetRegion() != HitRegion::Handoff &&
         dragSession_.TargetRegion() != HitRegion::Blocked;
-    // Resolve the insertion boundary while the external summary still owns
-    // the folder-only classification used by the Dock's split ranges.
+    // Keep the actual hit boundary before an asynchronous source supplies its
+    // file/folder types. Materialization assigns each member to its partition.
     const size_t externalDockInsertIndex =
         externalDockMappingTarget
-            ? externalDropDock->GetDropInsertIndex(
+            ? externalDropDock->GetExternalDropInsertIndex(
                 dragSession_.TargetSlot(),
                 dragSession_.TargetRegion())
             : 0;

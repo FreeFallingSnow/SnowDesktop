@@ -164,6 +164,9 @@ public:
     bool RestorePresentationState(const PresentationState& state);
     size_t GetDropInsertIndex(Slot* slot, HitRegion region) const
     { return InsertIndexFor(slot, region); }
+    // A delayed external producer has not supplied its item types yet. Keep
+    // the hit boundary until materialization can split the actual batch.
+    size_t GetExternalDropInsertIndex(Slot* slot, HitRegion region) const;
     size_t GetInsertIndexAtPoint(POINT pt) const;
     snowdesktop::dock_running_drag::Target GetRunningDragTarget(POINT pt) const;
     void DrawInsertionPreview(ID2D1DeviceContext* context, size_t insertIndex) const;
