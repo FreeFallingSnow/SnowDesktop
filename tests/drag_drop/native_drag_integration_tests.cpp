@@ -414,19 +414,23 @@ struct NativeDragIntegrationAccess
         app.dragSession_.Begin(origin, std::move(items), captured, point, point);
         return captured;
     }
-    static DropPreviewList GroupedMemberPreview(DesktopApp& app, bool atEnd)
+    static DropPreviewList GroupedMemberPreview(DesktopApp& app, bool atEnd, std::size_t before = 0)
     {
         auto* target = MemberContainer(app, L"ordered-group");
         const auto& slots = target->GetSlots();
+        auto* boundary = atEnd ? slots.back().get() : slots.at(before).get();
+        const auto frame = boundary->GetBounds();
+        app.dragSession_.UpdatePoint({atEnd ? frame.right - 1 : frame.left + 1,
+            atEnd ? frame.bottom - 1 : frame.top + 1});
         return app.BuildDropPreviewList(app.dragSession_.SourceList(), target,
-            atEnd ? nullptr : slots.front().get(), atEnd ? HitRegion::SortAfter : HitRegion::SortBefore,
+            atEnd ? nullptr : boundary, atEnd ? HitRegion::SortAfter : HitRegion::SortBefore,
             0, app.dragSession_.CurrentPoint());
     }
-    static void DropGroupedMembers(DesktopApp& app, bool atEnd)
+    static void DropGroupedMembers(DesktopApp& app, bool atEnd, std::size_t before = 0)
     {
         auto* target = MemberContainer(app, L"ordered-group");
         const auto& slots = target->GetSlots();
-        auto* slot = atEnd ? nullptr : slots.front().get();
+        auto* slot = atEnd ? nullptr : slots.at(before).get();
         const auto items = app.dragSession_.Items();
         auto* origin = app.dragSession_.Source();
         app.dragSession_.DeactivateForDrop();

@@ -4,6 +4,17 @@ namespace native_group_member_order_cases
 {
 using namespace native_member_order_cases;
 
+// H05 middle insertion expectations are declared before executing the native
+// path. The first moving member starts at visible index 1; multiple selection
+// also contains visible index 3. Insert before index 3 / 2 respectively.
+struct Middle { const wchar_t *sorted, *single, *multiple; };
+inline constexpr Middle middle[]{
+    {L"ABCD", L"ACBD", L"ABDC"},
+    {L"DCBA", L"DBCA", L"DCAB"},
+    {L"ACDB", L"ADCB", L"ACBD"},
+    {L"BDCA", L"BCDA", L"BDAC"},
+};
+
 inline void Check(DesktopApp& app, const SortCase& sorted, std::wstring_view expected, bool manual, bool list)
 {
     Require(Access::Widgets(app).size() == 3, "active-group ordering preserves all three native component identities");
@@ -51,7 +62,7 @@ inline void Run()
     std::size_t scenes = 0;
     for (const auto& sorted : sorts)
     for (const bool list : {false, true})
-    for (const int sequence : {0, 1, 2, 3, 4})
+    for (const int sequence : {0, 1, 2, 3, 4, 5, 6})
     {
         const auto description = "active-group sort=" + std::to_string(sorted.field) + " ascending=" +
             std::to_string(sorted.ascending) + " list=" + std::to_string(list) + " sequence=" + std::to_string(sequence);
@@ -63,25 +74,33 @@ inline void Run()
         Access::SortGroupedMembers(app, sorted.field, sorted.ascending);
         Check(app, sorted, sorted.sorted, false, list);
         const auto saved = Read(Access::LayoutPath(app));
-        const bool multi = sequence == 2 || sequence == 3;
+        const bool multi = sequence == 2 || sequence == 3 || sequence == 6;
         const bool atEnd = sequence == 1 || sequence == 3;
+        const std::size_t before = sequence == 5 ? 3u : sequence == 6 ? 2u : 0u;
         std::vector<std::wstring> selected{std::wstring(1, sorted.sorted[1]) + L".txt"};
         if (multi) selected.push_back(std::wstring(1, sorted.sorted[3]) + L".txt");
         const auto captured = Access::BeginGroupedMembers(app, selected);
         Require(captured.entries.size() == selected.size() && std::all_of(captured.entries.begin(), captured.entries.end(),
             [](const auto& entry) { return entry.kind == DropSourceKind::DesktopIcon && entry.widgetId == L"ordered"; }),
             "native group capture must retain every selected file under the stable active-child identity");
-        const auto preview = Access::GroupedMemberPreview(app, atEnd);
+        const auto preview = Access::GroupedMemberPreview(app, atEnd, before);
         Require(!preview.Empty() && !preview.fileBacked && preview.targetWidget && preview.targetWidget->id == L"ordered" &&
-            preview.insertIndex == (atEnd ? 4u : 0u), "native group preview must target its active child and the given real insertion boundary");
+            preview.insertIndex == (atEnd ? 4u : before), "native group preview must target its active child and the given real insertion boundary");
         if (sequence == 4)
         {
             Access::EndActualGesture(app);
             Require(Read(Access::LayoutPath(app)) == saved, "cancelling active-group drag cannot persist a new order");
         }
-        else Access::DropGroupedMembers(app, atEnd);
+        else Access::DropGroupedMembers(app, atEnd, before);
         const auto* expected = sequence == 4 ? sorted.sorted : multi
             ? (atEnd ? sorted.multiEnd : sorted.multiFront) : (atEnd ? sorted.singleEnd : sorted.singleFront);
+        if (sequence >= 5)
+        {
+            const auto literal = std::find_if(std::begin(middle), std::end(middle),
+                [&](const auto& row) { return std::wstring_view(row.sorted) == sorted.sorted; });
+            Require(literal != std::end(middle), "each H05 middle input must have an independent literal order");
+            expected = multi ? literal->multiple : literal->single;
+        }
         native_drag_commit_cases::context = description + " phase=after-drop";
         Check(app, sorted, expected, sequence != 4, list);
         Require(Access::Save(app), "save active-group manual result through actual host storage");
