@@ -1,12 +1,12 @@
     static void SeedDockPartitions(DesktopApp& app, const std::vector<std::filesystem::path>& files,
         bool pinned, bool mapping)
     {
-        PopulateModel(app, files, 0);
         // Six real entries need a visible Dock viewport and valid, distinct
-        // desktop cells. The generic two-file fixture uses a 4 x 3 page.
+        // desktop cells before PopulateModel performs its first LayoutItems.
         auto& page = app.gridPages_.front(); page.columns = 12; page.rows = 8;
         page.bounds = page.workArea = page.visualWorkArea = RECT{0, 0, 1200, 800};
         app.savedPageColumns_[page.id] = 12; app.savedPageRows_[page.id] = 8;
+        PopulateModel(app, files, 0);
         for (auto& item : app.items_) item.selected = false;
         SeedDock(app);
         app.dockAreas_ = {RECT{0, 200, 1200, 300}};

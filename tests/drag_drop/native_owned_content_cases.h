@@ -68,6 +68,36 @@ public:
         auto* drop = reinterpret_cast<DROPFILES*>(bytes.data()); drop->pFiles = sizeof(DROPFILES); drop->fWide = TRUE;
         memcpy(bytes.data() + sizeof(DROPFILES), names.data(), names.size() * sizeof(wchar_t));
     }
+    void ShellNamespaceAlternative()
+    {
+        const auto parsing = std::wstring(L"::") + kDesktopIconClsidRecycleBin;
+        PIDLIST_ABSOLUTE absolute = nullptr;
+        Require(SUCCEEDED(SHParseDisplayName(parsing.c_str(), nullptr, &absolute, 0, nullptr)) && absolute,
+            "resolve a known Shell namespace representation without enumerating the desktop");
+        Pidl item(absolute), parent(ILClone(item.get()));
+        Require(parent.get() && ILRemoveLastID(parent.get()), "retain the real CIDA parent identity");
+        PCUITEMID_CHILD child = ILFindLastID(item.get());
+        ComPtr<IDataObject> shell;
+        Require(SUCCEEDED(SHCreateDataObject(parent.get(), 1, &child, nullptr, IID_PPV_ARGS(&shell))),
+            "obtain the actual Shell CIDA representation for the complete virtual batch");
+        FORMATETC format{Named(CFSTR_SHELLIDLIST), nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL};
+        struct Medium
+        {
+            STGMEDIUM data{};
+            ~Medium() { if (data.tymed != TYMED_NULL) ReleaseStgMedium(&data); }
+        } medium;
+        Require(shell->QueryGetData(&format) == S_OK && SUCCEEDED(shell->GetData(&format, &medium.data)) &&
+            medium.data.tymed == TYMED_HGLOBAL && medium.data.hGlobal,
+            "the auxiliary CIDA must be a real queryable and readable Shell payload");
+        const auto size = GlobalSize(medium.data.hGlobal);
+        Require(size >= offsetof(CIDA, aoffset) + 2 * sizeof(UINT), "actual CIDA carries a parent and one child PIDL");
+        const void* bytes = GlobalLock(medium.data.hGlobal);
+        Require(bytes != nullptr, "lock the actual auxiliary Shell representation for copying");
+        auto& output = formats[format.cfFormat];
+        try { output.assign(static_cast<const std::byte*>(bytes), static_cast<const std::byte*>(bytes) + size); }
+        catch (...) { GlobalUnlock(medium.data.hGlobal); throw; }
+        GlobalUnlock(medium.data.hGlobal);
+    }
     HRESULT STDMETHODCALLTYPE GetData(FORMATETC* format, STGMEDIUM* medium) override
     {
         CheckThread(); ++reads;
@@ -305,6 +335,9 @@ inline void Run(std::string_view targetName, bool cancel = false, bool rightCopy
         if (kind == 1 || kind == 5 || kind == 6 || kind == 7 || kind == 10) source->Image();
         if (kind == 2) source->Text(CF_UNICODETEXT, L"data:application/octet-stream;base64,YWJjAAE=");
         if (kind >= 3 && kind <= 6) source->Virtual(kind == 3 ? 1 : 2, kind == 6);
+        // Retain the synchronous pure-virtual control; the same complete
+        // asynchronous batch also offers a genuine lower-priority Shell CIDA.
+        if (kind == 4 && asynchronous) source->ShellNamespaceAlternative();
         const auto url = origin.Url(kind == 9);
         if (kind >= 7 && kind <= 9) { source->Text(Source::Named(CFSTR_INETURLW), url); source->Text(CF_UNICODETEXT, L"caption must not replace resource"); }
         if (kind == 10) source->Files({borrowed});

@@ -30,10 +30,11 @@ bool OffersOwnedDropContent(IDataObject* source)
     };
     // Real Shell objects can provide text/image fallbacks. Do not render their
     // paths merely to decide hover/menu capability or replace the file batch.
-    if (offers(CF_HDROP) || offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"Shell IDList Array")))) return false;
-    return offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW"))) ||
-        offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptor"))) ||
-        snowdesktop::drop_image_data::OffersImageData(source) || offers(CF_UNICODETEXT) ||
+    if (offers(CF_HDROP)) return false;
+    if (offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptorW"))) ||
+        offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"FileGroupDescriptor")))) return true;
+    if (offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"Shell IDList Array")))) return false;
+    return snowdesktop::drop_image_data::OffersImageData(source) || offers(CF_UNICODETEXT) ||
         offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"UniformResourceLocatorW"))) ||
         offers(static_cast<CLIPFORMAT>(RegisterClipboardFormatW(L"UniformResourceLocator")));
 }

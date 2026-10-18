@@ -5,6 +5,18 @@
 namespace native_dock_partition_cases
 {
 using namespace native_ole_file_cases;
+inline void CheckInitialDesktopPositions(DesktopApp& app, const std::vector<GridCell>& cells)
+{
+    std::set<std::wstring> occupied;
+    const auto& pages = Access::Pages(app);
+    for (const auto& cell : cells)
+    {
+        const auto page = std::find_if(pages.begin(), pages.end(), [&](const auto& current) { return current.id == cell.pageId; });
+        Require(page != pages.end() && cell.column >= 0 && cell.row >= 0 && cell.column < page->columns && cell.row < page->rows &&
+            occupied.insert(cell.pageId + L":" + std::to_wstring(cell.column) + L":" + std::to_wstring(cell.row)).second,
+            "A27 fixture must present valid distinct desktop cells before any capture or Dock operation");
+    }
+}
 inline void Check(DesktopApp& app, const std::vector<std::wstring>& expected, bool mapping,
     const std::vector<GridCell>& originalCells, const std::vector<fs::path>& files)
 {
@@ -64,6 +76,7 @@ inline void Run()
             "actual Shell classification must separate main and file sections before crossing the fixed area");
         std::vector<std::wstring> keys; std::vector<GridCell> originalCells;
         for (const auto& file : files) { keys.push_back(ToUpperInvariant(file.wstring())); originalCells.push_back(Find(app, keys.back()).gridCell); }
+        if (mapping) CheckInitialDesktopPositions(app, originalCells);
         const std::vector<std::wstring> selected = multiple ? std::vector<std::wstring>{keys[4], keys[5]}
             : std::vector<std::wstring>{keys[5]};
         const auto captured = Access::BeginDockFiles(app, selected, {150, 250}, 0);
@@ -116,6 +129,7 @@ inline void Run()
             "real Shell classification must deliver the existing main/file partition before capturing a mixed reorder");
         std::vector<GridCell> originalCells; std::vector<std::wstring> keys;
         for (const auto& file : files) { keys.push_back(ToUpperInvariant(file.wstring())); originalCells.push_back(Find(app, keys.back()).gridCell); }
+        if (mapping || !pinned) CheckInitialDesktopPositions(app, originalCells);
         std::vector<std::size_t> selected;
         std::vector<std::size_t> order;
         if (pinned)
