@@ -2674,6 +2674,15 @@ if (BUILD_TESTING)
             REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
             TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell")
     endforeach()
+    foreach(INGRESS_TARGET IN ITEMS collection files mapping collection_group file_group_files file_group_mapping)
+        foreach(INGRESS_VERB IN ITEMS copy move alt_link ctrl_shift_link right_move right_copy right_link right_cancel right_dismiss)
+            add_test(NAME native_ole_widget_${INGRESS_TARGET}_${INGRESS_VERB}
+                COMMAND SnowDesktopNativeDragIntegrationTests --ole-widget-files ${INGRESS_TARGET} ${INGRESS_VERB})
+            set_tests_properties(native_ole_widget_${INGRESS_TARGET}_${INGRESS_VERB} PROPERTIES
+                REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
+                TIMEOUT 90 LABELS "integration;interaction;slot;widget;data;shell;ole")
+        endforeach()
+    endforeach()
     foreach(MIXED_TARGET IN ITEMS collection files)
         add_test(NAME native_mixed_selection_${MIXED_TARGET}
             COMMAND SnowDesktopNativeDragIntegrationTests --mixed-selection ${MIXED_TARGET})

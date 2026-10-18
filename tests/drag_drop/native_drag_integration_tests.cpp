@@ -372,6 +372,56 @@ struct NativeDragIntegrationAccess
                 widget && widget->GetWidgetData()->id == id) return widget;
         throw std::runtime_error("native member fixture requires its real container");
     }
+    static void SeedExternalStorage(DesktopApp& app, DesktopWidgetType rootType,
+        DesktopWidgetType memberType, bool icon, const std::filesystem::path& member)
+    {
+        const bool grouped = IsGroupWidgetType(rootType);
+        DesktopWidget target;
+        target.id = grouped ? L"ingress-active" : L"ingress-root";
+        target.type = memberType; target.title = target.customTitle = L"Existing destination";
+        target.gridCell = {L"__page:1", 0, 0}; target.gridSpan = {4, 3};
+        target.autoCollect = false; target.activeCategoryId = L"all";
+        if (memberType == DesktopWidgetType::FolderMapping)
+        {
+            target.sourceFolderPath = member.parent_path().wstring();
+            auto snapshot = snowdesktop::shell_refresh::ReadFolder(target.sourceFolderPath, false);
+            if (!snapshot.complete) throw std::runtime_error("read real mapped ingress baseline");
+            target.folderEntries = std::move(snapshot.entries);
+        }
+        else
+        {
+            auto item = FileItem(member); target.itemKeys = {item.layoutKey};
+            app.items_.push_back(std::move(item));
+        }
+        if (!grouped) { target.gridSpan = icon ? GridSpan{1, 1} : GridSpan{4, 3}; target.singleCellIconMode = icon; }
+        app.widgets_.push_back(std::move(target));
+        if (grouped)
+        {
+            DesktopWidget inactive;
+            inactive.id = L"ingress-inactive"; inactive.type = DesktopWidgetType::Collection;
+            inactive.title = inactive.customTitle = L"Unchanged inactive source";
+            inactive.gridCell = {L"__page:1", 0, 0}; inactive.gridSpan = {2, 2};
+            inactive.autoCollect = false; inactive.privacyMode = true;
+            if (rootType == DesktopWidgetType::FileGroup) inactive.type = DesktopWidgetType::FileCategories;
+            app.widgets_.push_back(std::move(inactive));
+            DesktopWidget root;
+            root.id = L"ingress-root"; root.type = rootType;
+            root.title = root.customTitle = L"Ingress group";
+            root.childWidgetIds = {L"ingress-active", L"ingress-inactive"}; root.activeCategoryId = L"ingress-active";
+            root.gridCell = {L"__page:1", 0, 0}; root.gridSpan = icon ? GridSpan{1, 1} : GridSpan{4, 3};
+            root.singleCellIconMode = icon; root.autoCollect = false;
+            app.widgets_.push_back(std::move(root));
+        }
+        app.desktopItemsReady_ = true; app.RefreshDesktopItemIndexCache(); app.LayoutItems();
+    }
+    static void FreshExternalDwell(DesktopApp& app)
+    {
+        // UI timeout transitions are a separate sequence. Keep real OLE
+        // routing/file work, with a fresh hover rather than an elapsed dwell.
+        app.CancelCollectionPopupDwell(); app.CancelCollectionGroupTabDwell();
+    }
+    static bool NoIngressPopup(const DesktopApp& app)
+    { return NoPresentationWindows(app) && app.popupWidgetIndex_ == static_cast<std::size_t>(-1); }
     static void SeedMemberModel(DesktopApp& app, const std::vector<std::filesystem::path>& files,
         DesktopWidgetType type, bool list)
     {
@@ -743,6 +793,7 @@ struct NativeDragIntegrationAccess
 #include "native_mixed_selection_cases.h"
 #include "native_group_member_order_cases.h"
 #include "native_right_drag_cases.h"
+#include "native_ole_widget_cases.h"
 
 namespace
 {
@@ -811,6 +862,7 @@ int main(int argc, char** argv)
         else if (argc == 2 && std::string_view(argv[1]) == "--group-member-order") native_group_member_order_cases::Run();
         else if (argc == 3 && std::string_view(argv[1]) == "--group-member-order") native_group_member_order_cases::Run(argv[2]);
         else if (argc == 3 && std::string_view(argv[1]) == "--right-drag-files") native_right_drag_cases::Run(argv[2]);
+        else if (argc == 4 && std::string_view(argv[1]) == "--ole-widget-files") native_ole_widget_cases::Run(argv[2], argv[3]);
         else throw std::runtime_error("unknown native drag integration mode");
         return 0;
     }
