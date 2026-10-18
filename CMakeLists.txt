@@ -3202,6 +3202,13 @@ if (BUILD_TESTING)
     get_property(SNOWDESKTOP_REGISTERED_TESTS DIRECTORY PROPERTY TESTS)
     foreach(test_name IN LISTS SNOWDESKTOP_REGISTERED_TESTS)
         get_test_property(${test_name} LABELS test_labels)
+        # These tests exercise a host graph or launch tool subprocesses. Budget
+        # their CPU demand independently of the global CTest job count; running
+        # 20 native hosts alongside tool workflows saturated the 24-core test
+        # machine and caused timeouts, while eight heavy natives passed.
+        if("isolated-native-model" IN_LIST test_labels OR "tools" IN_LIST test_labels)
+            set_tests_properties(${test_name} PROPERTIES PROCESSORS 3)
+        endif()
         if(("shell" IN_LIST test_labels OR "window" IN_LIST test_labels OR
             "ui" IN_LIST test_labels OR "host-runtime" IN_LIST test_labels)
             AND NOT "tools" IN_LIST test_labels
