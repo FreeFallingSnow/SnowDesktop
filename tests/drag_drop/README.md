@@ -606,6 +606,10 @@ A18 首轮已保留 40/54 通过、14 项映射等待失败的原始记录。诊
 
 D04/A20 的基线在生产默认解析未变时无警告编译：21 项中 14 项跨卷/混卷通过，七类同卷目标均在首个实际源存在性断言失败。`288cabf2` 采用实际物理目标卷决定默认动作；已知同步路径用于反馈，延迟路径在来源读取后决定实际提交和最终租约回报，不在悬停渲染内容。相同完整 21 项、130 场景通过，四项 A19、84 场景通过；另五个显式原生条目共 384 场景及共用异步传输模式通过，联合 31/31、270.54 秒。四种当前 ABI 的宿主故障副本产生五项预定业务失败：物理 Copy、遗漏 Dock 引用、反转跨卷/混卷默认规则、保留物理移动但遗漏实际来源完成回报。完整 C++ 断言与输入未过滤；源码和二进制指纹、原始基线和候选分别保留。卷身份读取参照 [FILE_ID_INFO](https://learn.microsoft.com/en-us/windows/win32/api/winbase/ns-winbase-file_id_info)，最终优化移动回报遵循 [EndOperation](https://learn.microsoft.com/en-us/windows/win32/api/shldisp/nf-shldisp-idataobjectasynccapability-endoperation)。本次为独立定向编译与执行，标准构建、全量及实机仍分别验收。
 
+D05/D06 的用户决策先登记为 A21/A22，再接入同一原生程序的 `native_widget_pair_storage` 与 `native_group_lifecycle_storage` 两个入口。当前独立定向结果为 2/2、43.11 秒：108 个配对场景与 36 个真实标签转移/组收尾场景通过；配置、去重、来源移除、归属、文件身份/字节/大小/修改时间、实际刷新和磁盘重载均核对。初始 Dock 选择夹具遗漏、映射基线初始化不全，以及重载路径大小写的字节比较误报均保留原始失败，不当作产品缺陷。证据为 `.build/verification/matrix-native-widget-pair-c1ccb65417814affb23dadfb4ee1d209.json`；优化前 168+36 场景为 84.72 秒，删去建组等价索引重复与冗余读盘，合并的全部正反索引仍逐项覆盖，超时未放宽。
+
+三项故障对照在当前 ABI 的 `app_widget_grouping.cpp` 独立副本中执行真实提交/收尾：误改目标设置、遗漏来源成员、跳过组解散，各产生对应业务断言失败，均为实际退出码 1；输入、测试对象与断言未过滤，生产源码未改动。记录为 `.codex-probes/drag-drop-matrix/native-host-16922f768f014350876e870c30554adc/pair-controls-04a1f3972ad24cda8d2ec874ada981db/evidence.json`。协作批次 `9f81134a77894a67b6b6aeb37b0ecc2e` 的标准 Release 构建通过，无编译/链接警告；新增两项与桌面提交、组内排序两项共 4/4 通过，CTest 41.10 秒，四项同时启动且均只执行一次，构建加测试批次共 165.12 秒。该结果是定向验证，不能写成当轮全量；真实指针命中、悬停弹窗和桌面实机仍不在此证据范围内。汇总记录为 `.build/verification/matrix-native-widget-pair-delivery-35c44d84e60d4b1abd3e2092cbbfdc56.json`。
+
 外部文件 A01/A02/A03 与 A16 的异步接受还必须在 `Drop` 返回时确认所选效果，并已对来源调用一次 `StartOperation`；实际文件与优化移动清理结果在完成后验证。此时序来自 [Windows 异步 Shell 传输契约](https://learn.microsoft.com/en-us/windows/win32/shell/datascenarios#dragging-and-dropping-shell-objects-asynchronously) 和 [StartOperation](https://learn.microsoft.com/en-us/windows/win32/api/shldisp/nf-shldisp-idataobjectasynccapability-startoperation)，效果值对应独立的用户动作；不能等待结果时超时就声称原始错误已被有效捕获。
 
 样本 A01 至 A03 的单/多选、真实文件/目录、允许效果、同步/异步和目标类型继续由第 2 节扩展，不能只保留这些代表例子作为完整覆盖。
