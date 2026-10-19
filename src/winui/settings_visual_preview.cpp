@@ -146,12 +146,18 @@ unsigned ExpandGradientDetails(const x::DependencyObject& cards, const x::Framew
 }
 
 // Deliberately no backend: these are example author fields, never a user's
-// component data. All writes/pickers/searches remain unavailable.
+// component data. Only the explicit secret-input diagnostic accepts synthetic
+// writes; it records lengths and status, never plaintext or real credentials.
 class PreviewWidgetService final : public wr::IWidgetSettingsService
 {
 public:
     wr::WidgetSettingsSnapshot value;
     bool showSearch = false;
+    bool allowSecretWrites = false;
+    bool failSecretWrites = false;
+    unsigned secretAttempts = 0;
+    unsigned secretSuccesses = 0;
+    std::size_t lastSecretBytes = 0;
     std::string searchResultTitle;
     explicit PreviewWidgetService(bool english, bool searching)
         : showSearch(searching), searchResultTitle(english ? "QQ Music" : "QQ音乐") // l10n-allow: isolated bilingual preview fixture, not production UI text.
@@ -185,6 +191,13 @@ public:
         launcher.opaque.configured = true;
         launcher.opaque.canChoose = launcher.opaque.canClear = true;
         launcher.opaque.displayLabel = english ? "NetEase Cloud Music" : "网易云音乐"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+        add("api_key", "password", "API Key", "API Key", {}); // l10n-allow: isolated preview field label.
+        auto& secret = value.fields.back();
+        secret.schema.group.clear();
+        secret.schema.description = english
+            ? "Encrypted on this device; sent only to the selected provider."
+            : "在本机加密保存，仅发送到所选厂商。"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
+        secret.opaque.available = secret.opaque.configured = secret.opaque.canClear = true;
         wr::WidgetSettingPresetSchema preset;
         preset.id = "standard";
         preset.label = english ? "Standard" : "标准"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
@@ -204,10 +217,25 @@ public:
     wr::WidgetSettingMutationResult SetOrdinary(const wr::WidgetSettingMutationGuard&, std::string_view, const wr::InteractionValue&) override { return {}; }
     wr::WidgetSettingMutationResult PreviewOrdinary(const wr::WidgetSettingMutationGuard&, std::string_view, const wr::InteractionValue&) override { return {}; }
     wr::WidgetSettingMutationResult SetSearchQuery(const wr::WidgetSettingMutationGuard&, std::string_view, std::string) override { return {}; }
-    wr::WidgetSettingMutationResult SetSecret(const wr::WidgetSettingMutationGuard&, std::string_view, std::string_view) override { return {}; }
+    wr::WidgetSettingMutationResult SetSecret(const wr::WidgetSettingMutationGuard& guard,
+        std::string_view key, std::string_view plaintext) override
+    {
+        if (!allowSecretWrites || key != "api_key") return {};
+        if (!guard.Matches(value))
+            return {wr::WidgetSettingMutationStatus::StaleSnapshot, value.generation, value.revision, "staleSnapshot", {}};
+        ++secretAttempts;
+        if (failSecretWrites)
+            return {wr::WidgetSettingMutationStatus::PersistenceFailed, value.generation, value.revision, "previewWriteFailed", {}};
+        for (auto& field : value.fields)
+            if (field.schema.key == key)
+                field.opaque.configured = field.opaque.canClear = !plaintext.empty();
+        lastSecretBytes = plaintext.size();
+        ++secretSuccesses;
+        return {wr::WidgetSettingMutationStatus::Applied, value.generation, ++value.revision, {}, {}};
+    }
     wr::WidgetSettingMutationResult ChooseFilesystemHandle(const wr::WidgetSettingMutationGuard&, std::string_view) override { return {}; }
     wr::WidgetSettingMutationResult OpenEntityReferencePicker(const wr::WidgetSettingMutationGuard&, std::string_view) override { return {}; }
-    wr::WidgetSettingMutationResult ClearOpaque(const wr::WidgetSettingMutationGuard&, std::string_view) override { return {}; }
+    wr::WidgetSettingMutationResult ClearOpaque(const wr::WidgetSettingMutationGuard& guard, std::string_view key) override { return SetSecret(guard, key, {}); }
     wr::WidgetSettingMutationResult ApplyPreset(const wr::WidgetSettingMutationGuard&, std::string_view) override { return {}; }
     wr::WidgetSettingMutationResult UpdateHostAppearance(const wr::WidgetSettingMutationGuard&, const wr::WidgetHostAppearancePatch&) override { return {}; }
     wr::WidgetSettingMutationResult PreviewHostAppearance(const wr::WidgetSettingMutationGuard&, const wr::WidgetHostAppearancePatch&) override { return {}; }
@@ -227,6 +255,56 @@ public:
     }
 };
 
+void ExerciseSecretInput(const x::FrameworkElement& root,
+    PreviewWidgetService& service, const std::filesystem::path& output)
+{
+    c::PasswordBox password{nullptr};
+    Walk(root, [&](const x::DependencyObject& node) {
+        if (const auto input = node.try_as<c::PasswordBox>()) password = input;
+    });
+    if (!password) throw std::runtime_error("missing preview password editor");
+    const auto editors = x::Media::VisualTreeHelper::GetParent(password);
+    c::Button clear{nullptr};
+    Walk(editors, [&](const x::DependencyObject& node) {
+        if (const auto button = node.try_as<c::Button>()) clear = button;
+    });
+    if (!clear) throw std::runtime_error("missing inline password clear action");
+    const auto inputBounds = password.TransformToVisual(root).TransformBounds(
+        {0, 0, static_cast<float>(password.ActualWidth()), static_cast<float>(password.ActualHeight())});
+    const auto clearBounds = clear.TransformToVisual(root).TransformBounds(
+        {0, 0, static_cast<float>(clear.ActualWidth()), static_cast<float>(clear.ActualHeight())});
+    if (std::abs(inputBounds.Y - clearBounds.Y) > 2.0 || clearBounds.X < inputBounds.X + inputBounds.Width)
+        throw std::runtime_error("password clear action is not aligned beside the input");
+    (void)password.Focus(x::FocusState::Programmatic);
+    const bool focused = password.FocusState() != x::FocusState::Unfocused;
+    if (focused) password.PasswordRevealMode(c::PasswordRevealMode::Visible);
+    password.Password(L"offline-a");
+    password.Password(L"offline-ab");
+    password.Password(L"offline-autosave");
+    PumpUntil([&] { return service.secretAttempts != 0; });
+    if (service.secretAttempts != 1 || service.secretSuccesses != 1 || service.lastSecretBytes != 16 ||
+        (focused && (password.Password() != L"offline-autosave" || password.PasswordRevealMode() != c::PasswordRevealMode::Visible)))
+        throw std::runtime_error("password input did not save its latest draft without interrupting editing");
+    service.failSecretWrites = true;
+    password.Password(L"offline-retry");
+    PumpUntil([&] { return service.secretAttempts == 2; });
+    if (service.secretSuccesses != 1 || service.lastSecretBytes != 16 || password.Password() != L"offline-retry")
+        throw std::runtime_error("failed password write lost its draft or replaced the stored value");
+    service.failSecretWrites = false;
+    InvokePreview(clear);
+    const auto settleUntil = GetTickCount64() + 800;
+    PumpUntil([&] { return GetTickCount64() >= settleUntil; });
+    if (service.secretAttempts != 3 || service.secretSuccesses != 2 || service.lastSecretBytes != 0 || !password.Password().empty())
+        throw std::runtime_error("clearing a password saved or resurrected its pending draft");
+    password.Password(L"offline-final");
+    PumpUntil([&] { return service.secretAttempts == 4; });
+    if (service.secretSuccesses != 3 || service.lastSecretBytes != 13)
+        throw std::runtime_error("password input did not recover after clearing");
+    std::ofstream(output / L"secret-input.tsv")
+        << "input-autosave\tburst-coalesced\tfailure-retains-draft\tclear-discards-draft\tfocus-retained\n"
+        << "passed\tpassed\tpassed\tpassed\t" << (focused ? "passed" : "not-observed") << '\n';
+}
+
 constexpr SettingsPage pages[] = {
     SettingsPage::General, SettingsPage::Desktop, SettingsPage::QuickNavigation,
     SettingsPage::DesktopPages, SettingsPage::WidgetBehavior, SettingsPage::DesktopCategories,
@@ -242,7 +320,7 @@ constexpr SettingsPage pages[] = {
 void Export(const std::filesystem::path& output, std::string_view selected, bool dark,
     const std::string& locale, int width, int height, bool expanded, bool custom, bool disabled,
     bool scenarioRules, const std::string& focusId, std::string_view calendarScenario,
-    bool searching, bool restore)
+    bool searching, bool restore, bool secretInput)
 {
     Locale::Instance().Init((std::filesystem::path(GetExecutableDirectoryPath()) / L"lang").c_str());
     if (!Locale::Instance().HasLanguage(locale)) throw std::runtime_error("preview locale is not installed");
@@ -266,6 +344,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         static_cast<int>(std::ceil(height * scale)), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 
     PreviewWidgetService widgets(locale == "en-US", searching);
+    widgets.allowSecretWrites = secretInput;
     widgets.value.customStyle = custom;
     widgets.value.hostAppearance.followPersonalization = !custom;
     if (custom) widgets.value.hostAppearance.presetId = "__custom";
@@ -1202,6 +1281,8 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
                 Settle(shell.as<x::FrameworkElement>());
             }
         }
+        if (secretInput && page == SettingsPage::WidgetSettings)
+            ExerciseSecretInput(shell.as<x::FrameworkElement>(), widgets, output);
         const unsigned gradientDetailsInvoked = expanded
             ? ExpandGradientDetails(cards, shell.as<x::FrameworkElement>()) : 0;
         unsigned removeStopButtons = 0;
@@ -1344,12 +1425,12 @@ std::optional<int> TryRunSettingsVisualPreview()
         if (theme != L"light" && theme != L"dark") throw std::runtime_error("preview supports light or dark XAML surfaces");
         const bool calendarState = state == L"calendar-dates" || state == L"calendar-weekly" ||
             state == L"calendar-monthly" || state == L"calendar-occurrence";
-        if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled" && state != L"scenarios" && state != L"searching" && state != L"restore" && !calendarState) throw std::runtime_error("invalid disclosure state");
+        if (state != L"expanded" && state != L"collapsed" && state != L"custom" && state != L"disabled" && state != L"scenarios" && state != L"searching" && state != L"restore" && state != L"secret-input" && !calendarState) throw std::runtime_error("invalid disclosure state");
         Export(output, winrt::to_string(args[3]), theme == L"dark", winrt::to_string(args[5]), width, height,
             state == L"expanded" || state == L"custom" || state == L"scenarios",
             state == L"custom" || state == L"scenarios", state == L"disabled", state == L"scenarios",
             count == 10 ? winrt::to_string(args[9]) : std::string{}, calendarState ? winrt::to_string(state) : std::string{},
-            state == L"searching", state == L"restore");
+            state == L"searching", state == L"restore", state == L"secret-input");
         std::ofstream(output / L"result.txt") << "passed\nIsolated production XAML, example data; no desktop material or interaction acceptance.\n";
         return 0;
     }

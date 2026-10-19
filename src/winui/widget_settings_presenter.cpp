@@ -285,6 +285,7 @@ struct WidgetFieldControl
     bool enabled = true;
     bool textDirty = false;
     bool passwordDirty = false;
+    bool passwordCanClear = false;
     bool continuousDirty = false;
     bool synchronizing = false;
     std::uint64_t searchRequestId = 0;
@@ -1375,6 +1376,9 @@ struct WidgetSettingsPresenter::Impl
     {
         const bool hasDraft = !field.password.Password().empty();
         field.passwordReveal.IsEnabled(field.password.IsEnabled() && hasDraft);
+        if (field.clear)
+            field.clear.IsEnabled(field.enabled &&
+                (field.passwordCanClear || hasDraft));
         if (!hasDraft)
         {
             field.password.PasswordRevealMode(muxc::PasswordRevealMode::Hidden);
@@ -1425,11 +1429,11 @@ struct WidgetSettingsPresenter::Impl
         passwordEditors.ColumnDefinitions().Append(revealColumn);
         passwordEditors.Children().Append(field.password);
         field.passwordReveal = muxc::Primitives::ToggleButton{};
-        field.passwordReveal.Width(40.0);
-        field.passwordReveal.MinWidth(40.0);
+        field.passwordReveal.Width(32.0);
+        field.passwordReveal.MinWidth(32.0);
         field.passwordReveal.Height(32.0);
         field.passwordReveal.Padding({0.0, 0.0, 0.0, 0.0});
-        field.passwordReveal.VerticalAlignment(mux::VerticalAlignment::Top);
+        field.passwordReveal.VerticalAlignment(mux::VerticalAlignment::Center);
         muxc::SymbolIcon revealIcon{muxc::Symbol::View};
         field.passwordReveal.Content(revealIcon);
         field.passwordRevealClicked = field.passwordReveal.Click(
@@ -1447,22 +1451,18 @@ struct WidgetSettingsPresenter::Impl
         field.passwordFlyout = muxc::TextCommandBarFlyout{};
         field.password.ContextFlyout(field.passwordFlyout);
         field.idleCommitTimer = mux::DispatcherTimer{};
-        field.idleCommitTimer.Interval(std::chrono::milliseconds(100));
+        field.idleCommitTimer.Interval(std::chrono::milliseconds(650));
         field.idleCommitTick = field.idleCommitTimer.Tick(
             [this, &field](const auto&, const auto&) {
                 field.idleCommitTimer.Stop();
-                // A context menu temporarily owns keyboard focus. Wait for
-                // dismissal and focus restoration before finalizing a draft.
-                if (!PasswordEditorHasFocus(field) &&
-                    !field.passwordFlyout.IsOpen())
-                {
-                    HidePasswordDraft(field);
+                // Save while typing without finalizing the focused editor.
+                // Clipboard commands finish before their draft is submitted.
+                if (!field.passwordFlyout.IsOpen())
                     (void)CommitPassword(field);
-                }
             });
         field.passwordFlyoutClosed = field.passwordFlyout.Closed(
             [&field](const auto&, const auto&) {
-                if (!PasswordEditorHasFocus(field))
+                if (field.passwordDirty || !PasswordEditorHasFocus(field))
                     field.idleCommitTimer.Start();
             });
         field.passwordChanged = field.password.PasswordChanged(
@@ -1472,15 +1472,20 @@ struct WidgetSettingsPresenter::Impl
                 field.passwordDirty = true;
                 field.draftError.clear();
                 RefreshFieldValidation(field);
+                field.idleCommitTimer.Stop();
+                field.idleCommitTimer.Interval(std::chrono::milliseconds(650));
+                field.idleCommitTimer.Start();
             });
         field.lostFocus = field.password.LostFocus(
             [&field](const auto&, const auto&) {
                 field.idleCommitTimer.Stop();
+                field.idleCommitTimer.Interval(std::chrono::milliseconds(100));
                 field.idleCommitTimer.Start();
             });
         field.passwordRevealLostFocus = field.passwordReveal.LostFocus(
             [&field](const auto&, const auto&) {
                 field.idleCommitTimer.Stop();
+                field.idleCommitTimer.Interval(std::chrono::milliseconds(100));
                 field.idleCommitTimer.Start();
             });
         field.keyDown = field.password.KeyDown(
@@ -1493,8 +1498,8 @@ struct WidgetSettingsPresenter::Impl
                 }
             });
         RefreshPasswordReveal(field);
+        BuildOpaqueActions(field, false, true, passwordEditors);
         field.editorHost.Children().Append(passwordEditors);
-        BuildOpaqueActions(field, false, true);
     }
 
     void BuildBooleanEditor(WidgetFieldControl& field)
@@ -1852,8 +1857,9 @@ struct WidgetSettingsPresenter::Impl
         {
             muxc::ColumnDefinition actionsColumn;
             actionsColumn.Width(mux::GridLengthHelper::Auto());
+            const auto column = inlineRow.ColumnDefinitions().Size();
             inlineRow.ColumnDefinitions().Append(actionsColumn);
-            muxc::Grid::SetColumn(field.opaqueActions, 1);
+            muxc::Grid::SetColumn(field.opaqueActions, static_cast<int>(column));
             inlineRow.Children().Append(field.opaqueActions);
         }
         else
@@ -2381,6 +2387,7 @@ struct WidgetSettingsPresenter::Impl
     {
         field.visible = state.visible;
         field.enabled = state.enabled;
+        if (field.password) field.passwordCanClear = state.opaque.canClear;
         field.root.Visibility(state.visible
             ? mux::Visibility::Visible
             : mux::Visibility::Collapsed);
@@ -2510,7 +2517,8 @@ struct WidgetSettingsPresenter::Impl
         if (field.choose)
             field.choose.IsEnabled(state.enabled && state.opaque.canChoose);
         if (field.clear)
-            field.clear.IsEnabled(state.enabled && state.opaque.canClear);
+            field.clear.IsEnabled(state.enabled && (state.opaque.canClear ||
+                (field.password && !field.password.Password().empty())));
         if (field.restoreDefault)
         {
             const bool differsFromDefault =
@@ -2894,7 +2902,9 @@ struct WidgetSettingsPresenter::Impl
         WidgetFieldControl& field)
     {
         if (field.idleCommitTimer) field.idleCommitTimer.Stop();
-        if (field.password) HidePasswordDraft(field);
+        if (field.password && !PasswordEditorHasFocus(field) &&
+            !field.passwordFlyout.IsOpen())
+            HidePasswordDraft(field);
         if (!field.passwordDirty)
         {
             if (field.password &&
@@ -2922,8 +2932,8 @@ struct WidgetSettingsPresenter::Impl
         {
             if (result.Succeeded())
             {
-                // Keep the user's masked draft while the control owns focus;
-                // a successful Enter must not truncate subsequent editing.
+                // Keep the draft and reveal choice while the editor owns focus;
+                // an idle save or Enter must not interrupt subsequent editing.
                 if (!PasswordEditorHasFocus(*current->second) &&
                     !current->second->passwordFlyout.IsOpen())
                 {
@@ -2934,7 +2944,8 @@ struct WidgetSettingsPresenter::Impl
             {
                 std::wstring restored = ToWide(plaintext);
                 current->second->synchronizing = true;
-                current->second->password.Password(restored);
+                if (current->second->password.Password() != restored)
+                    current->second->password.Password(restored);
                 current->second->synchronizing = false;
                 current->second->passwordDirty = true;
                 RefreshPasswordReveal(*current->second);
@@ -3006,10 +3017,21 @@ struct WidgetSettingsPresenter::Impl
     void ClearOpaque(WidgetFieldControl& field)
     {
         if (!CanMutateField(field)) return;
-        RunMutation(field.schema.key,
-            [this, key = field.schema.key](const auto& guard) {
+        const std::string key = field.schema.key;
+        const bool password = static_cast<bool>(field.password);
+        if (password && field.idleCommitTimer) field.idleCommitTimer.Stop();
+        // Clearing a secret discards its draft instead of saving it first.
+        const auto result = RunMutation(key,
+            [this, key](const auto& guard) {
                 return service.ClearOpaque(guard, key);
-            });
+            }, !password);
+        if (password && result.Succeeded())
+            if (const auto current = fieldsByKey.find(key);
+                current != fieldsByKey.end() && current->second->password)
+            {
+                current->second->passwordDirty = false;
+                ClearPasswordDraft(*current->second);
+            }
     }
 
     void RestoreFieldDefault(WidgetFieldControl& field)
@@ -3242,7 +3264,7 @@ struct WidgetSettingsPresenter::Impl
         {
             const auto clearText =
                 L("app.settings.widget.clear", L"Clear");
-            if (!field.search)
+            if (!field.search && !field.password)
                 field.clear.Content(winrt::box_value(clearText));
             muxc::ToolTipService::SetToolTip(
                 field.clear, winrt::box_value(clearText));
