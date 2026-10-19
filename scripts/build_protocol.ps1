@@ -32,22 +32,17 @@ function New-TaskPlan($Entry, [string]$Scope, [string]$Suites, [string]$Tests, [
     }
     if ($suiteList -contains 'none' -and ($suiteList.Count -ne 1 -or $names.Count -gt 0 -or $Scope -notin 'docs','component','tool')) { throw 'Explicit no-host-tests is limited to docs/component/tool and cannot be mixed with tests.' }
     if (($suiteList -contains 'selected') -and $names.Count -eq 0) { throw 'Selected tests must not be empty.' }
-    if ($Scope -ne 'unknown' -and ([string]::IsNullOrWhiteSpace($Reason) -or $paths.Count -eq 0)) { throw 'A scoped plan requires Inputs and a reason/dependency mapping (or exemption basis).' }
-    # The reviewed scope describes the behavior/dependency boundary. A folder
-    # name cannot distinguish a local presenter adjustment from a public API
-    # change, or a failed-test supplement from an initial infrastructure run.
-    # Preserve conservative coverage for explicitly high-risk/unknown work;
-    # scoped callers must provide the real inputs, selected tests and mapping.
-    $requiredFull = $Scope -in 'unknown','public','infrastructure'
-    if ($requiredFull -and $suiteList -contains 'none') { throw 'Shared/public/build inputs cannot claim the no-host-tests exemption.' }
+    if ([string]::IsNullOrWhiteSpace($Reason) -or $paths.Count -eq 0) { throw 'A plan requires Inputs and a reason/dependency mapping (or exemption basis); full also requires the concrete need for whole-product coverage.' }
+    # Scope describes impact, not permission to expand the selected tests.
+    # Whole-product coverage must be requested explicitly with its necessity
+    # reviewed in Reason; unknown impact is resolved before declaring a plan.
+    $requiredFull = $suiteList -contains 'full'
     return [pscustomobject]@{ schemaVersion=1; scope=$Scope; suites=$suiteList; tests=$names; inputs=$paths;
         reason=$Reason; editRevision=(Get-EditRevision $Entry); source='task-declared'; lightChecks=@('builtin-basic'); requiredFull=$requiredFull;
-        escalationReason=$(if($requiredFull){'Unknown impact or shared/public infrastructure requires full automatic coverage.'}else{''}); inputIdentity=$null }
+        escalationReason=$(if($requiredFull){$Reason}else{''}); inputIdentity=$null }
 }
 function Default-TaskPlan($Entry) {
-    return [pscustomobject]@{ schemaVersion=1; scope='unknown'; suites=@('full'); tests=@(); inputs=@();
-        reason='Legacy registration has no reviewed scope; conservative full automatic coverage.';
-        editRevision=(Get-EditRevision $Entry); source='legacy-default'; lightChecks=@('builtin-basic'); requiredFull=$true; escalationReason='Undeclared impact'; inputIdentity=$null }
+    throw "Missing test plan for $($Entry.id); declare inputs, impact and selected tests with plan before ready/finish. No build or full suite was started."
 }
 function Get-TaskIdentity($Plan) {
     $paths = @(Get-Field $Plan 'inputs' @())
@@ -121,7 +116,10 @@ function New-FrozenPlan($Current) {
         if ($plan.source -eq 'task-declared' -and $plan.inputIdentity -and (Get-TaskIdentity $plan).digest -ne $plan.inputIdentity.digest) { throw "Declared inputs changed after ready for $($entry.id); reopen and update plan." }
         $check=Get-Field $entry 'check'
         if($check -and $check.status -eq 'passed' -and (Get-TaskIdentity $plan).digest -ne $check.inputEnd.digest){throw "Check evidence is stale for $($entry.id); repeat check or reopen before edits."}
-        if ($plan.requiredFull -or $plan.suites -contains 'full') { $full=$true }
+        # Old plans may carry a scope-derived requiredFull flag. Only an
+        # explicit full suite can select whole-product coverage now.
+        $plan.requiredFull = $plan.suites -contains 'full'
+        if ($plan.requiredFull) { $full=$true }
         if ($plan.suites -notcontains 'none') { $build=$true }
         $tasks += [pscustomobject]@{ participant=$entry.id; editRevision=(Get-EditRevision $entry); requirement=$plan }
     }

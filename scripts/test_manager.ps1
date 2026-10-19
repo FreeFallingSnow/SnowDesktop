@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet("full", "fast", "core", "tools", "label", "name", "list", "plan")]
-    [string]$Mode = "full",
+    [string]$Mode = "list",
     [string]$Filter = "",
     [ValidatePattern("^[a-f0-9]{32}$")][string]$PlanBatch
 )

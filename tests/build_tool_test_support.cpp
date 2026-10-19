@@ -244,9 +244,23 @@ Json Coordinator::call(std::vector<std::string> args,int code){return bridge->ca
 std::unique_ptr<Child> Coordinator::start(std::vector<std::string> args){std::vector<std::wstring> command={powershell().wstring(),L"-NoProfile",L"-NonInteractive",L"-File",(scripts/L"build_manager.ps1").wstring()};for(const auto& arg:args)command.push_back(wide(arg));return std::make_unique<Child>(command,root);}
 Json Coordinator::state() const{return Json::parse(read(stateRoot/L"state.json"));}
 Json Coordinator::result(const std::string& batch) const{return Json::parse(read(stateRoot/wide(batch+".json")));}
-Json Coordinator::begin(const std::string& task){return call({"begin",task});}
+Json Coordinator::begin(const std::string& task){
+    auto value=call({"begin",task});
+    // Lifecycle fixtures deliberately request complete synthetic coverage.
+    // Production registrations have no default plan; missing-plan cases use call directly.
+    if(value.at("editRevision").integer()==0){
+        const auto current=state();
+        for(const auto& entry:current.at("current").at("participants").items){
+            if(entry.at("id").str()==task&&!entry.has("testPlan")){
+                plan(task,value.at("batchId").str(),0,"full","","module","src,scripts,CMakePresets.json,CMakeUserPresets.json");
+                break;
+            }
+        }
+    }
+    return value;
+}
 std::vector<std::string> Coordinator::bound(const std::string& action,const std::string& task,const std::string& batch,int revision)const{return {action,task,"-Batch",batch,"-Revision",std::to_string(revision)};}
-Json Coordinator::plan(const std::string& task,const std::string& batch,int revision,const std::string& suite,const std::string& tests,const std::string& scope,const std::string& inputs){auto args=bound("plan",task,batch,revision);args.insert(args.end(),{"-Scope",scope,"-Suites",suite,"-Inputs",inputs,"-Reason","reviewed isolated fixture dependency mapping"});if(!tests.empty())args.insert(args.end(),{"-Tests",tests});return call(args);}
+Json Coordinator::plan(const std::string& task,const std::string& batch,int revision,const std::string& suite,const std::string& tests,const std::string& scope,const std::string& inputs){auto args=bound("plan",task,batch,revision);args.insert(args.end(),{"-Scope",scope,"-Suites",suite,"-Inputs",inputs,"-Reason",suite=="full"?"coordinator lifecycle fixture requires the complete synthetic inventory; no product tests are executed":"reviewed isolated fixture dependency mapping"});if(!tests.empty())args.insert(args.end(),{"-Tests",tests});return call(args);}
 Json Coordinator::ready(const std::string& task,const std::string& batch,int revision,int code){auto value=call(bound("ready",task,batch,revision),code);if(value.has("waiter")&&value.at("waiter").has("pid"))workers.push_back(value.at("waiter"));return value;}
 Json Coordinator::finish(const std::string& task,const std::string& batch,int revision,int code){return call(bound("finish",task,batch,revision),code);}
 int Coordinator::calls() const{if(!fs::exists(root/L"calls.txt"))return 0;auto value=read(root/L"calls.txt");return static_cast<int>(std::count(value.begin(),value.end(),'\n'));}

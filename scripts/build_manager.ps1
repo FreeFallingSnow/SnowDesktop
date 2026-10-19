@@ -11,7 +11,7 @@ param(
     [string]$Reason,
     [long]$Revision = -1,
     [ValidateSet('unknown','module','docs','component','tool','public','infrastructure')][string]$Scope = 'unknown',
-    [string]$Suites = 'full', [string]$Tests = '', [string]$Inputs = '',
+    [string]$Suites = 'selected', [string]$Tests = '', [string]$Inputs = '',
     [switch]$AdoptExistingChanges, [string]$Files = '', [string]$MessageFile = '',
     [string]$IssueId = '', [string]$Assignee = '', [ValidateSet('open','resolved','deferred')][string]$IssueState = 'open',
     [switch]$AutoCheck
@@ -307,8 +307,9 @@ try {
                         $previous=Get-Field $old 'testPlan';if(-not $previous){$previous=Default-TaskPlan $old}
                         $plan=$previous|ConvertTo-Json -Depth 20|ConvertFrom-Json
                         $plan.source='repair-carried';$plan.editRevision=$entry.editRevision;$plan.inputIdentity=$null
-                        # Preserve reviewed requirements, including none/manual. Unknown,
-                        # public and infrastructure still escalate by their real scope.
+                        # Preserve explicit requirements, including none/manual;
+                        # scope alone never escalates a repair to full coverage.
+                        $plan.requiredFull = $plan.suites -contains 'full'
                         Set-Field $plan 'originalRequirement' (Get-Field $previous 'originalRequirement' $previous);Set-Field $entry 'testPlan' $plan
                         Set-Field $entry 'check' ([pscustomobject]@{status='pending';source='builtin-basic';editRevision=$entry.editRevision;reason='Prior ready evidence is not reused for repaired inputs.'})
                         $members += $entry
@@ -488,6 +489,7 @@ try {
                 if($observedRevision -lt 0){$observedRevision=Get-EditRevision $entries[0]}
                 $hasFinishedCurrentBatch = $true
                 if ($current.phase -eq 'editing') {
+                    if (-not (Get-Field $entries[0] 'testPlan')) { [void](Default-TaskPlan $entries[0]) }
                     if($CloseApplication){Set-Field $current 'closeApplicationRequested' $true; Write-AtomicJson $state $statePath}
                     # Remember an explicit request for this batch, even when
                     # another participant eventually owns the build. Shell

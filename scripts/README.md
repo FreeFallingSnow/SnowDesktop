@@ -25,7 +25,7 @@
 ```bat
 scripts\build.bat
 scripts\build_debug.bat
-scripts\test.bat
+scripts\test.bat name "^widget_settings_service$"
 scripts\test.bat fast
 scripts\test.bat core
 scripts\test.bat label rules
@@ -62,13 +62,15 @@ Debug 构建使用 debug preset 和 `scripts\build_debug.bat`。项目数与项�
 因此不要同时大幅提高两者；比较构建耗时时应固定源码输入并记录实际配置。
 
 测试按使用场景分层：日常改动优先用 `name <regex>` 或 `label <regex>` 运行最小充分集合；
-`core` 只运行核心测试；`fast` 运行除 `integration` 外的测试；无参数或 `full` 运行完整自动测试集合。
+`core` 只运行核心测试；`fast` 运行除 `integration` 外的测试；显式 `full` 运行完整自动测试集合。
+无参数只显示用法，不配置、构建或执行测试；直接调用 PowerShell 测试入口而未指定模式时只列清单。
 这些自动模式与对应 CTest 预设都排除 `manual` 手动诊断。Shell 文件操作集成测试已独立为手动诊断，
 平时不执行，遇到相关文件操作或 Shell 阻塞问题时运行 `scripts\test.bat name "^shell_file_operation_worker$"`；
 其预检回归仍自动运行。`name` / `label` 的显式筛选可以包含手动条目，`list` 会显示全部条目及标签。
 直接使用 CTest 时，`tests` 是自动全量，`all-tests` 包含手动诊断；自动全量通过不代表手动条目已执行。
-筛选参数是 CTest 正则表达式。完整测试用于任务最终交付、Pull Request 和发布验证，不要求每个
-中间 Commit 重复执行。
+筛选参数是 CTest 正则表达式。跨模块、公共 API、异步和基础设施改动也按调用链与依赖选择相关项目；
+普通交付、Pull Request 合入和缺少旧全量基线不自动要求全量。全量只用于最终发布候选、用户明确
+要求，或有具体证据且经依赖分析仍无法界定充分定向集合的整体覆盖需求；启动前说明必要性。
 
 `scripts\widget-dev.bat` 需要先构建一次宿主。新增开发候选后，打开组件设置或右键
 “添加组件”菜单即可重新发现组件，无需重启；`-RestartHost` 仍可显式重启宿主。
@@ -188,7 +190,7 @@ rem begin 成功返回后才能修复文件；使用新 editRevision 重报 plan
 
 检查输入、编辑修订及 operationId 一起持久化。失败、中断、待执行或失效的检查挡住冻结；异常退出不会当作通过。`check` 可显式重试已退出检查的只读评估；需要写入时先 `begin` 原子重开。旧进程或旧修订命令无权标记新编辑完成；重开后旧计划与证据失效。检查结束与冻结都核对输入，范围中的内容变化需要重开/更新计划；不自动把编辑者的异常退出变成完成。
 
-测试计划接受 `full/core/fast/tools/selected/none` 与字面 CTest 名称，拒绝 shell/regex。未知影响、公共接口和基础设施 scope 按规则要求应用全量；文件夹名称本身不是依赖分析。`full/core/fast` 排除 tools 和 manual；工具回归用 `-Suites tools` 或显式测试名请求，显式声明的 manual 仍执行。独立模块允许选定测试；文档、独立组件或工具可按现有规则 `-Suites none`，必须有输入范围与审查/豁免理由；这会报告 `skipped/not-required`，不声称宿主通过。空集合、未知名称、失败、跳过或未运行不算通过。源码依赖关系仍需要人/Agent 审阅，脚本不自动推导 C++ 依赖。
+测试计划接受 `full/core/fast/tools/selected/none` 与字面 CTest 名称，拒绝 shell/regex。所有 scope 均可按实际依赖选择相关项目，`unknown/public/infrastructure` 不自动升级全量；文件夹名称本身不是依赖分析。每份计划必须有 `Inputs` 和 `Reason`，说明依赖映射或豁免依据；全量须显式声明 `-Suites full` 并在理由中说明符合 AGENTS 的整体覆盖需求。未声明计划的 ready/finish 会保留 editing 并报错，遗漏 Suites 默认 selected 且必须提供 Tests，不启动全量。`full/core/fast` 排除 tools 和 manual；工具回归用显式测试名或确有必要的 `-Suites tools` 请求，显式声明的 manual 仍执行。文档、独立组件或工具可按现有规则 `-Suites none`；这会报告 `skipped/not-required`，不声称宿主通过。空集合、未知名称、失败、跳过或未运行不算通过。源码依赖关系与全量必要性仍需要人/Agent 审阅，脚本不自动推导 C++ 依赖或判断自然语言理由。
 
 冻结时合并、去重并持久化 `<batch>.plan.json`，之后不可改写；`coverage.json` 记录每个任务请求、实际覆盖、失败和执行前测试二进制 SHA-256。覆盖关联不是缺陷责任认定。源码摘要 v2 按文件内容计算，HEAD 作为元数据，不因只改变提交身份而失效。结果另记实际构建阶段及可观测输出二进制身份。端点身份检查不能排除构建途中改动后恢复、外部 SDK 或未登记写入者。
 
@@ -204,7 +206,7 @@ scripts\build.bat issue task-b -Batch <batchId> -IssueId <issueId> -IssueState d
 
 消息文件使用 UTF-8，并遵守双语提交规范。Git 租约只约束合作调用者；手动 Git、Git hook 自己的修改及同文件混合修改仍需协调。事务保存 parent/commit/实际路径和其他 index 条目稳定性；异常时保留证据，无回滚或覆盖用户修改。问题交接单独持久化，失败责任初始未分配；不得按测试请求者自动归责或重写冻结结果。
 
-热升级不强制迁移活动 v1 批次。其 `begin/finish/status/recover` 合同继续保留，`ready/check/plan` 拒绝并要求下一批启用；已在运行的旧 PowerShell 使用其启动时加载的逻辑，无法被新文件追溯升级。旧结果只能按其证据查询，不充当新协议验证。不要删除活动登记强行换协议。
+旧 v1 批次仍可只读查询和显式恢复，`ready/check/plan` 拒绝并要求下一批启用。未冻结且缺少计划的旧登记也不会默认全量；确认所属操作已停止后，用既有 recover 流程保留证据并退出登记，再在新 v2 批次声明计划。已在运行的旧 PowerShell 使用启动时加载的逻辑，无法被新文件追溯升级。旧结果只能按其证据查询，不充当新协议验证；不要删除活动登记强行换协议。
 
 看板由协作入口自动启动，地址和手动停启详见 [本地看板](../tools/build-dashboard/README.md)。
 
@@ -280,7 +282,7 @@ scripts\build.bat repair-abandon -Batch FAILED_BATCH -Reason "本次续修明确
 ```
 
 续修使用新的执行批次 ID，以 `logicalBatchId/repairOf/attempt` 关联同一逻辑轮次；并发 `repair` 原子复用同一子尝试。
-原需求保留在 `originalRequirement`，其他成员无需重登原需求；每个成员保留 scope/suites/tests/inputs/reason（包括 none 和显式 manual），合并去重。repairOf 本身不强制 full；未知/公共/基础设施或原有 full 要求仍全量。修复者按新输入重报实际依赖与失败/受影响测试，不能凭关联身份伪称旧覆盖通过。旧修订、检查和测试通过不沿用：
+原需求保留在 `originalRequirement`，其他成员无需重登原需求；每个成员保留 scope/suites/tests/inputs/reason（包括 none 和显式 manual），合并去重。repairOf 和未知/公共/基础设施 scope 均不强制 full；仅保留符合明确触发条件的显式 full 需求，历史 scope 推导的 requiredFull 标记不再升级选择范围。修复者按新输入重报实际依赖与失败/受影响测试，不能凭关联身份伪称旧覆盖通过。旧修订、检查和测试通过不沿用：
 继承成员重新只读检查；后台不可用时前台完成全部 pending 成员的检查，修复者必须重新取得文件归属（旧归属不自动授权），冻结后统一重测当前输入。
 重复 `repair` 不重开已就绪编辑者；进一步修复必须引用最新失败子尝试，不能覆盖祖先结果。
 映射落盘中断时从当前 `repairOf` 对账；未知遗失状态拒绝创建重复尝试。无关活动批次不会被替换或清空，先登记本地窗口等待。
@@ -337,12 +339,12 @@ Python 入口的总超时包含两次启动和目标执行，不通过扩大原�
 缺少依赖会明确失败，不计为通过。PowerShell 协议夹具只传递参数和观测数据，断言留在 C++ 中。
 `manual` 浏览器诊断仅在显式选择时成为要求。
 
-`scripts/test.bat` 的 full、core、fast、tools 和 name/label 选择使用共同 CTest 预设，默认最多四项并行执行，
-并行度统一配置在 `CMakePresets.json` 的 `all-tests.execution.jobs` 中。
+`scripts/test.bat` 的 full、core、fast、tools 和 name/label 选择使用共同 CTest 预设，
+并行度统一配置在 `CMakePresets.json` 的 `all-tests.execution.jobs` 中，不在说明中维护另一份固定值。
 各测试使用独立临时目录、日志和端口；共享桌面、Explorer 或宿主运行资源的条目通过
 `RESOURCE_LOCK snowdesktop_desktop` 互斥。CTest 会在锁占用期间调度其他独立测试，无需串行运行整套测试。
 
-日常无参数或 `full` 只运行应用产品测试；`core` 和 `fast` 也排除 `tools` 标签。
+无参数只显示用法；显式 `full` 只运行应用产品测试，`core` 和 `fast` 也排除 `tools` 标签。
 协作构建、计划、筛选、PowerShell 启动、等待、重试、共享资源和看板通过 `scripts/test.bat tools`
 单独回归，默认排除工具的 manual 诊断。`name`/`label` 可显式选择任何组和手动条目。
 `SnowDesktopTests` 仍保存统一原生目标清单，应用、工具、核心和快速聚合从声明标签派生：

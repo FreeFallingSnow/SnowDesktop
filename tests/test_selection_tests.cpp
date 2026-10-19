@@ -5,6 +5,13 @@ using namespace build_test;
 namespace {
 void run_tests(const fs::path& repo){
     auto root=temporary("selection");Bridge bridge(repo,root);auto script=root/L"selection.ps1";
+    // Exercise the real batch argument dispatch with an isolated launch sentinel.
+    // An accidental default-full branch cannot reach the repository test manager.
+    copy(repo,root,{"scripts/test.bat"});
+    write(root/L"scripts/powershell_runtime.bat","@echo off\r\nset \"SNOWDESKTOP_ENTRY_POWERSHELL=%~dp0unexpected.cmd\"\r\nexit /b 0\r\n");
+    write(root/L"scripts/unexpected.cmd","@echo off\r\necho unexpected>\"%~dp0unexpected.txt\"\r\nexit /b 91\r\n");
+    const auto defaultEntry=run({L"cmd.exe",L"/d",L"/c",(root/L"scripts/test.bat").wstring()},root);
+    require(defaultEntry.code==2&&defaultEntry.out.find("Usage:")!=std::string::npos&&!fs::exists(root/L"scripts/unexpected.txt"),"No-argument test entry launched work instead of showing usage");
     write(script,"param([string]$Operation)\n$ErrorActionPreference='Stop';Set-StrictMode -Version Latest\n$repositoryRoot="+ps_literal(repo)+R"PS(
 foreach($import in @(@{path='scripts/test_manager.ps1';functions=@('Get-TestSelection','Invoke-FilteredTests','Get-TestRunOptions','Assert-HostRuntimeAvailable','Assert-CompleteTestReport')},@{path='scripts/build_protocol.ps1';functions=@('Get-Field','Resolve-PlanTests')},@{path='scripts/test_output.ps1';functions=@('Test-IsolatedOutput')})){
  $tokens=$null;$errors=$null;$source=[Management.Automation.Language.Parser]::ParseFile((Join-Path $repositoryRoot $import.path),[ref]$tokens,[ref]$errors)
