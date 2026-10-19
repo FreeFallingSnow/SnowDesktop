@@ -8,6 +8,7 @@
 #include "dock/dock_tray_storage.h"
 #include "dock/dock_tray_popup_layout.h"
 #include "system/tray/tray_native_tooltip.h"
+#include "system/tray/tray_reregistration.h"
 #include <iostream>
 #include <memory>
 #include <windowsx.h>
@@ -19,6 +20,32 @@ int RunTrayModelTests()
     const auto check = [&](bool value, const char* message) {
         if (!value) { ++failures; std::cerr << "FAIL tray: " << message << '\n'; }
     };
+    {
+        // Only this fixture HWND receives requests. Its real process identity
+        // represents each recipient role; unrelated applications see no test.
+        const HWND window = CreateWindowExW(0, L"STATIC", L"", 0,
+            0, 0, 0, 0, HWND_MESSAGE, nullptr, GetModuleHandleW(nullptr), nullptr);
+        const UINT message = RegisterWindowMessageW(L"SnowDesktop.Tray.Reregistration.Tests");
+        const DWORD process = GetCurrentProcessId();
+        const DWORD otherHost = process ^ 0x80000000u, otherExplorer = process ^ 0x40000000u;
+        check(window && message, "recipient exclusion fixture is available");
+        if (window && message)
+        {
+            MSG pending{};
+            check(PostReregistration(window, otherHost, process, message) == ReregistrationPost::Skipped &&
+                !PeekMessageW(&pending, window, message, message, PM_REMOVE),
+                "Explorer receives no synthetic restart request even when it is not the host");
+            check(PostReregistration(window, process, otherExplorer, message) == ReregistrationPost::Skipped &&
+                !PeekMessageW(&pending, window, message, message, PM_REMOVE),
+                "collector host receives no synthetic restart request");
+            check(PostReregistration(window, otherHost, otherExplorer, message) == ReregistrationPost::Posted &&
+                PeekMessageW(&pending, window, message, message, PM_REMOVE) && pending.message == message,
+                "a recipient outside host and Explorer receives the real asynchronous message");
+            check(PostReregistration(nullptr, otherHost, otherExplorer, message) == ReregistrationPost::Skipped,
+                "missing recipient cannot be posted a re-registration request");
+        }
+        if (window) DestroyWindow(window);
+    }
     {
         namespace popup = snowdesktop::dock_tray::popup;
         const std::wstring raw = L"QQ & literal\n声音: 关闭\n会话消息: 原始文本";

@@ -4,6 +4,7 @@
 #include "tray_menu_placement.h"
 #include "tray_modern_bootstrap.h"
 #include "tray_native_tooltip.h"
+#include "tray_reregistration.h"
 #include "taskbar_hook/taskbar_symbol_resolver.h"
 #include "taskbar_hook/tray_connection.h"
 #include "platform/hook_registration_retry.h"
@@ -209,11 +210,31 @@ struct Service::Impl
             WriteDiagnosticLogEntry(L"Tray re-registration skipped: collector handshake unavailable", DiagnosticLogLevel::Warning);
             return;
         }
-        // Temporary issue #29 isolation: preserve collection and the handshake,
-        // but omit the synthetic shell-restart notification to applications.
-        // User comparison: no replay, but only four mirrored icons; the initial
-        // snapshot is incomplete on this system, so this is not a full repair.
-        WriteDiagnosticLogEntry(L"[Issue29 isolation] synthetic TaskbarCreated broadcast disabled");
+        struct Recipients
+        {
+            DWORD host, explorer;
+            UINT message;
+            unsigned posted = 0, failed = 0;
+        } recipients{GetCurrentProcessId(), current->shared->explorer,
+            RegisterWindowMessageW(L"TaskbarCreated")};
+        if (!recipients.explorer || !recipients.message)
+        {
+            WriteDiagnosticLogEntry(L"Tray re-registration skipped: recipient identity unavailable", DiagnosticLogLevel::Warning);
+            return;
+        }
+        // Issue #29 candidate: preserve application icon re-registration while
+        // excluding every window owned by Explorer from the synthetic request.
+        EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
+            auto& state = *reinterpret_cast<Recipients*>(parameter);
+            const auto result = PostReregistration(window, state.host, state.explorer, state.message);
+            if (result == ReregistrationPost::Posted) ++state.posted;
+            else if (result == ReregistrationPost::Failed) ++state.failed;
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&recipients));
+        wchar_t message[192]{};
+        swprintf_s(message, L"Tray re-registration applications posted=%u failed=%u excludedExplorer=%lu",
+            recipients.posted, recipients.failed, recipients.explorer);
+        WriteDiagnosticLogEntry(message);
     }
     void Run(std::stop_token token)
     {
@@ -289,7 +310,8 @@ struct Service::Impl
                     const auto resolved = symbols.get();
                     if (resolved.modernTrayError == ERROR_SUCCESS) modernAdapter = resolved.modernTray;
                     wchar_t message[192]{};
-                    swprintf_s(message, L"Tray modern bootstrap symbols error=%lu", resolved.modernTrayError);
+                    swprintf_s(message, L"Tray modern bootstrap symbols error=%lu resolverError=%lu",
+                        resolved.modernTrayError, resolved.error);
                     WriteDiagnosticLogEntry(message);
                 }
                 const auto epoch = static_cast<std::uint64_t>(Read(state.epoch));
