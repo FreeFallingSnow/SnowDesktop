@@ -548,7 +548,10 @@ void ApplyTaskbarActivationProtection(HWND taskbar) noexcept
                 protect = snapshot.targets[i].protectAutoHideActivation != FALSE;
         // Temporary cloaking retains Task View's explicit-access exemption,
         // independently of XAML appearance and symbol availability.
-        if (enabled && protect)
+        // Only a loaded native Win11 taskbar needs the immersive service
+        // subscription. Message-only/private taskbar windows have no such
+        // service, and must not leave its initialization worker retrying.
+        if (enabled && protect && GetModuleHandleW(L"Taskbar.dll"))
             StartTaskViewMonitorIfNeeded();
         autohide_observer::Configure(&g_sharedState->autoHideTrace, taskbar, enabled,
             protect);
