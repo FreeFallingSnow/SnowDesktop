@@ -80,14 +80,6 @@ IDWriteTextFormat* CreateFluentTextFormat(
     IDWriteFactory* factory, float fontSize = 14.0f);
 
 /**
- * @brief 请求 Explorer 创建桌面 WorkerW 宿主。
- * @details 该操作会向 Progman 发送未公开的 Shell 消息，只应在首次启用软件桌面
- *          或确认 Explorer 进程已重建时调用，不能用于周期性状态探测。
- * @return 消息成功送达或当前没有 Progman 窗口时返回 true
- */
-bool EnsureDesktopWorkerWindow();
-
-/**
  * @brief 查找桌面相关窗口
  * @details 定位 Progman、WorkerW、DefView、ListView 以及桌面宿主窗口的句柄，
  *          不发送会改变 Explorer 桌面窗口结构的消息，可安全用于周期性探测。

@@ -959,10 +959,8 @@ void DesktopApp::RecoverDesktopHostAfterExplorerRestart()
         return;
     }
 
-    // Only an actual Explorer process replacement is allowed to request a new
-    // WorkerW. Ordinary host polling and same-process shell changes stay read-only.
-    if (explorerDesktopRecreatePending_)
-        EnsureDesktopWorkerWindow();
+    // Reuse the new Explorer's own desktop host. Creating a wallpaper WorkerW
+    // here would also disturb other desktop clients after a real Shell restart.
     DesktopWindows current = FindDesktopWindows();
     if (!current.host || !IsWindow(current.host))
         return;

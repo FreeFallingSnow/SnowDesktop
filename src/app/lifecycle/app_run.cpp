@@ -478,12 +478,11 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     // Resolve the persisted desktop mode before touching Explorer's icon layer.
     LoadGeneralSettingsAndApply();
 
-    // Creating WorkerW mutates Explorer's desktop window tree. Do this once
-    // before the overlay is created; periodic discovery remains read-only.
-    EnsureDesktopWorkerWindow();
-
     // Discover Explorer now, but retain its icons until our first complete
     // composition frame has been prepared. Bootstrap can take several seconds.
+    // The overlay belongs above DefView in its existing parent. Requesting a
+    // separate wallpaper WorkerW is unnecessary and can disturb Wallpaper
+    // Engine's host before tray re-registration (issue #29).
     desktopWindows_ = FindDesktopWindows();
     if (desktopWindows_.host && IsWindow(desktopWindows_.host))
         GetWindowThreadProcessId(desktopWindows_.host,

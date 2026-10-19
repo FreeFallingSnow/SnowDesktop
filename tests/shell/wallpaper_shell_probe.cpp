@@ -5,6 +5,7 @@
 #include "taskbar_hook/taskbar_connection.h"
 #include "taskbar_hook/tray_connection.h"
 #include "system/status_bar/status_bar_appbar.h"
+#include "system/tray/tray_reregistration.h"
 
 #include <filesystem>
 #include <cstdio>
@@ -148,7 +149,7 @@ public:
         Require(delivered && removed, "complete load-only callback");
         Event("load-only-complete");
     }
-    void AttachTray(const std::filesystem::path& library, bool notify)
+    void AttachTray(const std::filesystem::path& library, bool notify, bool applicationsOnly = false)
     {
         using namespace snowdesktop::tray;
         mapping_ = CreateFileMappingW(INVALID_HANDLE_VALUE, nullptr, PAGE_READWRITE,
@@ -180,11 +181,28 @@ public:
             Require(SendMessageTimeoutW(shell_, RegisterWindowMessageW(kReregisterMessage),
                 tray_->owner, static_cast<LPARAM>(Read(tray_->epoch)),
                 SMTO_ABORTIFHUNG | SMTO_BLOCK, 200, &armed) && armed, "arm re-registration");
-            DWORD recipients = BSM_APPLICATIONS;
-            const auto broadcast = BroadcastSystemMessageW(BSF_POSTMESSAGE | BSF_IGNORECURRENTTASK,
-                &recipients, taskbarCreated_, 0, 0);
-            Require(broadcast > 0, "broadcast TaskbarCreated");
-            Event("sent-TaskbarCreated", static_cast<unsigned long long>(broadcast));
+            if (applicationsOnly)
+            {
+                struct Recipients { DWORD host, explorer; UINT message; unsigned posted = 0, failed = 0; }
+                    recipients{GetCurrentProcessId(), explorer_, taskbarCreated_};
+                Require(EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
+                    auto& state = *reinterpret_cast<Recipients*>(parameter);
+                    const auto posted = PostReregistration(window, state.host, state.explorer, state.message);
+                    if (posted == ReregistrationPost::Posted) ++state.posted;
+                    else if (posted == ReregistrationPost::Failed) ++state.failed;
+                    return TRUE;
+                }, reinterpret_cast<LPARAM>(&recipients)) != FALSE, "enumerate application recipients");
+                Event("sent-application-TaskbarCreated", recipients.posted);
+                Event("application-post-failures", recipients.failed);
+            }
+            else
+            {
+                DWORD recipients = BSM_APPLICATIONS;
+                const auto broadcast = BroadcastSystemMessageW(BSF_POSTMESSAGE | BSF_IGNORECURRENTTASK,
+                    &recipients, taskbarCreated_, 0, 0);
+                Require(broadcast > 0, "broadcast TaskbarCreated");
+                Event("sent-TaskbarCreated", static_cast<unsigned long long>(broadcast));
+            }
         }
     }
     void AttachTaskbar(bool appearance)
@@ -323,6 +341,10 @@ public:
         SendMessageW(window_, taskbarCreated_, 0, 0);
         Require(wallpaperChanges_ == 1 && displayChanges_ == 1 && taskbarChanges_ == 1,
             "real observer dispatch must classify wallpaper, display and taskbar notifications");
+        ExpectWallpaperUpdates(false);
+        SendMessageW(window_, WM_SETTINGCHANGE, SPI_SETDESKWALLPAPER, 0);
+        SendMessageW(window_, WM_SETTINGCHANGE, SPI_SETDESKWALLPAPER, 0);
+        ExpectWallpaperUpdates(true);
         Event("self-test-passed");
         return 0;
     }
@@ -332,6 +354,15 @@ public:
         Event("display-notifications", displayChanges_);
         Event("TaskbarCreated-notifications", taskbarChanges_);
         Require(!appbarRepositionFailed_, "AppBar callback placement failed");
+    }
+    void ExpectWallpaperUpdates(bool repeated)
+    {
+        // Opt-in, controlled scenario only: an initial refresh is expected.
+        // Three or more notifications detect the observed repeated-update
+        // signature, not visual playback or the number of animation restarts.
+        Event("wallpaper-update-expectation", repeated ? 1 : 0);
+        Require((wallpaperChanges_ >= 3) == repeated,
+            repeated ? "expected at least three wallpaper updates" : "expected at most two wallpaper updates");
     }
 private:
     static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
@@ -390,15 +421,18 @@ int wmain(int argc, wchar_t** argv)
     {
         if (argc == 2 && std::wstring_view(argv[1]) == L"--self-test")
             return Probe().SelfTest();
-        if (argc != 5)
+        if (argc != 5 && argc != 6)
         {
-            std::cerr << "usage: <observe|load|tray|tray-notify|taskbar-native|taskbar-tap|workerw|appbar> <isolated-hook.dll|-> <output.log> <10..120 seconds>\n";
+            std::cerr << "usage: <observe|load|tray|tray-notify|tray-applications|workerw-tray-applications|taskbar-native|taskbar-tap|workerw|appbar> <isolated-hook.dll|-> <output.log> <10..120 seconds> [--expect-stable|--expect-repeated]\n";
             return 2;
         }
         const std::wstring_view mode(argv[1]);
         Require(mode == L"observe" || mode == L"load" || mode == L"tray" || mode == L"tray-notify" ||
             mode == L"taskbar-native" || mode == L"taskbar-tap" || mode == L"workerw" ||
-            mode == L"appbar", "unknown scenario");
+            mode == L"appbar" || mode == L"tray-applications" || mode == L"workerw-tray-applications", "unknown scenario");
+        const std::wstring_view expectation(argc == 6 ? argv[5] : L"");
+        Require(expectation.empty() || expectation == L"--expect-stable" || expectation == L"--expect-repeated",
+            "unknown wallpaper update expectation");
         const std::wstring duration(argv[4]);
         std::size_t used = 0;
         const int seconds = std::stoi(duration, &used);
@@ -408,7 +442,16 @@ int wmain(int argc, wchar_t** argv)
         probe.Event("pre-action");
         probe.Pump(1000);
         const std::filesystem::path library = std::filesystem::absolute(argv[2]);
-        if (mode == L"tray" || mode == L"tray-notify") probe.AttachTray(library, mode == L"tray-notify");
+        if (mode == L"tray-applications" || mode == L"workerw-tray-applications")
+        {
+            if (mode == L"workerw-tray-applications")
+            {
+                probe.WorkerWindow();
+                probe.Pump(1000);
+            }
+            probe.AttachTray(library, true, true);
+        }
+        else if (mode == L"tray" || mode == L"tray-notify") probe.AttachTray(library, mode == L"tray-notify");
         else if (mode == L"load" || mode == L"taskbar-native" || mode == L"taskbar-tap")
         {
             probe.Load(library);
@@ -424,6 +467,7 @@ int wmain(int argc, wchar_t** argv)
         probe.Event("post-cleanup-observation");
         probe.Pump(15000);
         probe.Summary();
+        if (!expectation.empty()) probe.ExpectWallpaperUpdates(expectation == L"--expect-repeated");
         std::cout << "Observation completed; notification counts do not establish visual replay or a fix.\n";
         return 0;
     }
