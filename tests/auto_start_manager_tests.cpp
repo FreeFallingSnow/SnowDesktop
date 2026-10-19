@@ -79,9 +79,8 @@ void Require(bool value, const char* message)
 HWND permissionTestWindow = nullptr;
 HWND lowPermissionTestWindow = nullptr;
 HANDLE permissionTestChild = nullptr;
-snowdesktop::auto_start_launch::Identity creationToken;
 std::wstring creationCommand, creationDirectory;
-DWORD permissionTestTokenFailure = 0, permissionTestParentFailure = 0;
+DWORD permissionTestParentFailure = 0;
 int permissionTestParentCalls = 0;
 bool permissionTestOmitParent = false;
 
@@ -126,25 +125,6 @@ BOOL RetainPermissionTestProcess(LPCWSTR application, LPWSTR command,
     return created;
 }
 
-BOOL WINAPI CreatePermissionTestProcess(HANDLE token, DWORD, LPCWSTR application,
-    LPWSTR command, DWORD flags, LPVOID environment, LPCWSTR directory,
-    LPSTARTUPINFOW startup, LPPROCESS_INFORMATION process)
-{
-    creationToken = snowdesktop::auto_start_launch::ReadIdentity(token);
-    creationCommand = command;
-    creationDirectory = directory;
-    if (permissionTestTokenFailure)
-    {
-        // Replay the reporter's API failure, including the API's permission to
-        // modify its command buffer even when it does not create a child.
-        command[0] = L'!';
-        SetLastError(permissionTestTokenFailure);
-        return FALSE;
-    }
-    return RetainPermissionTestProcess(application, command, nullptr, nullptr,
-        FALSE, flags, environment, directory, startup, process);
-}
-
 BOOL WINAPI CreatePermissionTestParentProcess(LPCWSTR application, LPWSTR command,
     LPSECURITY_ATTRIBUTES processSecurity, LPSECURITY_ATTRIBUTES threadSecurity,
     BOOL inheritHandles, DWORD flags, LPVOID environment, LPCWSTR directory,
@@ -154,7 +134,7 @@ BOOL WINAPI CreatePermissionTestParentProcess(LPCWSTR application, LPWSTR comman
     Require((flags & (EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED |
         CREATE_UNICODE_ENVIRONMENT)) == (EXTENDED_STARTUPINFO_PRESENT | CREATE_SUSPENDED |
         CREATE_UNICODE_ENVIRONMENT) && !inheritHandles &&
-        startup->cb == sizeof(STARTUPINFOEXW), "fallback supplies suspended desktop-parent startup attributes");
+        startup->cb == sizeof(STARTUPINFOEXW), "single creation path supplies suspended desktop-parent startup attributes");
     creationCommand = command;
     creationDirectory = directory;
     if (permissionTestParentFailure)
@@ -169,7 +149,7 @@ BOOL WINAPI CreatePermissionTestParentProcess(LPCWSTR application, LPWSTR comman
         return RetainPermissionTestProcess(application, command, processSecurity, threadSecurity,
             inheritHandles, flags & ~EXTENDED_STARTUPINFO_PRESENT, environment, directory, &ordinary, process);
     }
-    // The fallback uses the actual Windows parent-process attributes and API.
+    // Observe the real Windows parent-process attributes and creation API.
     return RetainPermissionTestProcess(application, command, processSecurity, threadSecurity,
         inheritHandles, flags, environment, directory, startup, process);
 }
@@ -226,15 +206,13 @@ void CheckLowerIntegrityParent(const std::wstring& executable, const std::filesy
     DWORD windowProcess = 0;
     GetWindowThreadProcessId(lowPermissionTestWindow, &windowProcess);
     Require(windowProcess == fixture.dwProcessId, "desktop-parent fixture belongs to the isolated process");
-    launch::NativePlatform native(&CreatePermissionTestProcess, &LowPermissionTestShellWindow,
-        &CreatePermissionTestParentProcess);
+    launch::NativePlatform native(&CreatePermissionTestParentProcess, &LowPermissionTestShellWindow);
     const auto desktop = native.DesktopIdentity();
     Require(desktop.integrity == SECURITY_MANDATORY_LOW_RID && !desktop.elevated,
         "isolated parent really runs below the caller's integrity");
     const auto reportPath = directory / L"child report.txt";
     const std::wstring command = L"\"" + executable + L"\" --autostart-permission-probe \"" +
         reportPath.wstring() + L"\" --snowdesktop-autostart-owner=steam \"保留 spaces\"";
-    permissionTestTokenFailure = ERROR_ACCESS_DENIED;
     permissionTestOmitParent = true;
     bool denied = false;
     try { (void)native.Relaunch(desktop, command); }
@@ -244,9 +222,11 @@ void CheckLowerIntegrityParent(const std::wstring& executable, const std::filesy
     permissionTestOmitParent = false;
     const DWORD processId = native.Relaunch(desktop, command);
     Require(processId != 0 && WaitForSingleObject(permissionTestChild, 10000) == WAIT_OBJECT_0,
-        "actual lower-integrity fallback child completes");
+        "actual lower-integrity desktop-parent child completes");
     DWORD exitCode = 1;
-    Require(GetExitCodeProcess(permissionTestChild, &exitCode) && exitCode == 0,
+    const bool readExit = GetExitCodeProcess(permissionTestChild, &exitCode) != FALSE;
+    if (!readExit || exitCode != 0) std::cerr << "Lower-integrity child exit code: " << exitCode << '\n';
+    Require(readExit && exitCode == 0,
         "lower-integrity child can query its own token and write the isolated report");
     std::ifstream input(reportPath, std::ios::binary);
     const std::vector<char> bytes((std::istreambuf_iterator<char>(input)), {});
@@ -257,7 +237,7 @@ void CheckLowerIntegrityParent(const std::wstring& executable, const std::filesy
         std::to_wstring(desktop.session) + L"," + std::to_wstring(desktop.integrity) + L",0\n" +
         std::to_wstring(fixture.dwProcessId);
     Require(observed == expected, "real child inherits the separate lower-integrity parent and unchanged startup inputs");
-    std::cout << "Desktop-parent fallback: actual lower-integrity child and missing-parent negative control passed\n";
+    std::cout << "Desktop-parent launch: actual lower-integrity child and missing-parent negative control passed\n";
 }
 
 void CheckAutoStartNativeHandoff(const std::wstring& executable)
@@ -282,7 +262,7 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable)
             permissionTestChild = nullptr;
             DestroyWindow(permissionTestWindow);
             permissionTestWindow = nullptr;
-            permissionTestTokenFailure = permissionTestParentFailure = 0;
+            permissionTestParentFailure = 0;
             permissionTestParentCalls = 0;
             permissionTestOmitParent = false;
             std::error_code ignored;
@@ -292,8 +272,7 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable)
     } cleanup{directory};
     struct Platform
     {
-        launch::NativePlatform native{&CreatePermissionTestProcess, &PermissionTestShellWindow,
-            &CreatePermissionTestParentProcess};
+        launch::NativePlatform native{&CreatePermissionTestParentProcess, &PermissionTestShellWindow};
         launch::Identity CurrentIdentity()
         {
             auto identity = native.CurrentIdentity();
@@ -320,19 +299,14 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable)
         std::cout << "Native lower-token handoff unavailable in elevated test context; policy checks remain active\n";
         return;
     }
-    for (const DWORD creationError : {ERROR_SUCCESS, ERROR_ACCESS_DENIED, ERROR_PRIVILEGE_NOT_HELD})
     {
-        permissionTestTokenFailure = creationError;
         permissionTestParentCalls = 0;
         Platform attempt;
         const auto result = launch::Normalize(command, attempt);
         Require(result.handled && result.error == ERROR_SUCCESS && result.childProcessId != 0,
             "reported elevated startup reaches the real token handoff and child resume");
-        Require(permissionTestParentCalls == (creationError == ERROR_SUCCESS ? 0 : 1),
-            "denied token creation retries exactly once through the desktop parent");
-        Require(launch::SameDesktopUser(creationToken, desktop) &&
-            creationToken.integrity == desktop.integrity && !creationToken.elevated,
-            "creation uses the isolated desktop user's primary token");
+        Require(permissionTestParentCalls == 1,
+            "elevated login uses exactly one desktop-parent process creation");
         Require(creationCommand == command && creationDirectory == std::filesystem::current_path().wstring(),
             "launch keeps the complete Unicode command and current directory");
         Require(WaitForSingleObject(permissionTestChild, 10000) == WAIT_OBJECT_0,
@@ -355,35 +329,23 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable)
         Require(std::filesystem::remove(report), "remove completed child report before next attempt");
     }
 
-    // A denied alternative must remain a visible startup failure with no child;
-    // other token-creation errors must not be hidden by an unrelated retry.
-    permissionTestTokenFailure = ERROR_ACCESS_DENIED;
-    permissionTestParentFailure = ERROR_ACCESS_DENIED;
-    permissionTestParentCalls = 0;
+    // Creation failures remain visible and never retry under elevated identity.
+    for (const DWORD error : {ERROR_ACCESS_DENIED, ERROR_PRIVILEGE_NOT_HELD, ERROR_BAD_EXE_FORMAT})
     {
-        Platform denied;
-        const auto result = launch::Normalize(command, denied);
-        Require(result.handled && result.error == ERROR_ACCESS_DENIED && result.childProcessId == 0 &&
+        permissionTestParentFailure = error;
+        permissionTestParentCalls = 0;
+        Platform failed;
+        const auto result = launch::Normalize(command, failed);
+        Require(result.handled && result.error == error && result.childProcessId == 0 &&
             permissionTestParentCalls == 1 && !std::filesystem::exists(report) &&
             std::wstring_view(result.operation) == L"CreateProcessW(autostart desktop parent)",
-            "both denied creation methods retain an actionable failure without elevated fallback");
+            "a creation failure exits once with its original operation/code and no elevated fallback");
     }
     permissionTestParentFailure = 0;
-    permissionTestTokenFailure = ERROR_BAD_EXE_FORMAT;
-    permissionTestParentCalls = 0;
-    {
-        Platform invalid;
-        const auto result = launch::Normalize(command, invalid);
-        Require(result.handled && result.error == ERROR_BAD_EXE_FORMAT && result.childProcessId == 0 &&
-            permissionTestParentCalls == 0 && !std::filesystem::exists(report),
-            "non-permission token errors retain their original failure without retry");
-    }
 
     // An unexpected child token must be rejected while its primary thread is
     // still suspended, before it can write the supplied report or start a host.
-    permissionTestTokenFailure = ERROR_ACCESS_DENIED;
-    launch::NativePlatform rejected(&CreatePermissionTestProcess, &PermissionTestShellWindow,
-        &CreatePermissionTestParentProcess);
+    launch::NativePlatform rejected(&CreatePermissionTestParentProcess, &PermissionTestShellWindow);
     auto mismatch = rejected.DesktopIdentity();
     mismatch.integrity = SECURITY_MANDATORY_HIGH_RID;
     bool denied = false;
@@ -602,6 +564,10 @@ int RunAutoStartLaunchProbe()
             static_cast<std::streamsize>(observed.size() * sizeof(wchar_t)));
         output.close();
         return output ? 0 : ERROR_WRITE_FAULT;
+    }
+    catch (const snowdesktop::auto_start_launch::Failure& failure)
+    {
+        return static_cast<int>(failure.code);
     }
     catch (...) { return ERROR_GEN_FAILURE; }
 }

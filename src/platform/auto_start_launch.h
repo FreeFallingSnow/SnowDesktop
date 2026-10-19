@@ -116,19 +116,16 @@ struct Result
     const wchar_t* operation = L"AutoStart desktop-user handoff";
 };
 
-// Keep both creation boundaries injectable so tests can reproduce a denied
-// token launch and exercise the real desktop-parent fallback independently.
-using ProcessCreator = decltype(&CreateProcessWithTokenW);
-using ParentProcessCreator = decltype(&CreateProcessW);
+// Tests observe the real desktop-parent creation or inject a creation failure.
+using ProcessCreator = decltype(&CreateProcessW);
 using ShellWindowProvider = decltype(&GetShellWindow);
 
 class NativePlatform final
 {
 public:
-    explicit NativePlatform(ProcessCreator creator = &CreateProcessWithTokenW,
-        ShellWindowProvider shellWindow = &GetShellWindow,
-        ParentProcessCreator parentCreator = &CreateProcessW)
-        : creator_(creator), shellWindow_(shellWindow), parentCreator_(parentCreator) {}
+    explicit NativePlatform(ProcessCreator creator = &CreateProcessW,
+        ShellWindowProvider shellWindow = &GetShellWindow)
+        : creator_(creator), shellWindow_(shellWindow) {}
 
     Identity CurrentIdentity()
     {
@@ -155,16 +152,15 @@ public:
             L"GetWindowThreadProcessId(shell)");
         shellProcess_.value = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
         Require(shellProcess_.value != nullptr, L"OpenProcess(shell)");
-        Require(OpenProcessToken(shellProcess_.value, TOKEN_QUERY | TOKEN_DUPLICATE,
+        Require(OpenProcessToken(shellProcess_.value, TOKEN_QUERY,
             &shellToken_.value) != FALSE, L"OpenProcessToken(shell)");
         return ReadIdentity(shellToken_.value);
     }
 
     DWORD Relaunch(const Identity& desktop, std::wstring_view command)
     {
-        // CreateProcessWithTokenW has a documented 1024-character limit. Keep
-        // all arguments intact or fail explicitly; never truncate a data path.
-        if (command.size() >= 1024)
+        // CreateProcessW's Unicode command limit includes the terminating null.
+        if (command.size() >= 32767)
             throw Failure{ERROR_FILENAME_EXCED_RANGE, L"AutoStart command length"};
         std::wstring executable(32768, L'\0');
         const DWORD length = GetModuleFileNameW(nullptr, executable.data(),
@@ -179,11 +175,6 @@ public:
         const DWORD copied = GetCurrentDirectoryW(directorySize, directory.data());
         Require(copied != 0 && copied < directorySize, L"GetCurrentDirectoryW");
         directory.resize(copied);
-        Handle primary;
-        Require(DuplicateTokenEx(shellToken_.value,
-            TOKEN_QUERY | TOKEN_DUPLICATE | TOKEN_ASSIGN_PRIMARY, nullptr,
-            SecurityImpersonation, TokenPrimary, &primary.value) != FALSE,
-            L"DuplicateTokenEx(shell)");
         std::wstring mutableCommand(command);
         LPWCH environment = GetEnvironmentStringsW();
         Require(environment != nullptr, L"GetEnvironmentStringsW(autostart)");
@@ -205,30 +196,17 @@ public:
                 if (info.hProcess) CloseHandle(info.hProcess);
             }
         } child;
-        STARTUPINFOW startup{sizeof(startup)};
-        if (!creator_(primary.value, 0, executable.c_str(), mutableCommand.data(),
-            CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT,
-            environment, directory.c_str(), &startup, &child.info))
-        {
-            const DWORD error = GetLastError();
-            if (error != ERROR_ACCESS_DENIED && error != ERROR_PRIVILEGE_NOT_HELD)
-                throw Failure{error ? error : ERROR_GEN_FAILURE,
-                    L"CreateProcessWithTokenW(autostart)"};
-            // Some logon-task contexts deny token-based creation. Using the
-            // desktop process as parent inherits its token and job instead;
-            // it does not require the task's impersonation/logon privileges.
-            // A failed creation may have modified the command line already.
-            mutableCommand.assign(command);
-            CreateWithDesktopParent(executable.c_str(), mutableCommand.data(),
-                environment, directory.c_str(), &child.info);
-        }
+        CreateWithDesktopParent(executable.c_str(), mutableCommand.data(),
+            environment, directory.c_str(), &child.info);
         Handle childToken;
-        Require(OpenProcessToken(child.info.hProcess, TOKEN_QUERY, &childToken.value) != FALSE,
+        Require(OpenProcessToken(child.info.hProcess, TOKEN_QUERY | WRITE_DAC | WRITE_OWNER,
+            &childToken.value) != FALSE,
             L"OpenProcessToken(autostart child)");
         const Identity actual = ReadIdentity(childToken.value);
         if (!SameDesktopUser(actual, desktop) || actual.elevated ||
             actual.integrity != desktop.integrity)
             throw Failure{ERROR_ACCESS_DENIED, L"AutoStart child desktop-user verification"};
+        PrepareChildTokenObject(childToken.value, desktop);
         Require(ResumeThread(child.info.hThread) != static_cast<DWORD>(-1),
             L"ResumeThread(autostart child)");
         child.resumed = true;
@@ -236,6 +214,43 @@ public:
     }
 
 private:
+    void PrepareChildTokenObject(HANDLE child, const Identity& desktop)
+    {
+        // Parent selection supplies the desktop's security context, but the new
+        // token object's descriptor can still come from the elevated creator.
+        // Repair only this new token so the child can open its own token. Never
+        // mutate the desktop process's existing token or change token privileges.
+        const auto sourceStats = TokenBuffer(shellToken_.value, TokenStatistics);
+        const auto childStats = TokenBuffer(child, TokenStatistics);
+        const auto sourceId = reinterpret_cast<const TOKEN_STATISTICS*>(sourceStats.data())->TokenId;
+        const auto childId = reinterpret_cast<const TOKEN_STATISTICS*>(childStats.data())->TokenId;
+        if (sourceId.LowPart == childId.LowPart && sourceId.HighPart == childId.HighPart)
+            throw Failure{ERROR_INVALID_DATA, L"AutoStart child token is not independent"};
+        const auto defaults = TokenBuffer(shellToken_.value, TokenDefaultDacl);
+        PACL dacl = reinterpret_cast<const TOKEN_DEFAULT_DACL*>(defaults.data())->DefaultDacl;
+        if (!dacl || !IsValidAcl(dacl))
+            throw Failure{ERROR_INVALID_DATA, L"AutoStart desktop default DACL"};
+        SID_IDENTIFIER_AUTHORITY authority = SECURITY_MANDATORY_LABEL_AUTHORITY;
+        BYTE sid[SECURITY_MAX_SID_SIZE]{};
+        Require(InitializeSid(sid, &authority, 1) != FALSE, L"InitializeSid(autostart label)");
+        *GetSidSubAuthority(sid, 0) = desktop.integrity;
+        std::vector<BYTE> storage(sizeof(ACL) + sizeof(SYSTEM_MANDATORY_LABEL_ACE) + GetLengthSid(sid));
+        auto* sacl = reinterpret_cast<PACL>(storage.data());
+        Require(InitializeAcl(sacl, static_cast<DWORD>(storage.size()), ACL_REVISION) != FALSE,
+            L"InitializeAcl(autostart label)");
+        Require(AddMandatoryAce(sacl, ACL_REVISION, 0, SYSTEM_MANDATORY_LABEL_NO_WRITE_UP, sid) != FALSE,
+            L"AddMandatoryAce(autostart label)");
+        SECURITY_DESCRIPTOR descriptor{};
+        Require(InitializeSecurityDescriptor(&descriptor, SECURITY_DESCRIPTOR_REVISION) != FALSE,
+            L"InitializeSecurityDescriptor(autostart token)");
+        Require(SetSecurityDescriptorDacl(&descriptor, TRUE, dacl, FALSE) != FALSE,
+            L"SetSecurityDescriptorDacl(autostart token)");
+        Require(SetSecurityDescriptorSacl(&descriptor, TRUE, sacl, FALSE) != FALSE,
+            L"SetSecurityDescriptorSacl(autostart token)");
+        Require(SetKernelObjectSecurity(child, DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION,
+            &descriptor) != FALSE, L"SetKernelObjectSecurity(autostart child token)");
+    }
+
     void CreateWithDesktopParent(LPCWSTR executable, LPWSTR command,
         LPVOID environment, LPCWSTR directory, LPPROCESS_INFORMATION child)
     {
@@ -261,7 +276,7 @@ private:
         STARTUPINFOEXW startup{};
         startup.StartupInfo.cb = sizeof(startup);
         startup.lpAttributeList = list;
-        Require(parentCreator_(executable, command, nullptr, nullptr, FALSE,
+        Require(creator_(executable, command, nullptr, nullptr, FALSE,
             CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT |
                 EXTENDED_STARTUPINFO_PRESENT,
             environment, directory, &startup.StartupInfo, child) != FALSE,
@@ -270,7 +285,6 @@ private:
 
     ProcessCreator creator_;
     ShellWindowProvider shellWindow_;
-    ParentProcessCreator parentCreator_;
     Handle shellProcess_;
     Handle shellToken_;
 };
