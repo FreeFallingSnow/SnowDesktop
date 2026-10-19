@@ -564,7 +564,9 @@ void InspectWidgetControls(const x::FrameworkElement& root,
     std::set<std::string> types;
     std::ofstream inventory(output / L"widget-controls.tsv");
     std::ofstream timeLayout(output / L"widget-time-layout.tsv");
+    std::ofstream durationLayout(output / L"widget-duration-layout.tsv");
     timeLayout << "key\tpickerWidth\tbuttonWidth\tbuttonRight\n";
+    durationLayout << "key\tpart\tnumberWidth\tnumberHeight\tunitLeft\tnumberRight\tcenterDifference\n";
     inventory << "key\ttype\tenabled\tconfigured\tavailable\twidth\theight\n";
     for (const auto& field : service.value.fields)
     {
@@ -590,6 +592,31 @@ void InspectWidgetControls(const x::FrameworkElement& root,
             timeLayout.flush();
             if (bounds.X < -0.5 || bounds.X + bounds.Width > picker.ActualWidth() + 0.5)
                 throw std::runtime_error("time picker native border is clipped");
+        }
+        if (field.schema.Kind() == wr::WidgetSettingKind::Duration)
+        {
+            std::vector<c::NumberBox> numbers;
+            Walk(element, [&](const x::DependencyObject& node) {
+                if (const auto number = node.try_as<c::NumberBox>()) numbers.push_back(number);
+            });
+            for (std::size_t index = 0; index < numbers.size(); ++index)
+            {
+                const auto number = numbers[index];
+                const auto unit = PreviewControl<c::TextBlock>(element, L"DurationUnit" + std::to_wstring(index));
+                const auto numberBounds = number.TransformToVisual(element).TransformBounds(
+                    {0, 0, static_cast<float>(number.ActualWidth()), static_cast<float>(number.ActualHeight())});
+                const auto unitBounds = unit.TransformToVisual(element).TransformBounds(
+                    {0, 0, static_cast<float>(unit.ActualWidth()), static_cast<float>(unit.ActualHeight())});
+                const double centers = std::abs(numberBounds.Y + numberBounds.Height / 2 - unitBounds.Y - unitBounds.Height / 2);
+                durationLayout << field.schema.key << '\t' << index << '\t' << number.ActualWidth() << '\t'
+                    << number.ActualHeight() << '\t' << unitBounds.X << '\t' << numberBounds.X + numberBounds.Width
+                    << '\t' << centers << '\n';
+                durationLayout.flush();
+                if (number.Header() || number.ActualHeight() > 40 || centers > 1 ||
+                    unitBounds.X < numberBounds.X + numberBounds.Width ||
+                    unitBounds.X + unitBounds.Width > element.ActualWidth() + 0.5)
+                    throw std::runtime_error("duration unit is not fully visible beside its input: " + field.schema.key);
+            }
         }
         if (field.schema.Channel() == wr::WidgetSettingValueChannel::EntityReference ||
             field.schema.Channel() == wr::WidgetSettingValueChannel::FilesystemHandle)

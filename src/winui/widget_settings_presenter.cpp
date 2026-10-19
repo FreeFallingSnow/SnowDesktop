@@ -253,10 +253,12 @@ struct WidgetFieldControl
     muxc::CalendarDatePicker date{nullptr};
     muxc::TimePicker time{nullptr};
     std::array<muxc::NumberBox, 3> durationParts{nullptr, nullptr, nullptr};
+    std::array<muxc::TextBlock, 3> durationUnits{nullptr, nullptr, nullptr};
     std::array<muxc::TextBox, 3> durationInputs{nullptr, nullptr, nullptr};
     std::array<winrt::event_token, 3> durationTextTokens{};
     std::array<winrt::event_token, 3> durationLoadedTokens{};
     std::array<winrt::event_token, 3> durationKeyTokens{};
+    std::array<winrt::event_token, 3> durationUnitSizeTokens{};
     std::array<winrt::hstring, 3> durationObservedText;
     bool durationDirty = false;
     muxc::AutoSuggestBox search{nullptr};
@@ -1860,10 +1862,29 @@ struct WidgetSettingsPresenter::Impl
         field.content.Children().Append(field.multiSelect);
     }
 
+    void UpdateDurationEditorWidth(WidgetFieldControl& field)
+    {
+        double width = presenter_controls::kSettingResetWidth + presenter_controls::kSettingControlGap;
+        int count = 0;
+        for (const auto& unit : field.durationUnits)
+            if (unit)
+            {
+                ++count;
+                width += presenter_controls::kSettingNumberWidth + unit.ActualWidth();
+            }
+        // Six DIPs between a number and its suffix, twelve between pairs.
+        width += 6.0 * (2 * count - 1) + 6.0 * (count - 1);
+        width = std::ceil(std::max(presenter_controls::kSettingControlWidth, width));
+        if (field.row.layout->controlWidth == width) return;
+        field.row.layout->controlWidth = width;
+        presenter_controls::SettingRow::Arrange(field.row.root, field.row.controlHost,
+            *field.row.layout, field.row.root.ActualWidth());
+    }
+
     void BuildDurationEditor(WidgetFieldControl& field)
     {
         muxc::Grid parts;
-        parts.ColumnSpacing(8.0);
+        parts.ColumnSpacing(6.0);
         const int scale = wr::DurationSettingUnitSeconds(field.schema.durationUnit);
         const int count = scale == 3600 ? 1 : scale == 60 ? 2 : 3;
         field.idleCommitTimer = mux::DispatcherTimer{};
@@ -1876,9 +1897,12 @@ struct WidgetSettingsPresenter::Impl
             muxc::ColumnDefinition column;
             column.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
             parts.ColumnDefinitions().Append(column);
+            muxc::ColumnDefinition unitColumn;
+            unitColumn.Width(mux::GridLengthHelper::Auto());
+            parts.ColumnDefinitions().Append(unitColumn);
             auto& number = field.durationParts[index];
             number = muxc::NumberBox{};
-            number.MinWidth(0.0);
+            number.MinWidth(presenter_controls::kSettingNumberWidth);
             number.Minimum(0);
             number.Maximum(index == 0 ? 99 : 59);
             number.SmallChange(1);
@@ -1889,8 +1913,18 @@ struct WidgetSettingsPresenter::Impl
             formatter.FractionDigits(0);
             formatter.IsGrouped(false);
             number.NumberFormatter(formatter);
-            muxc::Grid::SetColumn(number, index);
+            muxc::Grid::SetColumn(number, 2 * index);
             parts.Children().Append(number);
+            auto& unit = field.durationUnits[index];
+            unit = muxc::TextBlock{};
+            muxa::AutomationProperties::SetAutomationId(unit, L"DurationUnit" + std::to_wstring(index));
+            unit.VerticalAlignment(mux::VerticalAlignment::Center);
+            if (index + 1 < count) unit.Margin({0, 0, 6, 0});
+            muxc::Grid::SetColumn(unit, 2 * index + 1);
+            parts.Children().Append(unit);
+            field.durationUnitSizeTokens[index] = unit.SizeChanged([this, &field](const auto&, const auto&) {
+                UpdateDurationEditorWidth(field);
+            });
             field.durationLoadedTokens[index] = number.Loaded([this, &field, index](const auto&, const auto&) {
                 const auto input = FindDurationInput(field.durationParts[index]);
                 if (!input || input == field.durationInputs[index]) return;
@@ -3740,7 +3774,7 @@ struct WidgetSettingsPresenter::Impl
         for (std::size_t index = 0; index < field.durationParts.size(); ++index)
             if (const auto number = field.durationParts[index])
             {
-                number.Header(winrt::box_value(units[index]));
+                field.durationUnits[index].Text(units[index]);
                 muxa::AutomationProperties::SetName(number, winrt::hstring{std::wstring{name} + L" " + units[index]});
             }
     }
@@ -4087,6 +4121,8 @@ struct WidgetSettingsPresenter::Impl
                         field.durationInputs[index].TextChanged(field.durationTextTokens[index]);
                     if (HasToken(field.durationLoadedTokens[index])) number.Loaded(field.durationLoadedTokens[index]);
                     if (HasToken(field.durationKeyTokens[index])) number.KeyDown(field.durationKeyTokens[index]);
+                    if (field.durationUnits[index] && HasToken(field.durationUnitSizeTokens[index]))
+                        field.durationUnits[index].SizeChanged(field.durationUnitSizeTokens[index]);
                 }
             if (field.search && HasToken(field.searchTextChanged))
                 field.search.TextChanged(field.searchTextChanged);
