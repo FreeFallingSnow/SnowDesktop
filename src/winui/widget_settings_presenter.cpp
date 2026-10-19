@@ -252,6 +252,7 @@ struct WidgetFieldControl
     muxc::StackPanel opaqueActions{nullptr};
     muxc::Button choose{nullptr};
     muxc::Button clear{nullptr};
+    std::optional<wr::WidgetSettingOpaqueState> referenceState;
 
     winrt::event_token textChanged{};
     winrt::event_token passwordChanged{};
@@ -274,7 +275,7 @@ struct WidgetFieldControl
     winrt::event_token timeChanged{};
     winrt::event_token searchTextChanged{};
     winrt::event_token searchSubmitted{};
-    winrt::event_token searchSelectionChanged{};
+    winrt::event_token searchResultClicked{};
     winrt::event_token chooseClicked{};
     winrt::event_token clearClicked{};
     winrt::event_token restoreDefaultClicked{};
@@ -1758,6 +1759,8 @@ struct WidgetSettingsPresenter::Impl
         field.searchResults = muxc::ListView{};
         field.searchResults.SelectionMode(
             muxc::ListViewSelectionMode::Single);
+        field.searchResults.IsItemClickEnabled(true);
+        field.searchResults.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         field.searchResults.MaxHeight(300.0);
         field.searchResults.Visibility(mux::Visibility::Collapsed);
 
@@ -1778,18 +1781,19 @@ struct WidgetSettingsPresenter::Impl
                 else
                     BeginSearch(field, ToUtf8(field.search.Text()));
             });
-        field.searchSelectionChanged =
-            field.searchResults.SelectionChanged(
-                [this, &field](const auto&, const auto&) {
+        field.searchResultClicked =
+            field.searchResults.ItemClick(
+                [this, &field](const auto&, const muxc::ItemClickEventArgs& args) {
                     if (updatingControls || field.synchronizing) return;
-                    const int index = field.searchResults.SelectedIndex();
-                    if (index >= 0)
-                        CommitSearchResult(
-                            field, static_cast<std::size_t>(index));
+                    std::uint32_t index = 0;
+                    if (field.searchResults.Items().IndexOf(args.ClickedItem(), index))
+                        CommitSearchResult(field, index);
                 });
-        field.editorHost.Children().Append(field.searchProgress);
-        field.editorHost.Children().Append(field.searchError);
-        field.editorHost.Children().Append(field.searchResults);
+        // Results belong below the complete setting row, outside its fixed
+        // editor column. They must not stretch the label's vertical alignment.
+        field.content.Children().Append(field.searchProgress);
+        field.content.Children().Append(field.searchError);
+        field.content.Children().Append(field.searchResults);
     }
 
     void BuildOpaqueActions(
@@ -2461,7 +2465,22 @@ struct WidgetSettingsPresenter::Impl
                 : nullptr);
             field.synchronizing = false;
         }
-        if (field.search && (updateFocusedSearch ||
+        const bool referenceSelectionChanged = field.search &&
+            state.schema.Kind() == wr::WidgetSettingKind::AppReference &&
+            (!field.referenceState ||
+                field.referenceState->configured != state.opaque.configured ||
+                field.referenceState->displayLabel != state.opaque.displayLabel);
+        const bool referenceSearchFinished = field.search &&
+            state.schema.Kind() == wr::WidgetSettingKind::AppReference &&
+            field.searchRequestId != 0 &&
+            !service.SearchSnapshot(widgetId, field.schema.key);
+        if (field.search && state.schema.Kind() == wr::WidgetSettingKind::AppReference)
+        {
+            if ((referenceSelectionChanged && field.referenceState) || referenceSearchFinished)
+                ClearSearch(field);
+            field.referenceState = state.opaque;
+        }
+        if (field.search && (updateFocusedSearch || referenceSelectionChanged || referenceSearchFinished ||
             field.search.FocusState() == mux::FocusState::Unfocused))
         {
             field.synchronizing = true;
@@ -3149,6 +3168,7 @@ struct WidgetSettingsPresenter::Impl
             item.Spacing(2.0);
             muxc::TextBlock title;
             title.Text(ToText(result.title));
+            title.TextWrapping(mux::TextWrapping::Wrap);
             title.FontWeight(
                 winrt::Windows::UI::Text::FontWeights::SemiBold());
             item.Children().Append(title);
@@ -3156,6 +3176,7 @@ struct WidgetSettingsPresenter::Impl
             {
                 muxc::TextBlock source;
                 source.Text(ToText(result.source));
+                source.TextWrapping(mux::TextWrapping::Wrap);
                 source.Opacity(0.72);
                 item.Children().Append(source);
             }
@@ -3597,9 +3618,8 @@ struct WidgetSettingsPresenter::Impl
             if (field.search && HasToken(field.searchSubmitted))
                 field.search.QuerySubmitted(field.searchSubmitted);
             if (field.searchResults &&
-                HasToken(field.searchSelectionChanged))
-                field.searchResults.SelectionChanged(
-                    field.searchSelectionChanged);
+                HasToken(field.searchResultClicked))
+                field.searchResults.ItemClick(field.searchResultClicked);
             if (field.choose && HasToken(field.chooseClicked))
                 field.choose.Click(field.chooseClicked);
             if (field.clear && HasToken(field.clearClicked))

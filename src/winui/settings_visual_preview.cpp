@@ -151,7 +151,10 @@ class PreviewWidgetService final : public wr::IWidgetSettingsService
 {
 public:
     wr::WidgetSettingsSnapshot value;
-    explicit PreviewWidgetService(bool english)
+    bool showSearch = false;
+    std::string searchResultTitle;
+    explicit PreviewWidgetService(bool english, bool searching)
+        : showSearch(searching), searchResultTitle(english ? "QQ Music" : "QQ音乐") // l10n-allow: isolated bilingual preview fixture, not production UI text.
     {
         value.widgetId = L"settings-visual-example"; value.packageId = "offline.example";
         value.widgetName = english ? "Example component" : "示例组件"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
@@ -189,7 +192,10 @@ public:
         preset.values.emplace("title", title);
         value.presets.push_back(std::move(preset));
     }
-    void SetEventCallbacks(SnapshotChangedCallback, SearchCompletedCallback) override {}
+    void SetEventCallbacks(SnapshotChangedCallback, SearchCompletedCallback searched) override
+    {
+        if (showSearch && searched) searched({value.widgetId, "launcher", value.generation, 1});
+    }
     wr::WidgetSettingsLoadResult Load(std::wstring) override { return {wr::WidgetSettingMutationStatus::Unchanged, value, {}, {}}; }
     wr::WidgetSettingsLoadResult Reload(std::wstring_view) override { return Load({}); }
     std::optional<wr::WidgetSettingsSnapshot> Snapshot(std::wstring_view) const override { return value; }
@@ -212,7 +218,13 @@ public:
     wr::WidgetSettingMutationResult StartSearch(const wr::WidgetSettingMutationGuard&, std::string_view, std::string, std::size_t) override { return {}; }
     wr::WidgetSettingMutationResult CancelSearch(const wr::WidgetSettingMutationGuard&, std::string_view) override { return {}; }
     wr::WidgetSettingMutationResult CommitSearchResult(const wr::WidgetSettingMutationGuard&, std::string_view, std::uint64_t, std::string_view) override { return {}; }
-    std::optional<wr::WidgetSettingSearchSnapshot> SearchSnapshot(std::wstring_view, std::string_view) const override { return {}; }
+    std::optional<wr::WidgetSettingSearchSnapshot> SearchSnapshot(std::wstring_view widgetId, std::string_view key) const override
+    {
+        if (!showSearch || widgetId != value.widgetId || key != "launcher") return {};
+        return wr::WidgetSettingSearchSnapshot{value.widgetId, "launcher", value.generation,
+            1, "qq", false, true, {}, {{"qq", "QQ", "Applications", "application"},
+                {"qqmusic", searchResultTitle, "Applications", "application"}}};
+    }
 };
 
 constexpr SettingsPage pages[] = {
@@ -253,7 +265,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     SetWindowPos(host.window, nullptr, 0, 0, static_cast<int>(std::ceil(width * scale)),
         static_cast<int>(std::ceil(height * scale)), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 
-    PreviewWidgetService widgets(locale == "en-US");
+    PreviewWidgetService widgets(locale == "en-US", searching);
     widgets.value.customStyle = custom;
     widgets.value.hostAppearance.followPersonalization = !custom;
     if (custom) widgets.value.hostAppearance.presetId = "__custom";

@@ -1418,6 +1418,8 @@ bool SettingsShell::EnsureWidgetSettingsPresenter() noexcept
                        result) {
                 if (closed_ || result.Succeeded() ||
                     result.status == snowdesktop::widget_runtime::
+                        WidgetSettingMutationStatus::Cancelled ||
+                    result.status == snowdesktop::widget_runtime::
                         WidgetSettingMutationStatus::InvalidValue)
                     return;
                 std::wstring message;

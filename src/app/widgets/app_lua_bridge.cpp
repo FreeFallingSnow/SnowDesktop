@@ -1,5 +1,6 @@
 #include "ui/render/app_font.h"
 #include "app/app.h"
+#include "widget_reference_picker.h"
 #include "layout/logical_slot_picker_rules.h"
 #include "navigation/name_pinyin.h"
 #include "navigation/search_match.h"
@@ -262,11 +263,11 @@ bool DesktopApp::LuaLogicalSlotPickerAcceptsType(
 }
 
 bool DesktopApp::OpenLuaLogicalSlotPicker(
-    const LogicalSlotPickerRequest& request)
+    const LogicalSlotPickerRequest& incoming)
 {
+    auto request = incoming;
     if (request.widgetId.empty() || request.slotId.empty() ||
-        request.accepts.empty() || quickNavigationOpen_ ||
-        IsLuaLogicalSlotPickerOpen() ||
+        request.accepts.empty() || !widgetEngine_ ||
         (!request.referenceType.empty() &&
             request.referenceType != "file" &&
             request.referenceType != "folder"))
@@ -275,6 +276,44 @@ bool DesktopApp::OpenLuaLogicalSlotPicker(
     if (widgetIndex >= widgets_.size() ||
         widgets_[widgetIndex].type != DesktopWidgetType::LuaScript)
         return false;
+
+    const auto& runtimes = widgetEngine_->GetWidgets();
+    const auto runtime = std::find_if(runtimes.begin(), runtimes.end(),
+        [&request](const auto& widget) { return widget.widgetId == request.widgetId; });
+    if (runtime == runtimes.end() || !runtime->valid || runtime->preview ||
+        (request.ownerToken && request.ownerToken != runtime->runtimeToken))
+        return false;
+    request.ownerToken = runtime->runtimeToken;
+
+    if (quickNavigationOpen_)
+    {
+        const auto& open = logicalSlotPickerRequest_;
+        if (open.widgetId == request.widgetId && open.ownerToken == request.ownerToken &&
+            open.slotId == request.slotId && open.referenceType == request.referenceType &&
+            open.accepts == request.accepts && open.targetIndex == request.targetIndex)
+        {
+            const HWND target = quickNavigationSearchEdit_
+                ? quickNavigationSearchEdit_ : quickNavigationHwnd_;
+            if (target && IsWindow(target))
+            {
+                (void)FocusKeyboardWindow(target, true, L"Logical slot picker", true);
+                return true;
+            }
+        }
+        CloseQuickNavigationThen([this, request] {
+            (void)OpenLuaLogicalSlotPicker(request);
+        });
+        return true;
+    }
+    if (quickNavigationHwnd_ && !quickNavigationAnimation_.IsHidden())
+    {
+        auto pending = std::move(quickNavigationPostCloseAction_);
+        quickNavigationPostCloseAction_ = [this, request, pending = std::move(pending)] {
+            if (pending) pending();
+            (void)OpenLuaLogicalSlotPicker(request);
+        };
+        return true;
+    }
 
     logicalSlotPickerRequest_ = request;
     quickNavigationActiveWidgetIndex_ = static_cast<size_t>(-1);
@@ -414,12 +453,27 @@ bool DesktopApp::CommitLuaLogicalSlotPickerCandidate(
     CloseQuickNavigationThen(
         [this, request, candidate = std::move(candidate)]() mutable {
             if (!widgetEngine_) return;
-            snowdesktop::widget_runtime::LogicalSlotChange change;
             std::string error;
-            if (!widgetEngine_->RuntimeBindHostLogicalSlot(
-                    request.widgetId, request.slotId,
-                    std::move(candidate), request.targetIndex,
-                    change, error, "host.picker"))
+            if (!snowdesktop::CommitWidgetReferencePicker(
+                    widgetSettingsService_.get(), request.widgetId, request.ownerToken,
+                    request.slotId, std::move(candidate),
+                    [this, &request](auto item, auto& change, auto& detail) {
+                        const auto& runtimes = widgetEngine_->GetWidgets();
+                        const auto owner = std::find_if(runtimes.begin(), runtimes.end(),
+                            [&request](const auto& widget) { return widget.widgetId == request.widgetId; });
+                        if (owner == runtimes.end() || owner->runtimeToken != request.ownerToken)
+                        {
+                            detail = "logical slot picker owner is stale";
+                            return false;
+                        }
+                        return widgetEngine_->RuntimeBindHostLogicalSlot(
+                            request.widgetId, request.slotId, std::move(item), request.targetIndex,
+                            change, detail, "host.picker");
+                    },
+                    [this, &request](auto keys) {
+                        (void)widgetEngine_->RuntimeNotifySettingsChanged(
+                            request.widgetId, std::move(keys), false);
+                    }, error))
             {
                 widgetEngine_->RuntimeRecordError(request.widgetId,
                     "logical slot picker: " + error);

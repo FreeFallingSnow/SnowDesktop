@@ -1646,8 +1646,7 @@ WidgetSettingMutationResult WidgetSettingsService::CancelSearch(
         auto found = state_->sessions.find(guard.widgetId);
         if (found == state_->sessions.end()) return checked;
         const auto search = found->second.searches.find(std::string(key));
-        if (search == found->second.searches.end() ||
-            !search->second.snapshot.pending)
+        if (search == found->second.searches.end())
             return { WidgetSettingMutationStatus::Unchanged,
                 session.snapshot.generation, session.snapshot.revision,
                 {}, {} };
@@ -1666,10 +1665,7 @@ WidgetSettingMutationResult WidgetSettingsService::CancelSearch(
                 search != found->second.searches.end() &&
                     search->second.request.requestId == request.requestId)
             {
-                search->second.snapshot.pending = false;
-                search->second.snapshot.completed = false;
-                search->second.snapshot.errorCode = "cancelled";
-                search->second.snapshot.results.clear();
+                found->second.searches.erase(search);
             }
     }
     return { WidgetSettingMutationStatus::Cancelled,

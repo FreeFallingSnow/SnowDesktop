@@ -1598,6 +1598,7 @@ WidgetEngineSettingsBackend::OpenEntityReferencePicker(
             "invalidEntityReferenceBinding");
     LogicalSlotPickerRequest request;
     request.widgetId = widget.widgetId;
+    request.ownerToken = descriptor.generation;
     request.slotId = setting->binding;
     request.kind = LogicalSlotKind::Binding;
     request.accepts = { expectedKind };

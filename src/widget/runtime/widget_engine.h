@@ -751,6 +751,7 @@ struct LogicalSlotHostSurface
 struct LogicalSlotPickerRequest
 {
     std::wstring widgetId;
+    std::uint64_t ownerToken = 0;
     std::string slotId;
     snowdesktop::widget_runtime::LogicalSlotKind kind =
         snowdesktop::widget_runtime::LogicalSlotKind::Binding;

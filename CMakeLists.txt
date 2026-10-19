@@ -325,6 +325,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/widgets/app_lua_panel.cpp
     src/app/widgets/app_lua_panel_render.cpp
     src/app/widgets/app_lua_bridge.cpp
+    src/app/widgets/widget_reference_picker.h
     src/app/menus/app_menu_icons.cpp
     src/app/lifecycle/app_message_dispatch.cpp
     src/shell/shell_context_menu_site.cpp

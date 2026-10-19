@@ -24501,6 +24501,7 @@ bool WidgetEngine::RuntimeOpenHostLogicalSlotPicker(
 
     LogicalSlotPickerRequest request;
     request.widgetId = widgetId;
+    request.ownerToken = ownerToken;
     request.slotId = std::string(slotId);
     request.kind = snapshot->kind;
     request.accepts = declaration->second.accepts;
