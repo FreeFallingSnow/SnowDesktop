@@ -232,7 +232,7 @@
       "lua_widget.api_balance_whale.provider": "プロバイダー",
       "lua_widget.api_balance_whale.key": "API Key",
       "lua_widget.api_balance_whale.key_hint": "この端末で暗号化して保存し、選択したプロバイダーにのみ送信。",
-      "lua_widget.api_balance_whale.interval": "重新整理間隔",
+      "lua_widget.api_balance_whale.interval": "更新間隔",
       "lua_widget.api_balance_whale.threshold": "残高警告のしきい値",
       "lua_widget.api_balance_whale.quota_threshold": "利用枠警告のしきい値（%）",
       "lua_widget.api_balance_whale.currency": "DeepSeek の優先通貨／カスタム通貨",

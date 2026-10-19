@@ -2389,6 +2389,8 @@ if (BUILD_TESTING)
         widget_secret_store
         SOURCES
             tests/widget_secret_store_tests.cpp
+            tests/widget/secret_store_legacy_fixture.cpp
+            tests/widget/secret_store_legacy_fixture.h
             src/widget/storage/widget_secret_store.cpp
         INCLUDE_DIRECTORIES src
         LINK_LIBRARIES bcrypt crypt32

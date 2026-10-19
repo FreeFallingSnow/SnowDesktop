@@ -61,6 +61,10 @@ private:
 
     bool Save(const std::unordered_map<std::string, Record>& records,
         std::string& error) const;
+    void ReadLengths(std::string_view primary,
+        std::unordered_map<std::string, Record>& records) const noexcept;
+    void SaveLengths(std::string_view primary,
+        const std::unordered_map<std::string, Record>& records) const noexcept;
     static std::string EntropyFor(const Record& record);
     static bool Protect(const Record& record, std::string_view plaintext,
         std::string& ciphertext, std::string& error);
@@ -71,5 +75,6 @@ private:
 
     std::filesystem::path path_;
     std::unordered_map<std::string, Record> records_;
+    bool loadFailed_ = false;
 };
 }

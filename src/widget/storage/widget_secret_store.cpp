@@ -20,9 +20,11 @@ namespace snowdesktop::widget_runtime
 namespace
 {
 constexpr std::array<char, 8> FileMagic{
-    'S', 'D', 'S', 'E', 'C', 'R', '0', '2' };
-constexpr std::array<char, 8> LegacyFileMagic{
     'S', 'D', 'S', 'E', 'C', 'R', '0', '1' };
+constexpr std::array<char, 8> PreviousFileMagic{
+    'S', 'D', 'S', 'E', 'C', 'R', '0', '2' };
+constexpr std::array<char, 8> LengthCacheMagic{
+    'S', 'D', 'S', 'E', 'C', 'L', '0', '1' };
 constexpr std::uint32_t UnknownLength = UINT32_MAX;
 constexpr std::string_view ReferencePrefix = "secret:v1:";
 constexpr std::size_t ReferenceRandomBytes = 16;
@@ -30,6 +32,7 @@ constexpr std::size_t MaximumOwnerBytes = 256;
 constexpr std::size_t MaximumSettingKeyBytes = 128;
 constexpr std::size_t MaximumCiphertextBytes = 128 * 1024;
 constexpr std::uint64_t MaximumFileBytes = 64ull * 1024ull * 1024ull;
+constexpr std::uint64_t MaximumLengthCacheBytes = 64ull * 1024ull;
 
 void Append16(std::string& output, std::uint16_t value)
 {
@@ -82,6 +85,38 @@ bool ValidOwnerPart(std::string_view value, std::size_t maximum)
 {
     return !value.empty() && value.size() <= maximum &&
         value.find('\0') == std::string_view::npos;
+}
+
+std::string FileDigest(std::string_view bytes)
+{
+    BCRYPT_ALG_HANDLE algorithm = nullptr;
+    if (BCryptOpenAlgorithmProvider(&algorithm, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0)
+        return {};
+    std::string digest(32, '\0');
+    const auto status = BCryptHash(algorithm, nullptr, 0,
+        reinterpret_cast<PUCHAR>(const_cast<char*>(bytes.data())), static_cast<ULONG>(bytes.size()),
+        reinterpret_cast<PUCHAR>(digest.data()), static_cast<ULONG>(digest.size()));
+    BCryptCloseAlgorithmProvider(algorithm, 0);
+    return status < 0 ? std::string{} : digest;
+}
+
+bool WriteAtomically(const std::filesystem::path& path, std::string_view bytes,
+    std::string& error)
+{
+    const std::filesystem::path temporary = path.wstring() + L".tmp";
+    std::ofstream file(temporary, std::ios::binary | std::ios::trunc);
+    if (!file) { error = "cannot create widget secret store"; return false; }
+    file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    file.flush();
+    if (!file) { error = "cannot write widget secret store"; return false; }
+    file.close();
+    if (!file || !MoveFileExW(temporary.c_str(), path.c_str(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        error = "cannot publish widget secret store";
+        return false;
+    }
+    return true;
 }
 }
 
@@ -209,19 +244,23 @@ bool WidgetSecretStore::Unprotect(const Record& record,
 bool WidgetSecretStore::Load(std::string& error)
 {
     records_.clear();
+    loadFailed_ = true;
     error.clear();
     std::error_code filesystemError;
     const auto status = std::filesystem::symlink_status(
         path_, filesystemError);
     if (filesystemError ==
         std::errc::no_such_file_or_directory)
+    {
+        loadFailed_ = false;
         return true;
+    }
     if (filesystemError)
     {
         error = "cannot inspect widget secret store";
         return false;
     }
-    if (!std::filesystem::exists(status)) return true;
+    if (!std::filesystem::exists(status)) { loadFailed_ = false; return true; }
     if (!std::filesystem::is_regular_file(status))
     {
         error = "widget secret store is not a regular file";
@@ -247,10 +286,11 @@ bool WidgetSecretStore::Load(std::string& error)
         error = "cannot read widget secret store";
         return false;
     }
-    const bool legacy = bytes.size() >= LegacyFileMagic.size() &&
-        std::equal(LegacyFileMagic.begin(), LegacyFileMagic.end(), bytes.begin());
+    file.close();
+    const bool previous = bytes.size() >= PreviousFileMagic.size() &&
+        std::equal(PreviousFileMagic.begin(), PreviousFileMagic.end(), bytes.begin());
     if (bytes.size() < FileMagic.size() + 4 ||
-        (!legacy && !std::equal(FileMagic.begin(), FileMagic.end(), bytes.begin())))
+        (!previous && !std::equal(FileMagic.begin(), FileMagic.end(), bytes.begin())))
     {
         error = "widget secret store has an invalid header";
         return false;
@@ -281,7 +321,7 @@ bool WidgetSecretStore::Load(std::string& error)
             return false;
         }
         Record record;
-        if (!legacy)
+        if (previous)
         {
             std::uint32_t length = 0;
             if (!Read32(bytes, offset, length) ||
@@ -322,14 +362,92 @@ bool WidgetSecretStore::Load(std::string& error)
         error = "widget secret store contains trailing data";
         return false;
     }
+    ReadLengths(bytes, loaded);
+    loadFailed_ = false;
+    // Earlier 1.0.11.0 test builds wrote inline lengths. Restore the published
+    // layout on a successful open, before a user can roll back without editing.
+    if (previous && !Save(loaded, error))
+    {
+        loadFailed_ = true;
+        return false;
+    }
     records_.swap(loaded);
     return true;
 }
+
+void WidgetSecretStore::ReadLengths(std::string_view primary,
+    std::unordered_map<std::string, Record>& records) const noexcept
+try
+{
+    // Optional, derived data. An old host may replace the primary file while
+    // retaining references; bind the whole cache to its exact ciphertext file.
+    const std::filesystem::path path = path_.wstring() + L".lengths";
+    std::error_code error;
+    if (!std::filesystem::is_regular_file(std::filesystem::symlink_status(path, error)) || error)
+        return;
+    const auto size = std::filesystem::file_size(path, error);
+    if (error || size < LengthCacheMagic.size() + 32 + 4 || size > MaximumLengthCacheBytes)
+        return;
+    std::ifstream file(path, std::ios::binary);
+    std::string bytes(static_cast<std::size_t>(size), '\0');
+    if (!file.read(bytes.data(), static_cast<std::streamsize>(size)) || file.peek() != EOF ||
+        !std::equal(LengthCacheMagic.begin(), LengthCacheMagic.end(), bytes.begin())) return;
+    const auto digest = FileDigest(primary);
+    if (digest.empty() || bytes.compare(LengthCacheMagic.size(), digest.size(), digest) != 0) return;
+    std::size_t offset = LengthCacheMagic.size() + digest.size();
+    std::uint32_t count = 0;
+    if (!Read32(bytes, offset, count) || count > records.size()) return;
+    std::unordered_map<std::string, std::uint32_t> lengths;
+    for (std::uint32_t index = 0; index < count; ++index)
+    {
+        std::uint16_t referenceSize = 0;
+        std::string reference;
+        std::uint32_t length = 0;
+        if (!Read16(bytes, offset, referenceSize) || !ReadField(bytes, offset, referenceSize, reference) ||
+            !Read32(bytes, offset, length) || !IsReference(reference) || !records.contains(reference) ||
+            length == 0 || length > MaximumSecretBytes || !lengths.emplace(reference, length).second) return;
+    }
+    if (offset != bytes.size()) return;
+    for (auto& [reference, record] : records)
+        if (const auto found = lengths.find(reference); found != lengths.end()) record.length = found->second;
+}
+catch (...) { /* Derived mask metadata cannot prevent opening the secret file. */ }
+
+void WidgetSecretStore::SaveLengths(std::string_view primary,
+    const std::unordered_map<std::string, Record>& records) const noexcept
+try
+{
+    const auto digest = FileDigest(primary);
+    if (digest.empty()) return;
+    std::string output(LengthCacheMagic.begin(), LengthCacheMagic.end());
+    output += digest;
+    const auto known = std::count_if(records.begin(), records.end(), [](const auto& entry) {
+        return entry.second.length.has_value();
+    });
+    Append32(output, static_cast<std::uint32_t>(known));
+    for (const auto& [reference, record] : records)
+        if (record.length)
+        {
+            Append16(output, static_cast<std::uint16_t>(reference.size()));
+            output += reference;
+            Append32(output, *record.length);
+        }
+    // Failed or interrupted cache writes cannot roll back a successful secret
+    // write. Missing/stale metadata is ignored and learned on explicit access.
+    std::string ignored;
+    (void)WriteAtomically(path_.wstring() + L".lengths", output, ignored);
+}
+catch (...) { /* The primary write has committed; mask metadata is optional. */ }
 
 bool WidgetSecretStore::Save(
     const std::unordered_map<std::string, Record>& records,
     std::string& error) const
 {
+    if (loadFailed_)
+    {
+        error = "cannot overwrite a widget secret store after a failed load";
+        return false;
+    }
     if (records.size() > MaximumRecords)
     {
         error = "widget secret record quota exceeded";
@@ -372,7 +490,6 @@ bool WidgetSecretStore::Save(
             static_cast<std::uint16_t>(record->settingKey.size()));
         Append32(output,
             static_cast<std::uint32_t>(record->ciphertext.size()));
-        Append32(output, record->length.value_or(UnknownLength));
         output += record->reference;
         output += record->packageId;
         output += record->instanceId;
@@ -388,28 +505,8 @@ bool WidgetSecretStore::Save(
         error = "cannot create private widget state directory";
         return false;
     }
-    const std::filesystem::path temporary = path_.wstring() + L".tmp";
-    std::ofstream file(temporary,
-        std::ios::binary | std::ios::trunc);
-    if (!file)
-    {
-        error = "cannot create widget secret store";
-        return false;
-    }
-    file.write(output.data(), static_cast<std::streamsize>(output.size()));
-    file.flush();
-    if (!file)
-    {
-        error = "cannot write widget secret store";
-        return false;
-    }
-    file.close();
-    if (!MoveFileExW(temporary.c_str(), path_.c_str(),
-            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
-    {
-        error = "cannot publish widget secret store";
-        return false;
-    }
+    if (!WriteAtomically(path_, output, error)) return false;
+    SaveLengths(output, records);
     return true;
 }
 
