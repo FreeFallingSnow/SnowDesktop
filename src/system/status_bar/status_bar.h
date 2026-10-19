@@ -101,6 +101,9 @@ public:
     bool ContainsTrayMenuPoint(HMONITOR monitor, POINT screen) const;
     void CancelTrayMenuSession(HMONITOR monitor = nullptr);
     bool ContainsPoint(POINT screen) const;
+    // UI-thread snapshot for the short Task View input handoff. The hook uses
+    // immutable screen rectangles and never queries application windows.
+    std::vector<RECT> InputBounds() const;
     RECT AvailableWorkArea(HMONITOR monitor, RECT screenWorkArea) const;
     // Icon/bar sizing excludes this merged strip's own reservation. Actual
     // desktop placement still uses the Shell-constrained work area above.

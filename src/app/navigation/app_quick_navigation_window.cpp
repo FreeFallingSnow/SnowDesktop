@@ -952,6 +952,8 @@ int DesktopApp::GetQuickNavTabDragTarget(size_t dragTab, int deltaX) const
 void DesktopApp::OpenQuickNavigation(
     QuickNavigationInvocationSource source)
 {
+    // Hotkeys and Dock search share the same boundary as the status bar.
+    if (statusBarTaskViewTransition_.Busy(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds())) return;
     if (FullscreenBlocksDockReveal(DockRevealSource::AssociatedSurface, nullptr)) return;
     if (dragSession_.IsActive() ||
         dragDropController_.IsExternalDragActive())

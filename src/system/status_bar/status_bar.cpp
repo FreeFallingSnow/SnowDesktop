@@ -1537,6 +1537,18 @@ bool StatusBar::ContainsPoint(POINT screen) const
     }
     return false;
 }
+std::vector<RECT> StatusBar::InputBounds() const
+{
+    std::vector<RECT> bounds;
+    if (impl_->removingWindows) return bounds;
+    for (const auto& [id, window] : impl_->windows)
+    {
+        (void)id;
+        if (window && window->InputAvailable() && !IsRectEmpty(&window->placedBounds))
+            bounds.push_back(window->placedBounds);
+    }
+    return bounds;
+}
 RECT StatusBar::AvailableWorkArea(HMONITOR monitor, RECT area) const
 {
     for (const auto& [id, window] : impl_->windows)

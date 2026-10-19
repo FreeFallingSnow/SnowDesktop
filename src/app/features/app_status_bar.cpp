@@ -122,8 +122,7 @@ void DesktopApp::ActivateStatusBar(snowdesktop::StatusBarAction action, HWND own
     if (action == Action::SystemControlCenter && !snowdesktop::StatusBarSupportsSystemQuickSettings())
         action = Action::ControlCenter;
     const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
-    if ((action == Action::TaskView && !statusBarTaskViewTransition_.CanBegin(now, systemTaskbarTaskViewActive_)) ||
-        (snowdesktop::IsTaskViewTransitionSensitiveAction(action) && statusBarTaskViewTransition_.Busy(now)))
+    if (!statusBarTaskViewTransition_.AllowsAction(action, now, systemTaskbarTaskViewActive_))
     {
         TraceStatusBarShellActivation(action, *statusBarActivationGeneration_, L"ignored",
             now, L"task-view-visible-or-transition");
@@ -196,7 +195,8 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
             IsWindowVisible(owner) && MonitorFromWindow(owner, MONITOR_DEFAULTTONULL) == monitor &&
             statusBar_->IsInteractionAvailable(monitor);
     };
-    if (!current() || action == Action::None) return;
+    if (!current() || action == Action::None || !statusBarTaskViewTransition_.AllowsAction(action,
+        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds(), systemTaskbarTaskViewActive_)) return;
     const auto ensureSystemPanel = [this] {
         if (!systemPanel_)
             systemPanel_ = std::make_unique<snowdesktop::SystemPanel>([this](const auto& changed) {
@@ -505,13 +505,19 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
         CloseQuickNavigation();
         const HWND foreground = GetForegroundWindow();
         const auto mouseHandoff = action == Action::TaskView ?
-            snowdesktop::StatusBarTaskViewInputHandoff::Create(uiAnimationScheduler_, anchor, GetDoubleClickTime()) : nullptr;
+            snowdesktop::StatusBarTaskViewInputHandoff::Create(uiAnimationScheduler_, statusBar_->InputBounds(),
+                [this, lifetime] {
+                    return lifetime.expired() ? 0.0 : statusBarTaskViewTransition_.Remaining(
+                        snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+                }) : nullptr;
         if (action == Action::TaskView && !mouseHandoff)
         {
-            // Preserve the previous safe gesture handoff if the temporary
-            // input shield cannot be installed; never open unprotected.
-            chord.pointerQuietMilliseconds = GetDoubleClickTime();
-            WriteDiagnosticLogEntry(L"StatusBar Task View pointer shield unavailable; using double-click wait");
+            // A delay cannot protect against a click after injection. Refuse
+            // this opening if its raw-input handoff cannot be established.
+            WriteDiagnosticLogEntry(L"StatusBar Task View input handoff unavailable; opening cancelled");
+            hold->shortcutFinished = true;
+            MessageBeep(MB_ICONWARNING);
+            return;
         }
         // Shell shortcut activation has no supported custom popup anchor. Let
         // Windows place its own surface; never move or reparent its window.
@@ -524,7 +530,7 @@ void DesktopApp::ContinueStatusBarActivation(snowdesktop::StatusBarAction action
                     !(input[0].ki.dwFlags & KEYEVENTF_KEYUP);
                 if (taskViewChord && !statusBarTaskViewTransition_.Begin(before, systemTaskbarTaskViewActive_))
                     return 0u;
-                if (taskViewChord && mouseHandoff) mouseHandoff->Begin();
+                if (taskViewChord && mouseHandoff) mouseHandoff->Begin(statusBarTaskViewTransition_.Remaining(before));
                 const UINT sent = SendInput(count, input, size);
                 if (taskViewChord && sent == 0) statusBarTaskViewTransition_.Reset();
                 if (taskViewChord && sent == 0 && mouseHandoff) mouseHandoff->Cancel();

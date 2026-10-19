@@ -417,14 +417,22 @@ void TestTaskViewTransition()
     transition.Observe(true, 11200);
     Check(!transition.Busy(11350) && !transition.CanBegin(11350, true),
         "duplicate shown events allow other native panels after settling but keep Task View open-only");
-    Check(IsTaskViewTransitionSensitiveAction(StatusBarAction::TaskView) &&
-        IsTaskViewTransitionSensitiveAction(StatusBarAction::ShowDesktop) &&
-        IsTaskViewTransitionSensitiveAction(StatusBarAction::Notifications) &&
-        IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemCalendar) &&
-        IsTaskViewTransitionSensitiveAction(StatusBarAction::SystemControlCenter) &&
-        !IsTaskViewTransitionSensitiveAction(StatusBarAction::Dismiss) &&
-        !IsTaskViewTransitionSensitiveAction(StatusBarAction::Settings),
-        "other native panels cannot interrupt Task View's transition, while dismissal and settings remain available");
+    transition.Reset();
+    Check(transition.Begin(100, false), "search interleave begins one Task View opening");
+    for (const auto action : {StatusBarAction::QuickSearch, StatusBarAction::TaskView,
+        StatusBarAction::Calendar, StatusBarAction::Tray, StatusBarAction::MenuQuickSearch,
+        StatusBarAction::Dismiss, StatusBarAction::Settings, StatusBarAction::ShowDesktop,
+        StatusBarAction::Notifications, StatusBarAction::SystemCalendar, StatusBarAction::SystemControlCenter})
+    {
+        Check(!transition.AllowsAction(action, 376, false),
+            "adjacent search and all surface-changing actions are rejected before Shell settles");
+        Check(transition.AllowsAction(action, 1600, false),
+            "missing visibility notification releases each action at the bounded deadline");
+    }
+    transition.Observe(true, 400);
+    Check(transition.Remaining(400) == 350 && !transition.AllowsAction(StatusBarAction::QuickSearch, 749, true) &&
+        transition.AllowsAction(StatusBarAction::QuickSearch, 750, true),
+        "search waits for the actual shown notification plus settling, not a double-click interval");
 }
 
 void TestTaskViewMouseHandoff()
@@ -433,8 +441,7 @@ void TestTaskViewMouseHandoff()
     using Result = StatusBarShortcutResult;
     const auto chord = ResolveStatusBarShellChord(StatusBarAction::TaskView, true, false);
     const auto legacyChord = ResolveStatusBarShellChord(StatusBarAction::TaskView, false, true);
-    Check(chord.pointerQuietMilliseconds == 0 && chord.waitForPointerRelease &&
-        legacyChord.pointerQuietMilliseconds == 0 && legacyChord.waitForPointerRelease,
+    Check(chord.waitForPointerRelease && legacyChord.waitForPointerRelease,
         "both Windows versions open Task View without a fixed double-click delay");
     UiAnimationScheduler scheduler;
     Check(scheduler.Initialize(), "Task View handoff scheduler initializes");
@@ -445,10 +452,8 @@ void TestTaskViewMouseHandoff()
     int sends = 0;
     bool current = true;
     std::vector<Result> outcomes;
-    const auto queue = [&](UINT quiet = 0) {
-        auto request = chord;
-        request.pointerQuietMilliseconds = quiet;
-        return ScheduleStatusBarShellShortcut(scheduler, request, {
+    const auto queue = [&] {
+        return ScheduleStatusBarShellShortcut(scheduler, chord, {
             [&](int code) { return code == held; },
             [&](UINT count, INPUT*, int) { ++sends; return count; },
             [&](auto) { return current; },
@@ -466,64 +471,59 @@ void TestTaskViewMouseHandoff()
     Check(sends == 2 && outcomes == std::vector<Result>{Result::Sent},
         "pointer release completes the request without starting a new quiet interval");
 
-    // Negative control: the former production chord cannot meet the same
-    // first-dispatch expectation. Keep that wait only as installation fallback.
-    outcomes.clear(); now = 0; queue(500);
-    now = 499; WaitAndDispatch(scheduler);
-    Check(sends == 2 && outcomes.empty(), "fallback still finishes the double-click interval");
-    held = VK_LBUTTON; WaitAndDispatch(scheduler);
-    now = 1000; WaitAndDispatch(scheduler);
-    Check(sends == 2, "fallback held second press cannot open Task View under the pointer");
-    held = 0; now = 1499; WaitAndDispatch(scheduler);
-    Check(sends == 2, "fallback release still leaves its quiet interval");
-    now = 1500; WaitAndDispatch(scheduler);
-    Check(sends == 3 && outcomes == std::vector<Result>{Result::Sent} && !scheduler.HasScheduledWork(),
-        "fallback completed double-click opens exactly once, with no deferred replay");
-
     outcomes.clear(); queue(); current = false; WaitAndDispatch(scheduler);
-    Check(sends == 3 && outcomes == std::vector<Result>{Result::Cancelled} && !scheduler.HasScheduledWork(),
+    Check(sends == 2 && outcomes == std::vector<Result>{Result::Cancelled} && !scheduler.HasScheduledWork(),
         "foreground change, hidden bar or externally opened Task View cancels the delayed request");
     current = true; outcomes.clear(); queue();
     held = VK_RBUTTON; now = 7000; WaitAndDispatch(scheduler);
-    Check(sends == 3 && outcomes == std::vector<Result>{Result::TimedOut} && !scheduler.HasScheduledWork(),
+    Check(sends == 2 && outcomes == std::vector<Result>{Result::TimedOut} && !scheduler.HasScheduledWork(),
         "held mouse cannot leave an unbounded deferred opening request");
-    held = 0; outcomes.clear();
-    queue(5000); now = 12000; WaitAndDispatch(scheduler);
-    Check(sends == 4 && outcomes == std::vector<Result>{Result::Sent},
-        "maximum Windows double-click interval has its own budget before the input timeout");
 }
 
 void TestTaskViewPointerGuard()
 {
     using snowdesktop::TaskViewPointerGuard;
-    // Model the physical second click landing in Shell after it covers the
-    // original button. Time and raw hook events are the only replaced inputs.
-    TaskViewPointerGuard guard({-100, 0, -68, 32}, 500);
+    // Task View is [-100,-68), adjacent search is [-68,-36). Include every
+    // bar, including a second monitor; no desktop input is synthesized.
+    TaskViewPointerGuard guard({{-100, 0, -4, 32}, {1000, 0, 1300, 32}});
     Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 100, false), "unarmed monitor leaves input alone");
-    guard.Arm(100);
-    Check(!guard.Filter(WM_RBUTTONDOWN, {-90, 16}, 110, false) &&
-        !guard.Filter(WM_MOUSEMOVE, {-90, 16}, 110, false) &&
+    Check(!guard.CanStop(100), "pre-injection physical input cannot retire the pending monitor");
+    guard.Arm(100, 1500);
+    Check(!guard.Filter(WM_MOUSEMOVE, {-90, 16}, 110, false) &&
         !guard.Filter(WM_LBUTTONDOWN, {200, 16}, 110, false) &&
         !guard.Filter(WM_LBUTTONUP, {-90, 16}, 110, false),
-        "other buttons, pointer motion, unrelated clicks and unmatched releases pass through");
+        "pointer motion, clicks outside the bars and unmatched releases pass through");
     Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 120, true), "injected clicks are not consumed");
-    Check(guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 130, false),
-        "rapid physical repeat at the covered Task View button is intercepted");
-    Check(!guard.Filter(WM_LBUTTONUP, {-90, 16}, 140, true),
+    Check(guard.Filter(WM_LBUTTONDOWN, {-50, 16}, 376, false),
+        "the original adjacent-search click is intercepted before it can dismiss Shell or open search");
+    Check(guard.Filter(WM_RBUTTONDOWN, {1100, 16}, 400, false) &&
+        guard.Filter(WM_MBUTTONDOWN, {-90, 16}, 401, false) &&
+        guard.Filter(WM_XBUTTONDOWN, {-90, 16}, 402, false, XBUTTON1 << 16) &&
+        guard.Filter(WM_XBUTTONDOWN, {-90, 16}, 403, false, XBUTTON2 << 16),
+        "other buttons and other monitor bars cannot insert a menu or activation during startup");
+    Check(!guard.Filter(WM_LBUTTONUP, {-90, 16}, 410, true),
         "injected release cannot complete a consumed physical press");
-    Check(!guard.CanStop(800), "expiry cannot unhook halfway through a consumed press");
-    Check(guard.Filter(WM_LBUTTONUP, {200, 200}, 810, false) && guard.CanStop(810),
-        "matching physical release is consumed outside the button after expiry before unhooking");
-    Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 820, false), "expired shield allows later clicks");
+    Check(!guard.CanStop(1600), "expiry cannot unhook halfway through consumed presses");
+    Check(guard.Filter(WM_LBUTTONUP, {200, 200}, 1610, false) && !guard.CanStop(1610) &&
+        guard.Filter(WM_RBUTTONUP, {200, 200}, 1611, false) &&
+        guard.Filter(WM_MBUTTONUP, {200, 200}, 1612, false) &&
+        guard.Filter(WM_XBUTTONUP, {200, 200}, 1613, false, XBUTTON1 << 16) &&
+        !guard.CanStop(1613) && guard.Filter(WM_XBUTTONUP, {200, 200}, 1614, false, XBUTTON2 << 16) &&
+        guard.CanStop(1614), "every consumed button drains its own release after timeout, outside all bars");
+    Check(!guard.Filter(WM_LBUTTONDOWN, {-90, 16}, 1620, false), "expired shield allows later clicks");
 
-    TaskViewPointerGuard cancelled({0, 0, 32, 32}, 5000);
-    cancelled.Arm(0);
-    Check(cancelled.Filter(WM_LBUTTONDOWN, {16, 16}, 1, false), "maximum double-click interval protects repeats");
+    TaskViewPointerGuard cancelled({{0, 0, 64, 32}});
+    cancelled.Arm(0, 1500);
+    Check(cancelled.Filter(WM_LBUTTONDOWN, {48, 16}, 1, false), "search press is consumed before cancellation");
     cancelled.Cancel();
     Check(!cancelled.CanStop(2) && cancelled.Filter(WM_LBUTTONUP, {16, 16}, 3, false) && cancelled.CanStop(3),
         "cancellation also drains a consumed press before removing its hook");
-    TaskViewPointerGuard expired({0, 0, 32, 32}, 500);
-    expired.Arm(0xffffff00u);
+    TaskViewPointerGuard settled({{0, 0, 64, 32}});
+    settled.Arm(0, 1500); settled.UpdateDeadline(100, 350);
+    Check(!settled.CanStop(449) && settled.CanStop(450),
+        "shown notification shortens raw-input protection to its settling deadline");
+    TaskViewPointerGuard expired({{0, 0, 64, 32}});
+    expired.Arm(0xffffff00u, 500);
     Check(!expired.CanStop(0xf3u) && expired.CanStop(0xf4u) &&
         !expired.Filter(WM_LBUTTONDOWN, {16, 16}, 0xf4u, false),
         "deadline is bounded across Windows tick-counter wrap and wins before a new press");
@@ -565,20 +565,28 @@ void TestTaskViewInputMonitorLifetime()
     const LowLevelMouseHook::Api api{&InstallTaskViewHookFixture, &UninstallTaskViewHookFixture};
     UiAnimationScheduler scheduler;
     Check(scheduler.Initialize(), "shield lifetime scheduler initializes");
-    auto request = StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 5000, api);
+    const std::vector<RECT> bounds{{0, 0, 96, 32}, {-1920, 0, -1800, 32}};
+    auto remaining = [] { return 1500.0; };
+    auto request = StatusBarTaskViewInputHandoff::Create(scheduler, bounds, remaining, api);
     Check(request && taskViewHookFixtureThread != GetCurrentThreadId(),
         "shield receives raw input on a dedicated thread instead of the UI thread");
+    MSLLHOOKSTRUCT down{}; down.pt = {48, 16};
+    Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONDOWN,
+        reinterpret_cast<LPARAM>(&down)) == 0, "unarmed production hook passes input without retiring");
+    WaitAndDispatch(scheduler);
+    Check(scheduler.HasScheduledWork() && IsWindow(taskViewHookFixtureWindow),
+        "pre-injection raw events cannot uninstall a pending handoff");
     request.reset(); // Model scheduler cancellation before SendInput.
     WaitAndDispatch(scheduler);
     Check(!scheduler.HasScheduledWork() && !IsWindow(taskViewHookFixtureWindow),
         "cancelled unarmed request releases its independent monitor without completion callback");
 
-    request = StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 5000, api);
+    request = StatusBarTaskViewInputHandoff::Create(scheduler, bounds, remaining, api);
     Check(request != nullptr, "shield can be installed again after cancellation");
-    request->Begin();
-    MSLLHOOKSTRUCT down{}; down.pt = {16, 16};
+    request->Begin(1500);
+    down.pt = {48, 16};
     Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONDOWN,
-        reinterpret_cast<LPARAM>(&down)) == 1, "production hook callback consumes the covered-button repeat");
+        reinterpret_cast<LPARAM>(&down)) == 1, "production hook callback consumes the adjacent search press");
     request->Cancel(); request.reset();
     WaitAndDispatch(scheduler);
     Check(scheduler.HasScheduledWork() && IsWindow(taskViewHookFixtureWindow),
@@ -589,13 +597,52 @@ void TestTaskViewInputMonitorLifetime()
     WaitAndDispatch(scheduler);
     Check(!scheduler.HasScheduledWork() && !IsWindow(taskViewHookFixtureWindow),
         "cancelled consumed press uninstalls immediately after its paired release");
-    request = StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 5000, api);
+    // Preserve the real scheduler, chord construction, transition state and
+    // hook callback together. Only OS installation/input/clock are replaced.
+    TaskViewTransitionGuard transition;
+    double now = 100;
+    int sends = 0;
+    request = StatusBarTaskViewInputHandoff::Create(scheduler, bounds, [&] { return transition.Remaining(now); }, api);
+    Check(request != nullptr, "opening interleave installs the production handoff");
+    ScheduleStatusBarShellShortcut(scheduler, ResolveStatusBarShellChord(StatusBarAction::TaskView, true, false), {
+        [](int) { return false; },
+        [&](UINT count, INPUT*, int) {
+            Check(transition.Begin(now, false), "input boundary starts one transition");
+            request->Begin(transition.Remaining(now)); ++sends; return count;
+        },
+        [](auto) { return true; },
+        [&](auto, StatusBarShortcutResult result) {
+            Check(result == StatusBarShortcutResult::Sent, "opening chord completes without a delayed retry");
+            request->ReleaseIfUnused();
+        }, [&] { return now; }});
+    const DWORD openingDeadline = GetTickCount() + 1000;
+    while (!sends && GetTickCount() - openingDeadline >= 0x80000000u) WaitAndDispatch(scheduler);
+    down.pt = {48, 16}; now = 376;
+    Check(sends == 1 && SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONDOWN,
+        reinterpret_cast<LPARAM>(&down)) == 1 && !transition.AllowsAction(StatusBarAction::QuickSearch, now, false),
+        "real opening handoff blocks the reproduced 276ms adjacent click at both raw input and action boundaries");
+    transition.Observe(true, 400); now = 749;
+    WaitAndDispatch(scheduler);
+    Check(IsWindow(taskViewHookFixtureWindow) && !transition.AllowsAction(StatusBarAction::QuickSearch, now, true),
+        "early shown callback cannot release either boundary before settling");
+    now = 750; request.reset(); WaitAndDispatch(scheduler);
+    Check(IsWindow(taskViewHookFixtureWindow) && scheduler.HasScheduledWork() &&
+        transition.AllowsAction(StatusBarAction::QuickSearch, now, true),
+        "settled action routing resumes while the old physical release is still draining");
+    down.pt = {300, 300};
+    Check(SendMessageW(taskViewHookFixtureWindow, WM_APP + 1, WM_LBUTTONUP,
+        reinterpret_cast<LPARAM>(&down)) == 1, "settled view cannot receive an orphaned release from the blocked click");
+    WaitAndDispatch(scheduler);
+    Check(sends == 1 && !scheduler.HasScheduledWork() && !IsWindow(taskViewHookFixtureWindow),
+        "settling removes the hook without replaying search or a second Win+Tab");
+
+    request = StatusBarTaskViewInputHandoff::Create(scheduler, bounds, remaining, api);
     Check(request != nullptr, "shield can restart for a later independent request");
-    request->Begin(); request.reset(); scheduler.CancelAll();
+    request->Begin(1500); request.reset(); scheduler.CancelAll();
     Check(!IsWindow(taskViewHookFixtureWindow), "scheduler shutdown joins and releases the shield");
     taskViewHookFixtureFails = true;
-    Check(!StatusBarTaskViewInputHandoff::Create(scheduler, {0, 0, 32, 32}, 500, api) &&
-        !scheduler.HasScheduledWork(), "hook installation failure returns the signal for the safe delayed fallback");
+    Check(!StatusBarTaskViewInputHandoff::Create(scheduler, bounds, remaining, api) &&
+        !scheduler.HasScheduledWork(), "hook installation failure rejects opening instead of applying an ineffective delay");
     taskViewHookFixtureFails = false;
     Check(UnregisterClassW(kTaskViewHookFixtureClass, windowClass.hInstance) != FALSE, "fixture unregisters after hook shutdown");
 }
