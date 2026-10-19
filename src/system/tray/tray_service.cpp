@@ -79,8 +79,11 @@ struct Service::Impl
     std::jthread worker;
     Impl()
     {
-        if (stop) worker = std::jthread([this](std::stop_token token) { Run(token); });
-        else { snapshot.degraded = true; snapshot.error = GetLastError(); }
+        // Temporary issue #29 isolation build: keep clients and lifetime intact,
+        // but do not connect to Explorer or broadcast tray re-registration.
+        snapshot.degraded = true;
+        snapshot.error = ERROR_CANCELLED;
+        WriteDiagnosticLogEntry(L"[Issue29 isolation] tray collector worker disabled");
     }
     ~Impl()
     {
