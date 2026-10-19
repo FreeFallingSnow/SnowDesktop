@@ -116,17 +116,19 @@ struct Result
     const wchar_t* operation = L"AutoStart desktop-user handoff";
 };
 
-// The operation boundary lets regression tests replace only the privileged
-// process-creation call. Production always uses CreateProcessWithTokenW.
+// Keep both creation boundaries injectable so tests can reproduce a denied
+// token launch and exercise the real desktop-parent fallback independently.
 using ProcessCreator = decltype(&CreateProcessWithTokenW);
+using ParentProcessCreator = decltype(&CreateProcessW);
 using ShellWindowProvider = decltype(&GetShellWindow);
 
 class NativePlatform final
 {
 public:
     explicit NativePlatform(ProcessCreator creator = &CreateProcessWithTokenW,
-        ShellWindowProvider shellWindow = &GetShellWindow)
-        : creator_(creator), shellWindow_(shellWindow) {}
+        ShellWindowProvider shellWindow = &GetShellWindow,
+        ParentProcessCreator parentCreator = &CreateProcessW)
+        : creator_(creator), shellWindow_(shellWindow), parentCreator_(parentCreator) {}
 
     Identity CurrentIdentity()
     {
@@ -204,10 +206,22 @@ public:
             }
         } child;
         STARTUPINFOW startup{sizeof(startup)};
-        Require(creator_(primary.value, 0, executable.c_str(), mutableCommand.data(),
+        if (!creator_(primary.value, 0, executable.c_str(), mutableCommand.data(),
             CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT,
-            environment, directory.c_str(), &startup, &child.info) != FALSE,
-            L"CreateProcessWithTokenW(autostart)");
+            environment, directory.c_str(), &startup, &child.info))
+        {
+            const DWORD error = GetLastError();
+            if (error != ERROR_ACCESS_DENIED && error != ERROR_PRIVILEGE_NOT_HELD)
+                throw Failure{error ? error : ERROR_GEN_FAILURE,
+                    L"CreateProcessWithTokenW(autostart)"};
+            // Some logon-task contexts deny token-based creation. Using the
+            // desktop process as parent inherits its token and job instead;
+            // it does not require the task's impersonation/logon privileges.
+            // A failed creation may have modified the command line already.
+            mutableCommand.assign(command);
+            CreateWithDesktopParent(executable.c_str(), mutableCommand.data(),
+                environment, directory.c_str(), &child.info);
+        }
         Handle childToken;
         Require(OpenProcessToken(child.info.hProcess, TOKEN_QUERY, &childToken.value) != FALSE,
             L"OpenProcessToken(autostart child)");
@@ -222,8 +236,41 @@ public:
     }
 
 private:
+    void CreateWithDesktopParent(LPCWSTR executable, LPWSTR command,
+        LPVOID environment, LPCWSTR directory, LPPROCESS_INFORMATION child)
+    {
+        Handle parent;
+        parent.value = OpenProcess(PROCESS_CREATE_PROCESS, FALSE, GetProcessId(shellProcess_.value));
+        Require(parent.value != nullptr, L"OpenProcess(autostart desktop parent)");
+        SIZE_T size = 0;
+        InitializeProcThreadAttributeList(nullptr, 1, 0, &size);
+        Require(size != 0 && GetLastError() == ERROR_INSUFFICIENT_BUFFER,
+            L"InitializeProcThreadAttributeList(autostart size)");
+        std::vector<BYTE> storage(size);
+        auto* list = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(storage.data());
+        Require(InitializeProcThreadAttributeList(list, 1, 0, &size) != FALSE,
+            L"InitializeProcThreadAttributeList(autostart)");
+        struct Attributes final
+        {
+            LPPROC_THREAD_ATTRIBUTE_LIST value;
+            ~Attributes() { DeleteProcThreadAttributeList(value); }
+        } attributes{list};
+        Require(UpdateProcThreadAttribute(list, 0, PROC_THREAD_ATTRIBUTE_PARENT_PROCESS,
+            &parent.value, sizeof(parent.value), nullptr, nullptr) != FALSE,
+            L"UpdateProcThreadAttribute(autostart desktop parent)");
+        STARTUPINFOEXW startup{};
+        startup.StartupInfo.cb = sizeof(startup);
+        startup.lpAttributeList = list;
+        Require(parentCreator_(executable, command, nullptr, nullptr, FALSE,
+            CREATE_SUSPENDED | CREATE_NEW_PROCESS_GROUP | CREATE_UNICODE_ENVIRONMENT |
+                EXTENDED_STARTUPINFO_PRESENT,
+            environment, directory, &startup.StartupInfo, child) != FALSE,
+            L"CreateProcessW(autostart desktop parent)");
+    }
+
     ProcessCreator creator_;
     ShellWindowProvider shellWindow_;
+    ParentProcessCreator parentCreator_;
     Handle shellProcess_;
     Handle shellToken_;
 };

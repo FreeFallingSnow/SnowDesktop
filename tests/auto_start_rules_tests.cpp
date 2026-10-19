@@ -9,6 +9,7 @@
 
 int RunAutoStartManagerTests();
 int RunAutoStartLaunchProbe();
+int RunAutoStartLowShellProbe();
 
 namespace
 {
@@ -103,6 +104,14 @@ void CheckAutoStartLaunchRules()
             static_cast<DWORD>(failQuery ? ERROR_TIMEOUT : ERROR_PRIVILEGE_NOT_HELD) && result.childProcessId == 0,
             "shell and creation failures terminate startup instead of falling back to high integrity");
     }
+    {
+        Platform platform;
+        platform.launchError = ERROR_ACCESS_DENIED;
+        const auto result = launch::Normalize(startup, platform);
+        Check(result.handled && result.error == ERROR_ACCESS_DENIED && result.childProcessId == 0 &&
+            platform.launches == 1,
+            "an unrecoverable denied handoff exits once without starting an elevated desktop");
+    }
 }
 }
 
@@ -110,6 +119,8 @@ int main(int argc, char** argv)
 {
     if (argc > 1 && std::string_view(argv[1]) == "--autostart-permission-probe")
         return RunAutoStartLaunchProbe();
+    if (argc > 1 && std::string_view(argv[1]) == "--autostart-low-shell")
+        return RunAutoStartLowShellProbe();
     if (const auto result = snowdesktop::auto_start::TryRunElevationCommand()) return *result;
     if (argc > 1 && std::string_view(argv[1]) == "--scheduler")
         return RunAutoStartManagerTests();
