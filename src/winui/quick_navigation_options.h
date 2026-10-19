@@ -27,7 +27,7 @@ public:
             edit(candidate);
             if (Accept(candidate)) apply(std::move(edit));
         };
-        root_.Spacing(appearanceOnly_ ? 8 : 24);
+        root_.Spacing(8);
         notice_.Severity(winrt::Microsoft::UI::Xaml::Controls::InfoBarSeverity::Error);
         notice_.IsClosable(false); notice_.IsOpen(false);
         presenter_controls::BindInfoBarVisibility(notice_); root_.Children().Append(notice_);
@@ -74,7 +74,6 @@ public:
             AddRow(suggestions, "quickNav.appSuggestions", appSuggestions_, [](auto& value) {
                 value.appSuggestionsEnabled = false;
             });
-            rowStorage_.back()->SetText(L("quickNav.appSuggestions"), L("quickNav.appSuggestions.hint"));
             presenter_controls::StyleSettingsCard(rowStorage_.back()->root);
             root_.Children().Append(suggestions);
             auto prefixes = Group("quickNav.prefixes", [this] {commit_([](auto& value) {value.prefixes = NavigationSettings{}.prefixes;});}, "quickNav.prefixes.hint");
@@ -91,7 +90,7 @@ public:
                 });
                 AddRow(prefixes, typeKeys[i], prefixes_[i], [i](auto& value) {value.prefixes[i] = NavigationSettings{}.prefixes[i];});
             }
-            Panel management; management.Spacing(8); root_.Children().Append(management);
+            Panel management; management.Spacing(8); management.Margin({0,16,0,0}); root_.Children().Append(management);
             defaultEngine_.SelectionChanged([this](auto&&, auto&&) {
                 const int index = defaultEngine_.SelectedIndex();
                 if (!sync_ && index >= 0 && static_cast<size_t>(index) < values_.engines.size())
@@ -209,8 +208,6 @@ public:
                 L("app.settings.restore_default") + L" · " + L(key));
         }
         for (const auto& [key, row] : rows_) row->SetText(L(key));
-        if (!appearanceOnly_)
-            rowStorage_.front()->SetText(L("quickNav.appSuggestions"), L("quickNav.appSuggestions.hint"));
         if (!appearanceOnly_)
         {
             addEngine_.Content(winrt::box_value(L("quickNav.engine.add")));

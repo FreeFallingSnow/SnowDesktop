@@ -2551,6 +2551,5 @@
   "settings.dock.attentionDot.positionHint": "Les valeurs négatives rapprochent le point du centre de l'icône ; les valeurs positives l'éloignent. Le décalage est un pourcentage de la taille de l'icône.",
   "app.nav.view_frequency": "Fréquence d’utilisation",
   "app.nav.app_suggestions": "Applications suggérées",
-  "quickNav.appSuggestions": "Activer les suggestions d’applications",
-  "quickNav.appSuggestions.hint": "Afficher une ligne d’applications fréquentes en haut de la page du bureau. Masquée lors du tri par fréquence d’utilisation."
+  "quickNav.appSuggestions": "Activer les suggestions d’applications"
 }

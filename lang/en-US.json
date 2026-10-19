@@ -2551,6 +2551,5 @@
   "settings.dock.attentionDot.positionHint": "Negative values move toward the icon center; positive values move outward. The offset is a percentage of the icon size.",
   "app.nav.view_frequency": "Usage frequency",
   "app.nav.app_suggestions": "App suggestions",
-  "quickNav.appSuggestions": "Enable app suggestions",
-  "quickNav.appSuggestions.hint": "Show one row of frequently used apps at the top of the desktop page. Hidden when sorting by usage frequency."
+  "quickNav.appSuggestions": "Enable app suggestions"
 }
