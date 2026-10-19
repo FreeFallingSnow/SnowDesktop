@@ -260,14 +260,23 @@ void ExerciseSecretInput(const x::FrameworkElement& root,
 {
     c::PasswordBox password{nullptr};
     Walk(root, [&](const x::DependencyObject& node) {
-        if (const auto input = node.try_as<c::PasswordBox>()) password = input;
+        if (const auto input = node.try_as<c::PasswordBox>(); input &&
+            x::Automation::AutomationProperties::GetName(input) == L"API Key") // l10n-allow: isolated preview field identity.
+            password = input;
     });
     if (!password) throw std::runtime_error("missing preview password editor");
-    const auto editors = x::Media::VisualTreeHelper::GetParent(password);
     c::Button clear{nullptr};
-    Walk(editors, [&](const x::DependencyObject& node) {
-        if (const auto button = node.try_as<c::Button>()) clear = button;
-    });
+    auto ancestor = password.as<x::DependencyObject>();
+    const winrt::hstring clearName{_LW("app.settings.widget.clear")};
+    while (ancestor && !clear)
+    {
+        Walk(ancestor, [&](const x::DependencyObject& node) {
+            if (const auto button = node.try_as<c::Button>(); button &&
+                x::Automation::AutomationProperties::GetName(button) == clearName)
+                clear = button;
+        });
+        if (!clear) ancestor = x::Media::VisualTreeHelper::GetParent(ancestor);
+    }
     if (!clear) throw std::runtime_error("missing inline password clear action");
     const auto inputBounds = password.TransformToVisual(root).TransformBounds(
         {0, 0, static_cast<float>(password.ActualWidth()), static_cast<float>(password.ActualHeight())});
