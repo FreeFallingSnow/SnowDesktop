@@ -882,28 +882,23 @@ void DesktopApp::UpdateQuickNavTabWidths()
     std::vector<size_t> ci = GetQuickNavigationCollectionIndices();
     const size_t tabCount = ci.size() + 2;
     quickNavTabWidths_.resize(tabCount, QuickNavScale(72));
-    quickNavViewModeSlotWidth_ = QuickNavScale(76);
+    quickNavViewModeSlotWidth_ = QuickNavScale(60);
 
     if (!dwriteFactory_ || !quickNavTabTextFormat_)
         return;
 
-    // Measure all modes once with the tab widths; hit tests reuse this slot.
-    // Switching modes or pages must not move the following tabs.
-    constexpr const char* keys[] = {
-        "app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial", "app.nav.view_frequency" };
-    for (const char* key : keys)
+    // Rendering and hit testing share the width of the current mode label.
+    const std::wstring viewLabel = QuickNavigationViewLabel();
+    ComPtr<IDWriteTextLayout> viewLayout;
+    if (SUCCEEDED(dwriteFactory_->CreateTextLayout(viewLabel.c_str(),
+            static_cast<UINT32>(viewLabel.size()), quickNavTabTextFormat_.Get(),
+            10000.f, 10000.f, &viewLayout)) && viewLayout)
     {
-        const std::wstring label = _LW(key);
-        ComPtr<IDWriteTextLayout> layout;
-        if (FAILED(dwriteFactory_->CreateTextLayout(label.c_str(),
-                static_cast<UINT32>(label.size()), quickNavTabTextFormat_.Get(),
-                10000.f, 10000.f, &layout)) || !layout)
-            continue;
         DWRITE_TEXT_METRICS metrics{};
-        if (SUCCEEDED(layout->GetMetrics(&metrics)))
-            quickNavViewModeSlotWidth_ = std::max(quickNavViewModeSlotWidth_, std::clamp(
+        if (SUCCEEDED(viewLayout->GetMetrics(&metrics)))
+            quickNavViewModeSlotWidth_ = std::clamp(
                 static_cast<int>(std::ceil(metrics.widthIncludingTrailingWhitespace)) + QuickNavScale(30),
-                QuickNavScale(60), QuickNavScale(164)));
+                QuickNavScale(60), QuickNavScale(164));
     }
 
     for (size_t i = 0; i < tabCount; ++i)

@@ -182,6 +182,7 @@ bool DesktopApp::ActivateQuickNavigationTab(size_t tab)
     CancelQuickNavigationTabHover();
     quickNavigationActiveWidgetIndex_ = tab == 0 ? static_cast<size_t>(-1) :
         tab == 1 ? static_cast<size_t>(-2) : indices[tab - 2];
+    UpdateQuickNavTabWidths();
     quickNavigationScrollOffset_ = 0;
     quickNavigationInitialJumpOpen_ = false;
     ResetQuickNavigationKeyboardTarget();

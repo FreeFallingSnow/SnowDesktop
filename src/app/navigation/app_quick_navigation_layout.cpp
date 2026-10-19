@@ -109,8 +109,8 @@ RECT DesktopApp::GetQuickNavigationViewModeSlotRect(
     const RECT tabs =
         GetQuickNavigationTabsRect(overlay);
     const int buttonSize = QuickNavScale(28);
-    // The cached slot is shared by every tab, including non-desktop tabs.
-    const int width = std::max(QuickNavScale(76), quickNavViewModeSlotWidth_);
+    // The cache follows the active tab's current sorting label.
+    const int width = std::max(QuickNavScale(60), quickNavViewModeSlotWidth_);
     const int top = tabs.top +
         std::max(0,
             static_cast<int>(
@@ -165,6 +165,7 @@ void DesktopApp::SetQuickNavigationViewMode(
             navigationSettings_);
     quickNavigationScrollOffset_ = 0;
     quickNavigationInitialJumpOpen_ = false;
+    UpdateQuickNavTabWidths();
     ResetQuickNavigationKeyboardTarget();
     InvalidateQuickNavigationWindow();
 }

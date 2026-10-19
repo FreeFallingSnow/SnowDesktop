@@ -2549,8 +2549,8 @@
   "settings.dock.attentionDot.size": "Punktgröße",
   "settings.dock.attentionDot.position": "Punktposition",
   "settings.dock.attentionDot.positionHint": "Negative Werte verschieben den Punkt zur Symbolmitte, positive nach außen. Der Versatz wird in Prozent der Symbolgröße angegeben.",
-  "app.nav.view_frequency": "Starthäufigkeit",
+  "app.nav.view_frequency": "Nutzungshäufigkeit",
   "app.nav.app_suggestions": "App-Vorschläge",
   "quickNav.appSuggestions": "App-Vorschläge aktivieren",
-  "quickNav.appSuggestions.hint": "Eine Zeile häufig verwendeter Apps oben auf der Desktop-Seite anzeigen. Bei Sortierung nach Starthäufigkeit ausgeblendet."
+  "quickNav.appSuggestions.hint": "Eine Zeile häufig verwendeter Apps oben auf der Desktop-Seite anzeigen. Bei Sortierung nach Nutzungshäufigkeit ausgeblendet."
 }
