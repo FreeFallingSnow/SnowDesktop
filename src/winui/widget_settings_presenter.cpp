@@ -1837,7 +1837,7 @@ struct WidgetSettingsPresenter::Impl
         {
             field.clear = muxc::Button{};
             if (inlineRow)
-                configureInlineAction(field.clear, muxc::Symbol::Clear);
+                configureInlineAction(field.clear, muxc::Symbol::ClearSelection);
             field.clearClicked = field.clear.Click(
                 [this, &field](const auto&, const auto&) {
                     ClearOpaque(field);
