@@ -189,19 +189,15 @@ int RunLifetimeChild(const std::filesystem::path& root,
         return fail("failed XAML must not prevent native activation dispatch on either taskbar");
     if (!AreTaskbarThreadsConnected(windows, GetCurrentProcessId(), owner.value.dwProcessId))
         return fail("failed XAML must still acknowledge native connection for this host on both taskbars");
-    // A late symbol helper result must reach the observer through the owner
-    // callback even though no VisualTreeWatcher was ever constructed. The
-    // fixture deliberately fails ABI compatibility rather than hook real Shell.
-    shared->autoHideResolutionError = ERROR_NOT_SUPPORTED;
+    // A late offline minimize request still reaches the native owner when
+    // XAML initialization failed. It must not erase the independent failure.
+    shared->minimizeSequence = 1;
+    shared->minimizeStarted = GetTickCount64();
     for (const HWND target : windows)
         SendMessageW(target, RegisterWindowMessageW(kApplyMessageName), 0, 0);
-    std::array<AutoHideTraceRecord, kAutoHideTraceCapacity> symbols;
-    LONG dropped = 0;
-    const LONG symbolCount = DrainAutoHideTrace(shared->autoHideTrace, symbols, dropped);
-    if (std::none_of(symbols.begin(), symbols.begin() + symbolCount, [](const auto& record) {
-            return record.kind == AutoHideTraceKind::Adapter && record.request == ERROR_NOT_SUPPORTED;
-        }) || shared->status != kStatusFailed || shared->lastError != ERROR_ALREADY_EXISTS)
-        return fail("late adapter Apply must be consumed without clearing the separate XAML failure");
+    if (!GetPropW(window, native::kAttachedProperty) || !GetPropW(secondary, native::kAttachedProperty) ||
+        shared->status != kStatusFailed || shared->lastError != ERROR_ALREADY_EXISTS)
+        return fail("offline minimize Apply must attach all taskbars without clearing the XAML failure");
     RECT rect{};
     const auto query = [&] {
         rect = {};
@@ -367,7 +363,7 @@ int RunLifetimeChild(const std::filesystem::path& root,
     UnmapViewOfFile(shared);
     CloseHandle(mapping);
     FreeLibrary(sentinel);
-    report << "PASS: failed TAP release, cooldown status replay, same-DLL host restart retry, retired-DLL isolated recovery and reuse, cancellation, all-taskbar activation, late adapter Apply, foreign query, disable, re-enable, host exit and retirement\n";
+    report << "PASS: failed TAP release, cooldown status replay, same-DLL host restart retry, retired-DLL isolated recovery and reuse, cancellation, all-taskbar activation, offline minimize Apply, foreign query, disable, re-enable, host exit and retirement\n";
     return 0;
 }
 

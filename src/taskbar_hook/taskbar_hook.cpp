@@ -546,12 +546,12 @@ void ApplyTaskbarActivationProtection(HWND taskbar) noexcept
         for (LONG i = 0; i < snapshot.targetCount; ++i)
             if (reinterpret_cast<HWND>(snapshot.targets[i].taskbar) == taskbar)
                 protect = snapshot.targets[i].protectAutoHideActivation != FALSE;
-        // Protection also needs Task View's explicit-access exemption when
-        // appearance cannot connect. Symbol-pending observation needs no COM.
-        if (enabled && protect && snapshot.autoHideResolutionError == ERROR_SUCCESS)
+        // Temporary cloaking retains Task View's explicit-access exemption,
+        // independently of XAML appearance and symbol availability.
+        if (enabled && protect)
             StartTaskViewMonitorIfNeeded();
         autohide_observer::Configure(&g_sharedState->autoHideTrace, taskbar, enabled,
-            protect, snapshot.autoHideAdapter, snapshot.autoHideResolutionError);
+            protect);
     }
     catch (...) { autohide_observer::Disable(); }
 }
@@ -1603,8 +1603,7 @@ LRESULT CALLBACK HookOwnerSubclass(HWND window, UINT message, WPARAM wParam,
                 return 0;
             ApplyTaskbarActivationProtection(window);
             const bool classic = native::IsClassicTaskbarPlatform();
-            if (classic || g_sharedState->suppressTaskbar)
-                native::Attach(window, g_sharedState, classic);
+            native::Attach(window, g_sharedState, classic);
             try
             {
                 if (g_visualTreeWatcher) g_visualTreeWatcher->ApplyTaskbar(window);
@@ -1927,7 +1926,6 @@ SnowDesktopTaskbarHookProc(int code, WPARAM wParam, LPARAM lParam)
             return CallNextHookEx(nullptr, code, wParam, lParam);
         ApplyTaskbarActivationProtection(message->hwnd);
         const bool classic = native::IsClassicTaskbarPlatform();
-        if (classic || g_sharedState->suppressTaskbar)
         {
             const bool applied = native::Attach(message->hwnd, g_sharedState, classic);
             if (!applied && g_sharedState->suppressTaskbar)

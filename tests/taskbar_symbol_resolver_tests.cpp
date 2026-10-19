@@ -209,28 +209,14 @@ int RunTaskbarSymbolResolverTests()
     debug.AddressOfRawData = 0xfffffff0; badDebug.Put(0x300, debug);
     check(!badDebug.View().Identity(), "overflowing CodeView locations cannot establish image compatibility");
 
-    for (bool secondary : {false, true})
-    {
-        const auto& procedure = updated.adapter.Get(secondary ? AutoHideSymbol::SecondaryWndProc : AutoHideSymbol::PrimaryWndProc);
-        ActivationRevealContext context;
-        context.protectedTaskbar = true; context.geometryValid = true; context.activation = WA_ACTIVE;
-        context.monitor = {0, 0, 2560, 1440}; context.taskbar = {0, 1438, 2560, 1498}; context.cursor = {100, 100};
-        context.secondary = secondary;
-        context.callerIsActivationHandler = updated.adapter.IsActivationCaller(secondary, procedure.begin + 0x20);
-        int calls = 0;
-        check(DispatchActivationReveal(context, 0, 8, [&](int, int) { ++calls; }) && calls == 0,
-            "a moved native WM_ACTIVATE caller still suppresses passive expansion on either screen");
-        context.callerIsActivationHandler = updated.adapter.IsActivationCaller(secondary, procedure.end);
-        check(!DispatchActivationReveal(context, 0, 8, [&](int, int) { ++calls; }) && calls == 1,
-            "the end of the native procedure is excluded and unrelated callers fail open");
-    }
     SharedState state;
-    state.autoHideAdapter = updated.adapter; state.autoHideResolutionError = ERROR_SUCCESS;
+    state.minimizeSequence = 7; state.minimizeStarted = 1234; state.minimizeSource = 42;
     Snapshot snapshot;
-    check(ReadSharedSnapshot(&state, snapshot) && updated.View().Validate(snapshot.autoHideAdapter) &&
-        snapshot.autoHideResolutionError == ERROR_SUCCESS, "a coherent private snapshot carries the resolved image and all focus hooks");
+    check(ReadSharedSnapshot(&state, snapshot) && snapshot.minimizeSequence == 7 &&
+        snapshot.minimizeStarted == 1234 && snapshot.minimizeSource == 42,
+        "a coherent private snapshot carries offline minimize protection");
     state.version--;
-    check(!ReadSharedSnapshot(&state, snapshot), "an older host/Explorer protocol cannot supply an incomplete symbol adapter");
+    check(!ReadSharedSnapshot(&state, snapshot), "an older host/Explorer protocol cannot supply the minimize request");
 
     wchar_t exe[32768]{};
     GetModuleFileNameW(nullptr, exe, static_cast<DWORD>(std::size(exe)));

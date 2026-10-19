@@ -7,20 +7,19 @@
 #include "../theme/panel_gradient.h"
 #include "../theme/edge_light_settings.h"
 #include "taskbar_autohide_trace.h"
-#include "taskbar_autohide_adapter.h"
 
 namespace snowdesktop::taskbar_hook
 {
 inline constexpr std::uint32_t kSharedStateMagic = 0x53445442; // "SDTB"
-inline constexpr std::uint32_t kSharedStateVersion = 13;
+inline constexpr std::uint32_t kSharedStateVersion = 14;
 inline constexpr std::size_t kMaximumTaskbarTargets = 32;
 
 inline constexpr wchar_t kSharedStateName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.State.v13";
+    L"Local\\SnowDesktop.TaskbarBackdrop.State.v14";
 inline constexpr wchar_t kReadyEventName[] =
-    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v13";
+    L"Local\\SnowDesktop.TaskbarBackdrop.Ready.v14";
 inline constexpr wchar_t kApplyMessageName[] =
-    L"SnowDesktop.TaskbarBackdrop.Apply.v13";
+    L"SnowDesktop.TaskbarBackdrop.Apply.v14";
 inline constexpr wchar_t kTaskViewStateMessageName[] =
     L"SnowDesktop.Taskbar.Dynamic.TaskView.v1";
 inline constexpr wchar_t kRegistryQueryMessageName[] =
@@ -48,6 +47,7 @@ inline constexpr LONG kStatusInjecting = 1;
 inline constexpr LONG kStatusConnected = 2;
 inline constexpr LONG kStatusApplied = 3;
 inline constexpr LONG kStatusFailed = -1;
+inline constexpr LRESULT kMinimizeApplyAcknowledged = 0x53444d50; // "SDMP"
 
 inline constexpr LONG kStyleGlassBackdrop = 1 << 0;
 inline constexpr LONG kStyleAcrylicBackdrop = 1 << 1;
@@ -151,9 +151,11 @@ struct SharedState
     volatile LONG lastError = ERROR_SUCCESS;
     volatile LONG diagnosticStage = 0;
     AutoHideTraceBuffer autoHideTrace;
-    // Written by the host under generation, after an isolated symbol helper.
-    AutoHideAdapter autoHideAdapter;
-    DWORD autoHideResolutionError = ERROR_IO_PENDING;
+    // Host-owned request; Explorer may cancel this sequence for explicit input.
+    LONG minimizeSequence = 0;
+    ULONGLONG minimizeStarted = 0;
+    std::uintptr_t minimizeSource = 0;
+    volatile LONG minimizeCancelled = 0;
 };
 
 struct SharedRegistryQueryState
@@ -196,9 +198,27 @@ struct Snapshot
     EdgeAppearance edge;
     LONG targetCount = 0;
     TargetAppearance targets[kMaximumTaskbarTargets]{};
-    AutoHideAdapter autoHideAdapter;
-    DWORD autoHideResolutionError = ERROR_IO_PENDING;
+    LONG minimizeSequence = 0;
+    ULONGLONG minimizeStarted = 0;
+    std::uintptr_t minimizeSource = 0;
+    LONG minimizeCancelled = 0;
 };
+inline bool HasMinimizeProtection(const Snapshot& snapshot) noexcept
+{
+    if (!snapshot.enabled) return false;
+    return std::any_of(snapshot.targets, snapshot.targets + snapshot.targetCount,
+        [](const TargetAppearance& target) { return target.protectAutoHideActivation != FALSE; });
+}
+
+inline bool ProtectsTaskbarMinimize(const Snapshot& snapshot, std::uintptr_t taskbar) noexcept
+{
+    if (!snapshot.enabled) return false;
+    for (LONG index = 0; index < snapshot.targetCount; ++index)
+        if (snapshot.targets[index].taskbar == taskbar)
+            return snapshot.targets[index].protectAutoHideActivation != FALSE &&
+                snapshot.targets[index].shellPanelVisible == FALSE;
+    return false;
+}
 inline bool ShouldSuppressTaskbar(const Snapshot& snapshot, std::uintptr_t taskbar) noexcept
 {
     if (!snapshot.enabled || !snapshot.suppressTaskbar) return false;
@@ -250,8 +270,10 @@ inline bool ReadSharedSnapshot(const SharedState* state, Snapshot& snapshot)
             static_cast<LONG>(kMaximumTaskbarTargets));
         std::copy_n(state->targets, snapshot.targetCount,
             snapshot.targets);
-        snapshot.autoHideAdapter = state->autoHideAdapter;
-        snapshot.autoHideResolutionError = state->autoHideResolutionError;
+        snapshot.minimizeSequence = state->minimizeSequence;
+        snapshot.minimizeStarted = state->minimizeStarted;
+        snapshot.minimizeSource = state->minimizeSource;
+        snapshot.minimizeCancelled = state->minimizeCancelled;
         MemoryBarrier();
         if (generation == state->generation &&
             (generation & 1) == 0)

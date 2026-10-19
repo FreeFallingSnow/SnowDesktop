@@ -14,7 +14,6 @@
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_connection.h"
 #include "taskbar_hook/taskbar_failure_feedback.h"
-#include "taskbar_hook/taskbar_symbol_resolver.h"
 #include "diagnostics/diagnostic_log.h"
 #include "platform/operation_feedback.h"
 
@@ -27,6 +26,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdint>
+#include <climits>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
@@ -468,7 +468,6 @@ public:
             state_->explorerProcessId != currentExplorerProcessId;
         if (explorerProcessChanged)
         {
-            symbolAttemptProcessId_ = 0;
             if (injectionCancelEvent_)
                 SetEvent(injectionCancelEvent_);
             state_->explorerProcessId = 0;
@@ -526,6 +525,13 @@ public:
             appearanceFailureReported_ = false;
 
         InterlockedIncrement(&state_->generation); // odd: write in progress
+        if (!hookEnabled || state_->ownerProcessId != GetCurrentProcessId())
+        {
+            state_->minimizeSequence = 0;
+            state_->minimizeStarted = 0;
+            state_->minimizeSource = 0;
+            InterlockedExchange(&state_->minimizeCancelled, 0);
+        }
         state_->enabled = hookEnabled ? TRUE : FALSE;
         state_->defaultEnabled = defaultEnabled ? TRUE : FALSE;
         state_->appearanceEnabled = hookEnabled && appearanceEnabled ? TRUE : FALSE;
@@ -644,7 +650,6 @@ public:
 
         if (!hookEnabled)
         {
-            symbolAttemptProcessId_ = 0;
             if (injectionCancelEvent_)
                 SetEvent(injectionCancelEvent_);
             return true;
@@ -652,17 +657,14 @@ public:
         if (!primaryTaskbar || !explorerProcessId)
             return false;
 
-        const bool nativeRequired = suppressTaskbar || !IsWindows11OrGreater();
-        const bool nativeMissing = nativeRequired && std::any_of(taskbars.begin(), taskbars.end(), [](HWND window) {
-            return !GetPropW(window, snowdesktop::taskbar_hook::native::kAttachedProperty);
-        });
         const bool protectActivation = std::any_of(targets.begin(), targets.end(), [](const auto& target) {
             return target.protectAutoHideActivation;
         });
+        const bool nativeRequired = suppressTaskbar || protectActivation || !IsWindows11OrGreater();
+        const bool nativeMissing = nativeRequired && std::any_of(taskbars.begin(), taskbars.end(), [](HWND window) {
+            return !GetPropW(window, snowdesktop::taskbar_hook::native::kAttachedProperty);
+        });
         const ULONGLONG now = GetTickCount64();
-        const bool resolveSymbols = protectActivation &&
-            (symbolAttemptProcessId_ != explorerProcessId ||
-                (state_->autoHideResolutionError != ERROR_SUCCESS && now - lastSymbolAttemptTick_ >= 60000));
         // A retained mapping/TAP from an earlier host is not this launch's
         // connection. Inject once per host/Explorer pair to retire that DLL
         // and bind activation observation and native entry points together.
@@ -672,11 +674,11 @@ public:
         const bool alreadyInjected = ownsConnection && !nativeMissing;
         const bool retryAppearance = appearanceEnabled &&
             state_->status == snowdesktop::taskbar_hook::kStatusFailed;
-        if (alreadyInjected && !resolveSymbols && !retryAppearance)
+        if (alreadyInjected && !retryAppearance)
             return true;
         if (injectionInFlight_.load(std::memory_order_acquire))
             return false;
-        if ((!alreadyInjected || retryAppearance) && !resolveSymbols &&
+        if ((!alreadyInjected || retryAppearance) &&
             state_->explorerProcessId == explorerProcessId &&
             now - lastInjectionAttemptTick_ < injectionRetryDelayMs_)
             return false;
@@ -684,18 +686,7 @@ public:
         state_->explorerProcessId = explorerProcessId;
         lastInjectionAttemptTick_ = now;
         injectionRetryDelayMs_ = 10000;
-        if (resolveSymbols)
-        {
-            symbolAttemptProcessId_ = explorerProcessId;
-            lastSymbolAttemptTick_ = now;
-            InterlockedIncrement(&state_->generation);
-            state_->autoHideResolutionError = ERROR_IO_PENDING;
-            state_->autoHideAdapter = {};
-            MemoryBarrier();
-            InterlockedIncrement(&state_->generation);
-        }
-        // Symbol retries and native reattachment must not erase the independent
-        // XAML failure/status reported by Explorer.
+        // Native reattachment preserves the independent XAML failure/status.
         if (!ownsConnection)
         {
             InterlockedExchange(&state_->status,
@@ -707,17 +698,9 @@ public:
         injectionInFlight_.store(true, std::memory_order_release);
         try
         {
-            // Capture deployment paths on the host, before the headless helper.
-            // It must not initialize user stores or start a second desktop.
-            const auto executable = std::filesystem::path(GetExecutableDirectoryPath()) / L"SnowDesktop.exe";
-            const auto symbolCache = std::filesystem::path(GetDataDirectoryPath()) / L"ShellHookSymbols";
             injectionThread_ = std::thread([this, primaryTaskbar, explorerProcessId,
-                    alreadyInjected, retryAppearance, resolveSymbols, executable, symbolCache,
                     taskbars = std::move(taskbars)] {
-                const bool injected = (alreadyInjected && !retryAppearance) || Inject(primaryTaskbar, explorerProcessId,
-                    taskbars);
-                if (injected && resolveSymbols)
-                    ResolveAdapter(explorerProcessId, taskbars, executable, symbolCache);
+                const bool injected = Inject(primaryTaskbar, explorerProcessId, taskbars);
                 {
                     std::lock_guard workerLock(mutex_);
                     if (!injected && state_ &&
@@ -737,6 +720,46 @@ public:
             return false;
         }
         return true;
+    }
+
+    bool BeginMinimizeProtection(HWND source)
+    {
+        using namespace snowdesktop::taskbar_hook;
+        std::vector<HWND> taskbars;
+        {
+            std::lock_guard lock(mutex_);
+            Snapshot snapshot;
+            if (!source || !ReadSharedSnapshot(state_, snapshot) ||
+                snapshot.ownerProcessId != GetCurrentProcessId() || !HasMinimizeProtection(snapshot)) return false;
+            const ULONGLONG now = GetTickCount64();
+            // The out-of-context WinEvent follows the synchronous pre-minimize
+            // hook. It must not restart the cloak after the first request ended.
+            if (snapshot.minimizeSource == reinterpret_cast<std::uintptr_t>(source) &&
+                (now - snapshot.minimizeStarted < 250 ||
+                    (IsIconic(source) && now - snapshot.minimizeStarted < 1500))) return true;
+            InterlockedIncrement(&state_->generation);
+            state_->minimizeSequence = snapshot.minimizeSequence == LONG_MAX ? 1 : snapshot.minimizeSequence + 1;
+            state_->minimizeStarted = now;
+            state_->minimizeSource = reinterpret_cast<std::uintptr_t>(source);
+            MemoryBarrier();
+            InterlockedIncrement(&state_->generation);
+            for (LONG i = 0; i < snapshot.targetCount; ++i)
+                if (snapshot.targets[i].protectAutoHideActivation)
+                    taskbars.push_back(reinterpret_cast<HWND>(snapshot.targets[i].taskbar));
+        }
+        bool applied = !taskbars.empty();
+        const UINT message = RegisterWindowMessageW(kApplyMessageName);
+        for (HWND taskbar : taskbars)
+        {
+            DWORD_PTR result = 0;
+            // Complete the existing native cloak on every taskbar thread before
+            // returning to the application's original minimize operation.
+            applied &= SendMessageTimeoutW(taskbar, message, 0, 0,
+                SMTO_ABORTIFHUNG | SMTO_BLOCK, 150, &result) != 0 &&
+                result == static_cast<DWORD_PTR>(kMinimizeApplyAcknowledged) &&
+                GetPropW(taskbar, native::kAttachedProperty) != nullptr;
+        }
+        return applied;
     }
 
     SystemTaskbarBackdropRuntimeState RuntimeState()
@@ -761,44 +784,6 @@ public:
     }
 
 private:
-    void ResolveAdapter(DWORD explorerProcessId, const std::vector<HWND>& taskbars,
-        const std::filesystem::path& executable, const std::filesystem::path& cache)
-    {
-        using namespace snowdesktop::taskbar_hook;
-        const auto started = GetTickCount64();
-        AutoHideResolution result;
-        try { result = RunTaskbarSymbolHelper(executable, cache, injectionCancelEvent_); }
-        catch (...) { result.error = ERROR_NOT_ENOUGH_MEMORY; }
-        {
-            std::lock_guard lock(mutex_);
-            if (!state_ || !state_->enabled || state_->explorerProcessId != explorerProcessId ||
-                (injectionCancelEvent_ && WaitForSingleObject(injectionCancelEvent_, 0) == WAIT_OBJECT_0)) return;
-            InterlockedIncrement(&state_->generation);
-            state_->autoHideAdapter = result.error == ERROR_SUCCESS ? result.adapter : AutoHideAdapter{};
-            state_->autoHideResolutionError = result.error;
-            MemoryBarrier();
-            InterlockedIncrement(&state_->generation);
-            lastSymbolAttemptTick_ = GetTickCount64();
-        }
-        const auto& id = result.adapter.image;
-        wchar_t message[512]{};
-        swprintf_s(message, L"[TaskbarAutoHideSymbols] explorerPid=%lu error=%lu elapsedMs=%llu "
-            L"timestamp=0x%08lX imageSize=0x%lX pdb=%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X "
-            L"age=%lu secondaryRva=0x%lX",
-            explorerProcessId, result.error, GetTickCount64() - started, id.timestamp, id.imageSize,
-            id.pdb.Data1, id.pdb.Data2, id.pdb.Data3, id.pdb.Data4[0], id.pdb.Data4[1],
-            id.pdb.Data4[2], id.pdb.Data4[3], id.pdb.Data4[4], id.pdb.Data4[5], id.pdb.Data4[6], id.pdb.Data4[7], id.age,
-            result.adapter.Get(AutoHideSymbol::SecondaryUnhide).begin);
-        WriteDiagnosticLogEntry(message);
-        const UINT apply = RegisterWindowMessageW(kApplyMessageName);
-        for (const HWND taskbar : taskbars)
-        {
-            DWORD owner = 0;
-            if (GetWindowThreadProcessId(taskbar, &owner) && owner == explorerProcessId)
-                PostMessageW(taskbar, apply, 0, 0);
-        }
-    }
-
     bool OpenState()
     {
         if (state_)
@@ -932,14 +917,12 @@ private:
     std::atomic<bool> injectionInFlight_{ false };
     ULONGLONG lastInjectionAttemptTick_ = 0;
     ULONGLONG injectionRetryDelayMs_ = 10000;
-    DWORD symbolAttemptProcessId_ = 0;
     DWORD injectedExplorerProcessId_ = 0;
     std::wstring selectedHookPath_;
     bool residentRuntimeLogged_ = false;
     bool appearanceFailureReported_ = false;
     DWORD reportedFailureExplorer_ = 0;
     DWORD reportedFailureError_ = 0;
-    ULONGLONG lastSymbolAttemptTick_ = 0;
 };
 
 TaskbarBackdropController& GetTaskbarBackdropController()
@@ -971,6 +954,11 @@ bool IsSystemTaskbarAutoHideEnabled()
         if (original >= 0) return original != FALSE;
     }
     return ReadSystemTaskbarAutoHideEnabled();
+}
+
+bool BeginSystemTaskbarMinimizeProtection(HWND source)
+{
+    return GetTaskbarBackdropController().BeginMinimizeProtection(source);
 }
 
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled)

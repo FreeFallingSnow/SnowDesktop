@@ -478,6 +478,10 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
 {
     snowdesktop::performance::Scope performanceScope("dock", "running.notification");
     if (!window) return;
+    // Fallback for programmatic minimization and applications which have not
+    // yet acquired a synchronous CBT hook. Existing requests are deduplicated.
+    if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window))
+        PrepareDockWindowMinimize(window, L"system-minimize");
     auto& previewOrder = snowdesktop::dock_window_order::Current();
     if (event == EVENT_OBJECT_DESTROY)
         previewOrder.Forget(window);

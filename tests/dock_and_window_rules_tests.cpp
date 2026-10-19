@@ -81,6 +81,7 @@
 #include "../src/app/layout/layout_reload.h"
 #include "../src/taskbar_hook/taskbar_autohide_trace.h"
 #include "../src/taskbar_hook/taskbar_autohide_rules.h"
+#include "../src/taskbar_hook/taskbar_hook_protocol.h"
 #include "../src/taskbar_hook/taskbar_hook_lifecycle.h"
 #include "taskbar_hook/taskbar_xaml_readiness.h"
 #include "../src/taskbar_hook/taskbar_symbol_resolver.h"
@@ -647,165 +648,100 @@ void CheckTaskbarHookLifecycle()
         "a failed installation must not permanently consume future reconnect attempts");
 }
 
-void CheckTaskbarActivationRevealDispatch()
+void CheckTaskbarMinimizeProtection()
 {
     using namespace snowdesktop::taskbar_hook;
-    ActivationRevealContext hidden;
-    // The failed runtime candidate excluded this real configuration by
-    // confusing an enabled summon hotkey with an absent ordinary Dock.
-    DockSettings settings;
-    settings.position = DockPosition::Bottom;
-    settings.floatingShortcutMode = true;
-    settings.showOnlyWhenSummoned = false;
-    hidden.protectedTaskbar = ShouldProtectAutoHideTaskbar(settings, true, true);
-    hidden.geometryValid = true;
-    hidden.activation = WA_ACTIVE;
-    hidden.callerIsActivationHandler = true;
-    hidden.monitor = {0, 0, 2560, 1440};
-    hidden.taskbar = {0, 1438, 2560, 1498};
-    hidden.cursor = {987, 1407};
-    auto expect = [&](const ActivationRevealContext& context, int flags, int request,
-        bool suppress, const char* failure) {
-        int originalCalls = 0;
-        const bool result = DispatchActivationReveal(context, flags, request, [&](int f, int r) {
-            ++originalCalls;
-            Check(f == flags && r == request, "forwarding must preserve native request arguments");
-        });
-        Check(result == suppress && originalCalls == (suppress ? 0 : 1), failure);
-    };
-    // Values from the user's ordinary Dock minimization, Trace 5. The fake
-    // boundary is only Explorer's native Unhide function, never the decision.
-    expect(hidden, 0, 8, true, "known hidden-taskbar activation must not invoke native expansion");
-    auto alternate = hidden;
-    alternate.explicitFocus = true;
-    expect(alternate, 0, 8, false, "Win+T/Win+B can share request 8 and must retain native expansion");
-    alternate = hidden;
-    alternate.cursor = {987, 1439};
-    expect(alternate, 0, 8, false, "intentional bottom-edge reveal must survive activation during minimization");
-    expect(hidden, 0, 15, false, "native edge request 15 must pass without any focus context");
-    expect(hidden, 1, 2, false, "Start-menu request must preserve native flags and expansion");
-    expect(hidden, 1, 9, false, "other observed native requests must remain untouched");
-    expect(hidden, 0, 27, false, "unknown request semantics must fail open");
-    alternate = hidden;
-    alternate.activation = WA_CLICKACTIVE;
-    expect(alternate, 0, 8, false, "direct taskbar mouse activation must pass");
-    alternate = hidden;
-    alternate.protectedTaskbar = false;
-    expect(alternate, 0, 8, false, "disabled Dock or unavailable adapter must pass");
-    alternate = hidden;
-    alternate.geometryValid = false;
-    expect(alternate, 0, 8, false, "failed geometry or pointer queries must fail open");
-    alternate = hidden;
-    alternate.callerIsActivationHandler = false;
-    expect(alternate, 0, 8, false, "request 8 from an unrecognized call site must pass");
-    alternate = hidden;
-    alternate.taskbar = {0, 1380, 2560, 1440};
-    expect(alternate, 0, 8, false, "an already revealed taskbar must retain its native interaction");
-    alternate = hidden;
-    alternate.taskbar = {0, 1410, 2560, 1470};
-    expect(alternate, 0, 8, false, "an ongoing reveal must not be interrupted");
-    alternate = hidden;
-    alternate.taskbar = {0, -58, 2560, 2};
-    expect(alternate, 0, 8, false, "a top taskbar is outside the bottom-Dock policy");
-    alternate = hidden;
-    alternate.secondary = true;
-    alternate.monitor = {-1920, 0, 0, 1080};
-    alternate.taskbar = {-1920, 1078, 0, 1138};
-    alternate.cursor = {987, 1407};
-    expect(alternate, 0, 8, true, "secondary passive activation must not depend on pointer monitor");
-    alternate.cursor = {-500, 1079};
-    expect(alternate, 0, 8, false, "negative-coordinate monitor edges must retain intentional reveal");
+    MinimizeProtection state;
+    MinimizeProtectionInput input{1, 1000, 1000, true, false, false, false, true};
+    Check(state.Update(input), "a minimize request cloaks immediately before its source becomes iconic");
+    input.now = 1100; input.sourceMinimized = true;
+    Check(state.Update(input), "native hidden geometry during the minimize handoff must not release the cloak too early");
+    input.now = 1500; input.nativeHidden = false;
+    Check(state.Update(input), "a taskbar expanded by passive activation remains cloaked");
+    input.now = 5000;
+    Check(state.Update(input), "a fixed timeout must not expose an internally expanded taskbar as a delayed flash");
+    input.nativeHidden = true;
+    Check(!state.Update(input), "Shell returning to hidden geometry completes temporary protection");
+    input.nativeHidden = false;
+    Check(!state.Update(input), "an already consumed request cannot rearm on a timer or appearance refresh");
+    input.sequence = 2; input.started = input.now; input.explicitReveal = true;
+    Check(!state.Update(input), "an intentional edge, keyboard, or shell-panel request releases protection");
+    input.explicitReveal = false;
+    Check(!state.Update(input), "finishing explicit access cannot resurrect an old minimize request");
+    input.sequence = 3; input.sourceMinimized = false;
+    Check(state.Update(input), "a later minimize gets an independent request");
+    input.now += MinimizeProtection::kMinimizeTimeoutMs;
+    Check(!state.Update(input), "a rejected or cancelled application minimize cannot leave its taskbars cloaked");
+    input.sequence = 4; input.started = input.now; input.cancelled = true;
+    Check(!state.Update(input), "another taskbar's explicit input cancels the same request across monitors");
+    input.sequence = 5; input.cancelled = false; input.sourceMinimized = true;
+    Check(state.Update(input), "a newer request is independent of earlier cancellation");
+    input.sourceMinimized = false;
+    Check(!state.Update(input), "restoring the source releases a still expanded taskbar");
+    input.sequence = 6; input.started = input.now - MinimizeProtection::kMinimizeTimeoutMs;
+    Check(!state.Update(input), "a recreated taskbar must not adopt a stale request");
+    input.sequence = 7; input.started = input.now; input.enabled = false;
+    Check(!state.Update(input), "disabled auto-hide relinquishes temporary protection");
 
-    // Production target policy feeds the Explorer Unhide dispatch. A Dock
-    // placed on either monitor must protect both taskbars; the native Unhide
-    // call is the only substitute. This catches the old hasDock activation gate.
+    const RECT screen{-1920, 510, 0, 1590};
+    const RECT hidden{-1920, 1588, 0, 1648}, visible{-1920, 1530, 0, 1590};
+    Check(IsAutoHiddenTaskbar(hidden, screen) && !IsAutoHiddenTaskbar(visible, screen),
+        "the original two-pixel versus sixty-pixel secondary taskbar regression is distinguished");
+    Check(IsTaskbarRevealEdge(hidden, screen, {-500, 1589}) &&
+        !IsTaskbarRevealEdge(hidden, screen, {1094, 1526}) &&
+        !IsTaskbarRevealEdge(hidden, screen, {-500, 1539}),
+        "only intentional access at that monitor's edge releases its temporary cloak");
+    Check(IsAutoHiddenTaskbar({-1920, 462, 0, 512}, screen) &&
+        IsTaskbarRevealEdge({-1920, 462, 0, 512}, screen, {-500, 510}),
+        "top taskbars use the same offline protection and intentional reveal policy");
+    Check(IsAutoHiddenTaskbar({-1968, 510, -1918, 1590}, screen) &&
+        IsTaskbarRevealEdge({-1968, 510, -1918, 1590}, screen, {-1920, 600}) &&
+        IsAutoHiddenTaskbar({-2, 510, 48, 1590}, screen) &&
+        IsTaskbarRevealEdge({-2, 510, 48, 1590}, screen, {-1, 600}),
+        "left and right taskbars retain intentional access on negative-origin monitors");
+    Check(!IsAutoHiddenTaskbar({}, screen), "invalid geometry cannot finish a temporary cloak");
+
+    DockSettings settings;
+    settings.suppressSystemTaskbar = false;
+    Check(ShouldProtectAutoHideTaskbar(settings, false, true) &&
+        !ShouldProtectAutoHideTaskbar(settings, true, false),
+        "native auto-hide protection is independent of Dock enablement");
+    settings.position = DockPosition::Left;
+    Check(ShouldProtectAutoHideTaskbar(settings, true, true),
+        "a side Dock does not exclude passive taskbar activation on other screens");
     settings.suppressSystemTaskbar = true;
-    Check(ShouldProtectAutoHideTaskbar(settings, true, false),
-        "permanent hiding must protect its auto-hide override even when the original preference was off");
-    Check(!ShouldProtectAutoHideTaskbar(settings, false, false),
-        "an inactive Dock cannot enable protection through its persisted hiding preference");
+    Check(ShouldProtectAutoHideTaskbar(settings, true, false) &&
+        !ShouldProtectAutoHideTaskbar(settings, false, false),
+        "permanent hiding protects only its active auto-hide override");
     for (const bool dockOnPrimary : {false, true})
     {
-        for (const bool secondary : {false, true})
+        SharedState shared;
+        shared.enabled = TRUE; shared.suppressTaskbar = TRUE; shared.targetCount = 2;
+        shared.minimizeSequence = 9; shared.minimizeStarted = 1000; shared.minimizeSource = 42;
+        for (LONG i = 0; i < 2; ++i)
         {
-            const bool hasDock = secondary ? !dockOnPrimary : dockOnPrimary;
             SystemTaskbarTargetAppearance target{.appearance = PersonalizationSettings{}};
-            ConfigureSystemTaskbarTargetProtection(target, true,
-                ShouldProtectAutoHideTaskbar(settings, true, false), hasDock);
-            Check(target.suppressTaskbar == hasDock,
-                "permanent taskbar hiding must remain limited to Dock screens");
-            alternate = hidden;
-            alternate.secondary = secondary;
-            alternate.monitor = secondary ? RECT{-1920, 0, 0, 1080} : hidden.monitor;
-            alternate.taskbar = secondary ? RECT{-1920, 1078, 0, 1138} : hidden.taskbar;
-            alternate.protectedTaskbar = target.protectAutoHideActivation;
-            expect(alternate, 0, 8, true,
-                "minimization activation must stay suppressed on screens with or without a Dock");
-
-            alternate.explicitFocus = true;
-            expect(alternate, 0, 8, false,
-                "explicit keyboard taskbar focus must remain available on every screen");
-            alternate.explicitFocus = false;
-            alternate.cursor = {alternate.monitor.left + 100, alternate.monitor.bottom - 1};
-            expect(alternate, 0, 8, false,
-                "intentional edge reveal must remain available on every screen");
-            alternate.cursor = hidden.cursor;
-
-            target.shellPanelVisible = true;
-            ConfigureSystemTaskbarTargetProtection(target, true, true, hasDock);
-            alternate.protectedTaskbar = target.protectAutoHideActivation;
-            expect(alternate, 0, 8, false,
-                "an open shell panel must release activation protection on its screen");
-
-            target.shellPanelVisible = false;
-            ConfigureSystemTaskbarTargetProtection(target, false, true, hasDock);
-            Check(!target.suppressTaskbar, "activation protection must not enable permanent hiding");
-            alternate.protectedTaskbar = target.protectAutoHideActivation;
-            expect(alternate, 0, 8, true,
-                "closing a shell panel must restore protection even without permanent hiding");
-
-            ConfigureSystemTaskbarTargetProtection(target, false, false, hasDock);
-            alternate.protectedTaskbar = target.protectAutoHideActivation;
-            expect(alternate, 0, 8, false,
-                "turning off protection must restore native activation on every screen");
+            ConfigureSystemTaskbarTargetProtection(target, true, true, (i == 0) == dockOnPrimary);
+            shared.targets[i].taskbar = static_cast<std::uintptr_t>(i + 1);
+            shared.targets[i].suppressTaskbar = target.suppressTaskbar;
+            shared.targets[i].protectAutoHideActivation = target.protectAutoHideActivation;
+        }
+        Snapshot snapshot;
+        Check(ReadSharedSnapshot(&shared, snapshot) && snapshot.minimizeSequence == 9 &&
+            snapshot.minimizeStarted == 1000 && snapshot.minimizeSource == 42,
+            "the same minimize request reaches all taskbars without a symbol adapter");
+        for (LONG i = 0; i < 2; ++i)
+        {
+            const auto taskbar = static_cast<std::uintptr_t>(i + 1);
+            Check(ProtectsTaskbarMinimize(snapshot, taskbar),
+                "temporary protection covers both Dock and non-Dock screens");
+            Check(ShouldSuppressTaskbar(snapshot, taskbar) == ((i == 0) == dockOnPrimary),
+                "permanent hiding retains its original monitor scope");
+            snapshot.targets[i].shellPanelVisible = TRUE;
+            Check(!ProtectsTaskbarMinimize(snapshot, taskbar) && !ShouldSuppressTaskbar(snapshot, taskbar),
+                "an explicitly open shell panel retains its taskbar access");
         }
     }
-
-    settings.suppressSystemTaskbar = false;
-    Check(!ShouldProtectAutoHideTaskbar(settings, false, true) &&
-        !ShouldProtectAutoHideTaskbar(settings, true, false),
-        "disabled Dock or native auto-hide must relinquish protection");
-    settings.position = DockPosition::Left;
-    settings.suppressSystemTaskbar = true;
-    Check(!ShouldProtectAutoHideTaskbar(settings, true, true),
-        "a side Dock must not control bottom-taskbar activation");
-
-    auto expectExplicit = [&](const ActivationRevealContext& context, bool primaryForeground,
-        bool reveal, const char* failure) {
-        int originalCalls = 0;
-        const bool result = DispatchExplicitForegroundReveal(context, primaryForeground, [&](int flags, int request) {
-            ++originalCalls;
-            Check(flags == 0 && request == 8, "explicit focus must use the verified native activation request");
-        });
-        Check(result == reveal && originalCalls == (reveal ? 1 : 0), failure);
-    };
-    alternate = hidden;
-    alternate.explicitFocus = true;
-    expectExplicit(alternate, true, true,
-        "keyboard focus must reveal a foreground taskbar left hidden after passive activation");
-    expectExplicit(alternate, false, false,
-        "keyboard focus to a different foreground window must retain normal native activation");
-    expectExplicit(hidden, true, false, "passive focus must not undo activation suppression");
-    alternate.taskbar = {0, 1380, 2560, 1440};
-    expectExplicit(alternate, true, false, "keyboard focus must not add a reveal to an already visible taskbar");
-    alternate = hidden;
-    alternate.explicitFocus = true;
-    alternate.protectedTaskbar = false;
-    expectExplicit(alternate, true, false, "disabled protection must not add keyboard reveals");
-    alternate = hidden;
-    alternate.explicitFocus = true;
-    alternate.secondary = true;
-    expectExplicit(alternate, true, false, "primary TrayUI must not receive a secondary taskbar object");
 }
 
 void CheckNativeDesktopCaptureReadiness()
@@ -2587,7 +2523,7 @@ int main(int argc, char** argv)
     CheckTaskbarAutoHideTraceTransport();
     CheckTaskbarHookLifecycle();
     CheckTaskbarXamlReadiness();
-    CheckTaskbarActivationRevealDispatch();
+    CheckTaskbarMinimizeProtection();
     failures += RunTaskbarSymbolResolverTests();
     CheckNativeDesktopCaptureReadiness();
     failures += RunExplorerIconVisibilityTests();

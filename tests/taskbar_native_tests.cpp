@@ -289,6 +289,77 @@ int RunNativeTaskbarTests()
             (value & DWM_CLOAKED_APP) != 0;
     };
     check(!cloaked(), "uncontrolled window provides an independent visible baseline");
+    {
+        // Exercise real DWM and native subclasses on two private taskbars.
+        // Only the Windows preference boundary is substituted; no Explorer
+        // windows, cursor movement or user application minimization is used.
+        registration.lpszClassName = L"Shell_SecondaryTrayWnd";
+        check(RegisterClassW(&registration) != 0, "register private secondary taskbar for temporary suppression");
+        const HWND secondary = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+            registration.lpszClassName, L"Temporary secondary taskbar", WS_POPUP,
+            -32000, -32000, 320, 48, nullptr, nullptr, instance, nullptr);
+        const HWND source = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC",
+            L"Private minimize request source", WS_POPUP, -32000, -32000, 32, 32,
+            nullptr, nullptr, instance, nullptr);
+        check(secondary && source, "create temporary protection fixtures");
+        ShowWindow(secondary, SW_SHOWNOACTIVATE);
+        ShowWindow(source, SW_SHOWNOACTIVATE);
+        const auto secondaryCloaked = [&] {
+            DWORD value = 0;
+            return SUCCEEDED(DwmGetWindowAttribute(secondary, DWMWA_CLOAKED, &value, sizeof(value))) &&
+                (value & DWM_CLOAKED_APP) != 0;
+        };
+        SharedState temporary;
+        temporary.enabled = TRUE; temporary.ownerProcessId = GetCurrentProcessId();
+        temporary.targetCount = 2;
+        temporary.targets[0].taskbar = reinterpret_cast<std::uintptr_t>(window);
+        temporary.targets[1].taskbar = reinterpret_cast<std::uintptr_t>(secondary);
+        temporary.targets[0].protectAutoHideActivation = TRUE;
+        temporary.targets[1].protectAutoHideActivation = TRUE;
+        appBarState = ABS_AUTOHIDE;
+        check(native::Attach(window, &temporary, false, TestAppBarMessage) &&
+            native::Attach(secondary, &temporary, false, TestAppBarMessage) &&
+            !cloaked() && !secondaryCloaked(),
+            "automatic hiding alone attaches offline protection without permanently hiding either screen");
+        temporary.minimizeSource = reinterpret_cast<std::uintptr_t>(source);
+        const auto arm = [&] {
+            ++temporary.minimizeSequence;
+            temporary.minimizeStarted = GetTickCount64();
+            SendMessageW(window, apply, 0, 0);
+            SendMessageW(secondary, apply, 0, 0);
+        };
+        arm();
+        check(cloaked() && secondaryCloaked(), "one application minimize temporarily cloaks all taskbars without a Dock target");
+        check(SendMessageW(secondary, apply, 0, 0) == kMinimizeApplyAcknowledged,
+            "the native window thread acknowledges successful application before minimize resumes");
+        const BOOL uncloak = FALSE;
+        DwmSetWindowAttribute(secondary, DWMWA_CLOAK, &uncloak, sizeof(uncloak));
+        check(secondaryCloaked(), "Shell cannot bypass an active temporary cloak");
+        SendMessageW(secondary, WM_MOUSEACTIVATE, 0, MAKELPARAM(HTCLIENT, WM_LBUTTONDOWN));
+        SendMessageW(window, apply, 0, 0);
+        check(!cloaked() && !secondaryCloaked(), "explicit taskbar access cancels the matching request on every screen");
+        SendMessageW(secondary, apply, 0, 0);
+        check(!secondaryCloaked(), "appearance refresh cannot rearm a cancelled temporary cloak");
+        arm();
+        check(cloaked() && secondaryCloaked(), "the next application minimize starts a new independent cloak");
+        temporary.targets[1].shellPanelVisible = TRUE;
+        SendMessageW(secondary, apply, 0, 0);
+        check(cloaked() && !secondaryCloaked(), "an open shell panel reveals its own taskbar while preserving the other screen");
+        temporary.targets[1].shellPanelVisible = FALSE;
+        SendMessageW(secondary, apply, 0, 0);
+        check(!secondaryCloaked(), "closing a shell panel does not resurrect the previous minimize request");
+        check(temporary.autoHideRestore == -1 && appBarState == ABS_AUTOHIDE,
+            "temporary protection never takes ownership of or changes Windows auto-hide preferences");
+        temporary.enabled = FALSE;
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        check(!cloaked() && !secondaryCloaked() && !GetPropW(window, native::kAttachedProperty) &&
+            !GetPropW(secondary, native::kAttachedProperty), "owner shutdown restores both taskbars and detaches temporary protection");
+        DestroyWindow(source);
+        DestroyWindow(secondary);
+        UnregisterClassW(registration.lpszClassName, instance);
+        appBarState = 0;
+    }
     HWND unrelated = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"STATIC",
         L"Unrelated test window", WS_POPUP, -32000, -32000, 32, 32,
         nullptr, nullptr, instance, nullptr);

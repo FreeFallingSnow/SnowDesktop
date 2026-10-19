@@ -69,7 +69,9 @@ inline void ConfigureSystemTaskbarTargetProtection(
     // minimized application can reach any taskbar, including screens without
     // a Dock; intentional shell-panel access still releases that protection.
     target.suppressTaskbar = suppressionRequested && hasDock;
-    target.protectAutoHideActivation = protectActivation && !target.shellPanelVisible;
+    // Keep the controller attached while a shell panel is open. Its per-window
+    // decision releases the current request without disabling future requests.
+    target.protectAutoHideActivation = protectActivation;
 }
 
 struct DockSettings : DockLayoutSettings
@@ -126,13 +128,10 @@ inline bool ShowDockWindowsButton(const DockSettings& settings) noexcept
 inline bool ShouldProtectAutoHideTaskbar(const DockSettings& settings,
     bool dockEnabled, bool autoHideEnabled) noexcept
 {
-    // floatingShortcutMode enables a summon hotkey; it does not replace the
-    // ordinary bottom Dock. Appearance preferences are independent as well.
-    // Permanent hiding temporarily enables Shell auto-hide while preserving
-    // the user's original preference for restoration. Protect that override
-    // too, including taskbars on monitors without a Dock.
-    return dockEnabled && settings.position == DockPosition::Bottom &&
-        (autoHideEnabled || settings.suppressSystemTaskbar);
+    // A minimizing application can activate a taskbar on any screen, regardless
+    // of Dock placement or animation. Permanent hiding also owns an auto-hide
+    // override even when the saved Windows preference was disabled.
+    return autoHideEnabled || (dockEnabled && settings.suppressSystemTaskbar);
 }
 
 inline PersonalizationSettings ResolveDockAppearance(const DockSettings& settings, const PersonalizationSettings& global)
@@ -189,6 +188,7 @@ inline void NormalizeDockSettings(DockSettings& settings)
 std::wstring GetDockSettingsPath();
 bool IsSystemTaskbarAutoHideEnabled();
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
+bool BeginSystemTaskbarMinimizeProtection(HWND source);
 bool IsSystemTaskbarAlignmentCentered();
 bool RequestSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();

@@ -8,14 +8,16 @@
 void DesktopApp::PrepareDockWindowMinimize(HWND window, const wchar_t* origin)
 {
     snowdesktop::dock_taskbar_diagnostics::Begin(window, origin);
-    // Both Dock clicks and the application's own minimize request must arm
-    // the same per-taskbar suppression before Windows changes foreground.
-    // This also reconciles a recent Explorer/auto-hide change before its timer.
-    if (generalSettings_.dockEnabled &&
-        (dockSettings_.suppressSystemTaskbar ||
-            (!IsClassicSystemTaskbar() && ShouldProtectAutoHideTaskbar(
-                dockSettings_, true, IsSystemTaskbarAutoHideEnabled()))))
+    // Refresh all monitors, then synchronously cloak their taskbars before
+    // either the Dock or the application lets Windows minimize the source.
+    if (ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
+            IsSystemTaskbarAutoHideEnabled()))
+    {
         RefreshSystemTaskbarAppearance(false);
+        if (!BeginSystemTaskbarMinimizeProtection(window))
+            WriteDiagnosticLogEntry(L"[TaskbarMinimizeProtection] not all taskbars acknowledged temporary cloaking",
+                DiagnosticLogLevel::Warning);
+    }
     snowdesktop::dock_taskbar_diagnostics::Record(L"minimize-taskbar-protection-submitted", window);
 }
 
@@ -228,8 +230,8 @@ bool DesktopApp::IsSystemTaskbarHookRequired(const DockSettings& settings) const
 {
     return (generalSettings_.dockEnabled && settings.suppressSystemTaskbar) ||
         AppearanceRequiresTaskbarHook(settings) ||
-        (!IsClassicSystemTaskbar() && ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled,
-            settings.systemTaskbarAutoHide));
+        ShouldProtectAutoHideTaskbar(settings, generalSettings_.dockEnabled,
+            settings.systemTaskbarAutoHide);
 }
 
 PersonalizationSettings DesktopApp::ResolveSystemTaskbarDynamicAppearance(
@@ -462,7 +464,7 @@ bool DesktopApp::RefreshSystemTaskbarAppearance(
             (void)RequestWindowsSystemLightThemeEnabled(*light);
     };
     const bool appearanceRequired = AppearanceRequiresTaskbarHook(dockSettings_);
-    const bool protectActivation = !IsClassicSystemTaskbar() && ShouldProtectAutoHideTaskbar(dockSettings_,
+    const bool protectActivation = ShouldProtectAutoHideTaskbar(dockSettings_,
         generalSettings_.dockEnabled, IsSystemTaskbarAutoHideEnabled());
     const bool suppressionRequested = generalSettings_.dockEnabled && dockSettings_.suppressSystemTaskbar;
     const bool hookRequired = appearanceRequired || protectActivation || suppressionRequested;

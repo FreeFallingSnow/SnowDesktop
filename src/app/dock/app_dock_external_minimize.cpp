@@ -1,20 +1,24 @@
 #include "app/app.h"
+#include "dock_platform_helpers.h"
 #include "dock/dock_minimize_protocol.h"
 #include "platform/deployment_context.h"
 #include "settings/animation_settings.h"
 
 void DesktopApp::UpdateDockExternalMinimizeTargets()
 {
-    if (!generalSettings_.dockEnabled || !dockWindowTransition_ ||
-        !snowdesktop::animation::RuntimeAnimationsEnabled() ||
-        snowdesktop::animation::RuntimeWindowEffect() == snowdesktop::animation::NoEffect)
+    const bool protectTaskbar = ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
+        IsSystemTaskbarAutoHideEnabled());
+    const bool animate = generalSettings_.dockEnabled && dockWindowTransition_ &&
+        snowdesktop::animation::RuntimeAnimationsEnabled() &&
+        snowdesktop::animation::RuntimeWindowEffect() != snowdesktop::animation::NoEffect;
+    if (!protectTaskbar && !animate)
     {
         dockExternalMinimize_.reset();
         return;
     }
     // The current target already owns its hook. Process-bitness checks, hook
     // synchronization and stale-lease recovery can wait for the next idle tick.
-    if (dockWindowTransition_->IsActive()) return;
+    if (dockWindowTransition_ && dockWindowTransition_->IsActive()) return;
     const HWND receiver = controlHwnd_ && IsWindow(controlHwnd_) ? controlHwnd_ : hwnd_;
     if (!receiver) return;
     if (!dockExternalMinimize_)
@@ -40,6 +44,18 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
         windows.push_back(state.window);
         windows.insert(windows.end(), state.trackedWindows.begin(), state.trackedWindows.end());
     }
+    if (protectTaskbar)
+    {
+        // Protection must also cover applications omitted from the Dock model,
+        // and remain armed when Dock display or minimize animation is disabled.
+        EnumWindows([](HWND window, LPARAM value) -> BOOL {
+            DWORD process = 0;
+            GetWindowThreadProcessId(window, &process);
+            if (process != GetCurrentProcessId() && IsDockTaskWindow(window))
+                reinterpret_cast<std::vector<HWND>*>(value)->push_back(window);
+            return TRUE;
+        }, reinterpret_cast<LPARAM>(&windows));
+    }
     std::sort(windows.begin(), windows.end(), std::less<HWND>{});
     windows.erase(std::unique(windows.begin(), windows.end()), windows.end());
     dockExternalMinimize_->UpdateTargets(windows);
@@ -63,6 +79,10 @@ void DesktopApp::UpdateDockExternalMinimizeTargets()
 bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
 {
     if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
+        !dockExternalMinimize_ || !dockExternalMinimize_->OwnsTarget(window) ||
+        !IsWindowVisible(window) || IsIconic(window)) return false;
+    PrepareDockWindowMinimize(window, L"application-minimize");
+    if (!snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount()) ||
         !generalSettings_.dockEnabled || reloading_ || dragSession_.HasContext() ||
         graphicsDeviceRecovery_.Pending() || !dockExternalMinimize_ ||
         !dockExternalMinimize_->OwnsTarget(window) || !dockWindowTransition_ ||
@@ -75,7 +95,6 @@ bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
     if (!target || !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount())) return false;
     const RECT anchor = target->anchor;
     HWND keepBelow = target->dock && IsWindowVisible(target->dock) ? target->dock : nullptr;
-    PrepareDockWindowMinimize(window, L"application-minimize");
     if (const HWND promotedDock = KeepDockTopmostForAction(anchor))
         keepBelow = promotedDock;
     DismissDockWindowPreviewUntilLeave();
