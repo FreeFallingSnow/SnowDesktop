@@ -81,6 +81,8 @@ struct Service::Impl
     {
         // Temporary issue #29 isolation build: keep clients and lifetime intact,
         // but do not connect to Explorer or broadcast tray re-registration.
+        // The controlled Dock launch/exit comparison on 2026-10-19 had no replay;
+        // this diagnostic omission is not a compatible production fallback.
         snapshot.degraded = true;
         snapshot.error = ERROR_CANCELLED;
         WriteDiagnosticLogEntry(L"[Issue29 isolation] tray collector worker disabled");
