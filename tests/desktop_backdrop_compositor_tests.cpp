@@ -12,6 +12,7 @@
 #include "ui/render/native_tooltip_content.h"
 #include "system/panel/system_panel_backdrop_placement.h"
 #include "dock/dock_desktop_layer_cases.h"
+#include "navigation/quick_navigation_attraction_render_cases.h"
 #include <commctrl.h>
 
 #include <roapi.h>
@@ -692,6 +693,7 @@ int RunDesktopBackdropCompositorTests()
         return failures;
 
     failures += CheckPopupRoundedEdgeCoverage();
+    failures += snowdesktop::test::CheckQuickNavigationAttractionPixels();
     failures += CheckHiddenPopupKeyboardFocus();
 
     {

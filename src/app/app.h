@@ -4281,7 +4281,9 @@ private:
     ComPtr<IDCompositionScaleTransform> quickNavDcompScaleTransform_;
     ComPtr<IDCompositionSurface> quickNavDcompSurface_;
     std::vector<ComPtr<IDCompositionVisual2>> quickNavGenieStrips_;
-    std::vector<ComPtr<IDCompositionVisual2>> quickNavAttractionTriangles_;
+    ComPtr<ID2D1Bitmap1> quickNavAttractionBitmap_;
+    ComPtr<IDCompositionSurface> quickNavAttractionSurface_;
+    SIZE quickNavAttractionSurfaceSize_{};
     int quickNavGenieStripEdge_ = -1;
     UINT quickNavCompWidth_ = 0;
     UINT quickNavCompHeight_ = 0;

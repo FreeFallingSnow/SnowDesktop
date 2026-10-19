@@ -1037,9 +1037,8 @@ void TestAttractionAnimationAndSurface()
     Check(!state.IsAnimating() && state.GetVisual().opacity == 1,
         "disabling Attraction settles the requested visible state");
 
-    // Production uses these source clips and canonical transforms for its live
-    // DComp surface. Check against independently evaluated patch corners, on
-    // all four Dock sides, negative monitor coordinates and fractional DPI.
+    // The glass silhouette must follow the same mesh as the content, on all
+    // four Dock sides, negative monitor coordinates and fractional DPI.
     for (const auto size : {std::pair{481.375, 613.625}, std::pair{1281.2, 721.6}})
     {
         const attraction::Rect panel{-1840.25, -900.75, -1840.25 + size.first, -900.75 + size.second};
@@ -1055,22 +1054,17 @@ void TestAttractionAnimationAndSurface()
             const auto patch = attraction::ControlPoints(panel, dock, collapsed);
             for (std::size_t i = 0; i < attraction::TriangleCount; ++i)
             {
-                const auto source = AttractionSource(size.first, size.second, i);
-                const auto matrix = attraction::TriangleValues(frame, i, -2000, -1000);
                 const auto cell = attraction::SourceCell(i / 2);
                 const double us[] = {cell.left, cell.right, cell.left, cell.right};
                 const double vs[] = {cell.top, cell.top, cell.bottom, cell.bottom};
                 const int corners[2][3] = {{0, 1, 2}, {3, 2, 1}};
                 for (const auto corner : corners[i % 2])
                 {
-                    const double x = us[corner] * size.first, y = vs[corner] * size.second;
-                    const auto& m = source.transform;
-                    const double s = x * m.m11 + y * m.m21 + m.dx;
-                    const double t = x * m.m12 + y * m.m22 + m.dy;
+                    const auto mapped = AttractionMeshPoint(frame, us[corner], vs[corner]);
                     const auto expected = attraction::Surface(patch, us[corner], vs[corner]);
-                    Check(std::abs(s * matrix[0] + t * matrix[2] + matrix[4] - (expected.x + 2000)) < 0.002 &&
-                            std::abs(s * matrix[1] + t * matrix[3] + matrix[5] - (expected.y + 1000)) < 0.002,
-                        "live Attraction surface triangles map to the shared curved patch without a coordinate offset");
+                    Check(std::abs(mapped.x - expected.x) < 1e-8 &&
+                            std::abs(mapped.y - expected.y) < 1e-8,
+                        "Attraction glass and content share the curved patch vertices");
                 }
                 const double u = (cell.left + cell.right) * 0.5, v = (cell.top + cell.bottom) * 0.5;
                 const auto glass = AttractionMeshPoint(frame, u, v);
