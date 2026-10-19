@@ -47,10 +47,15 @@ int main(int argc, char* argv[])
     const auto convertedDuration = detail::ConvertSetting(duration);
     InteractionValue durationValue;
     std::string durationError;
+    std::string oldDuration;
+    std::string fractionalDuration;
+    Check(EncodeTypedStorageValue(MakeWidgetSettingNumber(30), oldDuration, durationError) &&
+        EncodeTypedStorageValue(MakeWidgetSettingNumber(30.5), fractionalDuration, durationError),
+        "duration migration fixtures use the actual tagged storage format");
     detail::EncodedOrdinaryWrite durationWrite;
     Check(convertedDuration.schema.durationUnit == "minutes" && convertedDuration.defaultValue.integer == 25 &&
-        detail::DecodePreviousDurationStorage(convertedDuration.schema, "30", durationValue, durationError) && durationValue.integer == 30 &&
-        !detail::DecodePreviousDurationStorage(convertedDuration.schema, "30.5", durationValue, durationError) &&
+        detail::DecodePreviousDurationStorage(convertedDuration.schema, oldDuration, durationValue, durationError) && durationValue.integer == 30 &&
+        !detail::DecodePreviousDurationStorage(convertedDuration.schema, fractionalDuration, durationValue, durationError) &&
         detail::EncodeOrdinaryWrite(convertedDuration.schema,
             {"interval", MakeWidgetSettingInteger(30), false}, durationWrite, durationError) &&
         durationWrite.value == "30" && !durationWrite.typedMarker,

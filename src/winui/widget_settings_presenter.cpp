@@ -975,6 +975,23 @@ struct WidgetSettingsPresenter::Impl
         resetRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         resetCard.content.Children().Append(resetRow.root);
         root.Children().Append(resetCard.root);
+        const auto equalizeActionRows = [permissions = winrt::make_weak(permissionsRow.root),
+            restore = winrt::make_weak(resetRow.root), permissionText = winrt::make_weak(permissionsRow.text),
+            restoreText = winrt::make_weak(resetRow.text), permissionControl = winrt::make_weak(permissionsRow.controlHost),
+            restoreControl = winrt::make_weak(resetRow.controlHost)](const auto&, const auto&) {
+            const auto first = permissions.get(); const auto second = restore.get();
+            const auto firstText = permissionText.get(); const auto secondText = restoreText.get();
+            const auto firstControl = permissionControl.get(); const auto secondControl = restoreControl.get();
+            if (!first || !second || !firstText || !secondText || !firstControl || !secondControl) return;
+            const auto firstPadding = first.Padding(); const auto secondPadding = second.Padding();
+            const double height = std::ceil(std::max({68.0,
+                std::max(firstText.ActualHeight(), firstControl.ActualHeight()) + firstPadding.Top + firstPadding.Bottom,
+                std::max(secondText.ActualHeight(), secondControl.ActualHeight()) + secondPadding.Top + secondPadding.Bottom}));
+            if (first.MinHeight() != height) first.MinHeight(height);
+            if (second.MinHeight() != height) second.MinHeight(height);
+        };
+        permissionsRow.root.SizeChanged(equalizeActionRows);
+        resetRow.root.SizeChanged(equalizeActionRows);
 
         appearanceCard.root.Visibility(mux::Visibility::Collapsed);
         appearanceTitle.Visibility(mux::Visibility::Collapsed);
@@ -2788,7 +2805,14 @@ struct WidgetSettingsPresenter::Impl
                     const auto text = field.durationInputs[index] ? field.durationInputs[index].Text() : number.Text();
                     long long displayed = 0;
                     if (!wr::ReadWidgetSettingInteger(ToUtf8(text), displayed) || displayed != values[index])
-                        number.Text(ToText(std::to_string(values[index])));
+                    {
+                        const auto restored = ToText(std::to_string(values[index]));
+                        number.Text(restored);
+                        // NumberBox.Text may already equal the saved value while
+                        // its uncommitted native InputBox still contains a draft.
+                        if (field.durationInputs[index] && field.durationInputs[index].Text() != restored)
+                            field.durationInputs[index].Text(restored);
+                    }
                     field.durationObservedText[index] = field.durationInputs[index] ? field.durationInputs[index].Text() : number.Text();
                 }
             field.synchronizing = false;
