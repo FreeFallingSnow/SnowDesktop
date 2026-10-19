@@ -177,7 +177,7 @@ SD_IPC_FIELDS(widget_runtime::WidgetSettingFieldSchema,
     v.access, v.emptyLabel, v.noResultsLabel, v.minimum,
     v.maximum, v.step, v.minimumLength, v.maximumLength,
     v.required, v.showWhen, v.enabledWhen, v.dependsOn,
-    v.options, v.extensions);
+    v.options, v.extensions, v.durationUnit);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingGroupSchema,
     v.id, v.label, v.description, v.collapsible,
     v.defaultExpanded);

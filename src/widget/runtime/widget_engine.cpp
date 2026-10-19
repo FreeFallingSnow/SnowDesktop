@@ -1129,6 +1129,14 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     setting.dependsOn =
         LuaReadStorageField(L, tableIndex, "dependsOn");
     setting.type = LuaReadStorageField(L, tableIndex, "type");
+    if (setting.type == "duration")
+    {
+        const auto unit = LuaReadStorageField(L, tableIndex, "unit");
+        if (!unit.empty()) setting.durationUnit = unit;
+        const int scale = snowdesktop::widget_runtime::DurationSettingUnitSeconds(setting.durationUnit);
+        setting.maxValue = scale ? snowdesktop::widget_runtime::kMaximumSettingDurationSeconds / scale : 0;
+        setting.stepValue = 1;
+    }
     setting.defaultValue = LuaReadStorageField(L, tableIndex, "default");
     setting.searchKey = LuaReadStorageField(L, tableIndex, "searchKey");
     setting.binding = LuaReadStorageField(L, tableIndex, "binding");
@@ -1146,6 +1154,16 @@ static LuaWidgetManifest::Setting ReadLuaSettingTable(lua_State* L, int tableInd
     lua_getfield(L, tableIndex, "step");
     if (lua_isnumber(L, -1)) setting.stepValue = lua_tonumber(L, -1);
     lua_pop(L, 1);
+    if (setting.type == "duration" && setting.defaultValue.empty())
+        setting.defaultValue = std::to_string(setting.minValue);
+    if (setting.type == "duration")
+        for (const char* property : {"min", "max", "step"})
+        {
+            lua_getfield(L, tableIndex, property);
+            if (!lua_isnil(L, -1) && lua_type(L, -1) != LUA_TNUMBER)
+                setting.stepValue = std::numeric_limits<double>::quiet_NaN();
+            lua_pop(L, 1);
+        }
     lua_getfield(L, tableIndex, "minLength");
     if (!lua_isnil(L, -1))
     {
@@ -1683,17 +1701,20 @@ static bool ValidateSettingConditionsAndConstraints(
                 }
             }
         }
-        if (sourceSetting.type == "range" && !existenceOnly)
+        if ((sourceSetting.type == "range" || sourceSetting.type == "duration") && !existenceOnly)
         {
             for (const auto& expected : condition.values)
             {
                 double number = 0.0;
                 if (!snowdesktop::widget_runtime::ParseFiniteSettingNumber(
                         expected, number) || number < sourceSetting.minValue ||
-                    number > sourceSetting.maxValue)
+                    number > sourceSetting.maxValue ||
+                    (sourceSetting.type == "duration" &&
+                        !snowdesktop::widget_runtime::IsValidDurationSettingValue(number,
+                            sourceSetting.durationUnit, sourceSetting.minValue, sourceSetting.maxValue, sourceSetting.stepValue)))
                 {
                     error = "setting '" + owner.key +
-                        "' range condition is outside the source bounds";
+                        "' numeric condition is outside the source bounds";
                     return false;
                 }
             }
@@ -1787,7 +1808,7 @@ static bool ValidateOrdinaryDeclarativeSettings(
         {
             const bool typed = setting.type == "url" ||
                 setting.type == "date" || setting.type == "time" ||
-                setting.type == "range" || setting.type == "multiSelect" ||
+                setting.type == "range" || setting.type == "duration" || setting.type == "multiSelect" ||
                 IsFilesystemHandleSettingType(setting.type);
             if (!typed) continue;
             if (!typedSettings.emplace(setting.key, &setting).second)
@@ -1868,6 +1889,17 @@ static bool ValidateOrdinaryDeclarativeSettings(
                     }
                 }
             }
+            if (setting.type == "duration")
+            {
+                double number = 0;
+                if (!ParseFiniteSettingNumber(setting.defaultValue, number) ||
+                    !snowdesktop::widget_runtime::IsValidDurationSettingValue(number,
+                        setting.durationUnit, setting.minValue, setting.maxValue, setting.stepValue))
+                {
+                    error = "duration setting '" + setting.key + "' requires an integer default, valid unit, bounds and whole-unit step";
+                    return false;
+                }
+            }
             if (setting.type == "multiSelect" &&
                 (!setting.defaultValue.empty() ||
                     !IsValidMultiSelectSettingValue(
@@ -1917,6 +1949,17 @@ static bool ValidateOrdinaryDeclarativeSettings(
                     error = "preset '" + preset.id +
                         "' has an invalid value for setting '" + key + "'";
                     return false;
+                }
+                if (setting.type == "duration")
+                {
+                    double number = 0;
+                    if (!ParseFiniteSettingNumber(value, number) ||
+                        !snowdesktop::widget_runtime::IsValidDurationSettingValue(number,
+                            setting.durationUnit, setting.minValue, setting.maxValue, setting.stepValue))
+                    {
+                        error = "preset '" + preset.id + "' has an invalid duration for setting '" + key + "'";
+                        return false;
+                    }
                 }
                 if (setting.type == "range")
                 {
@@ -31606,6 +31649,14 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
                 setting.validationMessage);
             readString(object, "dependsOn", setting.dependsOn);
             readString(object, "type", setting.type);
+            if (setting.type == "duration")
+            {
+                readString(object, "unit", setting.durationUnit);
+                if (const auto unit = object.Find("unit"); unit && !unit->IsString()) setting.durationUnit = "__invalid";
+                const int scale = snowdesktop::widget_runtime::DurationSettingUnitSeconds(setting.durationUnit);
+                setting.maxValue = scale ? snowdesktop::widget_runtime::kMaximumSettingDurationSeconds / scale : 0;
+                setting.stepValue = 1;
+            }
             readString(object, "searchKey", setting.searchKey);
             readString(object, "binding", setting.binding);
             readString(object, "access", setting.access);
@@ -31628,6 +31679,12 @@ LuaWidgetManifest WidgetEngine::GetWidgetManifest(const std::wstring& filename)
             readNumber(object, "min", setting.minValue);
             readNumber(object, "max", setting.maxValue);
             readNumber(object, "step", setting.stepValue);
+            if (setting.type == "duration" && setting.defaultValue.empty())
+                setting.defaultValue = std::to_string(setting.minValue);
+            if (setting.type == "duration")
+                for (const char* property : {"min", "max", "step"})
+                    if (const auto number = object.Find(property); number && !number->IsNumber())
+                        setting.stepValue = std::numeric_limits<double>::quiet_NaN();
             if (const JsonValue* minimum = object.Find("minLength"))
             {
                 setting.minLength = minimum->IsNumber() &&

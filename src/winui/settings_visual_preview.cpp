@@ -220,7 +220,7 @@ public:
     void PopulateAllControls(bool english)
     {
         allControls = allowSecretWrites = true;
-        value.customStyle = false;
+        value.customStyle = true;
         value.widgetName = english ? "Lua setting controls" : "Lua 设置控件总览"; // l10n-allow: isolated bilingual preview fixture.
         value.fields.clear(); value.groups.clear(); value.presets.clear();
         value.groups = {{"inputs", english ? "Inputs" : "输入", {}, false, true}, // l10n-allow: isolated bilingual preview fixture.
@@ -254,6 +254,11 @@ public:
         multi.schema.options = {{"a", english ? "First option" : "第一个选项"}, {"b", longOption}, {"c", english ? "Third option" : "第三个选项"}}; // l10n-allow: isolated bilingual preview fixture.
         add("date", "date", "日期", "Date", "choices", wr::MakeWidgetSettingString("1492-10-12")); // l10n-allow: isolated bilingual preview fixture.
         add("time", "time", "时间", "Time", "choices", wr::MakeWidgetSettingString("09:30")); // l10n-allow: isolated bilingual preview fixture.
+        auto& duration = add("duration", "duration", "时长", "Duration", "choices", wr::MakeWidgetSettingInteger(90061)); // l10n-allow: isolated bilingual preview fixture.
+        duration.schema.minimum = 0; duration.schema.maximum = 359999; duration.schema.step = 1;
+        auto& focusDuration = add("focusDuration", "duration", "专注时长", "Focus duration", "choices", wr::MakeWidgetSettingInteger(25)); // l10n-allow: isolated bilingual preview fixture.
+        focusDuration.schema.durationUnit = "minutes";
+        focusDuration.schema.minimum = 1; focusDuration.schema.maximum = 120; focusDuration.schema.step = 1;
         add("appSearch", "appSearch", "应用名称搜索", "Application name search", "objects", wr::MakeWidgetSettingString("Example app")); // l10n-allow: isolated bilingual preview fixture.
         for (const auto type : {"appReference", "desktopItemReference", "fileReference", "folderReference", "fileHandle", "folderHandle"})
         {
@@ -547,6 +552,8 @@ void InspectWidgetControls(const x::FrameworkElement& root,
 {
     std::set<std::string> types;
     std::ofstream inventory(output / L"widget-controls.tsv");
+    std::ofstream timeLayout(output / L"widget-time-layout.tsv");
+    timeLayout << "key\tpickerWidth\tbuttonWidth\tbuttonRight\n";
     inventory << "key\ttype\tenabled\tconfigured\tavailable\twidth\theight\n";
     for (const auto& field : service.value.fields)
     {
@@ -557,6 +564,22 @@ void InspectWidgetControls(const x::FrameworkElement& root,
             << element.ActualWidth() << '\t' << element.ActualHeight() << '\n';
         if (element.ActualWidth() <= 0 || element.ActualHeight() <= 0)
             throw std::runtime_error("widget control has no layout: " + field.schema.key);
+        if (field.schema.Kind() == wr::WidgetSettingKind::Time)
+        {
+            const auto picker = WidgetPreviewControl<c::TimePicker>(element);
+            c::Button flyout{nullptr};
+            Walk(picker, [&](const x::DependencyObject& node) {
+                if (const auto button = node.try_as<c::Button>(); button && button.Name() == L"FlyoutButton") flyout = button;
+            });
+            if (!flyout) throw std::runtime_error("time picker flyout button is missing");
+            const auto bounds = flyout.TransformToVisual(picker).TransformBounds(
+                {0, 0, static_cast<float>(flyout.ActualWidth()), static_cast<float>(flyout.ActualHeight())});
+            timeLayout << field.schema.key << '\t' << picker.ActualWidth() << '\t' << flyout.ActualWidth()
+                << '\t' << bounds.X + bounds.Width << '\n';
+            timeLayout.flush();
+            if (bounds.X < -0.5 || bounds.X + bounds.Width > picker.ActualWidth() + 0.5)
+                throw std::runtime_error("time picker native border is clipped");
+        }
         if (field.schema.Channel() == wr::WidgetSettingValueChannel::EntityReference ||
             field.schema.Channel() == wr::WidgetSettingValueChannel::FilesystemHandle)
         {
@@ -574,7 +597,19 @@ void InspectWidgetControls(const x::FrameworkElement& root,
                 throw std::runtime_error("reference actions are not beside the value: " + field.schema.key);
         }
     }
-    if (types.size() != 19) throw std::runtime_error("widget preview does not cover all 19 setting types");
+    if (types.size() != 20) throw std::runtime_error("widget preview does not cover all 20 setting types");
+    const auto permissions = PreviewControl<x::FrameworkElement>(root, L"WidgetPermissionsRow");
+    const auto reset = PreviewControl<x::FrameworkElement>(root, L"WidgetResetRow");
+    std::ofstream(output / L"widget-action-card-layout.tsv") << "permissions\treset\n" << permissions.ActualHeight() << '\t' << reset.ActualHeight() << '\n';
+    if (std::abs(permissions.ActualHeight() - reset.ActualHeight()) > 1)
+        throw std::runtime_error("widget action cards do not share their standard row height");
+    const auto follow = PreviewControl<x::FrameworkElement>(root, L"WidgetFollowGlobalRow");
+    const auto theme = PreviewControl<x::FrameworkElement>(root, L"WidgetAppearanceThemeRow");
+    const auto restore = PreviewControl<x::FrameworkElement>(root, L"WidgetRestoreBackgroundRow");
+    std::ofstream(output / L"widget-appearance-card-layout.tsv") << "follow\ttheme\trestore\n" <<
+        follow.ActualHeight() << '\t' << theme.ActualHeight() << '\t' << restore.ActualHeight() << '\n';
+    if (std::abs(follow.ActualHeight() - theme.ActualHeight()) > 1 || std::abs(follow.ActualHeight() - restore.ActualHeight()) > 1)
+        throw std::runtime_error("widget appearance cards do not share their single-line height");
 }
 
 void ExerciseWidgetControls(const x::FrameworkElement& root,
@@ -667,6 +702,31 @@ void ExerciseWidgetControls(const x::FrameworkElement& root,
     check(savedString("time", "09:05"), "time-immediate");
     InvokePreview(WidgetPreviewAction(field("time"), "app.settings.widget.clear")); settle();
     check(savedString("time", "") && !time.SelectedTime(), "time-clear");
+    std::vector<c::NumberBox> durationParts;
+    Walk(field("duration"), [&](const x::DependencyObject& node) {
+        if (const auto number = node.try_as<c::NumberBox>()) durationParts.push_back(number);
+    });
+    check(durationParts.size() == 3 && durationParts[0].Value() == 25 && durationParts[1].Value() == 1 &&
+        durationParts[2].Value() == 1, "duration-over-24-hours-roundtrip");
+    WidgetPreviewControl<c::TextBox>(durationParts[2]).Text(L"7");
+    PumpUntil([&] { return service.Field("duration")->currentValue.integer == 90067; });
+    check(true, "duration-text-autosave-without-blur");
+    WidgetPreviewControl<c::TextBox>(durationParts[1]).Text(L"60");
+    const auto durationInvalidUntil = GetTickCount64() + 800;
+    PumpUntil([&] { return GetTickCount64() >= durationInvalidUntil; });
+    check(WidgetPreviewControl<c::TextBox>(durationParts[1]).Text() == L"60" && service.Field("duration")->currentValue.integer == 90067,
+        "duration-invalid-draft-keeps-saved-value");
+    WidgetPreviewControl<c::TextBox>(durationParts[1]).Text(L"2");
+    PumpUntil([&] { return service.Field("duration")->currentValue.integer == 90127; });
+    check(true, "duration-corrected-draft-autosave");
+    std::vector<c::NumberBox> focusParts;
+    Walk(field("focusDuration"), [&](const x::DependencyObject& node) {
+        if (const auto number = node.try_as<c::NumberBox>()) focusParts.push_back(number);
+    });
+    check(focusParts.size() == 2 && focusParts[1].Value() == 25, "duration-minute-storage-roundtrip");
+    WidgetPreviewControl<c::TextBox>(focusParts[1]).Text(L"30");
+    PumpUntil([&] { return service.Field("focusDuration")->currentValue.integer == 30; });
+    check(true, "duration-minute-unit-autosave");
     for (const auto key : {"desktopItemReference", "fileReference", "folderReference", "fileHandle", "folderHandle"})
     {
         auto item = field(key);

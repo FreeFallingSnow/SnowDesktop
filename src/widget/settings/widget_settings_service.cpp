@@ -130,11 +130,12 @@ InteractionValue EmptyDefault(const WidgetSettingFieldSchema& schema)
     {
     case WidgetSettingKind::Boolean:
         return MakeWidgetSettingBoolean(false);
+    case WidgetSettingKind::Duration:
     case WidgetSettingKind::Integer:
     case WidgetSettingKind::Color:
     {
         long long value = 0;
-        if (schema.Kind() == WidgetSettingKind::Integer &&
+        if ((schema.Kind() == WidgetSettingKind::Integer || schema.Kind() == WidgetSettingKind::Duration) &&
             schema.minimum > 0.0 &&
             !ReadWidgetSettingInteger(schema.minimum, value))
             value = 0;

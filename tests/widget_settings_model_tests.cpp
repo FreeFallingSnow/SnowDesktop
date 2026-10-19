@@ -38,6 +38,7 @@ int main()
         { "url", WidgetSettingKind::Url },
         { "date", WidgetSettingKind::Date },
         { "time", WidgetSettingKind::Time },
+        { "duration", WidgetSettingKind::Duration },
         { "appSearch", WidgetSettingKind::AppSearch },
         { "appReference", WidgetSettingKind::AppReference },
         { "desktopItemReference", WidgetSettingKind::DesktopItemReference },
@@ -89,6 +90,16 @@ int main()
         "unknown types use a diagnosed text fallback");
 
     WidgetSettingFieldSchema range;
+    WidgetSettingFieldSchema duration;
+    duration.key = "focus"; duration.rawType = "duration"; duration.durationUnit = "minutes";
+    duration.minimum = 1; duration.maximum = 120; duration.step = 1;
+    std::string encodedDuration;
+    Check(DecodeLegacyWidgetSettingValue(duration, "25", normalized, error) && normalized.integer == 25 &&
+        EncodeLegacyWidgetSettingValue(duration, MakeWidgetSettingInteger(30), encodedDuration, error) && encodedDuration == "30" &&
+        !NormalizeWidgetSettingValue(duration, MakeWidgetSettingNumber(1.5), normalized, error) &&
+        !NormalizeWidgetSettingValue(duration, MakeWidgetSettingInteger(121), normalized, error) &&
+        !WidgetSettingUsesTypedStorage(duration.Kind()),
+        "duration preserves legacy integer units and rejects invalid mutations without changing storage channels");
     range.key = "scale";
     range.rawType = "range";
     range.minimum = 0.0;

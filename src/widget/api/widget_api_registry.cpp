@@ -106,6 +106,7 @@ constexpr auto kHostFeatures = std::to_array<std::string_view>({
     "settings.dependencies",
     "settings.description",
     "settings.desktopItemReference",
+    "settings.duration",
     "settings.fileHandle",
     "settings.fileReference",
     "settings.folderHandle",

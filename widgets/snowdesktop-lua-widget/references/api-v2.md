@@ -2894,6 +2894,15 @@ API v2 还提供以下普通值设置控件：
 - `url`：空值或不超过 2048 字节、带 authority 且不含空白和反斜杠的 `http://` / `https://` URL；
 - `date`：空值或严格 Gregorian `YYYY-MM-DD`；
 - `time`：空值或 24 小时制 `HH:MM`；
+- `duration`：非负整数时长，`unit="seconds"|"minutes"|"hours"` 指定保存单位，省略时为秒。
+  `default/min/max/step` 均使用该单位；省略时 min 为 0、max 为不超过 99:59:59 的最大整单位、
+  step 为 1、default 为 min。上下限和步长必须为整数，值必须位于上下限内并相对 min 对齐步长。
+  设置页使用时、分、秒输入，精度由 unit 决定，不受一天 24 小时限制；合法输入停顿后自动保存。
+  沿用普通整数设置的十进制字符串存储，读取时使用 `tonumber(storage.get(key))`；从旧 range
+  升级时兼容已有带类型标记的数字，并在正常写入时转为普通整数存储，不更改键和数值单位。
+  这是 API v2 的新增 `settings.duration` feature。组件须声明该 requiredFeature 与
+  `minHostVersion="1.0.11.0"`；同版本早期构建可能不含该能力。官方社区组件必须在支持该能力的
+  宿主交付之后发布，旧宿主缺少 feature 时拒绝加载，不将时长回退成时刻；
 - `range`：声明有限的 `min <= max` 和正 `step`，省略 `step` 时默认为 `0.1`，宿主对值钳制并吸附到步长；需要整数步长时显式声明 `step = 1`；
 - `multiSelect`：声明 1-64 个唯一稳定 `options`，可配等长本地化 `optionLabels`，`default`
   与 preset 值均为这些选项组成的无重复数组。

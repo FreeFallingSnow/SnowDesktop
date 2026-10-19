@@ -38,7 +38,7 @@ local settings = {
             type = "text", default = DEFAULT_URL },
         { key = "interval",
             label = l10n.tr("lua_widget.rss_reader.refresh_interval"),
-            type = "int", default = 1800, min = 60, max = 3600 },
+            type = "duration", default = 1800, min = 60, max = 3600 },
         { key = "maxItems",
             label = l10n.tr("lua_widget.rss_reader.max_items"),
             type = "int", default = 30, min = 10, max = 100 },

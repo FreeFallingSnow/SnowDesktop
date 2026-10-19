@@ -412,6 +412,7 @@ void TestV2Contract()
                 "settings.description") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.desktopItemReference") &&
+            snowdesktop::widget_api::SupportsFeature("settings.duration") &&
             snowdesktop::widget_api::SupportsFeature(
                 "settings.fileReference") &&
             snowdesktop::widget_api::SupportsFeature(

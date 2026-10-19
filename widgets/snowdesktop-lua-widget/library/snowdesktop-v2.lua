@@ -104,7 +104,8 @@
 ---@field dependsOn? string Shorthand for enabledWhen={key=dependsOn,operator='truthy'}.
 ---@field showWhen? SnowSettingCondition Hide the field while the condition is false without clearing its value.
 ---@field enabledWhen? SnowSettingCondition Disable the field while the condition is false without clearing its value.
----@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'url'|'date'|'time'|'range'|'multiSelect'|'fileHandle'|'folderHandle'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
+---@field type 'text'|'password'|'bool'|'int'|'float'|'select'|'color'|'url'|'date'|'time'|'duration'|'range'|'multiSelect'|'fileHandle'|'folderHandle'|'appReference'|'desktopItemReference'|'fileReference'|'folderReference'|'appSearch'
+---@field unit? 'seconds'|'minutes'|'hours' duration storage unit; defaults to seconds. Numeric values and min/max/step use this unit. UI shows whole hour/minute/second parts at the declared precision, up to 99:59:59. Requires settings.duration.
 ---@field default? string|number|boolean|string[] multiSelect defaults are stable option arrays; range defaults are exposed to Lua as numbers. Ignored for password, filesystem-handle, and entity reference fields.
 ---@field searchKey? string Required by appSearch; stores the user's query separately from the selected display title.
 ---@field binding? string Required by appReference, desktopItemReference, fileReference, and folderReference; names one uniquely used replacePolicy='allow' manifest binding accepting only the matching reference kind.
@@ -113,7 +114,7 @@
 ---@field noResultsLabel? string Localized label shown after an application search returns no results.
 ---@field min? number
 ---@field max? number
----@field step? number Positive numeric editor increment; defaults to 0.1. Integer controls use whole-number increments; declare 1 explicitly for integer range increments.
+---@field step? number Positive numeric editor increment; defaults to 0.1, or 1 for duration. Duration requires an integer step and rejects unaligned values relative to min. Integer controls use whole-number increments; declare 1 explicitly for integer range increments.
 ---@field options? string[] Stable select or multiSelect values; multiSelect accepts 1-64 unique values.
 ---@field optionLabels? string[] Localized labels parallel to stable select or multiSelect option values.
 ---@field extensions? string[] Up to 16 safe file extensions for fileHandle; leading dots are optional. Not accepted by folderHandle.

@@ -9,6 +9,12 @@ namespace snowdesktop::widget_runtime
 bool IsValidUrlSettingValue(std::string_view value) noexcept;
 bool IsValidDateSettingValue(std::string_view value) noexcept;
 bool IsValidTimeSettingValue(std::string_view value) noexcept;
+inline constexpr int kMaximumSettingDurationSeconds = 359999;
+int DurationSettingUnitSeconds(std::string_view unit) noexcept;
+bool IsValidDurationSettingSchema(std::string_view unit, double minimum,
+    double maximum, double step) noexcept;
+bool IsValidDurationSettingValue(double value, std::string_view unit,
+    double minimum, double maximum, double step) noexcept;
 
 bool ParseFiniteSettingNumber(std::string_view value,
     double& output) noexcept;

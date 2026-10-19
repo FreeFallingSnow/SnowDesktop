@@ -633,6 +633,25 @@ void TestDeferredReferencePickerCompletion(bool completedBeforeSelection)
 int main()
 {
     using namespace snowdesktop::widget_runtime;
+    {
+        auto durationBackend = MakeBackend();
+        auto duration = Field("focus", "duration", MakeWidgetSettingInteger(25));
+        duration.schema.durationUnit = "minutes";
+        duration.schema.minimum = 1; duration.schema.maximum = 120; duration.schema.step = 1;
+        durationBackend.descriptor.manifestFields.push_back(duration);
+        WidgetSettingsService durationService(durationBackend);
+        auto snapshot = durationService.Snapshot(L"widget-1");
+        Check(snapshot && Find(*snapshot, "focus")->currentValue.integer == 25, "duration default keeps declared minute units");
+        Check(durationService.SetOrdinary(WidgetSettingMutationGuard::FromSnapshot(*snapshot), "focus", MakeWidgetSettingInteger(60)).Succeeded(),
+            "duration ordinary writes use the guarded settings service");
+        snapshot = durationService.Snapshot(L"widget-1");
+        Check(!durationService.SetOrdinary(WidgetSettingMutationGuard::FromSnapshot(*snapshot), "focus", MakeWidgetSettingInteger(121)).Succeeded() &&
+            durationService.Snapshot(L"widget-1")->fields.back().currentValue.integer == 60,
+            "invalid duration writes retain the prior persisted value");
+        Check(durationService.ResetField(WidgetSettingMutationGuard::FromSnapshot(*snapshot), "focus").Succeeded() &&
+            durationService.Snapshot(L"widget-1")->fields.back().currentValue.integer == 25,
+            "duration reset restores the original declared units");
+    }
 
     TestDeferredReferencePickerCompletion(false);
     TestDeferredReferencePickerCompletion(true);

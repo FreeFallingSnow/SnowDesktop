@@ -681,10 +681,13 @@ WidgetSettingBackendReadResult WidgetEngineSettingsBackend::ReadOrdinary(
     else
     {
         if (marker != storage.end())
-            return { BackendResult(
-                         WidgetSettingsBackendStatus::PersistenceFailed,
-                         "unexpectedTypedStorageMarker"), false, {} };
-        if (!DecodeLegacyWidgetSettingValue(
+        {
+            if (marker->second != TypedStorageMarker ||
+                !widget_settings_backend_detail::DecodePreviousDurationStorage(current.schema, stored->second, value, error))
+                return { BackendResult(WidgetSettingsBackendStatus::PersistenceFailed,
+                    "unexpectedTypedStorageMarker", std::move(error)), false, {} };
+        }
+        else if (!DecodeLegacyWidgetSettingValue(
                 current.schema, stored->second, value, error))
             return { BackendResult(WidgetSettingsBackendStatus::InvalidValue,
                          error.empty() ? "invalidStoredValue" : error),

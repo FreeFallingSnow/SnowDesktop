@@ -492,5 +492,5 @@ return widget.define({name=l10n.tr("lua_widget.sky_weather.name"),useCustomStyle
         {id="refresh",label=l10n.tr("lua_widget.sky_weather.refresh")},{id="settings",label=l10n.tr("lua_widget.sky_weather.settings")}}) end,
     settings={fields={{key="unit",type="select",label=l10n.tr("lua_widget.sky_weather.unit"),default="c",options={"c","f"},
         optionLabels={l10n.tr("lua_widget.sky_weather.celsius"),l10n.tr("lua_widget.sky_weather.fahrenheit")}},
-        {key="interval",type="int",label=l10n.tr("lua_widget.sky_weather.interval"),default=1800,min=600,max=21600},
+        {key="interval",type="duration",label=l10n.tr("lua_widget.sky_weather.interval"),default=1800,min=600,max=21600},
         {key="skyBackground",type="bool",label=l10n.tr("lua_widget.sky_weather.sky_background"),default=true}}}})

@@ -41,6 +41,20 @@ int main(int argc, char* argv[])
     catch (const std::exception& error) { Check(false,error.what()); }
     using namespace snowdesktop::widget_runtime;
     namespace detail = widget_settings_backend_detail;
+    LuaWidgetManifest::Setting duration;
+    duration.key = "interval"; duration.type = "duration"; duration.durationUnit = "minutes";
+    duration.minValue = 1; duration.maxValue = 120; duration.stepValue = 1; duration.defaultValue = "25.000000";
+    const auto convertedDuration = detail::ConvertSetting(duration);
+    InteractionValue durationValue;
+    std::string durationError;
+    detail::EncodedOrdinaryWrite durationWrite;
+    Check(convertedDuration.schema.durationUnit == "minutes" && convertedDuration.defaultValue.integer == 25 &&
+        detail::DecodePreviousDurationStorage(convertedDuration.schema, "30", durationValue, durationError) && durationValue.integer == 30 &&
+        !detail::DecodePreviousDurationStorage(convertedDuration.schema, "30.5", durationValue, durationError) &&
+        detail::EncodeOrdinaryWrite(convertedDuration.schema,
+            {"interval", MakeWidgetSettingInteger(30), false}, durationWrite, durationError) &&
+        durationWrite.value == "30" && !durationWrite.typedMarker,
+        "duration converts schema units, accepts prior range numbers, and writes unchanged integer units");
 
     // Omitted steps must preserve fractional defaults and persisted slider edits.
     LuaWidgetManifest::Setting defaultStepRange;

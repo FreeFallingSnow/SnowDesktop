@@ -16,7 +16,7 @@ constexpr UINT DispatchMessageId = WM_APP + 0x681;
 constexpr UINT_PTR AsyncTimerId = 1;
 constexpr std::uint32_t Magic = 0x53444950; // SDIP
 // Adds Dock attention-dot size and position preferences.
-constexpr std::uint32_t Version = 48;
+constexpr std::uint32_t Version = 49;
 constexpr std::size_t HeaderSize = 24;
 constexpr std::size_t MaximumQueuedBytes = MaximumFrameBytes * 2;
 constexpr std::size_t MaximumQueuedItems = 1024;

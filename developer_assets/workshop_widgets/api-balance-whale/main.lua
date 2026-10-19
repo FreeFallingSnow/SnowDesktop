@@ -387,7 +387,7 @@ local function settings()
         if provider then field.showWhen={key="provider",operator="equals",value=provider} end
         fields[#fields+1]=field
     end
-    add({key="interval",type="int",label=c.interval,default=300,min=60,max=86400})
+    add({key="interval",type="duration",label=c.interval,default=300,min=60,max=86400})
     add({key="lowBalance",type="float",label=c.threshold,default=10,min=0,max=1000000})
     add({key="lowQuota",type="int",label=c.quota_threshold,default=10,min=0,max=100})
     add({key="currency",type="select",label=c.currency,default="CNY",options={"CNY","USD"}})

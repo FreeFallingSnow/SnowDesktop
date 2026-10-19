@@ -32,6 +32,7 @@ inline WidgetSettingSourceField ConvertSetting(
     schema.group = source.group;
     schema.validationMessage = source.validationMessage;
     schema.rawType = source.type.empty() ? "text" : source.type;
+    schema.durationUnit = source.durationUnit;
     schema.searchKey = source.searchKey;
     schema.binding = source.binding;
     schema.access = source.access;
@@ -75,6 +76,15 @@ inline WidgetSettingSourceField ConvertSetting(
         result.defaultValue = MakeWidgetSettingBoolean(
             source.defaultValue == "1" || source.defaultValue == "true");
         break;
+    case WidgetSettingKind::Duration:
+    {
+        double number = source.minValue;
+        long long value = 0;
+        if (ParseFiniteSettingNumber(source.defaultValue, number))
+            (void)ReadWidgetSettingInteger(number, value);
+        result.defaultValue = MakeWidgetSettingInteger(value);
+        break;
+    }
     case WidgetSettingKind::Integer:
     case WidgetSettingKind::Color:
     {
@@ -115,6 +125,17 @@ struct EncodedOrdinaryWrite
     std::string value;
     bool typedMarker = false;
 };
+
+// A range-to-duration adoption keeps an existing numeric typed value readable.
+// The next ordinary write removes its old marker through the standard writer.
+inline bool DecodePreviousDurationStorage(const WidgetSettingFieldSchema& schema,
+    std::string_view encoded, InteractionValue& value, std::string& error)
+{
+    InteractionValue previous;
+    return schema.Kind() == WidgetSettingKind::Duration &&
+        DecodeTypedStorageValue(encoded, previous, error) &&
+        NormalizeWidgetSettingValue(schema, previous, value, error);
+}
 
 inline bool EncodeOrdinaryWrite(
     const WidgetSettingFieldSchema& schema,

@@ -14,6 +14,7 @@
 #include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
 #include <winrt/Microsoft.UI.Xaml.Controls.Primitives.h>
 #include <winrt/Microsoft.UI.Xaml.Input.h>
+#include <winrt/Microsoft.UI.Xaml.Media.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.Globalization.NumberFormatting.h>
 #include <winrt/Windows.Globalization.h>
@@ -208,6 +209,15 @@ struct SettingsCard
     muxc::StackPanel content{nullptr};
 };
 
+muxc::TextBox FindDurationInput(const mux::DependencyObject& root)
+{
+    if (const auto input = root.try_as<muxc::TextBox>(); input && input.Name() == L"InputBox") return input;
+    const int count = winrt::Microsoft::UI::Xaml::Media::VisualTreeHelper::GetChildrenCount(root);
+    for (int index = 0; index < count; ++index)
+        if (const auto input = FindDurationInput(winrt::Microsoft::UI::Xaml::Media::VisualTreeHelper::GetChild(root, index))) return input;
+    return nullptr;
+}
+
 struct MultiSelectOptionControl
 {
     std::string value;
@@ -242,6 +252,13 @@ struct WidgetFieldControl
     std::vector<MultiSelectOptionControl> multiOptions;
     muxc::CalendarDatePicker date{nullptr};
     muxc::TimePicker time{nullptr};
+    std::array<muxc::NumberBox, 3> durationParts{nullptr, nullptr, nullptr};
+    std::array<muxc::TextBox, 3> durationInputs{nullptr, nullptr, nullptr};
+    std::array<winrt::event_token, 3> durationTextTokens{};
+    std::array<winrt::event_token, 3> durationLoadedTokens{};
+    std::array<winrt::event_token, 3> durationKeyTokens{};
+    std::array<winrt::hstring, 3> durationObservedText;
+    bool durationDirty = false;
     muxc::AutoSuggestBox search{nullptr};
     muxc::ProgressRing searchProgress{nullptr};
     muxc::TextBlock searchError{nullptr};
@@ -731,6 +748,8 @@ struct WidgetSettingsPresenter::Impl
         followGlobal.HorizontalAlignment(mux::HorizontalAlignment::Right);
         followGlobalRow.Initialize(followGlobal);
         presenter_controls::StyleSettingsCard(followGlobalRow.root);
+        followGlobalRow.controlHost.MinHeight(40.0);
+        muxa::AutomationProperties::SetAutomationId(followGlobalRow.root, L"WidgetFollowGlobalRow");
         followGlobalRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         appearanceCard.content.Children().Append(followGlobalRow.root);
 
@@ -740,6 +759,8 @@ struct WidgetSettingsPresenter::Impl
         appearanceTheme.MaxWidth(520.0);
         appearanceThemeRow.Initialize(appearanceTheme);
         presenter_controls::StyleSettingsCard(appearanceThemeRow.root);
+        appearanceThemeRow.controlHost.MinHeight(40.0);
+        muxa::AutomationProperties::SetAutomationId(appearanceThemeRow.root, L"WidgetAppearanceThemeRow");
         appearanceCard.content.Children().Append(appearanceThemeRow.root);
 
         muxc::Button restoreBackground; restoreBackground.HorizontalAlignment(mux::HorizontalAlignment::Right);
@@ -758,6 +779,8 @@ struct WidgetSettingsPresenter::Impl
         });
         restoreBackgroundRow.Initialize(restoreBackground);
         presenter_controls::StyleSettingsCard(restoreBackgroundRow.root);
+        restoreBackgroundRow.controlHost.MinHeight(40.0);
+        muxa::AutomationProperties::SetAutomationId(restoreBackgroundRow.root, L"WidgetRestoreBackgroundRow");
         appearanceCard.content.Children().Append(restoreBackgroundRow.root);
         customAppearanceHost = muxc::StackPanel{};
         customAppearanceHost.Spacing(10.0);
@@ -930,6 +953,8 @@ struct WidgetSettingsPresenter::Impl
         });
         permissionsRow.Initialize(permissionsButton);
         presenter_controls::StyleSettingsSubrow(permissionsRow.root, true, 0.0);
+        permissionsRow.root.MinHeight(68.0);
+        muxa::AutomationProperties::SetAutomationId(permissionsRow.root, L"WidgetPermissionsRow");
         permissionsRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         relatedCard.content.Children().Append(permissionsRow.root);
         relatedCard.root.Visibility(mux::Visibility::Collapsed);
@@ -943,6 +968,10 @@ struct WidgetSettingsPresenter::Impl
         reset.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
         reset.MinHeight(32.0);
         resetRow.Initialize(reset);
+        resetCard.root.Padding({0.0});
+        presenter_controls::StyleSettingsSubrow(resetRow.root, true, 0.0);
+        resetRow.root.MinHeight(68.0);
+        muxa::AutomationProperties::SetAutomationId(resetRow.root, L"WidgetResetRow");
         resetRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         resetCard.content.Children().Append(resetRow.root);
         root.Children().Append(resetCard.root);
@@ -1809,6 +1838,65 @@ struct WidgetSettingsPresenter::Impl
         field.content.Children().Append(field.multiSelect);
     }
 
+    void BuildDurationEditor(WidgetFieldControl& field)
+    {
+        muxc::Grid parts;
+        parts.ColumnSpacing(8.0);
+        const int scale = wr::DurationSettingUnitSeconds(field.schema.durationUnit);
+        const int count = scale == 3600 ? 1 : scale == 60 ? 2 : 3;
+        field.idleCommitTimer = mux::DispatcherTimer{};
+        field.idleCommitTimer.Interval(std::chrono::milliseconds(650));
+        field.idleCommitTick = field.idleCommitTimer.Tick([this, &field](const auto&, const auto&) {
+            (void)CommitDuration(field);
+        });
+        for (int index = 0; index < count; ++index)
+        {
+            muxc::ColumnDefinition column;
+            column.Width(mux::GridLengthHelper::FromValueAndType(1, mux::GridUnitType::Star));
+            parts.ColumnDefinitions().Append(column);
+            auto& number = field.durationParts[index];
+            number = muxc::NumberBox{};
+            number.MinWidth(0.0);
+            number.Minimum(0);
+            number.Maximum(index == 0 ? 99 : 59);
+            number.SmallChange(1);
+            number.LargeChange(index == 0 ? 1 : 5);
+            number.SpinButtonPlacementMode(muxc::NumberBoxSpinButtonPlacementMode::Compact);
+            number.ValidationMode(muxc::NumberBoxValidationMode::Disabled);
+            winrt::Windows::Globalization::NumberFormatting::DecimalFormatter formatter;
+            formatter.FractionDigits(0);
+            formatter.IsGrouped(false);
+            number.NumberFormatter(formatter);
+            muxc::Grid::SetColumn(number, index);
+            parts.Children().Append(number);
+            field.durationLoadedTokens[index] = number.Loaded([this, &field, index](const auto&, const auto&) {
+                const auto input = FindDurationInput(field.durationParts[index]);
+                if (!input || input == field.durationInputs[index]) return;
+                if (field.durationInputs[index] && HasToken(field.durationTextTokens[index]))
+                    field.durationInputs[index].TextChanged(field.durationTextTokens[index]);
+                field.durationInputs[index] = input;
+                field.durationObservedText[index] = input.Text();
+                field.durationTextTokens[index] = input.TextChanged([this, &field, index](const auto&, const auto&) {
+                    if (field.synchronizing) return;
+                    const auto text = field.durationInputs[index].Text();
+                    if (text != field.durationObservedText[index])
+                    {
+                        field.durationObservedText[index] = text;
+                        field.durationDirty = true;
+                        field.draftError.clear();
+                        RefreshFieldValidation(field);
+                        field.idleCommitTimer.Stop();
+                        field.idleCommitTimer.Start();
+                    }
+                });
+            });
+            field.durationKeyTokens[index] = number.KeyDown([this, &field](const auto&, const muxi::KeyRoutedEventArgs& args) {
+                if (IsEnter(args)) (void)CommitDuration(field);
+            });
+        }
+        field.editorHost.Children().Append(parts);
+    }
+
     void BuildDateEditor(WidgetFieldControl& field)
     {
         field.date = muxc::CalendarDatePicker{};
@@ -1847,6 +1935,9 @@ struct WidgetSettingsPresenter::Impl
         field.time = muxc::TimePicker{};
         field.time.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         field.time.MinWidth(0.0);
+        // The native flyout button has its own 242-DIP minimum. The clear
+        // and reset actions leave 220 DIPs in the standard editor column.
+        field.time.Resources().Insert(winrt::box_value(L"TimePickerThemeMinWidth"), winrt::box_value(0.0));
         field.time.ClockIdentifier(L"24HourClock");
         field.time.MinuteIncrement(1);
         field.timeChanged = field.time.SelectedTimeChanged(
@@ -2109,6 +2200,9 @@ struct WidgetSettingsPresenter::Impl
             break;
         case wr::WidgetSettingKind::Date:
             BuildDateEditor(*field);
+            break;
+        case wr::WidgetSettingKind::Duration:
+            BuildDurationEditor(*field);
             break;
         case wr::WidgetSettingKind::Time:
             BuildTimeEditor(*field);
@@ -2679,6 +2773,19 @@ struct WidgetSettingsPresenter::Impl
                 field.date.Date(date ? winrt::box_value(*date).as<wf::IReference<wf::DateTime>>() : nullptr);
             field.synchronizing = false;
         }
+        if (field.durationParts[0] && !field.durationDirty)
+        {
+            const auto seconds = state.currentValue.integer * wr::DurationSettingUnitSeconds(field.schema.durationUnit);
+            const std::array<long long, 3> values{seconds / 3600, seconds / 60 % 60, seconds % 60};
+            field.synchronizing = true;
+            for (std::size_t index = 0; index < field.durationParts.size(); ++index)
+                if (const auto number = field.durationParts[index])
+                {
+                    if (number.Value() != static_cast<double>(values[index])) number.Value(static_cast<double>(values[index]));
+                    field.durationObservedText[index] = number.Text();
+                }
+            field.synchronizing = false;
+        }
         if (field.time)
         {
             field.synchronizing = true;
@@ -2825,6 +2932,7 @@ struct WidgetSettingsPresenter::Impl
             option.checkBox.IsEnabled(enabled);
         if (field.date) field.date.IsEnabled(enabled);
         if (field.time) field.time.IsEnabled(enabled);
+        for (const auto& number : field.durationParts) if (number) number.IsEnabled(enabled);
         if (field.search) field.search.IsEnabled(enabled);
         if (field.searchResults) field.searchResults.IsEnabled(enabled);
         if (field.restoreDefault) field.restoreDefault.IsEnabled(enabled);
@@ -3182,6 +3290,55 @@ struct WidgetSettingsPresenter::Impl
         return result;
     }
 
+    [[nodiscard]] wr::WidgetSettingMutationResult CommitDuration(WidgetFieldControl& field)
+    {
+        if (field.idleCommitTimer) field.idleCommitTimer.Stop();
+        if (!field.durationDirty) return UnchangedResult();
+        if (!CanFinalizeField(field)) return {wr::WidgetSettingMutationStatus::Disabled, generation, revision, "editorUnavailable", {}};
+        std::array<winrt::hstring, 3> draft;
+        std::array<long long, 3> values{};
+        bool valid = true;
+        for (std::size_t index = 0; index < field.durationParts.size(); ++index)
+            if (const auto number = field.durationParts[index])
+            {
+                draft[index] = field.durationInputs[index] ? field.durationInputs[index].Text() : number.Text();
+                valid = valid && wr::ReadWidgetSettingInteger(ToUtf8(draft[index]), values[index]) &&
+                    values[index] >= 0 && values[index] <= (index == 0 ? 99 : 59);
+            }
+        const int scale = wr::DurationSettingUnitSeconds(field.schema.durationUnit);
+        const auto seconds = valid ? values[0] * 3600 + values[1] * 60 + values[2] : 0;
+        const long long value = scale ? seconds / scale : 0;
+        valid = valid && scale && seconds % scale == 0 && wr::IsValidDurationSettingValue(
+            static_cast<double>(value), field.schema.durationUnit, field.schema.minimum, field.schema.maximum, field.schema.step);
+        if (!valid)
+        {
+            const auto message = L("app.widget.duration_picker.invalid", L"Enter a valid duration within the allowed range");
+            field.draftError = ToUtf8(winrt::hstring(message));
+            RefreshFieldValidation(field);
+            return {wr::WidgetSettingMutationStatus::InvalidValue, generation, revision, "invalidDuration", field.draftError};
+        }
+        const auto key = field.schema.key;
+        field.durationDirty = false;
+        const auto result = RunMutation(key, [this, key, value](const auto& guard) {
+            return service.SetOrdinary(guard, key, wr::MakeWidgetSettingInteger(value));
+        }, false);
+        if (!result.Succeeded())
+            if (const auto current = fieldsByKey.find(key); current != fieldsByKey.end())
+            {
+                auto& target = *current->second;
+                target.synchronizing = true;
+                for (std::size_t index = 0; index < target.durationParts.size(); ++index)
+                    if (target.durationParts[index])
+                    {
+                        target.durationParts[index].Text(draft[index]);
+                        target.durationObservedText[index] = draft[index];
+                    }
+                target.synchronizing = false;
+                target.durationDirty = true;
+            }
+        return result;
+    }
+
     [[nodiscard]] wr::WidgetSettingMutationResult CommitNumber(
         WidgetFieldControl& field)
     {
@@ -3266,6 +3423,12 @@ struct WidgetSettingsPresenter::Impl
     void RestoreFieldDefault(WidgetFieldControl& field)
     {
         if (!field.restoreDefault || !CanMutateField(field)) return;
+        if (field.durationParts[0])
+        {
+            field.idleCommitTimer.Stop();
+            field.durationDirty = false;
+            field.draftError.clear();
+        }
         const std::string key = field.schema.key;
         RunMutation(key, [this, key](const auto& guard) {
             return service.ResetField(guard, key);
@@ -3539,6 +3702,15 @@ struct WidgetSettingsPresenter::Impl
             muxa::AutomationProperties::SetName(field.date, name);
         if (field.time)
             muxa::AutomationProperties::SetName(field.time, name);
+        const std::array<std::wstring, 3> units{
+            L("app.widget.time_picker.hour", L"Hour"), L("app.widget.time_picker.minute", L"Minute"),
+            L("app.widget.duration_picker.second", L"Second")};
+        for (std::size_t index = 0; index < field.durationParts.size(); ++index)
+            if (const auto number = field.durationParts[index])
+            {
+                number.Header(winrt::box_value(units[index]));
+                muxa::AutomationProperties::SetName(number, winrt::hstring{std::wstring{name} + L" " + units[index]});
+            }
     }
 
     void RefreshLocalizedText()
@@ -3703,7 +3875,7 @@ struct WidgetSettingsPresenter::Impl
         std::vector<std::string> keys;
         keys.reserve(fields.size());
         for (const auto& field : fields)
-            if (field->textDirty || field->passwordDirty)
+            if (field->textDirty || field->passwordDirty || field->durationDirty)
                 keys.push_back(field->schema.key);
         if (closed || !active)
         {
@@ -3735,6 +3907,13 @@ struct WidgetSettingsPresenter::Impl
                 return result;
             if (result.Changed())
                 aggregate = result;
+            const auto duration = fieldsByKey.find(key);
+            if (duration != fieldsByKey.end())
+            {
+                result = CommitDuration(*duration->second);
+                if (!result.Succeeded()) return result;
+                if (result.Changed()) aggregate = result;
+            }
         }
         return aggregate;
     }
@@ -3869,6 +4048,14 @@ struct WidgetSettingsPresenter::Impl
                 field.date.DateChanged(field.dateChanged);
             if (field.time && HasToken(field.timeChanged))
                 field.time.SelectedTimeChanged(field.timeChanged);
+            for (std::size_t index = 0; index < field.durationParts.size(); ++index)
+                if (const auto number = field.durationParts[index])
+                {
+                    if (field.durationInputs[index] && HasToken(field.durationTextTokens[index]))
+                        field.durationInputs[index].TextChanged(field.durationTextTokens[index]);
+                    if (HasToken(field.durationLoadedTokens[index])) number.Loaded(field.durationLoadedTokens[index]);
+                    if (HasToken(field.durationKeyTokens[index])) number.KeyDown(field.durationKeyTokens[index]);
+                }
             if (field.search && HasToken(field.searchTextChanged))
                 field.search.TextChanged(field.searchTextChanged);
             if (field.search && HasToken(field.searchSubmitted))
@@ -3963,6 +4150,7 @@ struct WidgetSettingsPresenter::Impl
             if (field.multiSelect) return field.multiSelect;
             if (field.date) return field.date;
             if (field.time) return field.time;
+            if (field.durationParts[0]) return field.durationParts[0];
             if (field.search) return field.search;
             if (field.choose) return field.choose;
             if (field.clear) return field.clear;

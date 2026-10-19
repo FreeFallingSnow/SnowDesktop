@@ -83,6 +83,12 @@ void TestPermissionAndRelocatedRoutesCodec()
 
 void TestCodec()
 {
+    snowdesktop::widget_runtime::WidgetSettingFieldSchema duration;
+    duration.key = "focus"; duration.rawType = "duration"; duration.durationUnit = "minutes";
+    duration.minimum = 1; duration.maximum = 120; duration.step = 1;
+    const auto durationRestored = Unpack<snowdesktop::widget_runtime::WidgetSettingFieldSchema>(Pack(duration));
+    Check(durationRestored == duration && durationRestored.durationUnit == "minutes",
+        "duration units and numeric bounds survive the isolated settings process boundary");
     for (const auto focus : {"dock.attentionDotSize", "dock.attentionDotOffset"})
     {
         const auto requested = snowdesktop::SettingsRoute::ForPage(snowdesktop::SettingsPage::Dock, focus);

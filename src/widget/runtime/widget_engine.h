@@ -119,6 +119,7 @@ struct LuaWidgetManifest
         std::string validationMessage;
         std::string dependsOn;
         std::string type;
+        std::string durationUnit = "seconds";
         std::string defaultValue;
         std::string searchKey;
         std::string binding;
