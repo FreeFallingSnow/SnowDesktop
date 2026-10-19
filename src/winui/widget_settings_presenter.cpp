@@ -1733,9 +1733,21 @@ struct WidgetSettingsPresenter::Impl
 
     void BuildSearchEditor(WidgetFieldControl& field)
     {
+        muxc::Grid searchRow;
+        searchRow.ColumnSpacing(8.0);
+        muxc::ColumnDefinition searchColumn;
+        searchColumn.Width(mux::GridLengthHelper::FromValueAndType(
+            1.0, mux::GridUnitType::Star));
+        searchRow.ColumnDefinitions().Append(searchColumn);
         field.search = muxc::AutoSuggestBox{};
         field.search.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        field.search.MaxWidth(620.0);
+        field.search.MinWidth(0.0);
+        field.search.VerticalAlignment(mux::VerticalAlignment::Center);
+        searchRow.Children().Append(field.search);
+        field.editorHost.Children().Append(searchRow);
+        if (field.schema.Kind() == wr::WidgetSettingKind::AppReference)
+            BuildOpaqueActions(field, true, true, searchRow);
+
         field.searchProgress = muxc::ProgressRing{};
         field.searchProgress.Width(22.0);
         field.searchProgress.Height(22.0);
@@ -1775,31 +1787,46 @@ struct WidgetSettingsPresenter::Impl
                         CommitSearchResult(
                             field, static_cast<std::size_t>(index));
                 });
-        field.editorHost.Children().Append(field.search);
         field.editorHost.Children().Append(field.searchProgress);
         field.editorHost.Children().Append(field.searchError);
         field.editorHost.Children().Append(field.searchResults);
-
-        if (field.schema.Kind() == wr::WidgetSettingKind::AppReference)
-            BuildOpaqueActions(field, true, true);
     }
 
     void BuildOpaqueActions(
         WidgetFieldControl& field,
         bool allowChoose,
-        bool allowClear)
+        bool allowClear,
+        muxc::Grid inlineRow = nullptr)
     {
-        field.opaqueValue = muxc::TextBlock{};
-        field.opaqueValue.TextWrapping(mux::TextWrapping::Wrap);
-        field.editorHost.Children().Append(field.opaqueValue);
+        // Search references already show the selected name in the input.
+        // Other opaque references still need a separate value summary.
+        if (!inlineRow)
+        {
+            field.opaqueValue = muxc::TextBlock{};
+            field.opaqueValue.TextWrapping(mux::TextWrapping::Wrap);
+            field.editorHost.Children().Append(field.opaqueValue);
+        }
         field.opaqueActions = muxc::StackPanel{};
         field.opaqueActions.Orientation(muxc::Orientation::Horizontal);
         field.opaqueActions.Spacing(8.0);
         field.opaqueActions.HorizontalAlignment(
             mux::HorizontalAlignment::Right);
+        field.opaqueActions.VerticalAlignment(mux::VerticalAlignment::Center);
+        const auto configureInlineAction = [](const muxc::Button& button,
+                                               muxc::Symbol symbol) {
+            muxc::SymbolIcon icon{symbol};
+            button.Content(icon);
+            button.Width(32.0);
+            button.Height(32.0);
+            button.MinWidth(32.0);
+            button.MinHeight(32.0);
+            button.Padding({0.0, 0.0, 0.0, 0.0});
+        };
         if (allowChoose)
         {
             field.choose = muxc::Button{};
+            if (inlineRow)
+                configureInlineAction(field.choose, muxc::Symbol::OpenFile);
             field.chooseClicked = field.choose.Click(
                 [this, &field](const auto&, const auto&) {
                     ChooseOpaque(field);
@@ -1809,13 +1836,24 @@ struct WidgetSettingsPresenter::Impl
         if (allowClear)
         {
             field.clear = muxc::Button{};
+            if (inlineRow)
+                configureInlineAction(field.clear, muxc::Symbol::Clear);
             field.clearClicked = field.clear.Click(
                 [this, &field](const auto&, const auto&) {
                     ClearOpaque(field);
                 });
             field.opaqueActions.Children().Append(field.clear);
         }
-        field.editorHost.Children().Append(field.opaqueActions);
+        if (inlineRow)
+        {
+            muxc::ColumnDefinition actionsColumn;
+            actionsColumn.Width(mux::GridLengthHelper::Auto());
+            inlineRow.ColumnDefinitions().Append(actionsColumn);
+            muxc::Grid::SetColumn(field.opaqueActions, 1);
+            inlineRow.Children().Append(field.opaqueActions);
+        }
+        else
+            field.editorHost.Children().Append(field.opaqueActions);
     }
 
     void BuildReferenceEditor(WidgetFieldControl& field)
@@ -2334,7 +2372,8 @@ struct WidgetSettingsPresenter::Impl
 
     void PatchField(
         WidgetFieldControl& field,
-        const wr::WidgetSettingFieldState& state)
+        const wr::WidgetSettingFieldState& state,
+        bool updateFocusedSearch = false)
     {
         field.visible = state.visible;
         field.enabled = state.enabled;
@@ -2422,12 +2461,15 @@ struct WidgetSettingsPresenter::Impl
                 : nullptr);
             field.synchronizing = false;
         }
-        if (field.search &&
-            field.search.FocusState() == mux::FocusState::Unfocused)
+        if (field.search && (updateFocusedSearch ||
+            field.search.FocusState() == mux::FocusState::Unfocused))
         {
             field.synchronizing = true;
             if (state.schema.Kind() == wr::WidgetSettingKind::AppReference)
-                field.search.Text(ToText(state.opaque.displayLabel));
+                field.search.Text(state.opaque.configured &&
+                        state.opaque.displayLabel.empty()
+                    ? winrt::hstring(L("app.settings.widget.configured", L"Configured"))
+                    : ToText(state.opaque.displayLabel));
             else
                 field.search.Text(ToText(state.searchQuery));
             field.synchronizing = false;
@@ -3040,7 +3082,22 @@ struct WidgetSettingsPresenter::Impl
         if (result.Succeeded())
             if (const auto current = fieldsByKey.find(key);
                 current != fieldsByKey.end() && current->second->search)
+            {
                 ClearSearch(*current->second);
+                // Enter commits while the input still has focus. Replace the
+                // query with the selected name now that it is the sole value display.
+                if (current->second->schema.Kind() ==
+                    wr::WidgetSettingKind::AppReference)
+                {
+                    if (const auto snapshot = service.Snapshot(widgetId))
+                        for (const auto& state : snapshot->fields)
+                            if (state.schema.key == key)
+                            {
+                                PatchField(*current->second, state, true);
+                                break;
+                            }
+                }
+            }
     }
 
     void ClearSearch(WidgetFieldControl& field)
@@ -3151,18 +3208,25 @@ struct WidgetSettingsPresenter::Impl
         }
         if (field.choose)
         {
-            field.choose.Content(winrt::box_value(
-                L("app.settings.widget.choose", L"Choose or replace")));
+            const auto chooseText =
+                L("app.settings.widget.choose", L"Choose or replace");
+            if (!field.search)
+                field.choose.Content(winrt::box_value(chooseText));
+            muxc::ToolTipService::SetToolTip(
+                field.choose, winrt::box_value(chooseText));
             muxa::AutomationProperties::SetName(
-                field.choose,
-                L("app.settings.widget.choose", L"Choose or replace"));
+                field.choose, chooseText);
         }
         if (field.clear)
         {
-            field.clear.Content(winrt::box_value(
-                L("app.settings.widget.clear", L"Clear")));
+            const auto clearText =
+                L("app.settings.widget.clear", L"Clear");
+            if (!field.search)
+                field.clear.Content(winrt::box_value(clearText));
+            muxc::ToolTipService::SetToolTip(
+                field.clear, winrt::box_value(clearText));
             muxa::AutomationProperties::SetName(field.clear,
-                L("app.settings.widget.clear", L"Clear"));
+                clearText);
         }
         const auto name = ToText(field.schema.label);
         if (field.restoreDefault)

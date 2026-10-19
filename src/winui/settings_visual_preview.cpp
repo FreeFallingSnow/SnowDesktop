@@ -176,6 +176,12 @@ public:
         add("mode", "select", "显示方式", "Display mode", mode); // l10n-allow: isolated bilingual preview fixture, not production UI text.
         add("count", "int", "显示数量", "Item count", count); // l10n-allow: isolated bilingual preview fixture, not production UI text.
         value.fields.back().schema.group = "details";
+        add("launcher", "appReference", "搜索并选择启动项", "Search and select a launcher", {}); // l10n-allow: isolated bilingual preview fixture, not production UI text.
+        auto& launcher = value.fields.back();
+        launcher.schema.group.clear();
+        launcher.opaque.configured = true;
+        launcher.opaque.canChoose = launcher.opaque.canClear = true;
+        launcher.opaque.displayLabel = english ? "NetEase Cloud Music" : "网易云音乐"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
         wr::WidgetSettingPresetSchema preset;
         preset.id = "standard";
         preset.label = english ? "Standard" : "标准"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
