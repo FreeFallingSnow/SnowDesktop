@@ -1,12 +1,10 @@
 #include "pch.h"
 
 #include "winui_runtime.h"
-#include "settings/settings_window_restore_presentation.h"
 
 #include "App.xaml.h"
 
 #include <Microsoft.UI.Dispatching.Interop.h>
-#include <winrt/Microsoft.UI.Composition.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -80,71 +78,6 @@ struct WinUiRuntime::Impl
     winrt::com_ptr<winrt::SnowDesktop::implementation::App> application;
     muxh::DesktopWindowXamlSource xamlSource{nullptr};
     winrt::event_token takeFocusRequestedToken{};
-    std::shared_ptr<settings_restore_presentation::PendingFrame> restoreFrame;
-    muxm::CompositionTarget::Rendering_revoker restoreRendering;
-    muxm::CompositionTarget::Rendered_revoker restoreRendered;
-
-    void CancelRestoreFrame() noexcept
-    {
-        restoreRendering.revoke();
-        restoreRendered.revoke();
-        restoreFrame.reset();
-    }
-
-    void AwaitRestoreFrame()
-    {
-        if (!restoreFrame || !restoreFrame->IsCurrent() || !xamlSource)
-            return;
-        const std::weak_ptr<settings_restore_presentation::PendingFrame> weak = restoreFrame;
-        // Rendered observes completed work but does not schedule another frame.
-        // Restoring unchanged bounds can leave an idle Island with no render
-        // work, so briefly request frame ticks until that first render occurs.
-        restoreRendering = muxm::CompositionTarget::Rendering(winrt::auto_revoke,
-            [](const auto&, const auto&) {});
-        restoreRendered = muxm::CompositionTarget::Rendered(winrt::auto_revoke,
-            [this, weak](const auto&, const auto&) {
-                const auto frame = weak.lock();
-                if (!frame || !frame->IsCurrent() || !parentWindow ||
-                    IsIconic(parentWindow) || !IsWindowVisible(parentWindow))
-                    return;
-                try
-                {
-                    const auto compositor = muxh::ElementCompositionPreview::
-                        GetElementVisual(xamlSource.Content()).Compositor();
-                    const auto dispatcher = dispatcherQueue;
-                    restoreRendering.revoke();
-                    restoreRendered.revoke();
-                    // Rendered runs after XAML has produced its frame. Submit
-                    // that compositor's work on the next queue turn; the Dock's
-                    // separate DComp barrier cannot acknowledge this content.
-                    (void)dispatcher.TryEnqueue([weak, compositor, dispatcher] {
-                        const auto current = weak.lock();
-                        if (!current || !current->IsCurrent()) return;
-                        try
-                        {
-                            compositor.RequestCommitAsync().Completed(
-                                [weak, dispatcher](const auto& action,
-                                    winrt::Windows::Foundation::AsyncStatus status) {
-                                    if (status != winrt::Windows::Foundation::AsyncStatus::Completed)
-                                        return;
-                                    try { action.GetResults(); }
-                                    catch (...) { return; }
-                                    (void)dispatcher.TryEnqueue([weak] {
-                                        if (const auto completed = weak.lock())
-                                            completed->Complete();
-                                    });
-                                });
-                        }
-                        catch (...) { /* Keep pending for the bounded Dock fallback. */ }
-                    });
-                }
-                catch (...)
-                {
-                    restoreRendering.revoke();
-                    restoreRendered.revoke();
-                }
-            });
-    }
 
     [[nodiscard]] bool OnOwnerThread() const noexcept
     {
@@ -377,7 +310,6 @@ void WinUiRuntime::Detach() noexcept
     if (!impl_->OnOwnerThread())
         return;
 
-    impl_->CancelRestoreFrame();
     // Close() may dispatch window/focus messages. Remove the shared reference
     // before invoking platform teardown so reentrant Detach is a no-op.
     auto source = std::exchange(impl_->xamlSource, nullptr);
@@ -596,13 +528,6 @@ void WinUiRuntime::HandleWindowMessage(
         if (wParam == SIZE_MINIMIZED)
         {
             impl_->minimized = true;
-            impl_->CancelRestoreFrame();
-            try
-            {
-                impl_->restoreFrame = std::make_shared<
-                    settings_restore_presentation::PendingFrame>(impl_->parentWindow);
-            }
-            catch (...) {}
             break;
         }
         ResizeToClient();
@@ -617,7 +542,6 @@ void WinUiRuntime::HandleWindowMessage(
                 source.SiteBridge().Show();
                 if (const auto content = source.Content())
                 {
-                    impl_->AwaitRestoreFrame();
                     content.InvalidateMeasure();
                     content.InvalidateArrange();
                     content.UpdateLayout();
@@ -628,9 +552,6 @@ void WinUiRuntime::HandleWindowMessage(
             }
             catch (...) {}
         }
-        break;
-    case WM_SHOWWINDOW:
-        if (!wParam) impl_->CancelRestoreFrame();
         break;
     case WM_DPICHANGED:
         ResizeToClient();

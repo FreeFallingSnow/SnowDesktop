@@ -87,6 +87,12 @@ int main(int argc, char** argv)
         // recovery must never constrain it against the previous monitor.
         {"src/winui/settings_window_host.cpp", "case WM_DPICHANGED:", "case WM_SETTINGCHANGE:",
          {"settings_window_placement::Constrain", "SettingsWindowWorkArea("}},
+        // The settings window owns its retained source image. Dock animation
+        // must not depend on a settings-specific rendering protocol.
+        {"src/dock/dock_window_transition.cpp", "", "",
+         {"settings_window_restore_presentation.h", "settings_restore_presentation::"}},
+        {"src/winui/settings_window_host.cpp", "[[nodiscard]] bool CreateHostWindow()", "void ReleaseView()",
+         {"WS_EX_NOREDIRECTIONBITMAP"}},
     });
     passed = CheckWindowPlacement() && passed;
     using namespace snowdesktop::winui;

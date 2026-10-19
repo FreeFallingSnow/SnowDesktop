@@ -181,7 +181,6 @@ private:
     static constexpr ULONGLONG
         kMinimumReverseDurationMs = 80;
     static constexpr ULONGLONG kRestoreCleanupTimeoutMs = 1000;
-    static constexpr ULONGLONG kRestoreContentWaitMs = 160;
     static constexpr ULONGLONG kMinimizeCleanupTimeoutMs = 1000;
     static constexpr ULONGLONG
         kRestorePresentationDelayMs = 16;
@@ -312,7 +311,6 @@ private:
     double animationDurationMs_ =
         static_cast<double>(kAnimationDurationMs);
     double restoreCleanupDeadlineMs_ = 0.0;
-    double restoreContentWaitDeadlineMs_ = 0.0;
     double restoreVisibleTimeMs_ = 0.0;
     double restoreFadeStartTimeMs_ = 0.0;
     BYTE animationFromOpacity_ = 255;

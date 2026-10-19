@@ -7,7 +7,6 @@
 #include "dock_window_source_cloak.h"
 #include "platform/shell_overlay_window.h"
 #include "settings/animation_settings.h"
-#include "settings/settings_window_restore_presentation.h"
 
 #include <algorithm>
 #include <array>
@@ -2286,9 +2285,7 @@ void DockWindowTransition::RequestRestoreForAnimation()
     restoreRequested_ = true;
     preparingRestore_ = true;
     restoreGeometryStableTimeMs_ = 0.0;
-    const double now = MonotonicTimeMilliseconds();
-    restoreCleanupDeadlineMs_ = now + kRestoreCleanupTimeoutMs;
-    restoreContentWaitDeadlineMs_ = now + kRestoreContentWaitMs;
+    restoreCleanupDeadlineMs_ = MonotonicTimeMilliseconds() + kRestoreCleanupTimeoutMs;
     // Request the native restore while the source is cloaked and our first
     // (collapsed, transparent) frame is already committed. This gives native
     // geometry and application painting the whole Genie timeline to settle.
@@ -2341,13 +2338,6 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
         if (diagnosticCallback_) diagnosticCallback_(L"Dock restore prepared: full-geometry before animation");
         return true;
     }
-    // Content readiness is best-effort. A hidden/idle XAML producer may not
-    // acknowledge a frame; keep the selected animation with its available live
-    // image after a short budget rather than switching to an unanimated show.
-    const bool contentPending =
-        snowdesktop::settings_restore_presentation::IsPending(sourceWindow_);
-    if (contentPending && now < restoreContentWaitDeadlineMs_)
-        return false;
     RECT frame{};
     if (!RestoreGeometryReady(frame))
     {
@@ -2360,8 +2350,6 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
     }
     else if (now - restoreGeometryStableTimeMs_ >= kRestorePresentationDelayMs)
     {
-        if (contentPending && diagnosticCallback_)
-            diagnosticCallback_(L"Dock restore content wait expired: playing selected animation with available image");
         // Resolve both target geometry and source crop from the actual restored
         // window. WINDOWPLACEMENT and a minimized HWND cannot supply this crop.
         windowRect_ = frame;
@@ -2597,7 +2585,6 @@ void DockWindowTransition::Finish()
         static_cast<double>(
             kAnimationDurationMs);
     restoreCleanupDeadlineMs_ = 0.0;
-    restoreContentWaitDeadlineMs_ = 0.0;
     restoreVisibleTimeMs_ = 0.0;
     restoreFadeStartTimeMs_ = 0.0;
     animationFromOpacity_ = 255;

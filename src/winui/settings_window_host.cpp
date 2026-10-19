@@ -3413,15 +3413,15 @@ struct SettingsWindowHost::Impl
         RECT bounds{0, 0,
             MulDiv(kDefaultClientWidth, static_cast<int>(dpi), 96),
             MulDiv(kDefaultClientHeight, static_cast<int>(dpi), 96)};
-        constexpr DWORD extendedStyle = WS_EX_APPWINDOW | WS_EX_NOREDIRECTIONBITMAP;
+        constexpr DWORD extendedStyle = WS_EX_APPWINDOW;
         AdjustWindowRectExForDpi(&bounds, WS_OVERLAPPEDWINDOW, FALSE,
             extendedStyle, dpi);
         const auto placement = settings_window_placement::Center(
             {bounds.right - bounds.left, bounds.bottom - bounds.top}, work);
 
-        // The Island and system backdrop render through composition; keeping
-        // an additional GDI redirection bitmap can expose an empty white frame
-        // while the composition tree resumes after minimization.
+        // Keep normal top-level DWM redirection for the whole-window image
+        // retained across minimization. The Island continues to render its own
+        // composition content inside this source window.
         window = CreateWindowExW(extendedStyle,
             kSettingsWindowClassName, options.windowTitle.c_str(),
             WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
