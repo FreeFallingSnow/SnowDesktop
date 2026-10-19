@@ -547,6 +547,17 @@ c::Button WidgetPreviewAction(const x::DependencyObject& field, const char* labe
     return found;
 }
 
+c::Button WidgetPreviewReset(const x::DependencyObject& field)
+{
+    c::Button reset{nullptr};
+    Walk(field, [&](const x::DependencyObject& node) {
+        if (const auto button = node.try_as<c::Button>())
+            if (const auto icon = button.Content().try_as<c::FontIcon>(); icon && icon.Glyph() == L"\xE777") reset = button;
+    });
+    if (!reset) throw std::runtime_error("widget reset action is missing");
+    return reset;
+}
+
 void InspectWidgetControls(const x::FrameworkElement& root,
     const PreviewWidgetService& service, const std::filesystem::path& output)
 {
@@ -719,6 +730,13 @@ void ExerciseWidgetControls(const x::FrameworkElement& root,
     WidgetPreviewControl<c::TextBox>(durationParts[1]).Text(L"2");
     PumpUntil([&] { return service.Field("duration")->currentValue.integer == 90127; });
     check(true, "duration-corrected-draft-autosave");
+    InvokePreview(WidgetPreviewReset(field("duration"))); settle();
+    WidgetPreviewControl<c::TextBox>(durationParts[1]).Text(L"60");
+    const auto resetDraftUntil = GetTickCount64() + 800;
+    PumpUntil([&] { return GetTickCount64() >= resetDraftUntil; });
+    InvokePreview(WidgetPreviewReset(field("duration"))); settle();
+    check(service.Field("duration")->currentValue.integer == 90061 &&
+        WidgetPreviewControl<c::TextBox>(durationParts[1]).Text() == L"1", "duration-reset-discards-invalid-same-value-draft");
     std::vector<c::NumberBox> focusParts;
     Walk(field("focusDuration"), [&](const x::DependencyObject& node) {
         if (const auto number = node.try_as<c::NumberBox>()) focusParts.push_back(number);

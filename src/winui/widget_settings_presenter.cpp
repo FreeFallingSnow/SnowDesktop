@@ -1339,7 +1339,11 @@ struct WidgetSettingsPresenter::Impl
                     RestoreFieldDefault(field);
                 });
         }
-        field.row.Initialize(field.editorRow);
+        // TimePicker's template needs 242 DIPs before the clear/reset actions.
+        const double editorWidth = field.schema.Kind() == wr::WidgetSettingKind::Time
+            ? 242.0 + 2 * (presenter_controls::kSettingResetWidth + presenter_controls::kSettingControlGap)
+            : presenter_controls::kSettingControlWidth;
+        field.row.Initialize(field.editorRow, editorWidth);
         field.row.SetCompactEditor(compactEditor);
         if (compactEditor)
             field.row.SetControlAlignment(mux::HorizontalAlignment::Right);
@@ -1934,10 +1938,7 @@ struct WidgetSettingsPresenter::Impl
     {
         field.time = muxc::TimePicker{};
         field.time.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
-        field.time.MinWidth(0.0);
-        // The native flyout button has its own 242-DIP minimum. The clear
-        // and reset actions leave 220 DIPs in the standard editor column.
-        field.time.Resources().Insert(winrt::box_value(L"TimePickerThemeMinWidth"), winrt::box_value(0.0));
+        field.time.MinWidth(242.0);
         field.time.ClockIdentifier(L"24HourClock");
         field.time.MinuteIncrement(1);
         field.timeChanged = field.time.SelectedTimeChanged(
@@ -2782,7 +2783,11 @@ struct WidgetSettingsPresenter::Impl
                 if (const auto number = field.durationParts[index])
                 {
                     if (number.Value() != static_cast<double>(values[index])) number.Value(static_cast<double>(values[index]));
-                    field.durationObservedText[index] = number.Text();
+                    const auto text = field.durationInputs[index] ? field.durationInputs[index].Text() : number.Text();
+                    long long displayed = 0;
+                    if (!wr::ReadWidgetSettingInteger(ToUtf8(text), displayed) || displayed != values[index])
+                        number.Text(ToText(std::to_string(values[index])));
+                    field.durationObservedText[index] = field.durationInputs[index] ? field.durationInputs[index].Text() : number.Text();
                 }
             field.synchronizing = false;
         }
