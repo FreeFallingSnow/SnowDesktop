@@ -502,6 +502,7 @@ void DesktopApp::QueueIconTask(IconLoadTask value)
                     {
                         result->shortcutTarget = snowdesktop::category_collection_rules::ReadShellLinkTarget(shellLink.Get());
                         result->isApplicationShortcut =
+                            result->shortcutTarget.application ||
                             shellCalls::Call(L"Classify.ApplicationTarget", [&] {
                                 return IsApplicationsShellLinkTarget(shellLink.Get(), path);
                             });

@@ -6,6 +6,7 @@
 #include "drag_drop/empty_group_drop_rules.h"
 #include "icons/shortcut_icon_resource.h"
 #include "icons/large_icon_steam.h"
+#include "shell/shortcut_category_pidl_cases.h"
 
 #include <windows.h>
 #include <objbase.h>
@@ -146,6 +147,7 @@ void CheckShortcutCategoryTargets()
     const auto broken = collection::ReadShortcutTarget((temporary.Path() / L"missing.lnk").wstring());
     Check(!collection::IsProgramItem(L".LNK", false, {L".LNK:APP"}, broken),
         "an unresolved link is not silently treated as a program");
+    shortcut_category_pidl_cases::Run(temporary.Path(), Check);
     CoUninitialize();
 }
 #include "local_shortcut_icon_cases.h"

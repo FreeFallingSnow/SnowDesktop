@@ -4,6 +4,7 @@
 
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "shell/shortcut_application_rules.h"
+#include "shell/shortcut_category_target.h"
 #include "quick_navigation_helpers.h"
 #include "navigation/quick_navigation_rules.h"
 
@@ -752,7 +753,9 @@ bool DesktopApp::IsApplicationsShellLinkTarget(
 
     return shortcutRules::IsApplicationsShellLinkTarget(
         resolvedPath, arguments, appUserModelId,
-        targetParsingPath, applicationsPidlTarget);
+        targetParsingPath, applicationsPidlTarget) ||
+        (!resolvedPath[0] && snowdesktop::category_collection_rules::
+            HasApplicationsShellLinkPidlTarget(shellLink));
 }
 
 bool DesktopApp::CreateDesktopShortcutForShellLink(const std::wstring& displayName,
