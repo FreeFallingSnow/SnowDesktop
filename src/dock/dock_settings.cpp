@@ -13,6 +13,7 @@
 #include "taskbar_hook/taskbar_hook_protocol.h"
 #include "taskbar_hook/taskbar_native.h"
 #include "taskbar_hook/taskbar_autohide_rules.h"
+#include "taskbar_minimize_input.h"
 #include "taskbar_hook/taskbar_connection.h"
 #include "taskbar_hook/taskbar_failure_feedback.h"
 #include "diagnostics/diagnostic_log.h"
@@ -620,6 +621,25 @@ public:
         MemoryBarrier();
         InterlockedIncrement(&state_->generation); // even: snapshot complete
 
+        const bool watchMinimizeInput = hookEnabled && std::any_of(targets.begin(), targets.end(), [](const auto& target) {
+            return target.protectAutoHideActivation;
+        });
+        if (!watchMinimizeInput)
+        {
+            minimizeInput_.Stop();
+            minimizeInputLastAttempt_ = 0;
+        }
+        else if (!minimizeInput_.Running() && (!minimizeInputLastAttempt_ ||
+            GetTickCount64() - minimizeInputLastAttempt_ >= 3000))
+        {
+            minimizeInputLastAttempt_ = GetTickCount64();
+            const DWORD error = minimizeInput_.Start();
+            wchar_t diagnostic[160]{};
+            swprintf_s(diagnostic, L"[TaskbarMinimizeInput] dedicated observer ready=%d error=%lu",
+                error == ERROR_SUCCESS, error);
+            WriteDiagnosticLogEntry(diagnostic, error ? DiagnosticLogLevel::Warning : DiagnosticLogLevel::Info);
+        }
+
         const UINT applyMessage = RegisterWindowMessageW(
             snowdesktop::taskbar_hook::kApplyMessageName);
         std::vector<HWND> taskbars = FindSystemTaskbarWindows();
@@ -733,34 +753,39 @@ public:
             if (!source || !ReadSharedSnapshot(state_, snapshot) ||
                 snapshot.ownerProcessId != GetCurrentProcessId() || !HasMinimizeProtection(snapshot)) return false;
             const ULONGLONG now = GetTickCount64();
-            LASTINPUTINFO lastInput{sizeof(lastInput)};
-            bool taskbarInput = false;
-            if (GetLastInputInfo(&lastInput))
-                for (LONG i = 0; i < snapshot.targetCount; ++i)
-                {
-                    const HWND taskbar = reinterpret_cast<HWND>(snapshot.targets[i].taskbar);
-                    const DWORD recorded = HandleToULong(GetPropW(taskbar, native::kMinimizeInputTickProperty));
-                    taskbarInput |= IsRecentTaskbarInput(recorded, lastInput.dwTime, static_cast<DWORD>(now));
-                }
-            if (minimizeExemptions_.Exempts(reinterpret_cast<std::uintptr_t>(source), observed, taskbarInput, now))
-            {
-                WriteDiagnosticLogEntry(L"[TaskbarMinimizeProtection] taskbar-origin minimize exempted");
-                return true;
-            }
-            // The out-of-context WinEvent follows the synchronous pre-minimize
-            // hook. It must not restart the cloak after the first request ended.
-            if (snapshot.minimizeSource == reinterpret_cast<std::uintptr_t>(source) &&
-                (now - snapshot.minimizeStarted < 250 ||
-                    (IsIconic(source) && now - snapshot.minimizeStarted < 1500))) return true;
-            InterlockedIncrement(&state_->generation);
-            state_->minimizeSequence = snapshot.minimizeSequence == LONG_MAX ? 1 : snapshot.minimizeSequence + 1;
-            state_->minimizeStarted = now;
-            state_->minimizeSource = reinterpret_cast<std::uintptr_t>(source);
-            MemoryBarrier();
-            InterlockedIncrement(&state_->generation);
             for (LONG i = 0; i < snapshot.targetCount; ++i)
                 if (snapshot.targets[i].protectAutoHideActivation)
                     taskbars.push_back(reinterpret_cast<HWND>(snapshot.targets[i].taskbar));
+            const auto input = minimizeInput_.Read();
+            const HWND recipient = input.Recent(static_cast<DWORD>(now)) ? minimizeInput_.Recipient(input) : nullptr;
+            const bool taskbarInput = snowdesktop::dock::TaskbarMinimizeInput::BelongsToTaskbar(recipient, taskbars);
+            const bool exempt = minimizeExemptions_.Exempts(reinterpret_cast<std::uintptr_t>(source), observed, taskbarInput, now);
+            wchar_t diagnostic[320]{};
+            swprintf_s(diagnostic,
+                L"[TaskbarMinimizeProtection] decision=%s source=%p observed=%d inputReady=%d inputKind=%lu inputTick=%lu inputAge=%lu inputWindow=%p click=%ld,%ld",
+                exempt ? L"exempt" : L"protect", source, observed, minimizeInput_.Running(),
+                static_cast<DWORD>(input.kind), input.time, static_cast<DWORD>(now) - input.time, recipient,
+                input.point.x, input.point.y);
+            WriteDiagnosticLogEntry(diagnostic);
+            if (exempt)
+            {
+                // Also release any earlier request: a missing Explorer input
+                // notification must not keep another screen cloaked.
+                InterlockedExchange(&state_->minimizeCancelled, snapshot.minimizeSequence);
+            }
+            else
+            {
+                // The out-of-context WinEvent follows the synchronous request.
+                if (snapshot.minimizeSource == reinterpret_cast<std::uintptr_t>(source) &&
+                    (now - snapshot.minimizeStarted < 250 ||
+                        (IsIconic(source) && now - snapshot.minimizeStarted < 1500))) return true;
+                InterlockedIncrement(&state_->generation);
+                state_->minimizeSequence = snapshot.minimizeSequence == LONG_MAX ? 1 : snapshot.minimizeSequence + 1;
+                state_->minimizeStarted = now;
+                state_->minimizeSource = reinterpret_cast<std::uintptr_t>(source);
+                MemoryBarrier();
+                InterlockedIncrement(&state_->generation);
+            }
         }
         bool applied = !taskbars.empty();
         const UINT message = RegisterWindowMessageW(kApplyMessageName);
@@ -939,6 +964,8 @@ private:
     DWORD reportedFailureExplorer_ = 0;
     DWORD reportedFailureError_ = 0;
     snowdesktop::taskbar_hook::TaskbarMinimizeExemptions minimizeExemptions_;
+    snowdesktop::dock::TaskbarMinimizeInput minimizeInput_;
+    ULONGLONG minimizeInputLastAttempt_ = 0;
 };
 
 TaskbarBackdropController& GetTaskbarBackdropController()

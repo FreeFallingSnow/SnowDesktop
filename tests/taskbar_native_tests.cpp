@@ -5,6 +5,7 @@
 #include "../src/taskbar_hook/taskbar_connection.h"
 #include "../src/taskbar_hook/taskbar_autohide_rules.h"
 #include "dock/dock_settings.h"
+#include "dock/taskbar_minimize_input.h"
 #include "platform/taskbar_monitor.h"
 #include <dwmapi.h>
 #include <array>
@@ -100,6 +101,35 @@ LRESULT CALLBACK TestConnectionHook(int code, WPARAM wParam, LPARAM lParam)
     }
     return CallNextHookEx(nullptr, code, wParam, lParam);
 }
+
+struct MinimizeInputFixture
+{
+    HOOKPROC mouse = nullptr, keyboard = nullptr;
+    HWND recipient = nullptr, foreground = nullptr;
+    DWORD thread = 0;
+    int removed = 0;
+    bool rejectKeyboard = false;
+} minimizeInputFixture;
+
+HHOOK WINAPI InstallMinimizeInput(int kind, HOOKPROC callback, HINSTANCE, DWORD thread)
+{
+    if (thread || (kind != WH_MOUSE_LL && kind != WH_KEYBOARD_LL)) return nullptr;
+    minimizeInputFixture.thread = GetCurrentThreadId();
+    if (kind == WH_MOUSE_LL) minimizeInputFixture.mouse = callback;
+    else
+    {
+        if (minimizeInputFixture.rejectKeyboard) { SetLastError(ERROR_ACCESS_DENIED); return nullptr; }
+        minimizeInputFixture.keyboard = callback;
+    }
+    return reinterpret_cast<HHOOK>(static_cast<std::uintptr_t>(kind));
+}
+BOOL WINAPI RemoveMinimizeInput(HHOOK)
+{
+    ++minimizeInputFixture.removed;
+    return TRUE;
+}
+HWND WINAPI MinimizeInputWindowAt(POINT) { return minimizeInputFixture.recipient; }
+HWND WINAPI MinimizeInputForeground() { return minimizeInputFixture.foreground; }
 }
 
 // These are isolated windows in the test process, never the real Explorer
@@ -344,6 +374,79 @@ int RunNativeTaskbarTests()
         const HWND taskbarChild = CreateWindowExW(0, L"STATIC", L"Private taskbar input child",
             WS_CHILD | WS_VISIBLE, 0, 0, 32, 32, secondary, nullptr, instance, nullptr);
         check(taskbarChild != nullptr, "create a private descendant as the physical taskbar input recipient");
+        {
+            using snowdesktop::dock::MinimizeInput;
+            using snowdesktop::dock::MinimizeInputKind;
+            using snowdesktop::dock::TaskbarMinimizeInput;
+            // Substitute only OS input delivery and the system hit-test result.
+            // Production callbacks, worker lifetime, event snapshots and actual
+            // window ancestry remain intact; no physical input is synthesized.
+            minimizeInputFixture = {};
+            minimizeInputFixture.recipient = taskbarChild;
+            const TaskbarMinimizeInput::Api api{InstallMinimizeInput, RemoveMinimizeInput,
+                MinimizeInputWindowAt, MinimizeInputForeground};
+            TaskbarMinimizeInput monitor(api);
+            check(monitor.Start() == ERROR_SUCCESS && monitor.Running() &&
+                minimizeInputFixture.mouse && minimizeInputFixture.keyboard &&
+                minimizeInputFixture.thread != GetCurrentThreadId(),
+                "mouse and keyboard provenance starts on a dedicated thread without blocking the UI pump");
+            TaskbarMinimizeInput contender(api);
+            check(contender.Start() == ERROR_ALREADY_EXISTS && monitor.Running(),
+                "another observer cannot steal the active input owner");
+            const HWND taskbars[]{window, secondary};
+            MSLLHOOKSTRUCT pointer{};
+            pointer.pt = {3560, 1572}; pointer.time = 1000;
+            minimizeInputFixture.mouse(HC_ACTION, WM_LBUTTONUP, reinterpret_cast<LPARAM>(&pointer));
+            auto input = monitor.Read();
+            check(input.kind == MinimizeInputKind::Pointer && input.time == 1000 && input.Recent(1100) &&
+                TaskbarMinimizeInput::BelongsToTaskbar(monitor.Recipient(input), taskbars) &&
+                !GetPropW(secondary, native::kMinimizeInputTickProperty),
+                "taskbar clicks are recognized even when Explorer never publishes its queued-input property");
+            pointer.pt = {100, 100}; pointer.time = 1100;
+            minimizeInputFixture.mouse(HC_ACTION, WM_MOUSEMOVE, reinterpret_cast<LPARAM>(&pointer));
+            check(monitor.Read().time == 1000 && monitor.Read().point.x == 3560,
+                "pointer movement preserves the actual click rather than replacing it with hover position");
+            TaskbarMinimizeExemptions clicks;
+            const auto sourceKey = reinterpret_cast<std::uintptr_t>(source);
+            check(clicks.Exempts(sourceKey, false,
+                    TaskbarMinimizeInput::BelongsToTaskbar(monitor.Recipient(input), taskbars), 1100) &&
+                clicks.Exempts(sourceKey, true, false, 1200),
+                "a taskbar click and its delayed minimize notification stay exempt without Explorer queue delivery");
+            minimizeInputFixture.recipient = source;
+            pointer.time = 1300;
+            minimizeInputFixture.mouse(HC_ACTION, WM_LBUTTONDOWN, reinterpret_cast<LPARAM>(&pointer));
+            input = monitor.Read();
+            check(!TaskbarMinimizeInput::BelongsToTaskbar(monitor.Recipient(input), taskbars) &&
+                !clicks.Exempts(sourceKey, false, false, 1300),
+                "a new click in the application or Dock replaces old taskbar provenance");
+            KBDLLHOOKSTRUCT key{}; key.time = 1400;
+            minimizeInputFixture.foreground = source;
+            minimizeInputFixture.keyboard(HC_ACTION, WM_KEYDOWN, reinterpret_cast<LPARAM>(&key));
+            input = monitor.Read();
+            check(input.kind == MinimizeInputKind::Keyboard &&
+                !TaskbarMinimizeInput::BelongsToTaskbar(monitor.Recipient(input), taskbars),
+                "application keyboard commands cannot inherit an earlier taskbar click");
+            minimizeInputFixture.foreground = secondary;
+            key.time = 1500;
+            minimizeInputFixture.keyboard(HC_ACTION, WM_KEYDOWN, reinterpret_cast<LPARAM>(&key));
+            input = monitor.Read();
+            check(TaskbarMinimizeInput::BelongsToTaskbar(monitor.Recipient(input), taskbars) &&
+                !input.Recent(3001) && MinimizeInput{MinimizeInputKind::Pointer, 0xfffffff0}.Recent(0x20),
+                "taskbar keyboard activation is bounded and input age survives DWORD tick wrap");
+            monitor.Stop();
+            check(!monitor.Running() && monitor.Read().kind == MinimizeInputKind::None &&
+                minimizeInputFixture.removed == 2,
+                "stopping joins the input worker, removes both hooks and clears stale provenance");
+            minimizeInputFixture = {};
+            minimizeInputFixture.rejectKeyboard = true;
+            check(monitor.Start() == ERROR_ACCESS_DENIED && !monitor.Running() &&
+                minimizeInputFixture.removed == 1,
+                "partial input hook failure cleans up the first hook and releases ownership");
+            minimizeInputFixture.rejectKeyboard = false;
+            check(monitor.Start() == ERROR_SUCCESS && monitor.Running(),
+                "input capture can recover after a failed start without a stale active owner");
+            monitor.Stop();
+        }
         native::ObserveTaskbarInput(source, 1000);
         check(!GetPropW(window, native::kMinimizeInputTickProperty) &&
             !GetPropW(secondary, native::kMinimizeInputTickProperty),
