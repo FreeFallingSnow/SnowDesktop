@@ -145,7 +145,7 @@ int main()
         "an empty saved store reloads successfully");
     std::string unicodeReference;
     Expect(emptyReload.Set("package-a", "instance-a", "unicode", "a\xe4\xb8\xad\xf0\x9f\x94\x91",
-            unicodeReference, error) && emptyReload.Length("package-a", "instance-a", "unicode") == 4,
+            unicodeReference, error) && emptyReload.Length("package-a", "instance-a", "unicode") == 4u,
         "mask length matches UTF-16 editor characters rather than UTF-8 bytes");
 
     std::filesystem::remove_all(root, filesystemError);

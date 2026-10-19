@@ -1421,11 +1421,9 @@ struct WidgetSettingsPresenter::Impl
 
     void RefreshPasswordPlaceholder(WidgetFieldControl& field)
     {
-        auto placeholder = L(field.passwordConfigured
-            ? "app.settings.widget.configured" : "app.settings.widget.not_configured",
-            field.passwordConfigured ? L"Configured" : L"Not configured");
-        if (field.passwordConfigured && field.passwordLength)
-            placeholder += L"  " + std::wstring(*field.passwordLength, L'\x25cf');
+        const auto placeholder = field.passwordConfigured
+            ? std::wstring(field.passwordLength.value_or(0), L'\x25cf')
+            : L("app.settings.widget.not_configured", L"Not configured");
         field.password.PlaceholderText(placeholder);
         muxa::AutomationProperties::SetItemStatus(field.password,
             L(field.passwordConfigured ? "app.settings.widget.configured"

@@ -623,7 +623,7 @@ void TestCodec()
     Check(serialized.find("must-not-leave-host") == std::string::npos &&
         Unpack<WidgetSettingsSnapshot>(wire) == widget,
         "prepared secret fields retain only opaque status across IPC");
-    Check(Unpack<WidgetSettingsSnapshot>(wire).fields.front().opaque.secretLength == 31,
+    Check(Unpack<WidgetSettingsSnapshot>(wire).fields.front().opaque.secretLength == 31u,
         "ordinary snapshots carry mask length without plaintext");
     WidgetSettingSecretReadResult explicitRead{
         {WidgetSettingMutationStatus::Unchanged, 3, 9, {}, {}}, "offline-readback"};

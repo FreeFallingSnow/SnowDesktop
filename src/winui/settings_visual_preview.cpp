@@ -303,7 +303,7 @@ void ExerciseSecretInput(const x::FrameworkElement& root,
             .as<x::Automation::Provider::IToggleProvider>().Toggle();
     };
     if (service.secretReads != 0 || !password.Password().empty() ||
-        std::wstring(password.PlaceholderText()).find(std::wstring(16, L'\x25cf')) == std::wstring::npos)
+        password.PlaceholderText() != std::wstring(16, L'\x25cf'))
         throw std::runtime_error("opening a password field decrypted plaintext or lost its mask length");
     toggleReveal();
     PumpUntil([&] { return service.secretReads != 0; });
