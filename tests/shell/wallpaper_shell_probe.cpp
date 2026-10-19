@@ -4,6 +4,7 @@
 
 #include "taskbar_hook/taskbar_connection.h"
 #include "taskbar_hook/tray_connection.h"
+#include "system/status_bar/status_bar_appbar.h"
 
 #include <filesystem>
 #include <cstdio>
@@ -227,8 +228,54 @@ public:
             SMTO_ABORTIFHUNG | SMTO_NORMAL, 1000, &result) != 0, "request WorkerW once");
         Event("requested-WorkerW");
     }
+    void PlaceAppBar()
+    {
+        if (placingAppBar_) return;
+        placingAppBar_ = true;
+        MONITORINFO monitor{sizeof(monitor)};
+        const bool queried = GetMonitorInfoW(MonitorFromPoint({0, 0},
+            MONITOR_DEFAULTTOPRIMARY), &monitor) != FALSE;
+        const bool placed = queried && appbar_->Place(window_, kAppBarMessage,
+            ABE_TOP, 40, monitor.rcMonitor);
+        placingAppBar_ = false;
+        Require(placed, "place production AppBar");
+        const RECT bounds = appbar_->Bounds();
+        RECT current{};
+        if (!GetWindowRect(window_, &current) || !EqualRect(&bounds, &current) || !IsWindowVisible(window_))
+            Require(SetWindowPos(window_, HWND_TOPMOST, bounds.left, bounds.top,
+                bounds.right - bounds.left, bounds.bottom - bounds.top,
+                SWP_NOACTIVATE | SWP_SHOWWINDOW) != FALSE, "position transparent AppBar");
+    }
+    void AttachAppBar()
+    {
+        // Exercise the production reservation without the host, its desktop
+        // parenting, tray collector, native taskbar Hook or XAML TAP.
+        const LONG_PTR style = GetWindowLongPtrW(window_, GWL_EXSTYLE);
+        SetLastError(ERROR_SUCCESS);
+        const LONG_PTR previous = SetWindowLongPtrW(window_, GWL_EXSTYLE,
+            style | WS_EX_LAYERED | WS_EX_TRANSPARENT);
+        Require(previous || GetLastError() == ERROR_SUCCESS, "make AppBar transparent");
+        Require(SetLayeredWindowAttributes(window_, 0, 1, LWA_ALPHA) != FALSE,
+            "set AppBar opacity");
+        appbar_ = std::make_unique<snowdesktop::StatusBarAppBar>();
+        PlaceAppBar();
+        RECT work{};
+        Require(SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0) != FALSE,
+            "read reserved work area");
+        Event("appbar-workarea-top", static_cast<unsigned>(work.top));
+        Event("appbar-attached");
+    }
     void Cleanup() noexcept
     {
+        if (appbar_)
+        {
+            appbar_->Remove();
+            appbar_.reset();
+            ShowWindow(window_, SW_HIDE);
+            RECT work{};
+            if (SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0))
+                Event("appbar-removed-workarea-top", static_cast<unsigned>(work.top));
+        }
         if (tray_)
         {
             InterlockedExchange(&tray_->stop, 1);
@@ -284,6 +331,7 @@ public:
         Event("wallpaper-notifications", wallpaperChanges_);
         Event("display-notifications", displayChanges_);
         Event("TaskbarCreated-notifications", taskbarChanges_);
+        Require(!appbarRepositionFailed_, "AppBar callback placement failed");
     }
 private:
     static LRESULT CALLBACK Procedure(HWND window, UINT message, WPARAM wp, LPARAM lp)
@@ -296,6 +344,16 @@ private:
         }
         if (self)
         {
+            if (self->appbar_)
+            {
+                if (message == WM_WINDOWPOSCHANGED) self->appbar_->Notify(ABM_WINDOWPOSCHANGED);
+                else if (message == WM_ACTIVATE) self->appbar_->Notify(ABM_ACTIVATE);
+                else if (message == kAppBarMessage && wp == ABN_POSCHANGED)
+                {
+                    try { self->PlaceAppBar(); }
+                    catch (...) { self->appbarRepositionFailed_ = true; self->Event("appbar-reposition-failed"); }
+                }
+            }
             if (message == WM_SETTINGCHANGE)
             {
                 if (wp == SPI_SETDESKWALLPAPER) ++self->wallpaperChanges_;
@@ -309,6 +367,10 @@ private:
         return DefWindowProcW(window, message, wp, lp);
     }
     HWND window_ = nullptr, shell_ = nullptr;
+    static constexpr UINT kAppBarMessage = WM_APP + 35;
+    std::unique_ptr<snowdesktop::StatusBarAppBar> appbar_;
+    bool placingAppBar_ = false;
+    bool appbarRepositionFailed_ = false;
     DWORD explorer_ = 0;
     UINT taskbarCreated_ = RegisterWindowMessageW(L"TaskbarCreated");
     HMODULE module_ = nullptr;
@@ -330,12 +392,13 @@ int wmain(int argc, wchar_t** argv)
             return Probe().SelfTest();
         if (argc != 5)
         {
-            std::cerr << "usage: <observe|load|tray|tray-notify|taskbar-native|taskbar-tap|workerw> <isolated-hook.dll|-> <output.log> <10..120 seconds>\n";
+            std::cerr << "usage: <observe|load|tray|tray-notify|taskbar-native|taskbar-tap|workerw|appbar> <isolated-hook.dll|-> <output.log> <10..120 seconds>\n";
             return 2;
         }
         const std::wstring_view mode(argv[1]);
         Require(mode == L"observe" || mode == L"load" || mode == L"tray" || mode == L"tray-notify" ||
-            mode == L"taskbar-native" || mode == L"taskbar-tap" || mode == L"workerw", "unknown scenario");
+            mode == L"taskbar-native" || mode == L"taskbar-tap" || mode == L"workerw" ||
+            mode == L"appbar", "unknown scenario");
         const std::wstring duration(argv[4]);
         std::size_t used = 0;
         const int seconds = std::stoi(duration, &used);
@@ -353,6 +416,7 @@ int wmain(int argc, wchar_t** argv)
             else probe.AttachTaskbar(mode == L"taskbar-tap");
         }
         else if (mode == L"workerw") probe.WorkerWindow();
+        else if (mode == L"appbar") probe.AttachAppBar();
         probe.Event("action-complete");
         probe.Pump(static_cast<DWORD>(seconds) * 1000);
         probe.Event("cleanup-begin");

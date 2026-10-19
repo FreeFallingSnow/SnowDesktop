@@ -1431,7 +1431,7 @@ if (BUILD_TESTING)
         NATIVE_WINDOW_COMPATIBILITY
         SOURCES tests/shell/wallpaper_shell_probe.cpp
         INCLUDE_DIRECTORIES src
-        LINK_LIBRARIES user32 dwmapi
+        LINK_LIBRARIES user32 dwmapi shell32
         COMMAND_ARGUMENTS --self-test
         LABELS integration shell manual)
     add_dependencies(SnowDesktopWallpaperShellProbeTests SnowDesktopTaskbarHook)
