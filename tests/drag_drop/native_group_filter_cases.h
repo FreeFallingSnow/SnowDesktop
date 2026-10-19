@@ -225,8 +225,12 @@ inline void RunType(std::string_view name)
         native_drag_async_reload_cases::Refresh(app); Access::ReadyGroupTypeMetadata(app); checkManual();
         Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); Access::ReadyGroupTypeMetadata(app); checkManual();
         if (surface.name == "collection")
-            Require(Access::SortFreeType(app, ascending) == (ascending ? L"TUPQRSACBD" : L"DBCASRQPUT"),
-                "SortIcons must place system objects, folders, uncached real folder links and file types in full reversible grid order");
+        {
+            const auto observed = Access::SortFreeType(app, ascending);
+            Require(observed == (ascending ? L"TUPQRSACBD" : L"DBCASRQPUT"),
+                "SortIcons must place system objects, folders, uncached real folder links and file types in full reversible grid order; observed=" +
+                    WideToUtf8(observed));
+        }
         Access::StopModel(app);
         if (surface.type != DesktopWidgetType::FolderMapping) for (const auto& member : members) fs::remove(member);
     }

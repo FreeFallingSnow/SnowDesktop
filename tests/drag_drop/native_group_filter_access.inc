@@ -42,6 +42,7 @@
             app.items_.push_back(std::move(item));
         }
         app.RefreshDesktopItemIndexCache();
+        app.RefreshCollectedKeysCache();
         app.SortIcons(snowdesktop::folder_sort_rules::kType, ascending);
         std::vector<const DesktopItem*> ordered;
         for (const auto& item : app.items_) ordered.push_back(&item);
