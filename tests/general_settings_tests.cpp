@@ -1,4 +1,5 @@
 #include "settings/general_settings.h"
+#include "settings/personalization_initialization.h"
 #include "app/input/software_desktop_hotkey.h"
 #include "theme/personalization.h"
 #include "dock/dock_gradient_storage.h"
@@ -313,8 +314,94 @@ void TestTooltipPresentation()
     snowdesktop::SetNativeTooltipPreferences(snowdesktop::kDefaultTooltipFontSize, PersonalizationSettings::DarkPreset());
 }
 
+void TestInitialPersonalization()
+{
+    // Exercise the same initialization and codec as NativeSettingsStore in an
+    // isolated data directory, including profiles that never saved a theme.
+    const auto root = std::filesystem::temp_directory_path() /
+        (L"SnowDesktopInitialTheme-" + std::to_wstring(GetCurrentProcessId()) +
+            L"-" + std::to_wstring(GetTickCount64()));
+    std::filesystem::create_directories(root);
+    struct Cleanup
+    {
+        std::filesystem::path path;
+        ~Cleanup() { std::error_code error; std::filesystem::remove_all(path, error); }
+    } cleanup{root};
+    const auto path = root / L"SnowDesktop.personalization.json";
+    const auto read = [&] {
+        std::ifstream stream(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(stream), std::istreambuf_iterator<char>());
+    };
+    const auto load = [&](PersonalizationSettings& settings) {
+        return snowdesktop::LoadInitialPersonalization(path, settings);
+    };
+    const auto darkGlass = PersonalizationSettings::GlassDarkPreset();
+    PersonalizationSettings initial;
+    bool heightLoaded = true;
+    Check(!snowdesktop::LoadInitialPersonalization(path, initial, &heightLoaded) &&
+            initial == darkGlass && !heightLoaded && !std::filesystem::exists(path),
+        "new profiles start with dark frosted glass without writing during initialization");
+    Check(SavePersonalization(path.c_str(), initial), "persist the initial theme through the native codec");
+    PersonalizationSettings reloaded;
+    Check(load(reloaded) && reloaded == initial,
+        "dark frosted glass survives the next launch after the settings store persists it");
+
+    for (const auto* marker : {L"SnowDesktop.general.json", L"SnowDesktop.dock.json",
+             L"SnowDesktop.navigation.json", L"SnowDesktop.categories.json",
+             L"SnowDesktop.layout.json", L"SnowDesktop.storage.json"})
+    {
+        std::filesystem::remove(path);
+        const auto existing = root / marker;
+        { std::ofstream file(existing); file << "{}"; }
+        PersonalizationSettings legacy;
+        const auto expected = legacy;
+        Check(!load(legacy) && legacy == expected && !std::filesystem::exists(path),
+            "existing settings or layouts without a theme retain legacy appearance defaults");
+        std::filesystem::remove(existing);
+    }
+
+    for (const int preset : {kAppearancePresetDark, kAppearancePresetLight,
+             kAppearancePresetGlassDark, kAppearancePresetGlassLight,
+             kAppearancePresetGlassTransparent, kAppearancePresetAcrylicDark,
+             kAppearancePresetAcrylicLight, kAppearancePresetCustom})
+    {
+        auto saved = MakeAppearancePreset(preset);
+        if (preset == kAppearancePresetCustom)
+        {
+            saved.widgetAlpha = .63f;
+            saved.widgetBgR = .27f;
+            saved.glassEnabled = true;
+            saved.glassBlurRadius = 17.f;
+        }
+        saved.cornerRadius = 19.f;
+        saved.contextMenuStyle = 4;
+        Check(SavePersonalization(path.c_str(), saved), "seed an existing selected or custom appearance");
+        const auto before = read();
+        PersonalizationSettings loaded;
+        Check(load(loaded) && loaded == saved && read() == before,
+            "existing selected themes and custom appearance remain unchanged on upgrade");
+    }
+
+    for (const auto* contents : {"{}", "{\"widgetAlpha\":0.63}", ""})
+    {
+        { std::ofstream file(path, std::ios::binary | std::ios::trunc); file << contents; }
+        PersonalizationSettings expected, loaded;
+        const bool expectedResult = LoadPersonalization(path.c_str(), expected);
+        Check(load(loaded) == expectedResult && loaded == expected && read() == contents,
+            "partial legacy and empty appearance files retain their previous load and fallback behavior");
+    }
+
+    // Inspection errors are not evidence of a first launch. An invalid Windows
+    // path produces a deterministic error without changing directory ACLs.
+    PersonalizationSettings blocked;
+    const auto expected = blocked;
+    Check(!snowdesktop::LoadInitialPersonalization(root / L"invalid|profile" / path.filename(), blocked) && blocked == expected,
+        "uninspectable profile paths retain legacy defaults instead of choosing a new theme");
+}
+
 int main(int argc, char** argv)
 {
+    TestInitialPersonalization();
     {
         // A reader may permit writes while forbidding delete/replace. The
         // native savers must preserve the committed document on failed commit.

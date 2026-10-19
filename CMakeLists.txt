@@ -454,6 +454,7 @@ set(SNOWDESKTOP_SOURCES
     src/settings/settings_route.h
     src/settings/settings_search_index.cpp
     src/settings/settings_search_index.h
+    src/settings/personalization_initialization.h
     src/settings/settings_store_native.cpp
     src/settings/settings_window.cpp
     src/settings/settings_ipc_channel.cpp
