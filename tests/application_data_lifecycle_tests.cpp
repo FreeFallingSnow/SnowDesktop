@@ -871,6 +871,58 @@ void TestDebugProfile(const std::filesystem::path& fixture)
         Read(paths.root / L"unmanaged.txt") == "unmanaged", "reset preserves both desktops, normal data and unmanaged profile files");
     Expect(profile::Read(paths, config, error) && config.enabled && !config.pendingReset && config.desktop == otherDesktop,
         "reset preserves the active mode and selected directory");
+
+    // A real image mapping reproduces Explorer retaining the debug Hook after
+    // switching back to normal mode. No real Hook is injected or executed.
+    const auto cachedRuntime = paths.data /
+        L"ShellHook/shared/slots-v1/SnowDesktopTaskbarHook.dll/slot-0/SnowDesktopTaskbarHook.dll";
+    std::filesystem::create_directories(cachedRuntime.parent_path());
+    wchar_t system[MAX_PATH]{};
+    const UINT systemLength = GetSystemDirectoryW(system, MAX_PATH);
+    Expect(systemLength && systemLength < MAX_PATH &&
+        CopyFileW((std::filesystem::path(system) / L"version.dll").c_str(), cachedRuntime.c_str(), TRUE),
+        "copy a system DLL into the isolated debug runtime cache");
+    const HMODULE mappedRuntime = LoadLibraryExW(cachedRuntime.c_str(), nullptr, DONT_RESOLVE_DLL_REFERENCES);
+    Expect(mappedRuntime != nullptr, "retain an image mapping after the debug host exits");
+    const auto runtimeBytes = Read(cachedRuntime);
+    Write(paths.data / L"debug.txt", "reset-again");
+    Write(paths.data / L"widgets" / L"storage.json", "component-state");
+    Write(paths.data / L"ShellHookSymbols" / L"symbols.bin", "cached-symbols");
+    Write(paths.root / L"FullBackups" / L"backup.txt", "backup");
+    config.enabled = false;
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error) &&
+        !profile::Enabled(), "return to normal mode while a debug runtime remains mapped");
+    Expect(profile::Clear(paths, error), "inactive reset succeeds while the debug runtime is still mapped");
+    Expect(Read(cachedRuntime) == runtimeBytes && !runtimeBytes.empty() &&
+        !std::filesystem::exists(paths.data / L"debug.txt") &&
+        !std::filesystem::exists(paths.data / L"widgets") &&
+        !std::filesystem::exists(paths.data / L"ShellHookSymbols") &&
+        !std::filesystem::exists(paths.root / L"FullBackups"),
+        "inactive reset retains only the runtime cache while clearing settings, components, symbols and backups");
+    if (mappedRuntime) FreeLibrary(mappedRuntime);
+
+    // An active host also holds cache owner leases without FILE_SHARE_DELETE.
+    const auto owner = cachedRuntime.parent_path() / L".owner.lock";
+    HANDLE runtimeLease = CreateFileW(owner.c_str(), GENERIC_READ, FILE_SHARE_READ,
+        nullptr, CREATE_NEW, FILE_ATTRIBUTE_HIDDEN, nullptr);
+    Expect(runtimeLease != INVALID_HANDLE_VALUE, "retain an active debug runtime lease");
+    Write(paths.data / L"debug.txt", "reset-on-startup");
+    Write(paths.root / L"TempState" / L"pending.txt", "restore");
+    Write(paths.root / L"PrivateState" / L"secrets.txt", "secret");
+    config.enabled = true;
+    config.pendingReset = true;
+    Expect(profile::Write(paths, config, error) && profile::Initialize(paths.normalData, {realDesktop}, error) &&
+        profile::Enabled(), "startup reset succeeds with an outstanding runtime owner lease");
+    Expect(Read(cachedRuntime) == runtimeBytes && std::filesystem::exists(owner) &&
+        !std::filesystem::exists(paths.data / L"debug.txt") &&
+        !std::filesystem::exists(paths.root / L"TempState") &&
+        !std::filesystem::exists(paths.root / L"PrivateState") &&
+        profile::Read(paths, config, error) && config.enabled && !config.pendingReset &&
+        config.desktop == otherDesktop, "startup reset clears state and pending reset without modifying leased runtime files");
+    if (runtimeLease != INVALID_HANDLE_VALUE) CloseHandle(runtimeLease);
+    Expect(Read(otherDesktop / L"keep.txt") == "keep-demo" && Read(paths.defaultDesktop / L"demo.txt") == "demo-file" &&
+        Read(paths.normalData / L"normal.txt") == "normal-state" && Read(realDesktop / L"original.txt") == "real-desktop",
+        "mapped and leased runtime resets preserve normal data, real desktop and both simulated desktop selections");
     config.desktop = root / L"missing-custom-folder";
     Expect(profile::Write(paths, config, error) && !profile::Initialize(paths.normalData, {realDesktop}, error),
         "missing custom folder fails startup rather than falling back to the real desktop");
