@@ -16,7 +16,9 @@
 #include <winrt/Microsoft.UI.Xaml.Input.h>
 #include <winrt/Windows.System.h>
 #include <winrt/Windows.Globalization.NumberFormatting.h>
+#include <winrt/Windows.Globalization.h>
 #include <winrt/Windows.UI.h>
+#include <winrt/Windows.UI.Xaml.Interop.h>
 
 #include <algorithm>
 #include <array>
@@ -143,40 +145,37 @@ std::optional<wf::DateTime> ParseDate(std::string_view encoded) noexcept
 {
     if (!wr::IsValidDateSettingValue(encoded) || encoded.empty())
         return std::nullopt;
-    SYSTEMTIME systemTime{};
-    systemTime.wYear = static_cast<WORD>(
+    const int year =
         (encoded[0] - '0') * 1000 + (encoded[1] - '0') * 100 +
-        (encoded[2] - '0') * 10 + (encoded[3] - '0'));
-    systemTime.wMonth = static_cast<WORD>(
-        (encoded[5] - '0') * 10 + (encoded[6] - '0'));
-    systemTime.wDay = static_cast<WORD>(
-        (encoded[8] - '0') * 10 + (encoded[9] - '0'));
-    FILETIME fileTime{};
-    if (!SystemTimeToFileTime(&systemTime, &fileTime))
-        return std::nullopt;
-    ULARGE_INTEGER ticks{};
-    ticks.LowPart = fileTime.dwLowDateTime;
-    ticks.HighPart = fileTime.dwHighDateTime;
-    return wf::DateTime{wf::TimeSpan{
-        static_cast<std::int64_t>(ticks.QuadPart)}};
+        (encoded[2] - '0') * 10 + (encoded[3] - '0');
+    try
+    {
+        winrt::Windows::Globalization::Calendar calendar;
+        calendar.ChangeCalendarSystem(L"GregorianCalendar");
+        calendar.ChangeClock(L"24HourClock");
+        calendar.Day(1);
+        calendar.Year(year);
+        calendar.Month((encoded[5] - '0') * 10 + (encoded[6] - '0'));
+        calendar.Day((encoded[8] - '0') * 10 + (encoded[9] - '0'));
+        calendar.Hour(12); calendar.Minute(0); calendar.Second(0); calendar.Nanosecond(0);
+        return calendar.GetDateTime();
+    }
+    catch (...) { return std::nullopt; }
 }
 
 std::string FormatDate(const wf::DateTime& date) noexcept
 {
-    const auto rawTicks = static_cast<std::uint64_t>(
-        date.time_since_epoch().count());
-    ULARGE_INTEGER ticks{};
-    ticks.QuadPart = rawTicks;
-    FILETIME fileTime{ticks.LowPart, ticks.HighPart};
-    SYSTEMTIME systemTime{};
-    if (!FileTimeToSystemTime(&fileTime, &systemTime))
-        return {};
-    char buffer[16]{};
-    std::snprintf(buffer, sizeof(buffer), "%04u-%02u-%02u",
-        static_cast<unsigned>(systemTime.wYear),
-        static_cast<unsigned>(systemTime.wMonth),
-        static_cast<unsigned>(systemTime.wDay));
-    return buffer;
+    try
+    {
+        winrt::Windows::Globalization::Calendar calendar;
+        calendar.ChangeCalendarSystem(L"GregorianCalendar");
+        calendar.SetDateTime(date);
+        char buffer[16]{};
+        std::snprintf(buffer, sizeof(buffer), "%04d-%02d-%02d",
+            calendar.Year(), calendar.Month(), calendar.Day());
+        return buffer;
+    }
+    catch (...) { return {}; }
 }
 
 std::optional<wf::TimeSpan> ParseTime(std::string_view encoded) noexcept
@@ -248,11 +247,13 @@ struct WidgetFieldControl
     muxc::TextBlock searchError{nullptr};
     muxc::ListView searchResults{nullptr};
     std::vector<wr::WidgetSettingSearchResult> resultValues;
-    muxc::TextBlock opaqueValue{nullptr};
+    muxc::TextBox referenceText{nullptr};
+    muxc::TextBlock referenceStatus{nullptr};
     muxc::StackPanel opaqueActions{nullptr};
     muxc::Button choose{nullptr};
     muxc::Button clear{nullptr};
     std::optional<wr::WidgetSettingOpaqueState> referenceState;
+    std::string temporalValue;
 
     winrt::event_token textChanged{};
     winrt::event_token passwordChanged{};
@@ -275,6 +276,8 @@ struct WidgetFieldControl
     winrt::event_token timeChanged{};
     winrt::event_token searchTextChanged{};
     winrt::event_token searchSubmitted{};
+    winrt::event_token searchKeyDown{};
+    winrt::event_token resultKeyDown{};
     winrt::event_token searchResultClicked{};
     winrt::event_token chooseClicked{};
     winrt::event_token clearClicked{};
@@ -284,6 +287,7 @@ struct WidgetFieldControl
     bool visible = true;
     bool enabled = true;
     bool textDirty = false;
+    winrt::hstring textObservedValue;
     bool passwordDirty = false;
     bool passwordCanClear = false;
     bool passwordConfigured = false;
@@ -1317,6 +1321,8 @@ struct WidgetSettingsPresenter::Impl
         field.root.Child(field.content);
         muxa::AutomationProperties::SetName(
             field.root, ToText(field.schema.label));
+        muxa::AutomationProperties::SetAutomationId(
+            field.root, ToText("WidgetSetting." + field.schema.key));
         if (!field.schema.description.empty())
             muxa::AutomationProperties::SetHelpText(
                 field.root, ToText(field.schema.description));
@@ -1341,6 +1347,7 @@ struct WidgetSettingsPresenter::Impl
     {
         field.text = muxc::TextBox{};
         field.text.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        field.text.MinWidth(0.0);
         field.idleCommitTimer = mux::DispatcherTimer{};
         field.idleCommitTimer.Interval(std::chrono::milliseconds(650));
         field.idleCommitTick = field.idleCommitTimer.Tick(
@@ -1351,6 +1358,9 @@ struct WidgetSettingsPresenter::Impl
         field.textChanged = field.text.TextChanged(
             [this, &field](const auto&, const auto&) {
                 if (field.synchronizing) return;
+                const auto value = field.text.Text();
+                if (value == field.textObservedValue) return;
+                field.textObservedValue = value;
                 field.textDirty = true;
                 field.draftError.clear();
                 RefreshFieldValidation(field);
@@ -1722,9 +1732,19 @@ struct WidgetSettingsPresenter::Impl
         field.select = muxc::ComboBox{};
         field.select.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         field.select.MaxWidth(520.0);
+        field.select.MinWidth(0.0);
+        field.select.MaxDropDownHeight(320.0);
         for (const auto& option : field.schema.options)
-            field.select.Items().Append(winrt::box_value(ToText(
-                option.label.empty() ? option.value : option.label)));
+        {
+            muxc::TextBlock label;
+            const auto text = ToText(option.label.empty() ? option.value : option.label);
+            label.Text(text);
+            label.TextWrapping(mux::TextWrapping::Wrap);
+            label.MaxLines(2);
+            label.TextTrimming(mux::TextTrimming::CharacterEllipsis);
+            muxc::ToolTipService::SetToolTip(label, winrt::box_value(text));
+            field.select.Items().Append(label);
+        }
         field.selectionChanged = field.select.SelectionChanged(
             [this, &field](const auto&, const auto&) {
                 if (!CanMutateField(field)) return;
@@ -1749,13 +1769,27 @@ struct WidgetSettingsPresenter::Impl
         field.multiSelect.SelectionMode(
             muxc::ListViewSelectionMode::None);
         field.multiSelect.MaxHeight(320.0);
+        field.multiSelect.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        field.multiSelect.IsTabStop(false);
+        muxc::ScrollViewer::SetHorizontalScrollMode(field.multiSelect, muxc::ScrollMode::Disabled);
+        muxc::ScrollViewer::SetHorizontalScrollBarVisibility(field.multiSelect, muxc::ScrollBarVisibility::Disabled);
+        mux::Style optionStyle{winrt::xaml_typename<muxc::ListViewItem>()};
+        optionStyle.Setters().Append(mux::Setter{muxc::Control::HorizontalContentAlignmentProperty(),
+            winrt::box_value(mux::HorizontalAlignment::Stretch)});
+        optionStyle.Setters().Append(mux::Setter{muxc::Control::PaddingProperty(), winrt::box_value(mux::Thickness{0})});
+        field.multiSelect.ItemContainerStyle(optionStyle);
         for (const auto& option : field.schema.options)
         {
             MultiSelectOptionControl item;
             item.value = option.value;
             item.checkBox = muxc::CheckBox{};
-            item.checkBox.Content(winrt::box_value(ToText(
-                option.label.empty() ? option.value : option.label)));
+            muxc::TextBlock label;
+            const auto text = ToText(option.label.empty() ? option.value : option.label);
+            label.Text(text);
+            label.TextWrapping(mux::TextWrapping::Wrap);
+            item.checkBox.Content(label);
+            item.checkBox.HorizontalContentAlignment(mux::HorizontalAlignment::Stretch);
+            muxa::AutomationProperties::SetName(item.checkBox, text);
             item.checkBox.HorizontalAlignment(
                 mux::HorizontalAlignment::Stretch);
             item.checked = item.checkBox.Checked(
@@ -1769,35 +1803,50 @@ struct WidgetSettingsPresenter::Impl
             field.multiSelect.Items().Append(item.checkBox);
             field.multiOptions.push_back(std::move(item));
         }
-        field.editorHost.Children().Append(field.multiSelect);
+        // The list owns a bounded vertical viewport below the complete row;
+        // option text uses the page width instead of the editor column.
+        field.row.SetCompactEditor(true);
+        field.content.Children().Append(field.multiSelect);
     }
 
     void BuildDateEditor(WidgetFieldControl& field)
     {
         field.date = muxc::CalendarDatePicker{};
         field.date.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        field.date.MinWidth(0.0);
+        field.date.CalendarIdentifier(L"GregorianCalendar");
+        if (const auto first = ParseDate("0001-01-01")) field.date.MinDate(*first);
+        if (const auto last = ParseDate("9999-12-31")) field.date.MaxDate(*last);
         field.date.DateFormat(L"{year.full}-{month.integer(2)}-{day.integer(2)}");
         field.dateChanged = field.date.DateChanged(
             [this, &field](const muxc::CalendarDatePicker&,
                            const muxc::CalendarDatePickerDateChangedEventArgs& args) {
                 if (!CanMutateField(field)) return;
                 const auto selected = args.NewDate();
+                if (!selected && field.schema.required)
+                {
+                    RestoreTemporalValue(field);
+                    return;
+                }
                 const std::string value = selected
                     ? FormatDate(selected.Value())
                     : std::string{};
-                RunMutation(field.schema.key,
+                if (value == field.temporalValue) return;
+                const auto result = RunMutation(field.schema.key,
                     [this, key = field.schema.key, value](const auto& guard) {
                         return service.SetOrdinary(guard, key,
                             wr::MakeWidgetSettingString(value));
                     });
+                if (!result.Succeeded()) RestoreTemporalValue(field);
             });
-        field.editorHost.Children().Append(field.date);
+        BuildNullableEditor(field, field.date);
     }
 
     void BuildTimeEditor(WidgetFieldControl& field)
     {
         field.time = muxc::TimePicker{};
         field.time.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        field.time.MinWidth(0.0);
         field.time.ClockIdentifier(L"24HourClock");
         field.time.MinuteIncrement(1);
         field.timeChanged = field.time.SelectedTimeChanged(
@@ -1805,16 +1854,46 @@ struct WidgetSettingsPresenter::Impl
                            const muxc::TimePickerSelectedValueChangedEventArgs& args) {
                 if (!CanMutateField(field)) return;
                 const auto selected = args.NewTime();
+                if (!selected && field.schema.required)
+                {
+                    RestoreTemporalValue(field);
+                    return;
+                }
                 const std::string value = selected
                     ? FormatTime(selected.Value())
                     : std::string{};
-                RunMutation(field.schema.key,
+                if (value == field.temporalValue) return;
+                const auto result = RunMutation(field.schema.key,
                     [this, key = field.schema.key, value](const auto& guard) {
                         return service.SetOrdinary(guard, key,
                             wr::MakeWidgetSettingString(value));
                     });
+                if (!result.Succeeded()) RestoreTemporalValue(field);
             });
-        field.editorHost.Children().Append(field.time);
+        BuildNullableEditor(field, field.time);
+    }
+
+    void BuildNullableEditor(WidgetFieldControl& field, const mux::UIElement& editor)
+    {
+        muxc::Grid pair;
+        pair.ColumnSpacing(8.0);
+        muxc::ColumnDefinition value;
+        value.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
+        pair.ColumnDefinitions().Append(value);
+        pair.Children().Append(editor);
+        BuildOpaqueActions(field, false, !field.schema.required, pair);
+        field.editorHost.Children().Append(pair);
+    }
+
+    void RestoreTemporalValue(WidgetFieldControl& field)
+    {
+        if (const auto snapshot = service.Snapshot(widgetId))
+            for (const auto& state : snapshot->fields)
+                if (state.schema.key == field.schema.key)
+                {
+                    PatchField(field, state);
+                    break;
+                }
     }
 
     void BuildSearchEditor(WidgetFieldControl& field)
@@ -1828,11 +1907,15 @@ struct WidgetSettingsPresenter::Impl
         field.search = muxc::AutoSuggestBox{};
         field.search.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
         field.search.MinWidth(0.0);
+        field.search.QueryIcon(muxc::SymbolIcon{muxc::Symbol::Find});
         field.search.VerticalAlignment(mux::VerticalAlignment::Center);
         searchRow.Children().Append(field.search);
         field.editorHost.Children().Append(searchRow);
         if (field.schema.Kind() == wr::WidgetSettingKind::AppReference)
+        {
             BuildOpaqueActions(field, true, true, searchRow);
+            BuildReferenceStatus(field);
+        }
 
         field.searchProgress = muxc::ProgressRing{};
         field.searchProgress.Width(22.0);
@@ -1862,9 +1945,39 @@ struct WidgetSettingsPresenter::Impl
             [this, &field](const muxc::AutoSuggestBox&,
                            const muxc::AutoSuggestBoxQuerySubmittedEventArgs&) {
                 if (!field.resultValues.empty())
-                    CommitSearchResult(field, 0);
+                    CommitSearchResult(field, static_cast<std::size_t>(std::max(0, field.searchResults.SelectedIndex())));
                 else
                     BeginSearch(field, ToUtf8(field.search.Text()));
+            });
+        field.searchKeyDown = field.search.PreviewKeyDown(
+            [this, &field](const auto&, const muxi::KeyRoutedEventArgs& args) {
+                if (!CanMutateField(field)) return;
+                if (args.Key() == ws::VirtualKey::Escape &&
+                    field.searchResults.Visibility() == mux::Visibility::Visible)
+                {
+                    (void)service.CancelSearch(Guard(), field.schema.key);
+                    ClearSearch(field);
+                    args.Handled(true);
+                }
+                else if ((args.Key() == ws::VirtualKey::Down || args.Key() == ws::VirtualKey::Up) &&
+                    !field.resultValues.empty())
+                {
+                    const int last = static_cast<int>(field.resultValues.size()) - 1;
+                    const int selected = field.searchResults.SelectedIndex();
+                    const int next = selected < 0 ? (args.Key() == ws::VirtualKey::Down ? 0 : last)
+                        : std::clamp(selected + (args.Key() == ws::VirtualKey::Down ? 1 : -1), 0, last);
+                    field.searchResults.SelectedIndex(next);
+                    field.searchResults.ScrollIntoView(field.searchResults.Items().GetAt(static_cast<std::uint32_t>(next)));
+                    args.Handled(true);
+                }
+            });
+        field.resultKeyDown = field.searchResults.KeyDown(
+            [this, &field](const auto&, const muxi::KeyRoutedEventArgs& args) {
+                if (IsEnter(args) && field.searchResults.SelectedIndex() >= 0)
+                {
+                    CommitSearchResult(field, static_cast<std::size_t>(field.searchResults.SelectedIndex()));
+                    args.Handled(true);
+                }
             });
         field.searchResultClicked =
             field.searchResults.ItemClick(
@@ -1885,16 +1998,8 @@ struct WidgetSettingsPresenter::Impl
         WidgetFieldControl& field,
         bool allowChoose,
         bool allowClear,
-        muxc::Grid inlineRow = nullptr)
+        const muxc::Grid& inlineRow)
     {
-        // Search references already show the selected name in the input.
-        // Other opaque references still need a separate value summary.
-        if (!inlineRow)
-        {
-            field.opaqueValue = muxc::TextBlock{};
-            field.opaqueValue.TextWrapping(mux::TextWrapping::Wrap);
-            field.editorHost.Children().Append(field.opaqueValue);
-        }
         field.opaqueActions = muxc::StackPanel{};
         field.opaqueActions.Orientation(muxc::Orientation::Horizontal);
         field.opaqueActions.Spacing(8.0);
@@ -1914,8 +2019,7 @@ struct WidgetSettingsPresenter::Impl
         if (allowChoose)
         {
             field.choose = muxc::Button{};
-            if (inlineRow)
-                configureInlineAction(field.choose, muxc::Symbol::OpenFile);
+            configureInlineAction(field.choose, muxc::Symbol::OpenFile);
             field.chooseClicked = field.choose.Click(
                 [this, &field](const auto&, const auto&) {
                     ChooseOpaque(field);
@@ -1925,15 +2029,14 @@ struct WidgetSettingsPresenter::Impl
         if (allowClear)
         {
             field.clear = muxc::Button{};
-            if (inlineRow)
-                configureInlineAction(field.clear, muxc::Symbol::ClearSelection);
+            configureInlineAction(field.clear, muxc::Symbol::ClearSelection);
             field.clearClicked = field.clear.Click(
                 [this, &field](const auto&, const auto&) {
                     ClearOpaque(field);
                 });
             field.opaqueActions.Children().Append(field.clear);
         }
-        if (inlineRow)
+        if (allowChoose || allowClear)
         {
             muxc::ColumnDefinition actionsColumn;
             actionsColumn.Width(mux::GridLengthHelper::Auto());
@@ -1942,13 +2045,33 @@ struct WidgetSettingsPresenter::Impl
             muxc::Grid::SetColumn(field.opaqueActions, static_cast<int>(column));
             inlineRow.Children().Append(field.opaqueActions);
         }
-        else
-            field.editorHost.Children().Append(field.opaqueActions);
     }
 
     void BuildReferenceEditor(WidgetFieldControl& field)
     {
-        BuildOpaqueActions(field, true, true);
+        muxc::Grid pair;
+        pair.ColumnSpacing(8.0);
+        muxc::ColumnDefinition name;
+        name.Width(mux::GridLengthHelper::FromValueAndType(1.0, mux::GridUnitType::Star));
+        pair.ColumnDefinitions().Append(name);
+        field.referenceText = muxc::TextBox{};
+        field.referenceText.IsReadOnly(true);
+        field.referenceText.MinWidth(0.0);
+        field.referenceText.HorizontalAlignment(mux::HorizontalAlignment::Stretch);
+        muxa::AutomationProperties::SetName(field.referenceText, ToText(field.schema.label));
+        pair.Children().Append(field.referenceText);
+        BuildOpaqueActions(field, true, true, pair);
+        field.editorHost.Children().Append(pair);
+        BuildReferenceStatus(field);
+    }
+
+    void BuildReferenceStatus(WidgetFieldControl& field)
+    {
+        field.referenceStatus = muxc::TextBlock{};
+        field.referenceStatus.TextWrapping(mux::TextWrapping::Wrap);
+        field.referenceStatus.FontSize(12.0);
+        field.referenceStatus.Visibility(mux::Visibility::Collapsed);
+        field.content.Children().Append(field.referenceStatus);
     }
 
     std::unique_ptr<WidgetFieldControl> BuildField(
@@ -2485,7 +2608,9 @@ struct WidgetSettingsPresenter::Impl
         if (field.text && !field.textDirty)
         {
             field.synchronizing = true;
-            field.text.Text(ToText(StringValue(state.currentValue)));
+            const auto value = ToText(StringValue(state.currentValue));
+            field.textObservedValue = value;
+            if (field.text.Text() != value) field.text.Text(value);
             field.synchronizing = false;
         }
         if (field.password)
@@ -2529,6 +2654,10 @@ struct WidgetSettingsPresenter::Impl
                     break;
                 }
             field.select.SelectedIndex(selected);
+            muxc::ToolTipService::SetToolTip(field.select, winrt::box_value(selected < 0 ? winrt::hstring{}
+                : ToText(field.schema.options[static_cast<std::size_t>(selected)].label.empty()
+                    ? field.schema.options[static_cast<std::size_t>(selected)].value
+                    : field.schema.options[static_cast<std::size_t>(selected)].label)));
         }
         if (field.multiSelect)
         {
@@ -2543,19 +2672,21 @@ struct WidgetSettingsPresenter::Impl
         if (field.date)
         {
             field.synchronizing = true;
-            const auto date = ParseDate(StringValue(state.currentValue));
-            field.date.Date(date
-                ? winrt::box_value(*date).as<wf::IReference<wf::DateTime>>()
-                : nullptr);
+            field.temporalValue = StringValue(state.currentValue);
+            const auto date = ParseDate(field.temporalValue);
+            const auto current = field.date.Date();
+            if (static_cast<bool>(current) != date.has_value() || (current && date && current.Value() != *date))
+                field.date.Date(date ? winrt::box_value(*date).as<wf::IReference<wf::DateTime>>() : nullptr);
             field.synchronizing = false;
         }
         if (field.time)
         {
             field.synchronizing = true;
-            const auto time = ParseTime(StringValue(state.currentValue));
-            field.time.SelectedTime(time
-                ? winrt::box_value(*time).as<wf::IReference<wf::TimeSpan>>()
-                : nullptr);
+            field.temporalValue = StringValue(state.currentValue);
+            const auto time = ParseTime(field.temporalValue);
+            const auto current = field.time.SelectedTime();
+            if (static_cast<bool>(current) != time.has_value() || (current && time && current.Value() != *time))
+                field.time.SelectedTime(time ? winrt::box_value(*time).as<wf::IReference<wf::TimeSpan>>() : nullptr);
             field.synchronizing = false;
         }
         const bool referenceSelectionChanged = field.search &&
@@ -2578,33 +2709,33 @@ struct WidgetSettingsPresenter::Impl
         {
             field.synchronizing = true;
             if (state.schema.Kind() == wr::WidgetSettingKind::AppReference)
-                field.search.Text(state.opaque.configured &&
-                        state.opaque.displayLabel.empty()
-                    ? winrt::hstring(L("app.settings.widget.configured", L"Configured"))
-                    : ToText(state.opaque.displayLabel));
+                field.search.Text(ToText(state.opaque.displayLabel));
             else
-                field.search.Text(ToText(state.searchQuery));
+                field.search.Text(ToText(StringValue(state.currentValue).empty()
+                    ? state.searchQuery : StringValue(state.currentValue)));
             field.synchronizing = false;
         }
-        if (field.opaqueValue)
+        if (field.referenceText)
         {
-            std::wstring value;
-            if (state.opaque.configured)
-                value = state.opaque.displayLabel.empty()
-                    ? L("app.settings.widget.configured", L"Configured")
-                    : std::wstring(ToText(state.opaque.displayLabel));
-            else
-                value = state.schema.emptyLabel.empty()
-                    ? L("app.settings.widget.not_configured",
-                        L"Not configured")
-                    : std::wstring(ToText(state.schema.emptyLabel));
-            field.opaqueValue.Text(value);
+            field.referenceText.Text(ToText(state.opaque.displayLabel));
+            field.referenceText.PlaceholderText(state.schema.emptyLabel.empty()
+                ? L("app.settings.widget.choose", L"Choose or replace") : ToWide(state.schema.emptyLabel));
+            muxc::ToolTipService::SetToolTip(field.referenceText,
+                winrt::box_value(ToText(state.opaque.displayLabel)));
+        }
+        if (field.referenceStatus)
+        {
+            const bool unavailable = state.opaque.configured && !state.opaque.available;
+            field.referenceStatus.Text(unavailable
+                ? L("iconAppearance.unavailable", L"Target unavailable") : std::wstring{});
+            field.referenceStatus.Visibility(unavailable ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         }
         if (field.choose)
             field.choose.IsEnabled(state.enabled && state.opaque.canChoose);
         if (field.clear)
-            field.clear.IsEnabled(state.enabled && (state.opaque.canClear ||
-                (field.password && !field.password.Password().empty())));
+            field.clear.IsEnabled(state.enabled && ((field.date || field.time)
+                ? !state.schema.required && !StringValue(state.currentValue).empty()
+                : state.opaque.canClear || (field.password && !field.password.Password().empty())));
         if (field.restoreDefault)
         {
             const bool differsFromDefault =
@@ -2655,7 +2786,8 @@ struct WidgetSettingsPresenter::Impl
             : mux::Visibility::Visible);
         const std::wstring status = !validation.empty()
             ? std::wstring(field.validation.Text())
-            : std::wstring(field.diagnostic.Text());
+            : field.referenceStatus && field.referenceStatus.Visibility() == mux::Visibility::Visible
+                ? std::wstring(field.referenceStatus.Text()) : std::wstring(field.diagnostic.Text());
         muxa::AutomationProperties::SetItemStatus(field.root, status);
     }
 
@@ -2679,6 +2811,7 @@ struct WidgetSettingsPresenter::Impl
     void SetFieldEnabled(WidgetFieldControl& field, bool enabled)
     {
         if (field.text) field.text.IsEnabled(enabled);
+        if (field.referenceText) field.referenceText.IsEnabled(enabled);
         if (field.password) field.password.IsEnabled(enabled);
         if (field.passwordReveal) RefreshPasswordReveal(field);
         if (field.toggle) field.toggle.IsEnabled(enabled);
@@ -2976,7 +3109,9 @@ struct WidgetSettingsPresenter::Impl
                 current != fieldsByKey.end() && current->second->text)
             {
                 current->second->synchronizing = true;
-                current->second->text.Text(ToWide(value));
+                current->second->textObservedValue = ToText(value);
+                if (current->second->text.Text() != current->second->textObservedValue)
+                    current->second->text.Text(current->second->textObservedValue);
                 current->second->synchronizing = false;
                 current->second->textDirty = true;
             }
@@ -3103,6 +3238,14 @@ struct WidgetSettingsPresenter::Impl
     void ClearOpaque(WidgetFieldControl& field)
     {
         if (!CanMutateField(field)) return;
+        if (field.date || field.time)
+        {
+            if (!field.schema.required)
+                RunMutation(field.schema.key, [this, key = field.schema.key](const auto& guard) {
+                    return service.SetOrdinary(guard, key, wr::MakeWidgetSettingString({}));
+                });
+            return;
+        }
         const std::string key = field.schema.key;
         const bool password = static_cast<bool>(field.password);
         if (password && field.idleCommitTimer) field.idleCommitTimer.Stop();
@@ -3213,8 +3356,8 @@ struct WidgetSettingsPresenter::Impl
                 ClearSearch(*current->second);
                 // Enter commits while the input still has focus. Replace the
                 // query with the selected name now that it is the sole value display.
-                if (current->second->schema.Kind() ==
-                    wr::WidgetSettingKind::AppReference)
+                if (current->second->schema.Kind() == wr::WidgetSettingKind::AppReference ||
+                    current->second->schema.Kind() == wr::WidgetSettingKind::AppSearch)
                 {
                     if (const auto snapshot = service.Snapshot(widgetId))
                         for (const auto& state : snapshot->fields)
@@ -3339,8 +3482,6 @@ struct WidgetSettingsPresenter::Impl
         {
             const auto chooseText =
                 L("app.settings.widget.choose", L"Choose or replace");
-            if (!field.search)
-                field.choose.Content(winrt::box_value(chooseText));
             muxc::ToolTipService::SetToolTip(
                 field.choose, winrt::box_value(chooseText));
             muxa::AutomationProperties::SetName(
@@ -3350,8 +3491,6 @@ struct WidgetSettingsPresenter::Impl
         {
             const auto clearText =
                 L("app.settings.widget.clear", L"Clear");
-            if (!field.search && !field.password)
-                field.clear.Content(winrt::box_value(clearText));
             muxc::ToolTipService::SetToolTip(
                 field.clear, winrt::box_value(clearText));
             muxa::AutomationProperties::SetName(field.clear,
@@ -3734,6 +3873,10 @@ struct WidgetSettingsPresenter::Impl
                 field.search.TextChanged(field.searchTextChanged);
             if (field.search && HasToken(field.searchSubmitted))
                 field.search.QuerySubmitted(field.searchSubmitted);
+            if (field.search && HasToken(field.searchKeyDown))
+                field.search.PreviewKeyDown(field.searchKeyDown);
+            if (field.searchResults && HasToken(field.resultKeyDown))
+                field.searchResults.KeyDown(field.resultKeyDown);
             if (field.searchResults &&
                 HasToken(field.searchResultClicked))
                 field.searchResults.ItemClick(field.searchResultClicked);

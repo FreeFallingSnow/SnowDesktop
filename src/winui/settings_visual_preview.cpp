@@ -13,8 +13,11 @@
 #include <robuffer.h>
 #include <shellapi.h>
 #include <cmath>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <set>
 #include <stdexcept>
 #include <winrt/Microsoft.UI.Xaml.Automation.h>
 #include <winrt/Microsoft.UI.Xaml.Automation.Peers.h>
@@ -160,6 +163,11 @@ public:
     std::size_t lastSecretBytes = 0;
     unsigned secretReads = 0;
     std::string syntheticSecret = "offline-existing";
+    bool allControls = false;
+    bool cancelNextPicker = false;
+    std::map<std::string, wr::WidgetSettingSearchSnapshot, std::less<>> searches;
+    SnapshotChangedCallback changed;
+    SearchCompletedCallback searched;
     std::string searchResultTitle;
     explicit PreviewWidgetService(bool english, bool searching)
         : showSearch(searching), searchResultTitle(english ? "QQ Music" : "QQ音乐") // l10n-allow: isolated bilingual preview fixture, not production UI text.
@@ -191,6 +199,7 @@ public:
         auto& launcher = value.fields.back();
         launcher.schema.group.clear();
         launcher.opaque.configured = true;
+        launcher.opaque.available = true;
         launcher.opaque.canChoose = launcher.opaque.canClear = true;
         launcher.opaque.displayLabel = english ? "NetEase Cloud Music" : "网易云音乐"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
         add("api_key", "password", "API Key", "API Key", {}); // l10n-allow: isolated preview field label.
@@ -208,8 +217,86 @@ public:
         preset.values.emplace("title", title);
         value.presets.push_back(std::move(preset));
     }
-    void SetEventCallbacks(SnapshotChangedCallback, SearchCompletedCallback searched) override
+    void PopulateAllControls(bool english)
     {
+        allControls = allowSecretWrites = true;
+        value.customStyle = false;
+        value.widgetName = english ? "Lua setting controls" : "Lua 设置控件总览"; // l10n-allow: isolated bilingual preview fixture.
+        value.fields.clear(); value.groups.clear(); value.presets.clear();
+        value.groups = {{"inputs", english ? "Inputs" : "输入", {}, false, true}, // l10n-allow: isolated bilingual preview fixture.
+            {"choices", english ? "Choices" : "选项", {}, false, true}, // l10n-allow: isolated bilingual preview fixture.
+            {"objects", english ? "Objects and files" : "对象与文件", {}, false, true}, // l10n-allow: isolated bilingual preview fixture.
+            {"states", english ? "State examples" : "状态示例", {}, false, true}}; // l10n-allow: isolated bilingual preview fixture.
+        const auto add = [&](const char* key, const char* type, const char* zh, const char* en,
+                             const char* group, wr::InteractionValue current) -> wr::WidgetSettingFieldState& {
+            wr::WidgetSettingFieldState field;
+            field.schema.key = key; field.schema.rawType = type; field.schema.label = english ? en : zh;
+            field.schema.group = group; field.currentValue = field.defaultValue = std::move(current);
+            value.fields.push_back(std::move(field)); return value.fields.back();
+        };
+        add("text", "text", "文本", "Text", "inputs", wr::MakeWidgetSettingString("SnowDesktop")); // l10n-allow: isolated bilingual preview fixture.
+        auto& secret = add("api_key", "password", "API Key", "API Key", "inputs", {}); // l10n-allow: isolated preview label.
+        secret.opaque = {true, true, true, true, {}, 16u};
+        auto& url = add("url", "url", "网址", "URL", "inputs", wr::MakeWidgetSettingString("https://example.test/api")); // l10n-allow: isolated bilingual preview fixture.
+        url.schema.validationMessage = english ? "Enter an HTTP or HTTPS URL." : "请输入 HTTP 或 HTTPS 网址。"; // l10n-allow: isolated bilingual preview fixture.
+        add("int", "int", "整数", "Integer", "inputs", wr::MakeWidgetSettingInteger(12)); // l10n-allow: isolated bilingual preview fixture.
+        auto& decimal = add("float", "float", "小数", "Decimal", "inputs", wr::MakeWidgetSettingNumber(1.25)); // l10n-allow: isolated bilingual preview fixture.
+        decimal.schema.maximum = 10; decimal.schema.step = 0.05;
+        add("range", "range", "范围", "Range", "inputs", wr::MakeWidgetSettingNumber(40)); // l10n-allow: isolated bilingual preview fixture.
+        add("bool", "bool", "开关", "Toggle", "choices", wr::MakeWidgetSettingBoolean(true)); // l10n-allow: isolated bilingual preview fixture.
+        add("color", "color", "颜色", "Color", "choices", wr::MakeWidgetSettingInteger(0x4C78D8)); // l10n-allow: isolated bilingual preview fixture.
+        const std::string longOption = english
+            ? "A long option label that remains readable when the settings window is narrow, with additional context that must not disappear."
+            : "这是一条较长的选项名称，用于检查窄窗口下的换行、完整名称提示，以及多选列表能否利用整行空间显示内容。"; // l10n-allow: isolated bilingual preview fixture.
+        auto& select = add("select", "select", "单选", "Single choice", "choices", wr::MakeWidgetSettingString("a")); // l10n-allow: isolated bilingual preview fixture.
+        select.schema.options = {{"a", english ? "Automatic" : "自动"}, {"b", longOption}}; // l10n-allow: isolated bilingual preview fixture.
+        auto& multi = add("multiSelect", "multiSelect", "多选", "Multiple choices", "choices", wr::MakeWidgetSettingStringArray({"a"})); // l10n-allow: isolated bilingual preview fixture.
+        multi.schema.options = {{"a", english ? "First option" : "第一个选项"}, {"b", longOption}, {"c", english ? "Third option" : "第三个选项"}}; // l10n-allow: isolated bilingual preview fixture.
+        add("date", "date", "日期", "Date", "choices", wr::MakeWidgetSettingString("1492-10-12")); // l10n-allow: isolated bilingual preview fixture.
+        add("time", "time", "时间", "Time", "choices", wr::MakeWidgetSettingString("09:30")); // l10n-allow: isolated bilingual preview fixture.
+        add("appSearch", "appSearch", "应用名称搜索", "Application name search", "objects", wr::MakeWidgetSettingString("Example app")); // l10n-allow: isolated bilingual preview fixture.
+        for (const auto type : {"appReference", "desktopItemReference", "fileReference", "folderReference", "fileHandle", "folderHandle"})
+        {
+            const std::map<std::string, std::pair<const char*, const char*>, std::less<>> labels{
+                {"appReference", {"启动项", "Launcher"}}, {"desktopItemReference", {"桌面项目", "Desktop item"}}, // l10n-allow: isolated bilingual preview fixture.
+                {"fileReference", {"文件引用", "File reference"}}, {"folderReference", {"文件夹引用", "Folder reference"}}, // l10n-allow: isolated bilingual preview fixture.
+                {"fileHandle", {"授权文件", "Authorized file"}}, {"folderHandle", {"授权文件夹", "Authorized folder"}}}; // l10n-allow: isolated bilingual preview fixture.
+            const auto& label = labels.at(type);
+            auto& field = add(type, type, label.first, label.second, "objects", {});
+            field.opaque = {true, true, true, true,
+                std::string(type).find("folder") != std::string::npos ? "Documents" : "example-file-with-a-long-name.txt", {}};
+        }
+        auto& empty = add("empty", "fileReference", "未选择", "Empty selection", "states", {}); // l10n-allow: isolated bilingual preview fixture.
+        empty.opaque = {false, false, true, false, {}, {}};
+        auto& missing = add("unavailable", "folderHandle", "失效的对象", "Unavailable object", "states", {}); // l10n-allow: isolated bilingual preview fixture.
+        missing.opaque = {true, false, true, true, "Unavailable-folder", {}};
+        auto& disabled = add("disabled", "desktopItemReference", "禁用的选择", "Disabled selection", "states", {}); // l10n-allow: isolated bilingual preview fixture.
+        disabled.enabled = false; disabled.opaque = {true, true, true, true, "Read-only example", {}};
+        auto& required = add("requiredDate", "date", "必填日期", "Required date", "states", wr::MakeWidgetSettingString("2026-10-19")); // l10n-allow: isolated bilingual preview fixture.
+        required.schema.required = true;
+        required.schema.validationMessage = english ? "A date is required." : "日期不能为空。"; // l10n-allow: isolated bilingual preview fixture.
+        auto& invalid = add("invalid", "text", "校验提示", "Validation example", "states", wr::MakeWidgetSettingString({})); // l10n-allow: isolated bilingual preview fixture.
+        invalid.schema.required = true; invalid.valid = false;
+        invalid.schema.validationMessage = invalid.validationError = english ? "Enter a value." : "请输入内容。"; // l10n-allow: isolated bilingual preview fixture.
+    }
+    wr::WidgetSettingFieldState* Field(std::string_view key)
+    {
+        for (auto& field : value.fields) if (field.schema.key == key) return &field;
+        return nullptr;
+    }
+    wr::WidgetSettingMutationResult Result(bool applied = false)
+    {
+        return {applied ? wr::WidgetSettingMutationStatus::Applied : wr::WidgetSettingMutationStatus::Unchanged,
+            value.generation, applied ? ++value.revision : value.revision, {}, {}};
+    }
+    bool CanWrite(const wr::WidgetSettingMutationGuard& guard, std::string_view key)
+    {
+        const auto field = Field(key);
+        return allControls && guard.Matches(value) && field && field->enabled;
+    }
+    void SetEventCallbacks(SnapshotChangedCallback onChanged, SearchCompletedCallback onSearched) override
+    {
+        changed = std::move(onChanged); searched = std::move(onSearched);
         if (showSearch && searched) searched({value.widgetId, "launcher", value.generation, 1});
     }
     wr::WidgetSettingsLoadResult Load(std::wstring) override { return {wr::WidgetSettingMutationStatus::Unchanged, value, {}, {}}; }
@@ -217,9 +304,22 @@ public:
     std::optional<wr::WidgetSettingsSnapshot> Snapshot(std::wstring_view) const override { return value; }
     void Close(std::wstring_view) override {}
     void CloseAll() override {}
-    wr::WidgetSettingMutationResult SetOrdinary(const wr::WidgetSettingMutationGuard&, std::string_view, const wr::InteractionValue&) override { return {}; }
-    wr::WidgetSettingMutationResult PreviewOrdinary(const wr::WidgetSettingMutationGuard&, std::string_view, const wr::InteractionValue&) override { return {}; }
-    wr::WidgetSettingMutationResult SetSearchQuery(const wr::WidgetSettingMutationGuard&, std::string_view, std::string) override { return {}; }
+    wr::WidgetSettingMutationResult SetOrdinary(const wr::WidgetSettingMutationGuard& guard, std::string_view key, const wr::InteractionValue& input) override
+    {
+        if (!CanWrite(guard, key)) return {};
+        auto& field = *Field(key);
+        wr::InteractionValue normalized; std::string error;
+        if (!wr::NormalizeWidgetSettingValue(field.schema, input, normalized, error))
+            return {wr::WidgetSettingMutationStatus::InvalidValue, value.generation, value.revision, error, field.schema.validationMessage};
+        field.currentValue = std::move(normalized); field.hasStoredValue = true; field.valid = true; field.validationError.clear();
+        return Result(true);
+    }
+    wr::WidgetSettingMutationResult PreviewOrdinary(const wr::WidgetSettingMutationGuard& guard, std::string_view key, const wr::InteractionValue& input) override { return SetOrdinary(guard, key, input); }
+    wr::WidgetSettingMutationResult SetSearchQuery(const wr::WidgetSettingMutationGuard& guard, std::string_view key, std::string query) override
+    {
+        if (!CanWrite(guard, key)) return {};
+        Field(key)->searchQuery = std::move(query); return Result(true);
+    }
     wr::WidgetSettingSecretReadResult ReadSecret(const wr::WidgetSettingMutationGuard& guard,
         std::string_view key) override
     {
@@ -247,21 +347,64 @@ public:
         ++secretSuccesses;
         return {wr::WidgetSettingMutationStatus::Applied, value.generation, ++value.revision, {}, {}};
     }
-    wr::WidgetSettingMutationResult ChooseFilesystemHandle(const wr::WidgetSettingMutationGuard&, std::string_view) override { return {}; }
-    wr::WidgetSettingMutationResult OpenEntityReferencePicker(const wr::WidgetSettingMutationGuard&, std::string_view) override { return {}; }
-    wr::WidgetSettingMutationResult ClearOpaque(const wr::WidgetSettingMutationGuard& guard, std::string_view key) override { return SetSecret(guard, key, {}); }
+    wr::WidgetSettingMutationResult ChooseFilesystemHandle(const wr::WidgetSettingMutationGuard& guard, std::string_view key) override
+    {
+        if (!CanWrite(guard, key)) return {};
+        if (cancelNextPicker) { cancelNextPicker = false; return Result(); }
+        Field(key)->opaque = {true, true, true, true, "Chosen example", {}};
+        return Result(true);
+    }
+    wr::WidgetSettingMutationResult OpenEntityReferencePicker(const wr::WidgetSettingMutationGuard& guard, std::string_view key) override { return ChooseFilesystemHandle(guard, key); }
+    wr::WidgetSettingMutationResult ClearOpaque(const wr::WidgetSettingMutationGuard& guard, std::string_view key) override
+    {
+        if (key == "api_key") return SetSecret(guard, key, {});
+        if (!CanWrite(guard, key)) return {};
+        Field(key)->opaque = {false, false, true, false, {}, {}}; return Result(true);
+    }
     wr::WidgetSettingMutationResult ApplyPreset(const wr::WidgetSettingMutationGuard&, std::string_view) override { return {}; }
     wr::WidgetSettingMutationResult UpdateHostAppearance(const wr::WidgetSettingMutationGuard&, const wr::WidgetHostAppearancePatch&) override { return {}; }
     wr::WidgetSettingMutationResult PreviewHostAppearance(const wr::WidgetSettingMutationGuard&, const wr::WidgetHostAppearancePatch&) override { return {}; }
-    wr::WidgetSettingMutationResult CommitPreview(const wr::WidgetSettingMutationGuard&) override { return {}; }
+    wr::WidgetSettingMutationResult CommitPreview(const wr::WidgetSettingMutationGuard& guard) override { return allControls && guard.Matches(value) ? Result() : wr::WidgetSettingMutationResult{}; }
     wr::WidgetSettingMutationResult RevertPreview(const wr::WidgetSettingMutationGuard&) override { return {}; }
-    wr::WidgetSettingMutationResult ResetField(const wr::WidgetSettingMutationGuard&, std::string_view) override { return {}; }
+    wr::WidgetSettingMutationResult ResetField(const wr::WidgetSettingMutationGuard& guard, std::string_view key) override
+    {
+        if (!CanWrite(guard, key)) return {};
+        return SetOrdinary(guard, key, Field(key)->defaultValue);
+    }
     wr::WidgetSettingMutationResult Reset(const wr::WidgetSettingMutationGuard&) override { return {}; }
-    wr::WidgetSettingMutationResult StartSearch(const wr::WidgetSettingMutationGuard&, std::string_view, std::string, std::size_t) override { return {}; }
-    wr::WidgetSettingMutationResult CancelSearch(const wr::WidgetSettingMutationGuard&, std::string_view) override { return {}; }
-    wr::WidgetSettingMutationResult CommitSearchResult(const wr::WidgetSettingMutationGuard&, std::string_view, std::uint64_t, std::string_view) override { return {}; }
+    wr::WidgetSettingMutationResult StartSearch(const wr::WidgetSettingMutationGuard& guard, std::string_view key, std::string query, std::size_t) override
+    {
+        if (!CanWrite(guard, key)) return {};
+        const std::string name(key);
+        searches[name] = {value.widgetId, name, value.generation, value.revision, std::move(query), false, true, {},
+            {{"first", "First example", "Offline", "application"}, {"second", "Second example", "Offline", "application"}}};
+        if (searched) searched({value.widgetId, name, value.generation, searches[name].requestId});
+        return {wr::WidgetSettingMutationStatus::Started, value.generation, value.revision, {}, {}};
+    }
+    wr::WidgetSettingMutationResult CancelSearch(const wr::WidgetSettingMutationGuard& guard, std::string_view key) override
+    {
+        if (!CanWrite(guard, key)) return {};
+        searches.erase(std::string(key)); return Result();
+    }
+    wr::WidgetSettingMutationResult CommitSearchResult(const wr::WidgetSettingMutationGuard& guard, std::string_view key, std::uint64_t requestId, std::string_view id) override
+    {
+        if (!CanWrite(guard, key)) return {};
+        const auto search = searches.find(std::string(key));
+        if (search == searches.end() || search->second.requestId != requestId) return {};
+        auto& field = *Field(key);
+        if (field.schema.Kind() == wr::WidgetSettingKind::AppSearch)
+            field.currentValue = wr::MakeWidgetSettingString(id == "second" ? "Second example" : "First example");
+        else field.opaque = {true, true, true, true, id == "second" ? "Second example" : "First example", {}};
+        searches.erase(search); return Result(true);
+    }
     std::optional<wr::WidgetSettingSearchSnapshot> SearchSnapshot(std::wstring_view widgetId, std::string_view key) const override
     {
+        if (allControls)
+        {
+            const auto found = searches.find(std::string(key));
+            return widgetId == value.widgetId && found != searches.end()
+                ? std::optional<wr::WidgetSettingSearchSnapshot>(found->second) : std::nullopt;
+        }
         if (!showSearch || widgetId != value.widgetId || key != "launcher") return {};
         return wr::WidgetSettingSearchSnapshot{value.widgetId, "launcher", value.generation,
             1, "qq", false, true, {}, {{"qq", "QQ", "Applications", "application"},
@@ -375,6 +518,207 @@ void ExerciseSecretInput(const x::FrameworkElement& root,
         << "passed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\t" << (editFocused ? "passed" : "not-observed") << '\n';
 }
 
+template<class Control> Control WidgetPreviewControl(const x::DependencyObject& field)
+{
+    Control found{nullptr};
+    Walk(field, [&](const x::DependencyObject& node) { if (!found) found = node.try_as<Control>(); });
+    if (!found) throw std::runtime_error("missing native widget control");
+    return found;
+}
+
+x::FrameworkElement WidgetPreviewField(const x::FrameworkElement& root, std::string_view key)
+{
+    return PreviewControl<x::FrameworkElement>(root, winrt::to_hstring("WidgetSetting." + std::string(key)));
+}
+
+c::Button WidgetPreviewAction(const x::DependencyObject& field, const char* labelKey)
+{
+    c::Button found{nullptr};
+    const winrt::hstring name{_LW(labelKey)};
+    Walk(field, [&](const x::DependencyObject& node) {
+        if (const auto button = node.try_as<c::Button>(); button &&
+            x::Automation::AutomationProperties::GetName(button) == name) found = button;
+    });
+    return found;
+}
+
+void InspectWidgetControls(const x::FrameworkElement& root,
+    const PreviewWidgetService& service, const std::filesystem::path& output)
+{
+    std::set<std::string> types;
+    std::ofstream inventory(output / L"widget-controls.tsv");
+    inventory << "key\ttype\tenabled\tconfigured\tavailable\twidth\theight\n";
+    for (const auto& field : service.value.fields)
+    {
+        const auto element = WidgetPreviewField(root, field.schema.key);
+        types.insert(field.schema.rawType);
+        inventory << field.schema.key << '\t' << field.schema.rawType << '\t' << field.enabled << '\t'
+            << field.opaque.configured << '\t' << field.opaque.available << '\t'
+            << element.ActualWidth() << '\t' << element.ActualHeight() << '\n';
+        if (element.ActualWidth() <= 0 || element.ActualHeight() <= 0)
+            throw std::runtime_error("widget control has no layout: " + field.schema.key);
+        if (field.schema.Channel() == wr::WidgetSettingValueChannel::EntityReference ||
+            field.schema.Channel() == wr::WidgetSettingValueChannel::FilesystemHandle)
+        {
+            if (field.schema.Kind() == wr::WidgetSettingKind::AppReference) continue;
+            const auto text = WidgetPreviewControl<c::TextBox>(element);
+            const auto choose = WidgetPreviewAction(element, "app.settings.widget.choose");
+            const auto clear = WidgetPreviewAction(element, "app.settings.widget.clear");
+            if (!text.IsReadOnly() || !choose || !clear)
+                throw std::runtime_error("reference control lost its readable name or actions");
+            const auto bounds = text.TransformToVisual(element).TransformBounds(
+                {0, 0, static_cast<float>(text.ActualWidth()), static_cast<float>(text.ActualHeight())});
+            const auto button = choose.TransformToVisual(element).TransformBounds(
+                {0, 0, static_cast<float>(choose.ActualWidth()), static_cast<float>(choose.ActualHeight())});
+            if (button.X < bounds.X + bounds.Width - 1 || std::abs(button.Y - bounds.Y) > 2)
+                throw std::runtime_error("reference actions are not beside the value: " + field.schema.key);
+        }
+    }
+    if (types.size() != 19) throw std::runtime_error("widget preview does not cover all 19 setting types");
+}
+
+void ExerciseWidgetControls(const x::FrameworkElement& root,
+    PreviewWidgetService& service, const std::filesystem::path& output)
+{
+    std::ofstream checks(output / L"widget-control-checks.tsv");
+    checks << "scenario\tresult\n";
+    const auto check = [&](bool passed, const std::string& name) {
+        checks << name << '\t' << (passed ? "passed" : "failed") << '\n'; checks.flush();
+        if (!passed) throw std::runtime_error("widget control check failed: " + name);
+    };
+    const auto field = [&](const char* key) { return WidgetPreviewField(root, key); };
+    const auto settle = [&] { Settle(root); };
+    const auto savedString = [&](const char* key, std::string_view expected) {
+        return service.Field(key)->currentValue.string == expected;
+    };
+    auto text = WidgetPreviewControl<c::TextBox>(field("text"));
+    text.Text(L"Edited example");
+    PumpUntil([&] { return savedString("text", "Edited example"); });
+    check(true, "text-autosave");
+    c::Button restoreText{nullptr};
+    Walk(field("text"), [&](const x::DependencyObject& node) {
+        if (const auto button = node.try_as<c::Button>(); button)
+            if (const auto icon = button.Content().try_as<c::FontIcon>(); icon && icon.Glyph() == L"\xE777") restoreText = button;
+    });
+    check(static_cast<bool>(restoreText), "text-native-reset-action");
+    InvokePreview(restoreText); settle();
+    check(text.Text() == L"SnowDesktop" && savedString("text", "SnowDesktop"), "text-reset-refresh");
+    auto url = WidgetPreviewControl<c::TextBox>(field("url"));
+    url.Text(L"invalid-url");
+    const auto invalidUntil = GetTickCount64() + 800;
+    PumpUntil([&] { return GetTickCount64() >= invalidUntil; });
+    check(url.Text() == L"invalid-url" && savedString("url", "https://example.test/api"), "url-invalid-draft-retained");
+    url.Text(L"https://example.test/edited");
+    PumpUntil([&] { return savedString("url", "https://example.test/edited"); });
+    check(true, "url-autosave");
+    WidgetPreviewControl<c::ToggleSwitch>(field("bool")).IsOn(false);
+    settle();
+    check(!service.Field("bool")->currentValue.boolean, "bool-immediate");
+    for (const auto key : {"int", "float", "range"})
+    {
+        const double desired = std::string_view(key) == "int" ? 17.0 : std::string_view(key) == "float" ? 2.5 : 65.0;
+        WidgetPreviewControl<c::NumberBox>(field(key)).Value(desired);
+        PumpUntil([&] {
+            const auto& value = service.Field(key)->currentValue;
+            return value.type == wr::InteractionValue::Type::Integer ? value.integer == static_cast<long long>(desired)
+                : std::abs(value.number - desired) < 0.00001;
+        });
+        const auto idleUntil = GetTickCount64() + 750;
+        PumpUntil([&] { return GetTickCount64() >= idleUntil; });
+        check(true, std::string(key) + "-preview-and-commit");
+    }
+    auto single = WidgetPreviewControl<c::ComboBox>(field("select"));
+    single.SelectedIndex(1);
+    settle();
+    check(savedString("select", "b"), "select-long-label");
+    auto multi = WidgetPreviewControl<c::ListView>(field("multiSelect"));
+    multi.StartBringIntoView(); settle();
+    c::CheckBox second{nullptr};
+    const auto secondLabel = winrt::to_hstring(service.Field("multiSelect")->schema.options[1].label);
+    Walk(multi, [&](const x::DependencyObject& node) {
+        if (const auto option = node.try_as<c::CheckBox>(); option &&
+            x::Automation::AutomationProperties::GetName(option) == secondLabel) second = option;
+    });
+    check(static_cast<bool>(second), "multiSelect-options-realized");
+    second.IsChecked(true);
+    settle();
+    check(service.Field("multiSelect")->currentValue.array.size() == 2, "multiSelect-immediate");
+    const auto multiWidth = field("multiSelect").ActualWidth();
+    check(multi.ActualWidth() > multiWidth * 0.8, "multiSelect-full-row");
+    auto date = WidgetPreviewControl<c::CalendarDatePicker>(field("date"));
+    winrt::Windows::Globalization::Calendar calendar;
+    calendar.ChangeCalendarSystem(L"GregorianCalendar");
+    calendar.SetDateTime(date.Date().Value());
+    check(calendar.Year() == 1492 && calendar.Month() == 10 && calendar.Day() == 12, "date-historical-roundtrip");
+    calendar.Day(1); calendar.Year(2028); calendar.Month(2); calendar.Day(29);
+    date.Date(winrt::box_value(calendar.GetDateTime()).as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::DateTime>>());
+    settle();
+    check(savedString("date", "2028-02-29"), "date-leap-day");
+    InvokePreview(WidgetPreviewAction(field("date"), "app.settings.widget.clear")); settle();
+    check(savedString("date", "") && !date.Date(), "date-clear");
+    check(!WidgetPreviewAction(field("requiredDate"), "app.settings.widget.clear"), "required-date-no-clear");
+    auto requiredDate = WidgetPreviewControl<c::CalendarDatePicker>(field("requiredDate"));
+    requiredDate.Date(nullptr); settle();
+    check(savedString("requiredDate", "2026-10-19") && static_cast<bool>(requiredDate.Date()), "required-date-rejected-clear-restores-display");
+    auto time = WidgetPreviewControl<c::TimePicker>(field("time"));
+    time.SelectedTime(winrt::box_value(std::chrono::duration_cast<winrt::Windows::Foundation::TimeSpan>(std::chrono::minutes(545)))
+        .as<winrt::Windows::Foundation::IReference<winrt::Windows::Foundation::TimeSpan>>());
+    settle();
+    check(savedString("time", "09:05"), "time-immediate");
+    InvokePreview(WidgetPreviewAction(field("time"), "app.settings.widget.clear")); settle();
+    check(savedString("time", "") && !time.SelectedTime(), "time-clear");
+    for (const auto key : {"desktopItemReference", "fileReference", "folderReference", "fileHandle", "folderHandle"})
+    {
+        auto item = field(key);
+        const auto choose = WidgetPreviewAction(item, "app.settings.widget.choose");
+        const auto clear = WidgetPreviewAction(item, "app.settings.widget.clear");
+        const auto before = service.Field(key)->opaque;
+        service.cancelNextPicker = true; InvokePreview(choose); settle();
+        check(service.Field(key)->opaque == before, std::string(key) + "-cancel-keeps-selection");
+        InvokePreview(clear); settle();
+        check(!service.Field(key)->opaque.configured && !clear.IsEnabled(), std::string(key) + "-clear");
+        InvokePreview(choose); settle();
+        check(service.Field(key)->opaque.configured &&
+            WidgetPreviewControl<c::TextBox>(item).Text() == L"Chosen example", std::string(key) + "-choose-refresh");
+    }
+    const auto missing = field("unavailable");
+    check(WidgetPreviewAction(missing, "app.settings.widget.clear").IsEnabled() &&
+        x::Automation::AutomationProperties::GetItemStatus(missing) == winrt::hstring{_LW("iconAppearance.unavailable")},
+        "unavailable-announced-and-clearable");
+    check(!WidgetPreviewAction(field("disabled"), "app.settings.widget.choose").IsEnabled() &&
+        !WidgetPreviewAction(field("disabled"), "app.settings.widget.clear").IsEnabled(), "disabled-actions");
+    check(WidgetPreviewControl<c::TextBox>(field("empty")).Text().empty() &&
+        !WidgetPreviewAction(field("empty"), "app.settings.widget.clear").IsEnabled(), "empty-selection-no-fake-value");
+    for (const auto key : {"appSearch", "appReference"})
+    {
+        auto item = field(key); item.StartBringIntoView(); settle();
+        (void)service.StartSearch(wr::WidgetSettingMutationGuard::FromSnapshot(service.value), key, "example", 16);
+        const auto results = WidgetPreviewControl<c::ListView>(item);
+        PumpUntil([&] { return results.Items().Size() == 2; });
+        results.SelectedIndex(1);
+        const auto search = WidgetPreviewControl<c::AutoSuggestBox>(item);
+        c::Button query{nullptr};
+        Walk(search, [&](const x::DependencyObject& node) {
+            if (const auto button = node.try_as<c::Button>(); button && button.Name() == L"QueryButton") query = button;
+        });
+        check(static_cast<bool>(query), std::string(key) + "-native-query-action");
+        InvokePreview(query); settle();
+        check(std::string_view(key) == "appSearch" ? savedString(key, "Second example")
+            : service.Field(key)->opaque.displayLabel == "Second example", std::string(key) + "-selected-result");
+        check(search.Text() == L"Second example", std::string(key) + "-selected-name-visible");
+    }
+    const auto colorField = field("color"); colorField.StartBringIntoView(); settle();
+    const auto colorButton = WidgetPreviewControl<c::Button>(colorField);
+    colorButton.Flyout().ShowAt(colorButton); settle();
+    const auto colorPanel = colorButton.Flyout().as<c::Flyout>().Content().as<x::DependencyObject>();
+    const auto picker = WidgetPreviewControl<c::ColorPicker>(colorPanel);
+    picker.Color({255, 24, 80, 160});
+    settle();
+    colorButton.Flyout().Hide(); settle();
+    check(service.Field("color")->currentValue.integer == 0x1850A0, "color-preview-close-commit");
+    check(service.secretReads == 0, "gallery-does-not-decrypt-secrets");
+}
+
 constexpr SettingsPage pages[] = {
     SettingsPage::General, SettingsPage::Desktop, SettingsPage::QuickNavigation,
     SettingsPage::DesktopPages, SettingsPage::WidgetBehavior, SettingsPage::DesktopCategories,
@@ -413,11 +757,13 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
     SetWindowPos(host.window, nullptr, 0, 0, static_cast<int>(std::ceil(width * scale)),
         static_cast<int>(std::ceil(height * scale)), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
 
+    const bool controlsGallery = scenarioRules && selected == "widget-settings";
     PreviewWidgetService widgets(locale == "en-US", searching);
     widgets.allowSecretWrites = secretInput;
     widgets.value.customStyle = custom;
     widgets.value.hostAppearance.followPersonalization = !custom;
     if (custom) widgets.value.hostAppearance.presetId = "__custom";
+    if (controlsGallery) widgets.PopulateAllControls(locale == "en-US");
     auto shell = winrt::make_self<winrt::SnowDesktop::implementation::SettingsShell>();
     shell->RequestedTheme(dark ? x::ElementTheme::Dark : x::ElementTheme::Light);
     shell->SetLocalizer([](std::string_view key) { return std::wstring(_LW(std::string(key).c_str())); });
@@ -717,7 +1063,7 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         snapshot.route = SettingsRoute::ForPage(page);
         if (page == SettingsPage::WidgetSettings) snapshot.route = SettingsRoute::ForWidget(widgets.value.widgetId);
         if (page == SettingsPage::LargeIcon) snapshot.route.itemKey = L"settings-visual-example";
-        snapshot.route.focusId = focusId;
+        snapshot.route.focusId = controlsGallery ? std::string{} : focusId;
         appearanceFixture->globalSettings = snapshot.values.desktop.iconBeautify;
         if (!shell->ApplySnapshot(snapshot)) throw std::runtime_error("preview route refused: " + key);
         HomeAboutStatusPatch status; status.generation = 1; status.revision = revision;
@@ -1353,6 +1699,11 @@ void Export(const std::filesystem::path& output, std::string_view selected, bool
         }
         if (secretInput && page == SettingsPage::WidgetSettings)
             ExerciseSecretInput(shell.as<x::FrameworkElement>(), widgets, output);
+        if (controlsGallery && page == SettingsPage::WidgetSettings)
+        {
+            InspectWidgetControls(shell.as<x::FrameworkElement>(), widgets, output);
+            if (focusId == "exercise") ExerciseWidgetControls(shell.as<x::FrameworkElement>(), widgets, output);
+        }
         const unsigned gradientDetailsInvoked = expanded
             ? ExpandGradientDetails(cards, shell.as<x::FrameworkElement>()) : 0;
         unsigned removeStopButtons = 0;
