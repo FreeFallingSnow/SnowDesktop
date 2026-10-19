@@ -19,6 +19,8 @@
 #include "layout/item_render_layer_rules.h"
 #include "widget/runtime/widget_item_layout.h"
 #include "storage_title_bar_layout.h"
+#include "layout/folder_sort_rules.h"
+#include "shell/item_sort_metadata.h"
 
 #include <algorithm>
 #include <unordered_set>
@@ -793,7 +795,7 @@ FileGroup::GetGroupSearchResults() const
         {
             std::wstring name;
             std::wstring type;
-            bool directory = false;
+            snowdesktop::folder_sort_rules::TypeGroup typeGroup = snowdesktop::folder_sort_rules::TypeGroup::Other;
             std::optional<FILETIME> modified;
             std::optional<std::uint64_t> size;
         };
@@ -806,14 +808,16 @@ FileGroup::GetGroupSearchResults() const
                     app_->FindItemIndexByKey(result.desktopKey);
                 if (itemIndex < app_->items_.size())
                 {
-                    const DesktopItem& item = app_->items_[itemIndex];
+                    DesktopItem& item = app_->items_[itemIndex];
                     value.name = item.name;
                     value.type = item.typeName;
                     if (column == snowdesktop::list_detail_rules::Column::Type)
                     {
                         const DWORD attributes = GetFileAttributesW(item.parsingName.c_str());
-                        value.directory = attributes != INVALID_FILE_ATTRIBUTES &&
+                        const bool directory = attributes != INVALID_FILE_ATTRIBUTES &&
                             (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+                        if (!directory) snowdesktop::item_sort_metadata::Prepare(item, item.parsingName);
+                        value.typeGroup = snowdesktop::folder_sort_rules::TypeGroupFor(item, directory);
                     }
                     value.modified = item.modifiedTime;
                     value.size = item.fileSize;
@@ -826,11 +830,15 @@ FileGroup::GetGroupSearchResults() const
                 result.folderEntryIndex <
                     app_->widgets_[sourceIndex].folderEntries.size())
             {
-                const FolderEntry& entry = app_->widgets_[sourceIndex].
+                FolderEntry& entry = app_->widgets_[sourceIndex].
                     folderEntries[result.folderEntryIndex];
                 value.name = entry.DisplayName();
                 value.type = entry.typeName;
-                value.directory = entry.isDirectory;
+                if (column == snowdesktop::list_detail_rules::Column::Type)
+                {
+                    if (!entry.isDirectory) snowdesktop::item_sort_metadata::Prepare(entry, entry.fullPath);
+                    value.typeGroup = snowdesktop::folder_sort_rules::TypeGroupFor(entry, entry.isDirectory);
+                }
                 value.modified = entry.lastWriteTime;
                 value.size = entry.fileSize;
             }
@@ -853,12 +861,9 @@ FileGroup::GetGroupSearchResults() const
                 }
                 else if (column == snowdesktop::list_detail_rules::Column::Type)
                 {
-                    if (a.directory != b.directory) return a.directory;
-                    const bool hasA = !a.type.empty();
-                    const bool hasB = !b.type.empty();
-                    if (hasA != hasB) return hasA;
-                    comparison = _wcsicmp(
-                        a.type.c_str(), b.type.c_str());
+                    comparison = snowdesktop::folder_sort_rules::CompareType(
+                        a.typeGroup, a.type, a.name, b.typeGroup, b.type, b.name);
+                    return ascending ? comparison < 0 : comparison > 0;
                 }
                 else if (column == snowdesktop::list_detail_rules::Column::Modified)
                 {

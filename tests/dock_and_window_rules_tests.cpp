@@ -5310,14 +5310,14 @@ int main(int argc, char** argv)
         sortEntries,
         folderSort::kType, false);
     Check(
-        sortEntries[0].name == L"folder-a" &&
+        sortEntries[0].name == L"zeta.txt" &&
             sortEntries[1].name ==
-                L"folder-b" &&
+                L"alpha.png" &&
             sortEntries[2].name ==
-                L"zeta.txt" &&
+                L"folder-b" &&
             sortEntries[3].name ==
-                L"alpha.png",
-        "descending type sort keeps directories first and uses stable names for ties");
+                L"folder-a",
+        "descending type sort reverses type priority and puts directories last in descending name order");
     folderSort::StableSort(
         sortEntries,
         folderSort::kSize, true);

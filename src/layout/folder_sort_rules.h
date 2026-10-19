@@ -60,6 +60,40 @@ inline int CompareInsensitive(
     return 0;
 }
 
+enum class TypeGroup
+{
+    System,
+    Directory,
+    DirectoryShortcut,
+    Other,
+};
+
+template<class Item>
+inline TypeGroup TypeGroupFor(const Item& item, bool directory)
+{
+    if constexpr (requires { item.desktopIconClsid; })
+        if (!item.desktopIconClsid.empty()) return TypeGroup::System;
+    if (directory) return TypeGroup::Directory;
+    if constexpr (requires { item.shortcutTarget.directory; })
+        if (item.shortcutTarget.directory) return TypeGroup::DirectoryShortcut;
+    return TypeGroup::Other;
+}
+
+// Direction is applied by the caller to the entire comparison, including
+// category priority and name ties. Equal keys retain their original order.
+inline int CompareType(TypeGroup groupA, std::wstring_view typeA, std::wstring_view nameA,
+    TypeGroup groupB, std::wstring_view typeB, std::wstring_view nameB)
+{
+    if (groupA != groupB) return groupA < groupB ? -1 : 1;
+    if (groupA == TypeGroup::Other)
+    {
+        if (typeA.empty() != typeB.empty()) return typeA.empty() ? 1 : -1;
+        const int comparison = CompareInsensitive(typeA, typeB);
+        if (comparison != 0) return comparison;
+    }
+    return CompareInsensitive(nameA, nameB);
+}
+
 template <typename Entry>
 inline void StableSort(
     std::vector<Entry>& entries,
@@ -74,30 +108,27 @@ inline void StableSort(
         [mode, ascending](
             const Entry& a,
             const Entry& b) {
-            // Name and type views keep directories grouped before files.
+            // Name views keep directories grouped before files.
             // Modified-time views compare every entry on the same timeline.
-            if ((mode == kName || mode == kType) &&
+            if (mode == kName &&
                 a.isDirectory != b.isDirectory)
                 return a.isDirectory;
 
             int comparison = 0;
             if (mode == kType)
             {
-                if constexpr (requires { a.typeName; b.typeName; })
-                {
-                    const bool hasA = !a.typeName.empty();
-                    const bool hasB = !b.typeName.empty();
-                    if (hasA != hasB)
-                        return hasA;
-                    comparison = CompareInsensitive(
-                        a.typeName, b.typeName);
-                }
-                else
-                {
-                    comparison = CompareInsensitive(
-                        ExtensionOf(a.name),
-                        ExtensionOf(b.name));
-                }
+                const auto name = [](const Entry& entry) -> std::wstring_view {
+                    if constexpr (requires { entry.DisplayName(); }) return entry.DisplayName();
+                    else return entry.name;
+                };
+                const auto type = [](const Entry& entry) -> std::wstring_view {
+                    if constexpr (requires { entry.typeName; }) return entry.typeName;
+                    else return ExtensionOf(entry.name);
+                };
+                comparison = CompareType(TypeGroupFor(a, a.isDirectory), type(a), name(a),
+                    TypeGroupFor(b, b.isDirectory), type(b), name(b));
+                if (comparison == 0) comparison = CompareInsensitive(a.fullPath, b.fullPath);
+                return ascending ? comparison < 0 : comparison > 0;
             }
             else if (mode == kModified)
             {

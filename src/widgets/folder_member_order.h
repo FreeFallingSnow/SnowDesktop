@@ -2,6 +2,7 @@
 
 #include "common/types.h"
 #include "layout/folder_sort_rules.h"
+#include "shell/item_sort_metadata.h"
 #include <iterator>
 #include <unordered_map>
 
@@ -52,6 +53,7 @@ inline void Refresh(DesktopWidget& widget, NormalizeKey normalizeKey)
             NormalizeMode(widget.folderSortMode) !=
         snowdesktop::folder_sort_rules::kManual)
     {
+        snowdesktop::item_sort_metadata::PrepareFolder(widget.folderEntries, widget.folderSortMode);
         snowdesktop::folder_sort_rules::StableSort(
             widget.folderEntries,
             widget.folderSortMode,

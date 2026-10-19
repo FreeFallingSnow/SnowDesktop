@@ -2,6 +2,7 @@
 #include "app/dock/dock_folder_popup_read.h"
 #include "ui/menu/menu_fluent_glyphs.h"
 #include "app/menus/sort_menu.h"
+#include "shell/item_sort_metadata.h"
 
 // Collection and Dock-folder popup transitions.
 
@@ -795,6 +796,7 @@ void DesktopApp::SortDockFolderPopupContents(
                 FromLegacyFolderSortMode(mode);
         dockFolderPopupWidget_.contentSortAscending =
             ascending;
+        snowdesktop::item_sort_metadata::PrepareFolder(dockFolderPopupWidget_.folderEntries, mode);
         snowdesktop::folder_sort_rules::
             StableSort(
                 dockFolderPopupWidget_.

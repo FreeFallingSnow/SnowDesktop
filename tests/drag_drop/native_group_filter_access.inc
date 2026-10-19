@@ -24,6 +24,35 @@
         if (!view) throw std::runtime_error("filter fixture requires its real native scrolling surface");
         view->SetSearchText(query);
     }
+    static std::wstring SortFreeType(DesktopApp& app, bool ascending)
+    {
+        app.items_oo_.clear(); app.containers_.clear(); app.widgets_.clear();
+        for (auto& item : app.items_) item.shortcutTarget = {};
+        const std::pair<const wchar_t*, const wchar_t*> systemItems[]{
+            {L"T", L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}"},
+            {L"U", L"{645FF040-5081-101B-9F08-00AA002F954E}"}};
+        // Only the external namespace metadata boundary is supplied here;
+        // production SortIcons assigns and persists the actual grid cells.
+        for (const auto& [name, clsid] : systemItems)
+        {
+            auto item = FileItem(name);
+            item.desktopIconClsid = item.layoutKey = clsid;
+            item.parsingName = L"::" + std::wstring(clsid);
+            item.typeName = std::wstring(name) == L"T" ? L"Z" : L"A";
+            app.items_.push_back(std::move(item));
+        }
+        app.RefreshDesktopItemIndexCache();
+        app.SortIcons(snowdesktop::folder_sort_rules::kType, ascending);
+        std::vector<const DesktopItem*> ordered;
+        for (const auto& item : app.items_) ordered.push_back(&item);
+        std::sort(ordered.begin(), ordered.end(), [](const auto* a, const auto* b) {
+            return a->gridCell.column != b->gridCell.column
+                ? a->gridCell.column < b->gridCell.column : a->gridCell.row < b->gridCell.row;
+        });
+        std::wstring result;
+        for (const auto* item : ordered) result += item->name.front();
+        return result;
+    }
     static void ReadyGroupTypeMetadata(DesktopApp& app)
     {
         // The windowless host intentionally does not start the icon loader.

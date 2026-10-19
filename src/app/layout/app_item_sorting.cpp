@@ -1,24 +1,27 @@
 #include "app/app.h"
 #include "app/lifecycle/startup_diagnostics.h"
 #include "layout/desktop_item_sort_rules.h"
+#include "shell/item_sort_metadata.h"
 
 // Desktop and widget sorting plus clipboard cut-state updates.
 
 namespace
 {
-std::unordered_set<size_t> TypeDirectoryIndices(const std::vector<DesktopItem>& items,
+std::unordered_set<size_t> TypeDirectoryIndices(std::vector<DesktopItem>& items,
     const std::vector<size_t>& indices, int mode)
 {
     std::unordered_set<size_t> result;
     if (mode != snowdesktop::folder_sort_rules::kType) return result;
-    // Sample each physical item once before comparison. Shell namespace items
-    // may not have filesystem attributes and keep their existing type order.
+    // Sample filesystem attributes and saved shortcut targets once, outside
+    // comparisons. Namespace identity supplies the separate system group.
     for (const size_t index : indices)
         if (index < items.size())
         {
             const DWORD attributes = GetFileAttributesW(items[index].parsingName.c_str());
             if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)
                 result.insert(index);
+            else
+                snowdesktop::item_sort_metadata::Prepare(items[index], items[index].parsingName);
         }
     return result;
 }
@@ -166,6 +169,7 @@ void DesktopApp::SortWidgetContents(size_t widgetIndex, int mode, bool ascending
             snowdesktop::folder_sort_rules::
                 NormalizeMode(mode);
         w.folderSortAscending = ascending;
+        snowdesktop::item_sort_metadata::PrepareFolder(w.folderEntries, w.folderSortMode);
         snowdesktop::folder_sort_rules::StableSort(
             w.folderEntries,
             w.folderSortMode,

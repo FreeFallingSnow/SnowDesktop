@@ -3707,7 +3707,8 @@ void TestNewItemsRetainTheirDesktopFilesOwner()
 }
 
 // The host uses this comparator for free-desktop icons and collection contents.
-// Unknown metadata must remain last, and zero bytes must remain a known value.
+// Unknown size/time metadata remains last; Type order reverses completely.
+// Zero bytes must remain a known value.
 void TestDesktopMetadataSorting(bool negativeControl = false)
 {
     using namespace snowdesktop::folder_sort_rules;
@@ -3737,8 +3738,39 @@ void TestDesktopMetadataSorting(bool negativeControl = false)
     Check(names(kModified, false) == L"ZBADC", "modified descending puts the newest first and unavailable times last");
     Check(names(kName, true) == L"ABCDZ" && names(kName, false) == L"ZDCBA",
         "name sorting retains both directions");
-    Check(names(kType, true) == L"CZABD" && names(kType, false) == L"ABDZC",
-        "desktop Type sorting preserves empty-type placement and ascending names within both type directions");
+    Check(names(kType, true) == L"ZABDC" && names(kType, false) == L"CDBAZ",
+        "Type descending reverses both type blocks, missing types and names within a block");
+    // User-defined priority: system objects, directories, folder shortcuts,
+    // then other types. Misleading type labels cannot override these groups.
+    std::vector<DesktopItem> grouped(10);
+    const wchar_t* groupNames[]{L"ZText", L"ZFolder", L"ZSystem", L"ZLink", L"AImage",
+        L"ASystem", L"AFolder", L"ALink", L"AText", L"Unknown"};
+    for (size_t i = 0; i < grouped.size(); ++i) grouped[i].name = groupNames[i];
+    grouped[0].typeName = grouped[8].typeName = L"Text";
+    grouped[4].typeName = L"Image";
+    grouped[2].desktopIconClsid = L"{20D04FE0-3AEA-1069-A2D8-08002B30309D}";
+    grouped[5].desktopIconClsid = L"{645FF040-5081-101B-9F08-00AA002F954E}";
+    grouped[2].typeName = L"A"; grouped[5].typeName = L"Z";
+    grouped[3].shortcutTarget.directory = grouped[7].shortcutTarget.directory = true;
+    const auto groupOrder = [&](bool ascending, bool desktop) {
+        std::vector<size_t> indices{0, 1, 2, 3, 4, 5, 6, 7, 8, 9};
+        std::stable_sort(indices.begin(), indices.end(), [&](size_t a, size_t b) {
+            const bool da = a == 1 || a == 6, db = b == 1 || b == 6;
+            return desktop ? snowdesktop::desktop_item_sort_rules::LessOnDesktop(
+                grouped[a], grouped[b], kType, ascending, da, db)
+                : snowdesktop::desktop_item_sort_rules::Less(grouped[a], grouped[b], kType, ascending, da, db);
+        });
+        std::wstring result;
+        for (const auto index : indices) result += static_cast<wchar_t>(L'A' + index);
+        return result;
+    };
+    for (const bool desktop : {false, true})
+    {
+        Check(groupOrder(true, desktop) == L"FCGBHDEIAJ",
+            "Type ascending prioritizes system objects, folders and folder shortcuts before other file types");
+        Check(groupOrder(false, desktop) == L"JAIEDHBGCF",
+            "Type descending reverses all categories, type names and item names on desktop and in collections");
+    }
     // Negative control: the former name-only behavior cannot satisfy metadata expectations.
     Check(names(kName, true) != L"BZADC" && names(kName, false) != L"ZBADC",
         "metadata fixtures distinguish unsupported size/date sorting from a correct result");

@@ -138,6 +138,14 @@ inline void RunFiltered(std::string_view name)
     }
     std::cout << scenes << " native filtered real-anchor, hidden-member, cancellation/date refusal and storage scenes passed: " << name << '\n';
 }
+inline void CreateTypeShortcut(const fs::path& path, const fs::path& target)
+{
+    Microsoft::WRL::ComPtr<IShellLinkW> link;
+    Microsoft::WRL::ComPtr<IPersistFile> persisted;
+    Require(SUCCEEDED(CoCreateInstance(CLSID_ShellLink, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&link))) &&
+        SUCCEEDED(link->SetPath(target.c_str())) && SUCCEEDED(link.As(&persisted)) &&
+        SUCCEEDED(persisted->Save(path.c_str(), TRUE)), "create a real folder shortcut for the Type sort contract");
+}
 inline void RunType(std::string_view name)
 {
     const auto& surface = Find(name);
@@ -160,6 +168,8 @@ inline void RunType(std::string_view name)
         }
         for (const auto* directory : {L"P", L"Q"})
         { members.push_back(source / directory); fs::create_directory(members.back()); }
+        members.push_back(source / L"R.lnk"); CreateTypeShortcut(members[6], members[4]);
+        members.push_back(source / L"S.lnk"); CreateTypeShortcut(members[7], members[5]);
         SHFILEINFOW typeA{}, typeZ{};
         Require(SHGetFileInfoW(members[0].c_str(), 0, &typeA, sizeof(typeA), SHGFI_TYPENAME) != 0 &&
             SHGetFileInfoW(members[1].c_str(), 0, &typeZ, sizeof(typeZ), SHGFI_TYPENAME) != 0 &&
@@ -173,10 +183,10 @@ inline void RunType(std::string_view name)
         const auto before = Access::Widgets(app);
         if (surface.grouped) Access::SortGroupedMembers(app, order::sort::kType, ascending);
         else Access::SortMembers(app, order::sort::kType, ascending);
-        const auto expected = ascending ? L"PQACBD" : L"PQBDAC";
+        const auto expected = ascending ? L"PQRSACBD" : L"DBCASRQP";
         const auto check = [&] {
             Require(Displayed(app, surface.grouped) == expected,
-                "D12 Type: directories stay first; type blocks follow direction; equal-type names use ascending secondary order");
+                "Type: folders precede folder shortcuts and other types; descending reverses categories and name ties");
             Require(pair::Widget(app, L"ordered").contentSortColumn == order::Column::Type &&
                 pair::Widget(app, L"ordered").contentSortAscending == ascending,
                 "actual native sort command must persist its chosen Type field and direction");
@@ -186,12 +196,15 @@ inline void RunType(std::string_view name)
                 Require(Read(members[index]) == std::string(1, static_cast<char>('A' + index)), "explicit Type sort cannot alter physical member bytes");
             Require(fs::is_empty(members[4]) && fs::is_empty(members[5]) && Access::NoIngressPopup(app),
                 "Type sort preserves both real directories and does not create desktop presentation windows");
+            Require(fs::equivalent(native_ole_file_cases::LinkTarget(members[6]), members[4]) &&
+                fs::equivalent(native_ole_file_cases::LinkTarget(members[7]), members[5]),
+                "Type sorting preserves both real folder shortcut targets");
         };
         check(); Require(Access::Save(app), "save actual native Type sort");
         native_drag_async_reload_cases::Refresh(app); Access::ReadyGroupTypeMetadata(app); check();
         Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); Access::ReadyGroupTypeMetadata(app); check();
         const auto sorted = Access::Widgets(app);
-        const std::vector<std::wstring> selected{ascending ? L"C.snowdesktop_type_a" : L"D.snowdesktop_type_z"};
+        const std::vector<std::wstring> selected{L"C.snowdesktop_type_a"};
         const auto captured = surface.grouped ? Access::BeginGroupedMembers(app, selected) : Access::BeginMembers(app, selected);
         Require(captured.entries.size() == 1, "D02 Type drag captures the actual selected member without prefiltering");
         const auto preview = surface.grouped ? Access::GroupedMemberPreview(app, false) : Access::MemberPreview(app, false);
@@ -199,7 +212,7 @@ inline void RunType(std::string_view name)
             "D02 Type manual drag must publish the given visible first-member insertion mark");
         if (surface.grouped) Access::DropGroupedMembers(app, false);
         else Access::DropMembers(app, false);
-        const auto manualOrder = ascending ? L"CPQABD" : L"DPQBAC";
+        const auto manualOrder = ascending ? L"CPQRSABD" : L"CDBASRQP";
         const auto checkManual = [&] {
             CheckOrder(app, surface, manualOrder, true, sorted);
             Require(Displayed(app, surface.grouped) == manualOrder,
@@ -211,10 +224,13 @@ inline void RunType(std::string_view name)
         checkManual(); Require(Access::Save(app), "save native manual result after Type ordering");
         native_drag_async_reload_cases::Refresh(app); Access::ReadyGroupTypeMetadata(app); checkManual();
         Access::Load(app); native_drag_async_reload_cases::Refresh(app, true); Access::ReadyGroupTypeMetadata(app); checkManual();
+        if (surface.name == "collection")
+            Require(Access::SortFreeType(app, ascending) == (ascending ? L"TUPQRSACBD" : L"DBCASRQPUT"),
+                "SortIcons must place system objects, folders, uncached real folder links and file types in full reversible grid order");
         Access::StopModel(app);
         if (surface.type != DesktopWidgetType::FolderMapping) for (const auto& member : members) fs::remove(member);
     }
-    std::cout << scenes << " native Type directory priority, real Shell names, direction and storage scenes passed: " << name << '\n';
+    std::cout << scenes << " native Type folder/shortcut priority, full reversal and storage scenes passed: " << name << '\n';
 }
 inline void RunCategoryDwell()
 {
@@ -355,23 +371,25 @@ inline void RunTypeSearch()
         for (std::size_t index = 0; index < regular.size(); ++index)
         { std::ofstream stream(regular[index], std::ios::binary); stream << "search-type-" << index; }
         fs::create_directory(p); fs::create_directory(q);
+        const auto r = desktop / L"R.needle.lnk", s = mapped / L"S.needle.lnk";
+        CreateTypeShortcut(r, p); CreateTypeShortcut(s, q);
         auto& app = profile.Model(false, root / L"layout");
-        Access::SeedSearchTypeSurface(app, {a, c, p, ta}, mapped, list);
+        Access::SeedSearchTypeSurface(app, {a, c, p, ta, r}, mapped, list);
         Access::PrepareReload(app); Access::BindAsync(app);
         native_drag_async_reload_cases::Refresh(app);
         Access::ReadyGroupTypeMetadata(app);
         const auto original = Access::Widgets(app);
         Access::FilterSurfaceQuery(app, true, L"needle");
         Access::SortGroupedMembers(app, order::sort::kType, ascending);
-        const auto expected = ascending ? std::vector<fs::path>{p, q, a, c, ta, tb, b, d}
-            : std::vector<fs::path>{p, q, b, d, a, c, ta, tb};
+        const auto expected = ascending ? std::vector<fs::path>{p, q, r, s, a, c, ta, tb, b, d}
+            : std::vector<fs::path>{d, b, ta, tb, c, a, s, r, q, p};
         const auto check = [&] {
             std::vector<fs::path> observed;
             for (const auto& slot : Access::MemberContainer(app, L"ordered-group")->GetSlots())
                 if (const auto* item = slot->GetItem()) observed.emplace_back(item->GetPath());
             Require(observed.size() == expected.size() && std::equal(observed.begin(), observed.end(), expected.begin(), expected.end(),
                 [](const auto& left, const auto& right) { return fs::equivalent(left, right); }),
-                "D12: mixed-source search Type sort keeps directory priority, type direction, ascending name ties and stable equal-name source order");
+                "mixed search Type sort orders folders, folder shortcuts and file types; reverses names and categories; keeps equal-key source order");
             for (const auto& widget : original)
                 if (widget.id != L"ordered-group") pair::CheckChild(app, widget);
             const auto& group = pair::Widget(app, L"ordered-group");
@@ -381,6 +399,8 @@ inline void RunTypeSearch()
             for (std::size_t index = 0; index < regular.size(); ++index)
                 Require(Read(regular[index]) == "search-type-" + std::to_string(index), "mixed search sort preserves all six actual source file identities and bytes");
             Require(fs::is_empty(p) && fs::is_empty(q) && Access::NoIngressPopup(app), "mixed search sort keeps real directories and creates no presentation window");
+            Require(fs::equivalent(native_ole_file_cases::LinkTarget(r), p) && fs::equivalent(native_ole_file_cases::LinkTarget(s), q),
+                "mixed search Type sort preserves folder shortcut targets from both real sources");
         };
         check(); Require(Access::Save(app), "save actual mixed search Type settings");
         native_drag_async_reload_cases::Refresh(app);
@@ -389,7 +409,7 @@ inline void RunTypeSearch()
         Access::Load(app); native_drag_async_reload_cases::Refresh(app, true);
         Access::ReadyGroupTypeMetadata(app);
         Access::FilterSurfaceQuery(app, true, L"needle"); check();
-        Access::StopModel(app); for (const auto& path : {a, c, p, ta}) fs::remove(path);
+        Access::StopModel(app); for (const auto& path : {a, c, r, p, ta}) fs::remove(path);
     }
     std::cout << scenes << " native mixed-source search Type and stable equal-name storage scenes passed\n";
 }
