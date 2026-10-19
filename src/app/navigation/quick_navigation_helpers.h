@@ -8,6 +8,7 @@
 #include <string>
 #include <algorithm>
 #include <cstdint>
+#include <cmath>
 
 inline constexpr size_t kQuickNavigationAppResultLimit = 80;
 inline constexpr size_t kQuickNavigationAppCollapsedResultCount = 5;
@@ -52,6 +53,17 @@ inline RECT QuickNavigationSearchInputRect(RECT search, int inset)
     search.right = std::max<LONG>(search.left + 1, search.right);
     search.bottom = std::max<LONG>(search.top + 1, search.bottom);
     return search;
+}
+
+inline float QuickNavigationItemTextLineSpacing(float fontSize)
+{
+    return std::max(1.0f, std::floor(fontSize * 1.08f));
+}
+
+inline int QuickNavigationItemTextHeight(float fontSize, int lines)
+{
+    return std::max(1, static_cast<int>(std::ceil(
+        QuickNavigationItemTextLineSpacing(fontSize) * static_cast<float>(std::max(1, lines)))));
 }
 
 inline RECT QuickNavigationItemTextRect(RECT item, RECT icon, int pad, int gap, int height)

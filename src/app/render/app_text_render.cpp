@@ -469,9 +469,9 @@ void DesktopApp::DrawQuickNavItemText(ID2D1RenderTarget* ctx, RECT bounds,
         return;
 
     const float fontSize = quickNavItemTextFormat_->GetFontSize();
-    const float lineSpacing = std::max(1.0f, std::floor(fontSize * 1.08f));
+    const float lineSpacing = QuickNavigationItemTextLineSpacing(fontSize);
     const float baseline = std::max(1.0f, std::floor(fontSize * 0.84f));
-    const int textHeight = std::max(1, static_cast<int>(std::ceil(lineSpacing * static_cast<float>(navigationSettings_.layout.labelLines))));
+    const int textHeight = QuickNavigationItemTextHeight(fontSize, navigationSettings_.layout.labelLines);
     RECT iconRect = GetQuickNavItemIconRect(bounds);
     const int horizontalPad = QuickNavScale(4);
     const int topGap = std::max(1, QuickNavScale(10));

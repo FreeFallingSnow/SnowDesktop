@@ -75,6 +75,7 @@ public:
                 value.appSuggestionsEnabled = false;
             });
             rowStorage_.back()->SetText(L("quickNav.appSuggestions"), L("quickNav.appSuggestions.hint"));
+            presenter_controls::StyleSettingsCard(rowStorage_.back()->root);
             root_.Children().Append(suggestions);
             auto prefixes = Group("quickNav.prefixes", [this] {commit_([](auto& value) {value.prefixes = NavigationSettings{}.prefixes;});}, "quickNav.prefixes.hint");
             constexpr const char* typeKeys[] = {"quickNav.type.app", "quickNav.type.file", "quickNav.type.web", "quickNav.type.settings", "quickNav.type.run", "quickNav.type.calculator"};
