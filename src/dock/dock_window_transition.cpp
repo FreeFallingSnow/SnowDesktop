@@ -7,6 +7,7 @@
 #include "dock_window_source_cloak.h"
 #include "platform/shell_overlay_window.h"
 #include "settings/animation_settings.h"
+#include "settings/settings_window_restore_presentation.h"
 
 #include <algorithm>
 #include <array>
@@ -2339,7 +2340,8 @@ bool DockWindowTransition::PrepareRestoredWindow(double now)
         return true;
     }
     RECT frame{};
-    if (!RestoreGeometryReady(frame))
+    if (!RestoreGeometryReady(frame) ||
+        snowdesktop::settings_restore_presentation::IsPending(sourceWindow_))
     {
         restoreGeometryStableTimeMs_ = 0.0;
     }

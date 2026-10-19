@@ -6,6 +6,7 @@
 #include "dock/dock_window_source_cloak.h"
 #include "dock/dock_window_transition.h"
 #include "settings/animation_settings.h"
+#include "settings/settings_window_restore_presentation.h"
 
 #include <array>
 #include <atomic>
@@ -1595,6 +1596,67 @@ void CheckRetainedWindowImage()
                     }
                     return predicate();
                 };
+                // Substitute only the XAML renderer's completion signal. The
+                // actual StartRestore, HWND restore, scheduler, cloak and DWM
+                // image remain in use: usable geometry must not start a blank
+                // animation while the settings child is still rendering.
+                for (const int effect : {1, 2, 3, 4})
+                {
+                    using snowdesktop::settings_restore_presentation::PendingFrame;
+                    snowdesktop::animation::SetRuntimePreferences(snowdesktop::animation::AlwaysOn,
+                        2, 0, 60, false, false, effect);
+                    ShowWindow(source, SW_MINIMIZE);
+                    PendingFrame oldFrame(source);
+                    PendingFrame frame(source);
+                    oldFrame.Complete();
+                    Check(frame.IsCurrent(), "an older XAML frame cannot acknowledge the current restore");
+                    bool prepared = false;
+                    int activated = 0, fallback = 0;
+                    transition.SetDiagnosticCallback([&](const wchar_t* message) {
+                        if (std::wstring(message).find(L"Dock restore prepared:") == 0) prepared = true;
+                    });
+                    const bool started = transition.StartRestore(source, dock,
+                        [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                            if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                                ShowWindow(window, SW_SHOWNOACTIVATE);
+                            else if (phase == DockWindowRestoreTransitionPhase::ActivateRestored)
+                                ++activated;
+                            else ++fallback;
+                        });
+                    Check(started, "settings frame-wait fixture starts through the real Dock restore entry");
+                    const ULONGLONG observeUntil = GetTickCount64() + 120;
+                    pumpUntil([&] { return GetTickCount64() >= observeUntil; }, 200);
+                    Check(transition.IsActive() && !IsIconic(source) && appCloaked(source) &&
+                        !prepared && !DockWindowTransitionTestAccess::TimelineActive(transition) && activated == 0,
+                        "restored geometry alone cannot present or expose a pending settings frame");
+                    frame.Complete();
+                    drain();
+                    Check(prepared && activated == 1 && fallback == 0 && !appCloaked(source),
+                        "a committed settings frame resumes the full restore and activates once");
+                }
+                // A failed renderer must take the existing bounded fallback,
+                // never strand the source behind its temporary animation cloak.
+                {
+                    ShowWindow(source, SW_MINIMIZE);
+                    snowdesktop::settings_restore_presentation::PendingFrame stalled(source);
+                    int fallback = 0;
+                    transition.SetDiagnosticCallback({});
+                    const bool started = transition.StartRestore(source, dock,
+                        [&](HWND window, DockWindowRestoreTransitionPhase phase) {
+                            if (phase == DockWindowRestoreTransitionPhase::RequestRestore)
+                                ShowWindow(window, SW_SHOWNOACTIVATE);
+                            else if (phase == DockWindowRestoreTransitionPhase::FallbackWithoutAnimation)
+                                ++fallback;
+                        });
+                    Check(started, "stalled settings renderer starts a bounded restore");
+                    DockWindowTransitionTestAccess::ExpireRestoreDeadline(transition);
+                    drain();
+                    Check(fallback == 1 && !IsIconic(source) && !appCloaked(source),
+                        "stalled settings rendering falls back once and releases its source cloak");
+                }
+                transition.SetDiagnosticCallback([&](const wchar_t* message) {
+                    if (std::wstring(message).find(L"Dock transition:") == 0) presentation = message;
+                });
                 // The Win10 capture keeps invisible resize borders while iconic.
                 // Supply that platform-specific retained size at the real restore
                 // entry; HWND restore, image rebind and scheduler remain real.
