@@ -243,6 +243,11 @@ void CheckLowerIntegrityParent(const std::wstring& executable, const std::filesy
 void CheckAutoStartNativeHandoff(const std::wstring& executable)
 {
     namespace launch = snowdesktop::auto_start_launch;
+    struct ErrorMode
+    {
+        UINT previous = SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+        ~ErrorMode() { SetErrorMode(previous); }
+    } errorMode;
     permissionTestWindow = CreateWindowExW(0, L"STATIC", L"SnowDesktop permission test shell",
         0, 0, 0, 1, 1, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     Require(permissionTestWindow != nullptr, "create hidden isolated shell-token fixture");
@@ -258,7 +263,15 @@ void CheckAutoStartNativeHandoff(const std::wstring& executable)
         std::filesystem::path directory;
         ~Cleanup()
         {
-            if (permissionTestChild) CloseHandle(permissionTestChild);
+            if (permissionTestChild)
+            {
+                if (WaitForSingleObject(permissionTestChild, 0) == WAIT_TIMEOUT)
+                {
+                    TerminateProcess(permissionTestChild, ERROR_TIMEOUT);
+                    WaitForSingleObject(permissionTestChild, 5000);
+                }
+                CloseHandle(permissionTestChild);
+            }
             permissionTestChild = nullptr;
             DestroyWindow(permissionTestWindow);
             permissionTestWindow = nullptr;
@@ -498,6 +511,7 @@ struct DenyRegistryWrites
 
 int RunAutoStartLowShellProbe()
 {
+    SetErrorMode(GetErrorMode() | SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     int count = 0;
     LPWSTR* arguments = CommandLineToArgvW(GetCommandLineW(), &count);
     if (!arguments) return ERROR_INVALID_DATA;

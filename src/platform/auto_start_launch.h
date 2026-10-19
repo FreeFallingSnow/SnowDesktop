@@ -152,7 +152,7 @@ public:
             L"GetWindowThreadProcessId(shell)");
         shellProcess_.value = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, processId);
         Require(shellProcess_.value != nullptr, L"OpenProcess(shell)");
-        Require(OpenProcessToken(shellProcess_.value, TOKEN_QUERY,
+        Require(OpenProcessToken(shellProcess_.value, TOKEN_QUERY | READ_CONTROL,
             &shellToken_.value) != FALSE, L"OpenProcessToken(shell)");
         return ReadIdentity(shellToken_.value);
     }
@@ -226,10 +226,22 @@ private:
         const auto childId = reinterpret_cast<const TOKEN_STATISTICS*>(childStats.data())->TokenId;
         if (sourceId.LowPart == childId.LowPart && sourceId.HighPart == childId.HighPart)
             throw Failure{ERROR_INVALID_DATA, L"AutoStart child token is not independent"};
-        const auto defaults = TokenBuffer(shellToken_.value, TokenDefaultDacl);
-        PACL dacl = reinterpret_cast<const TOKEN_DEFAULT_DACL*>(defaults.data())->DefaultDacl;
-        if (!dacl || !IsValidAcl(dacl))
-            throw Failure{ERROR_INVALID_DATA, L"AutoStart desktop default DACL"};
+        // Copy the token object's actual mapped DACL, not TokenDefaultDacl:
+        // that default describes future objects and may contain generic masks.
+        DWORD size = 0;
+        GetKernelObjectSecurity(shellToken_.value, DACL_SECURITY_INFORMATION, nullptr, 0, &size);
+        Require(size != 0 && GetLastError() == ERROR_INSUFFICIENT_BUFFER,
+            L"GetKernelObjectSecurity(autostart desktop token size)");
+        std::vector<BYTE> sourceSecurity(size);
+        Require(GetKernelObjectSecurity(shellToken_.value, DACL_SECURITY_INFORMATION,
+            sourceSecurity.data(), size, &size) != FALSE,
+            L"GetKernelObjectSecurity(autostart desktop token)");
+        PACL dacl = nullptr;
+        BOOL present = FALSE, defaulted = FALSE;
+        Require(GetSecurityDescriptorDacl(sourceSecurity.data(), &present, &dacl, &defaulted) != FALSE,
+            L"GetSecurityDescriptorDacl(autostart desktop token)");
+        if (!present || !dacl || !IsValidAcl(dacl))
+            throw Failure{ERROR_INVALID_DATA, L"AutoStart desktop token DACL"};
         SID_IDENTIFIER_AUTHORITY authority = SECURITY_MANDATORY_LABEL_AUTHORITY;
         BYTE sid[SECURITY_MAX_SID_SIZE]{};
         Require(InitializeSid(sid, &authority, 1) != FALSE, L"InitializeSid(autostart label)");
