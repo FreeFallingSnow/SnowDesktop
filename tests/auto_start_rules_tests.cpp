@@ -48,6 +48,7 @@ void CheckAutoStartLaunchRules()
             "all login owners delegate once to Explorer with their launch inputs");
     }
     for (const auto command : {L"host.exe", L"host.exe --snowdesktop-startup-elevated=123",
+        L"host.exe --snowdesktop-autostart",
         L"host.exe --snowdesktop-autostart-owner=unknown",
         L"host.exe --data-directory=--snowdesktop-autostart-owner=steam"})
     {

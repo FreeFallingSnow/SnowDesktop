@@ -1,5 +1,7 @@
 #pragma once
 
+#include "auto_start_rules.h"
+
 #include <windows.h>
 #include <shellapi.h>
 #pragma push_macro("ShellExecute")
@@ -188,10 +190,10 @@ public:
         std::wstring parameters;
         for (int index = 1; index < arguments.count; ++index)
         {
-            // The Explorer-launched child takes the normal entry point.
-            if (IsOwnerArgument(arguments.value[index])) continue;
             if (!parameters.empty()) parameters.push_back(L' ');
-            parameters += QuoteArgument(arguments.value[index]);
+            // Retain background intent, but do not delegate the child again.
+            parameters += QuoteArgument(IsOwnerArgument(arguments.value[index]) ?
+                kAutoStartBackgroundArgument : arguments.value[index]);
         }
         execute_(executable, parameters, directory);
         return 0;

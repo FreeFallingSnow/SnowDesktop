@@ -3,6 +3,7 @@
 
 #include "common/constants.h"
 #include "application_restart_policy.h"
+#include "auto_start_rules.h"
 #include "steam/steam_runtime_context.h"
 
 #include <algorithm>
@@ -377,7 +378,8 @@ LaunchIntent ParseLaunchIntent(std::wstring_view commandLine)
             intent = LaunchIntent::ApplicationRecovery;
             break;
         }
-        if (argument == L"--snowdesktop-autostart-owner=portable" ||
+        if (argument == kAutoStartBackgroundArgument ||
+            argument == L"--snowdesktop-autostart-owner=portable" ||
             argument == L"--snowdesktop-autostart-owner=packaged" ||
             argument == L"--snowdesktop-autostart-owner=steam")
         {
