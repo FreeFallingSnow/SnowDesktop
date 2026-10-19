@@ -2994,11 +2994,12 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
         return it->second.Get();
     };
 
-    // ── 1. Background + border ────────────────────────────────
+    // ── 1. Background (defer the outline until after content) ──
     PersonalizationSettings backgroundAppearance = borderAppearance;
     backgroundAppearance.widgetEdgeHighlightEnabled = false;
-    app_->DrawWidgetPanelBackground(context, frame, radius, fillColor, borderColor,
-        selected, strokeW, &backgroundAppearance, ShouldRegisterBackdrop());
+    const D2D1_COLOR_F transparentBorder = D2D1::ColorF(0, 0.0f);
+    app_->DrawWidgetPanelBackground(context, frame, radius, fillColor, transparentBorder,
+        false, strokeW, &backgroundAppearance, ShouldRegisterBackdrop());
 
     // ── 2. Content (clipped to rounded frame via cached geometry) ──
     if (!IsCollapsed())
@@ -3185,9 +3186,11 @@ void WidgetContainer::DrawChrome(ID2D1DeviceContext* context, POINT mousePt)
     // ── Scrollbar (on top of everything, hover only) ──────────
     if (!IsCollapsed() && !IsSingleCellPresentation()) DrawScrollbar(context, hovered);
 
-    // The material reflection must remain visible after component content and
-    // the bottom gradient have been composited. Selection keeps its flat
-    // accent outline without an additional reflection.
+    // Draw the outline once, above content and the title gradient. Translucent
+    // borders would darken if drawn both below and above these layers.
+    app_->DrawWidgetPanelBorder(context, frame, radius,
+        borderColor, selected, strokeW);
+    // Selection keeps its flat accent outline without a material reflection.
     if (!selected)
         (void)app_->DrawWidgetPanelEdgeHighlight(
             context, frame, radius, fillColor, &borderAppearance);

@@ -381,14 +381,13 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
     const float panelRadius = static_cast<float>(Cu(cornerRadiusCu));
     const float panelStroke = selected
         ? std::max(1.6f, configuredStroke) : configuredStroke;
+    const D2D1_COLOR_F transparentBorder = D2D1::ColorF(0, 0.0f);
     const bool hasBackgroundLayer = engine && widgetOk &&
         engine->HasBackgroundLayer(data_->id);
     if (hasBackgroundLayer)
     {
         PersonalizationSettings materialEffects = backgroundEffects;
         materialEffects.acrylicEnabled = false;
-        D2D1_COLOR_F transparentBorder = borderColor;
-        transparentBorder.a = 0.0f;
         app_->DrawWidgetPanelBackground(context, frame, panelRadius,
             fillColor, transparentBorder, false, panelStroke,
             &materialEffects, !preview && registerBackdrop);
@@ -401,17 +400,17 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
 
         D2D1_COLOR_F transparentFill = fillColor;
         transparentFill.a = 0.0f;
-        // This pass only adds border/noise above the authored background.
+        // This pass only adds noise above the authored background.
         // The material gradient was already drawn underneath it.
         backgroundEffects.panelGradient.enabled = false;
         app_->DrawWidgetPanelBackground(context, frame, panelRadius,
-            transparentFill, borderColor, selected, panelStroke,
+            transparentFill, transparentBorder, false, panelStroke,
             &backgroundEffects, false);
     }
     else
     {
         app_->DrawWidgetPanelBackground(context, frame, panelRadius,
-            fillColor, borderColor, selected, panelStroke,
+            fillColor, transparentBorder, false, panelStroke,
             &backgroundEffects, !preview && registerBackdrop);
     }
 
@@ -690,8 +689,9 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
         }
     }
 
-    // Draw the independent material reflection after Lua content and the host
-    // bottom gradient so neither can erase the right/bottom transmitted light.
+    // Keep the outline and reflection above Lua content and the host gradient.
+    app_->DrawWidgetPanelBorder(context, frame, panelRadius,
+        borderColor, selected, panelStroke);
     if (!selected)
         (void)app_->DrawWidgetPanelEdgeHighlight(
             context, frame, static_cast<float>(Cu(cornerRadiusCu)),

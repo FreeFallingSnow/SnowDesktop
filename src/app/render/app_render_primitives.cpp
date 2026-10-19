@@ -137,28 +137,34 @@ void DesktopApp::DrawWidgetPanelBackground(ID2D1DeviceContext* ctx, RECT frame, 
             screenOrigin);
     }
 
-    D2D1_COLOR_F stroke = selected
-        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f)
-        : border;
-    if (stroke.a > 0.0f)
-    {
-        strokeWidth = std::max(kMinimumWidgetBorderWidth, strokeWidth);
-        if (auto* strokeBrush = getBrush(stroke))
-        {
-            auto outline = rr;
-            if (!selected)
-            {
-                const float inset = strokeWidth * 0.5f;
-                outline.rect = D2D1::RectF(rr.rect.left + inset, rr.rect.top + inset,
-                    rr.rect.right - inset, rr.rect.bottom - inset);
-                outline.radiusX = outline.radiusY = std::max(0.0f, radius - inset);
-            }
-            snowdesktop::smooth_corners::Stroke(ctx, outline.rect, outline.radiusX, strokeBrush, strokeWidth);
-        }
-    }
+    DrawWidgetPanelBorder(ctx, frame, radius, border, selected, strokeWidth);
     if (!selected)
         (void)DrawWidgetPanelEdgeHighlight(
             ctx, frame, radius, fill, &p, effectScale);
+}
+
+void DesktopApp::DrawWidgetPanelBorder(
+    ID2D1DeviceContext* ctx, RECT frame, float radius,
+    D2D1_COLOR_F border, bool selected, float strokeWidth)
+{
+    if (!ctx || IsRectEmptyRect(frame)) return;
+    const D2D1_COLOR_F stroke = selected
+        ? D2D1::ColorF(0.39f, 0.66f, 1.0f, 0.90f)
+        : border;
+    if (stroke.a <= 0.0f) return;
+
+    radius = std::max(0.0f, radius);
+    strokeWidth = std::max(kMinimumWidgetBorderWidth, strokeWidth);
+    auto outline = ToD2DRect(frame);
+    if (!selected)
+    {
+        const float inset = strokeWidth * 0.5f;
+        outline = D2D1::RectF(outline.left + inset, outline.top + inset,
+            outline.right - inset, outline.bottom - inset);
+        radius = std::max(0.0f, radius - inset);
+    }
+    DrawD2DRoundedRectangle(ctx, outline, radius,
+        D2D1::ColorF(0, 0.0f), stroke, strokeWidth);
 }
 
 bool DesktopApp::DrawWidgetPanelEdgeHighlight(
