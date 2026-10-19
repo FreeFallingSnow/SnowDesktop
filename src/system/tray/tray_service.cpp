@@ -222,8 +222,8 @@ struct Service::Impl
             WriteDiagnosticLogEntry(L"Tray re-registration skipped: recipient identity unavailable", DiagnosticLogLevel::Warning);
             return;
         }
-        // Issue #29 candidate: preserve application icon re-registration while
-        // excluding every window owned by Explorer from the synthetic request.
+        // Explorer also consumes shell lifecycle signals. An application icon
+        // re-registration request must exclude all of its windows (issue #29).
         EnumWindows([](HWND window, LPARAM parameter) -> BOOL {
             auto& state = *reinterpret_cast<Recipients*>(parameter);
             const auto result = PostReregistration(window, state.host, state.explorer, state.message);
