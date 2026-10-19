@@ -158,6 +158,8 @@ public:
     unsigned secretAttempts = 0;
     unsigned secretSuccesses = 0;
     std::size_t lastSecretBytes = 0;
+    unsigned secretReads = 0;
+    std::string syntheticSecret = "offline-existing";
     std::string searchResultTitle;
     explicit PreviewWidgetService(bool english, bool searching)
         : showSearch(searching), searchResultTitle(english ? "QQ Music" : "QQ音乐") // l10n-allow: isolated bilingual preview fixture, not production UI text.
@@ -198,6 +200,7 @@ public:
             ? "Encrypted on this device; sent only to the selected provider."
             : "在本机加密保存，仅发送到所选厂商。"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
         secret.opaque.available = secret.opaque.configured = secret.opaque.canClear = true;
+        secret.opaque.secretLength = static_cast<std::uint32_t>(syntheticSecret.size());
         wr::WidgetSettingPresetSchema preset;
         preset.id = "standard";
         preset.label = english ? "Standard" : "标准"; // l10n-allow: isolated bilingual preview fixture, not production UI text.
@@ -217,6 +220,13 @@ public:
     wr::WidgetSettingMutationResult SetOrdinary(const wr::WidgetSettingMutationGuard&, std::string_view, const wr::InteractionValue&) override { return {}; }
     wr::WidgetSettingMutationResult PreviewOrdinary(const wr::WidgetSettingMutationGuard&, std::string_view, const wr::InteractionValue&) override { return {}; }
     wr::WidgetSettingMutationResult SetSearchQuery(const wr::WidgetSettingMutationGuard&, std::string_view, std::string) override { return {}; }
+    wr::WidgetSettingSecretReadResult ReadSecret(const wr::WidgetSettingMutationGuard& guard,
+        std::string_view key) override
+    {
+        if (!allowSecretWrites || key != "api_key" || !guard.Matches(value)) return {};
+        ++secretReads;
+        return {{wr::WidgetSettingMutationStatus::Unchanged, value.generation, value.revision, {}, {}}, syntheticSecret};
+    }
     wr::WidgetSettingMutationResult SetSecret(const wr::WidgetSettingMutationGuard& guard,
         std::string_view key, std::string_view plaintext) override
     {
@@ -228,7 +238,11 @@ public:
             return {wr::WidgetSettingMutationStatus::PersistenceFailed, value.generation, value.revision, "previewWriteFailed", {}};
         for (auto& field : value.fields)
             if (field.schema.key == key)
+            {
                 field.opaque.configured = field.opaque.canClear = !plaintext.empty();
+                field.opaque.secretLength = static_cast<std::uint32_t>(plaintext.size());
+            }
+        syntheticSecret = plaintext;
         lastSecretBytes = plaintext.size();
         ++secretSuccesses;
         return {wr::WidgetSettingMutationStatus::Applied, value.generation, ++value.revision, {}, {}};
@@ -278,6 +292,25 @@ void ExerciseSecretInput(const x::FrameworkElement& root,
         if (!clear) ancestor = x::Media::VisualTreeHelper::GetParent(ancestor);
     }
     if (!clear) throw std::runtime_error("missing inline password clear action");
+    c::Primitives::ToggleButton reveal{nullptr};
+    Walk(ancestor, [&](const x::DependencyObject& node) {
+        if (const auto button = node.try_as<c::Primitives::ToggleButton>()) reveal = button;
+    });
+    if (!reveal) throw std::runtime_error("missing password reveal action");
+    const auto toggleReveal = [&] {
+        const auto peer = x::Automation::Peers::FrameworkElementAutomationPeer::CreatePeerForElement(reveal);
+        peer.GetPattern(x::Automation::Peers::PatternInterface::Toggle)
+            .as<x::Automation::Provider::IToggleProvider>().Toggle();
+    };
+    if (service.secretReads != 0 || !password.Password().empty() ||
+        std::wstring(password.PlaceholderText()).find(std::wstring(16, L'\x25cf')) == std::wstring::npos)
+        throw std::runtime_error("opening a password field decrypted plaintext or lost its mask length");
+    toggleReveal();
+    PumpUntil([&] { return service.secretReads != 0; });
+    if (password.Password() != L"offline-existing" || password.PasswordRevealMode() != c::PasswordRevealMode::Visible ||
+        service.secretReads != 1 || service.secretAttempts != 0)
+        throw std::runtime_error("explicit password reveal did not read the saved value without writing it");
+    toggleReveal();
     const auto inputBounds = password.TransformToVisual(root).TransformBounds(
         {0, 0, static_cast<float>(password.ActualWidth()), static_cast<float>(password.ActualHeight())});
     const auto clearBounds = clear.TransformToVisual(root).TransformBounds(
@@ -286,14 +319,27 @@ void ExerciseSecretInput(const x::FrameworkElement& root,
         throw std::runtime_error("password clear action is not aligned beside the input");
     (void)password.Focus(x::FocusState::Programmatic);
     const bool focused = password.FocusState() != x::FocusState::Unfocused;
-    if (focused) password.PasswordRevealMode(c::PasswordRevealMode::Visible);
     password.Password(L"offline-a");
     password.Password(L"offline-ab");
     password.Password(L"offline-autosave");
     PumpUntil([&] { return service.secretAttempts != 0; });
     if (service.secretAttempts != 1 || service.secretSuccesses != 1 || service.lastSecretBytes != 16 ||
-        (focused && (password.Password() != L"offline-autosave" || password.PasswordRevealMode() != c::PasswordRevealMode::Visible)))
+        (focused && password.Password() != L"offline-autosave"))
         throw std::runtime_error("password input did not save its latest draft without interrupting editing");
+    (void)clear.Focus(x::FocusState::Programmatic);
+    const auto afterBlur = GetTickCount64() + 850;
+    PumpUntil([&] { return GetTickCount64() >= afterBlur; });
+    if (service.lastSecretBytes != 16 || service.secretAttempts != 1)
+        throw std::runtime_error("blurring a saved password changed its stored secret");
+    const auto beforeEditRead = service.secretReads;
+    (void)password.Focus(x::FocusState::Programmatic);
+    const bool editFocused = password.FocusState() != x::FocusState::Unfocused;
+    if (service.secretReads != beforeEditRead)
+        throw std::runtime_error("automatic focus read plaintext without an input gesture");
+    toggleReveal();
+    if (password.Password() != L"offline-autosave" || service.secretReads != beforeEditRead + 1)
+        throw std::runtime_error("reopening password editing did not reload the saved value");
+    toggleReveal();
     service.failSecretWrites = true;
     password.Password(L"offline-retry");
     PumpUntil([&] { return service.secretAttempts == 2; });
@@ -311,15 +357,22 @@ void ExerciseSecretInput(const x::FrameworkElement& root,
         << "attemptsBefore\tattemptsAfter\tsuccesses\tstoredBytes\tdraftCharacters\tclearClicks\tclearEnabled\n"
         << beforeClear << '\t' << service.secretAttempts << '\t' << service.secretSuccesses << '\t'
         << service.lastSecretBytes << '\t' << password.Password().size() << '\t' << clearClicks << '\t' << clear.IsEnabled() << '\n';
-    if (service.secretAttempts != 3 || service.secretSuccesses != 2 || service.lastSecretBytes != 0 || !password.Password().empty())
+    if (service.lastSecretBytes != 0 || !password.Password().empty() || clearClicks != 1 || clear.IsEnabled())
         throw std::runtime_error("clearing a password saved or resurrected its pending draft");
+    const auto afterClear = service.secretAttempts;
     password.Password(L"offline-final");
-    PumpUntil([&] { return service.secretAttempts == 4; });
-    if (service.secretSuccesses != 3 || service.lastSecretBytes != 13)
+    PumpUntil([&] { return service.secretAttempts > afterClear; });
+    if (service.lastSecretBytes != 13)
         throw std::runtime_error("password input did not recover after clearing");
+    const auto afterFinal = service.secretAttempts;
+    (void)clear.Focus(x::FocusState::Programmatic);
+    const auto finalBlur = GetTickCount64() + 850;
+    PumpUntil([&] { return GetTickCount64() >= finalBlur; });
+    if (service.lastSecretBytes != 13 || service.secretAttempts != afterFinal)
+        throw std::runtime_error("final password was cleared by a programmatic draft reset");
     std::ofstream(output / L"secret-input.tsv")
-        << "input-autosave\tburst-coalesced\tfailure-retains-draft\tclear-discards-draft\tfocus-retained\n"
-        << "passed\tpassed\tpassed\tpassed\t" << (focused ? "passed" : "not-observed") << '\n';
+        << "masked-open\texplicit-reveal\tinput-autosave\tburst-coalesced\tfailure-retains-draft\tclear-discards-draft\tblur-keeps-secret\tedit-readback\n"
+        << "passed\tpassed\tpassed\tpassed\tpassed\tpassed\tpassed\t" << (editFocused ? "passed" : "not-observed") << '\n';
 }
 
 constexpr SettingsPage pages[] = {

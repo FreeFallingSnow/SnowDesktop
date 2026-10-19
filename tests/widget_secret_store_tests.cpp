@@ -59,6 +59,28 @@ int main()
         firstReference.find(firstSecret) == std::string::npos,
         "setting a secret returns only an opaque reference");
     const std::string persisted = ReadBytes(path);
+    Expect(store.Length("package-a", "instance-a", "apiToken") == firstSecret.size() &&
+            !store.Length("package-a", "instance-b", "apiToken"),
+        "mask length is available without resolving plaintext and remains owner scoped");
+    // An actual v1 record has no length slot. Keep the DPAPI ciphertext and
+    // owner identity intact while exercising lazy metadata migration.
+    auto legacyBytes = persisted;
+    legacyBytes[7] = '1';
+    legacyBytes.erase(24, 4);
+    const auto legacyPath = root / L"legacy.bin";
+    { std::ofstream file(legacyPath, std::ios::binary); file.write(legacyBytes.data(), static_cast<std::streamsize>(legacyBytes.size())); }
+    WidgetSecretStore legacy(legacyPath);
+    std::string legacyPlaintext;
+    Expect(legacy.Load(error) && !legacy.Length("package-a", "instance-a", "apiToken"),
+        "legacy records load without decrypting to discover length");
+    Expect(legacy.ReadForEditing("package-a", "instance-a", "apiToken", legacyPlaintext, error) &&
+            legacyPlaintext == firstSecret,
+        "the first explicit read can open an existing encrypted record");
+    SecureZeroMemory(legacyPlaintext.data(), legacyPlaintext.size());
+    legacyPlaintext.clear();
+    WidgetSecretStore migrated(legacyPath);
+    Expect(migrated.Load(error) && migrated.Length("package-a", "instance-a", "apiToken") == firstSecret.size(),
+        "explicit legacy reads persist length for future masked opens");
     Expect(!persisted.empty() &&
         persisted.find(firstSecret) == std::string::npos,
         "the persistent secret store never contains plaintext");
@@ -121,6 +143,10 @@ int main()
     WidgetSecretStore emptyReload(path);
     Expect(emptyReload.Load(error),
         "an empty saved store reloads successfully");
+    std::string unicodeReference;
+    Expect(emptyReload.Set("package-a", "instance-a", "unicode", "a\xe4\xb8\xad\xf0\x9f\x94\x91",
+            unicodeReference, error) && emptyReload.Length("package-a", "instance-a", "unicode") == 4,
+        "mask length matches UTF-16 editor characters rather than UTF-8 bytes");
 
     std::filesystem::remove_all(root, filesystemError);
     if (failures == 0)

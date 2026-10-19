@@ -614,6 +614,7 @@ void TestCodec()
     field.currentValue = MakeWidgetSettingString("must-not-leave-host");
     field.defaultValue = field.currentValue;
     field.opaque.configured = true;
+    field.opaque.secretLength = 31;
     field.opaque.displayLabel = "must-not-leave-host";
     widget.fields.push_back(field);
     PrepareWidgetSettingsSnapshot(widget);
@@ -622,6 +623,13 @@ void TestCodec()
     Check(serialized.find("must-not-leave-host") == std::string::npos &&
         Unpack<WidgetSettingsSnapshot>(wire) == widget,
         "prepared secret fields retain only opaque status across IPC");
+    Check(Unpack<WidgetSettingsSnapshot>(wire).fields.front().opaque.secretLength == 31,
+        "ordinary snapshots carry mask length without plaintext");
+    WidgetSettingSecretReadResult explicitRead{
+        {WidgetSettingMutationStatus::Unchanged, 3, 9, {}, {}}, "offline-readback"};
+    const auto decodedSecret = Unpack<WidgetSettingSecretReadResult>(Pack(explicitRead));
+    Check(decodedSecret.result.Succeeded() && decodedSecret.plaintext == "offline-readback",
+        "only the explicit secret-read result carries editor plaintext");
 }
 
 void TestCustomCategoryCreation()

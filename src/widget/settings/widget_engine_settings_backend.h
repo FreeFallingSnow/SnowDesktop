@@ -277,6 +277,11 @@ public:
     WidgetSettingsBackendResult RevertPreview(
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard& guard) override;
+    WidgetSettingsBackendResult ReadSecret(
+        const WidgetSettingsBackendDescriptor& widget,
+        const WidgetSettingMutationGuard& guard,
+        const WidgetSettingFieldSchema& field,
+        std::string& plaintext) override;
     WidgetSettingsBackendResult SetSecret(
         const WidgetSettingsBackendDescriptor& widget,
         const WidgetSettingMutationGuard& guard,

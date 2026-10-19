@@ -196,7 +196,7 @@ SD_IPC_FIELDS(widget_runtime::WidgetHostAppearancePatch,
     v.acrylicEnabled, v.contentTheme, v.clearContentTheme, v.panelGradient);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingOpaqueState,
     v.configured, v.available, v.canChoose, v.canClear,
-    v.displayLabel);
+    v.displayLabel, v.secretLength);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingFieldState,
     v.schema, v.currentValue, v.defaultValue, v.hasStoredValue,
     v.visible, v.enabled, v.valid, v.validationError,
@@ -210,6 +210,8 @@ SD_IPC_FIELDS(widget_runtime::WidgetSettingMutationGuard,
 SD_IPC_FIELDS(widget_runtime::WidgetSettingMutationResult,
     v.status, v.generation, v.revision, v.errorCode,
     v.message);
+SD_IPC_FIELDS(widget_runtime::WidgetSettingSecretReadResult,
+    v.result, v.plaintext);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingSearchResult,
     v.id, v.title, v.source, v.type);
 SD_IPC_FIELDS(widget_runtime::WidgetSettingSearchSnapshot,

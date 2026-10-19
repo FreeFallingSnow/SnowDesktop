@@ -1061,6 +1061,33 @@ WidgetSettingMutationResult WidgetSettingsService::SetSearchQuery(
     return ReloadAfterMutation(*this, session, backendResult);
 }
 
+WidgetSettingSecretReadResult WidgetSettingsService::ReadSecret(
+    const WidgetSettingMutationGuard& guard, std::string_view key)
+{
+    SessionCopy session;
+    auto checked = GuardSession(state_, guard, session);
+    if (!checked.Succeeded()) return { std::move(checked), {} };
+    const auto* field = FindField(session.snapshot, key);
+    if (!field)
+        return { { WidgetSettingMutationStatus::SettingNotFound,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingNotFound", {} }, {} };
+    if (field->schema.Channel() != WidgetSettingValueChannel::Secret)
+        return { { WidgetSettingMutationStatus::WrongValueChannel,
+            session.snapshot.generation, session.snapshot.revision,
+            "wrongValueChannel", {} }, {} };
+    if (!field->enabled || !field->visible)
+        return { { WidgetSettingMutationStatus::Disabled,
+            session.snapshot.generation, session.snapshot.revision,
+            "settingDisabled", {} }, {} };
+    WidgetSettingSecretReadResult result;
+    const auto read = state_->backend.ReadSecret(
+        session.descriptor, guard, field->schema, result.plaintext);
+    result.result = WithIdentity(MutationResultFor(read), session.snapshot);
+    if (!read.Succeeded()) result.ClearPlaintext();
+    return result;
+}
+
 WidgetSettingMutationResult WidgetSettingsService::SetSecret(
     const WidgetSettingMutationGuard& guard, std::string_view key,
     std::string_view plaintext)

@@ -20,7 +20,10 @@ namespace snowdesktop::widget_runtime
 namespace
 {
 constexpr std::array<char, 8> FileMagic{
+    'S', 'D', 'S', 'E', 'C', 'R', '0', '2' };
+constexpr std::array<char, 8> LegacyFileMagic{
     'S', 'D', 'S', 'E', 'C', 'R', '0', '1' };
+constexpr std::uint32_t UnknownLength = UINT32_MAX;
 constexpr std::string_view ReferencePrefix = "secret:v1:";
 constexpr std::size_t ReferenceRandomBytes = 16;
 constexpr std::size_t MaximumOwnerBytes = 256;
@@ -244,8 +247,10 @@ bool WidgetSecretStore::Load(std::string& error)
         error = "cannot read widget secret store";
         return false;
     }
+    const bool legacy = bytes.size() >= LegacyFileMagic.size() &&
+        std::equal(LegacyFileMagic.begin(), LegacyFileMagic.end(), bytes.begin());
     if (bytes.size() < FileMagic.size() + 4 ||
-        !std::equal(FileMagic.begin(), FileMagic.end(), bytes.begin()))
+        (!legacy && !std::equal(FileMagic.begin(), FileMagic.end(), bytes.begin())))
     {
         error = "widget secret store has an invalid header";
         return false;
@@ -276,6 +281,17 @@ bool WidgetSecretStore::Load(std::string& error)
             return false;
         }
         Record record;
+        if (!legacy)
+        {
+            std::uint32_t length = 0;
+            if (!Read32(bytes, offset, length) ||
+                (length != UnknownLength && (length == 0 || length > MaximumSecretBytes)))
+            {
+                error = "widget secret length is invalid";
+                return false;
+            }
+            if (length != UnknownLength) record.length = length;
+        }
         if (!ReadField(bytes, offset, referenceLength, record.reference) ||
             !ReadField(bytes, offset, packageLength, record.packageId) ||
             !ReadField(bytes, offset, instanceLength, record.instanceId) ||
@@ -356,6 +372,7 @@ bool WidgetSecretStore::Save(
             static_cast<std::uint16_t>(record->settingKey.size()));
         Append32(output,
             static_cast<std::uint32_t>(record->ciphertext.size()));
+        Append32(output, record->length.value_or(UnknownLength));
         output += record->reference;
         output += record->packageId;
         output += record->instanceId;
@@ -444,6 +461,14 @@ bool WidgetSecretStore::Set(std::string_view packageId,
     }
     if (!Protect(record, plaintext, record.ciphertext, error))
         return false;
+    const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+        plaintext.data(), static_cast<int>(plaintext.size()), nullptr, 0);
+    if (length <= 0)
+    {
+        error = "widget secret is not valid UTF-8";
+        return false;
+    }
+    record.length = static_cast<std::uint32_t>(length);
     if (existing != candidate.end())
         existing->second = record;
     else
@@ -493,6 +518,40 @@ std::string WidgetSecretStore::Reference(std::string_view packageId,
         });
     return found == records_.end() ? std::string{} :
         found->second.reference;
+}
+
+std::optional<std::uint32_t> WidgetSecretStore::Length(
+    std::string_view packageId, std::string_view instanceId,
+    std::string_view settingKey) const
+{
+    const auto reference = Reference(packageId, instanceId, settingKey);
+    const auto found = records_.find(reference);
+    return found == records_.end() ? std::nullopt : found->second.length;
+}
+
+bool WidgetSecretStore::ReadForEditing(std::string_view packageId,
+    std::string_view instanceId, std::string_view settingKey,
+    std::string& plaintext, std::string& error)
+{
+    const auto reference = Reference(packageId, instanceId, settingKey);
+    if (reference.empty()) { plaintext.clear(); error.clear(); return true; }
+    if (!Resolve(packageId, instanceId, reference, plaintext, error)) return false;
+    auto& record = records_.at(reference);
+    if (!record.length)
+    {
+        const int length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+            plaintext.data(), static_cast<int>(plaintext.size()), nullptr, 0);
+        if (length > 0)
+        {
+            auto candidate = records_;
+            candidate.at(reference).length = static_cast<std::uint32_t>(length);
+            // Metadata migration must not prevent the requested read. Never
+            // decrypt old records merely to build a settings snapshot.
+            std::string metadataError;
+            if (Save(candidate, metadataError)) records_.swap(candidate);
+        }
+    }
+    return true;
 }
 
 bool WidgetSecretStore::RemoveSetting(std::string_view packageId,

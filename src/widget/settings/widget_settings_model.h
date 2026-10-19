@@ -214,6 +214,8 @@ struct WidgetSettingOpaqueState
     bool canChoose = false;
     bool canClear = false;
     std::string displayLabel;
+    // UTF-16 units, matching PasswordBox. Legacy records may not know it yet.
+    std::optional<std::uint32_t> secretLength;
 
     bool operator==(const WidgetSettingOpaqueState&) const = default;
 };
@@ -318,6 +320,21 @@ struct WidgetSettingMutationResult
     {
         return status == WidgetSettingMutationStatus::Applied;
     }
+};
+
+/** Returned only for an explicit settings editor read, never in snapshots. */
+struct WidgetSettingSecretReadResult
+{
+    WidgetSettingMutationResult result;
+    std::string plaintext;
+
+    void ClearPlaintext() noexcept
+    {
+        volatile char* data = plaintext.data();
+        for (std::size_t i = 0; i < plaintext.size(); ++i) data[i] = 0;
+        plaintext.clear();
+    }
+    ~WidgetSettingSecretReadResult() { ClearPlaintext(); }
 };
 
 struct WidgetSettingSearchResult

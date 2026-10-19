@@ -787,8 +787,12 @@ WidgetSettingBackendOpaqueResult WidgetEngineSettingsBackend::ReadOpaque(
         state.available = !widget.preview && engine_.secretStore_ != nullptr;
         state.canChoose = state.available;
         if (state.available)
+        {
             state.configured = !engine_.secretStore_->Reference(
                 widget.packageId, instanceId, field.key).empty();
+            state.secretLength = engine_.secretStore_->Length(
+                widget.packageId, instanceId, field.key);
+        }
         state.canClear = state.available && state.configured;
         return { Success(false), std::move(state) };
     }
@@ -1250,6 +1254,35 @@ void WidgetEngineSettingsBackend::RestorePreviewNoexcept() noexcept
         engine_.RemoveWidgetSettingsPreviewForBackend(this);
         preview_.reset();
     }
+}
+
+WidgetSettingsBackendResult WidgetEngineSettingsBackend::ReadSecret(
+    const WidgetSettingsBackendDescriptor& descriptor,
+    const WidgetSettingMutationGuard& guard,
+    const WidgetSettingFieldSchema& field, std::string& plaintext)
+{
+    plaintext.clear();
+    if (GetCurrentThreadId() != ownerThreadId_) return WrongThread();
+    const int index = engine_.FindWidget(descriptor.widgetId);
+    if (index < 0)
+        return BackendResult(WidgetSettingsBackendStatus::WidgetNotFound, "widgetNotFound");
+    const LuaWidget& widget = engine_.widgets_[index];
+    if (!widget_settings_backend_detail::MutationIdentityMatches(
+            descriptor, guard, widget.widgetId, widget.packageId, widget.runtimeToken))
+        return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot, "staleSnapshot");
+    const auto* declaration = FindDeclaredSetting(widget, field.key);
+    if (!declaration)
+        return BackendResult(WidgetSettingsBackendStatus::SettingNotFound, "settingNotFound");
+    if (!SchemaMatches(*declaration, field) || declaration->type != "password")
+        return BackendResult(WidgetSettingsBackendStatus::StaleSnapshot, "staleSettingSchema");
+    if (widget.preview || !engine_.secretStore_)
+        return BackendResult(WidgetSettingsBackendStatus::Unavailable, "secretStoreUnavailable");
+    std::string error;
+    if (!engine_.secretStore_->ReadForEditing(widget.packageId,
+            WideToUtf8(widget.widgetId), field.key, plaintext, error))
+        return BackendResult(WidgetSettingsBackendStatus::Unavailable,
+            "secretReadFailed", std::move(error));
+    return Success(false);
 }
 
 WidgetSettingsBackendResult WidgetEngineSettingsBackend::SetSecret(

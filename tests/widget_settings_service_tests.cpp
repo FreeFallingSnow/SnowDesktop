@@ -80,6 +80,7 @@ public:
     bool deferredReferencePicker = false;
     int ordinaryCalls = 0;
     int secretCalls = 0;
+    int secretReadCalls = 0;
     int handleCalls = 0;
     int referenceCalls = 0;
     int previewCalls = 0;
@@ -313,6 +314,16 @@ public:
         ++revertCalls;
         mutationOrder.push_back("revertPreview");
         return Ok();
+    }
+
+    WidgetSettingsBackendResult ReadSecret(
+        const WidgetSettingsBackendDescriptor&,
+        const WidgetSettingMutationGuard&,
+        const WidgetSettingFieldSchema&, std::string& plaintext) override
+    {
+        ++secretReadCalls;
+        plaintext = "offline-readback";
+        return mutationResult;
     }
 
     WidgetSettingsBackendResult SetSecret(
@@ -928,6 +939,22 @@ int main()
 
     snapshot = service.Snapshot(L"widget-1");
     guard = WidgetSettingMutationGuard::FromSnapshot(*snapshot);
+    Check(backend.secretReadCalls == 0,
+        "loading, snapshots and writes never request secret plaintext");
+    auto read = service.ReadSecret(guard, "token");
+    Check(read.result.Succeeded() && read.plaintext == "offline-readback" &&
+            backend.secretReadCalls == 1 && service.Snapshot(L"widget-1")->revision == guard.revision,
+        "an explicit owner-scoped secret read leaves the settings revision unchanged");
+    read.ClearPlaintext();
+    Check(service.ReadSecret(guard, "scale").result.status == WidgetSettingMutationStatus::WrongValueChannel &&
+            service.ReadSecret({guard.widgetId, guard.generation, guard.revision - 1}, "token").result.status ==
+                WidgetSettingMutationStatus::StaleSnapshot && backend.secretReadCalls == 1,
+        "ordinary fields and stale guards cannot read plaintext");
+    backend.mutationResult = {WidgetSettingsBackendStatus::Unavailable, "secretReadFailed", {}};
+    auto denied = service.ReadSecret(guard, "token");
+    Check(!denied.result.Succeeded() && denied.plaintext.empty(),
+        "failed reads never return a backend's partial plaintext");
+    backend.mutationResult = Ok();
     WidgetSettingMutationResult handle =
         service.ChooseFilesystemHandle(guard, "file");
     snapshot = service.Snapshot(L"widget-1");
