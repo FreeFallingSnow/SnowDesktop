@@ -223,6 +223,8 @@ bool LoadNavigationSettings(const wchar_t* path, NavigationSettings& settings)
     const auto* collapsed = document.Find("lastCollapsed");
     if (!collapsed || !collapsed->IsBoolean()) collapsed = document.Find("defaultCollapsed");
     if (collapsed && collapsed->IsBoolean()) settings.lastCollapsed = collapsed->boolean;
+    if (const auto* value = document.Find("appSuggestionsEnabled"); value && value->IsBoolean())
+        settings.appSuggestionsEnabled = value->boolean;
     if (const auto* layout = document.Find("layout"); layout && layout->IsObject())
     {
 #define SD_NAV_READ(name) if (const auto* value = layout->Find(#name); value && value->IsNumber() && std::isfinite(value->number) && value->number >= -32768 && value->number <= 32768) settings.layout.name = static_cast<int>(value->number)
@@ -287,6 +289,7 @@ bool SaveNavigationSettings(const wchar_t* path, const NavigationSettings& setti
     file << "  \"enabled\": " << (settings.enabled ? "true" : "false") << ",\n";
     file << "  \"modifiers\": " << settings.modifiers << ",\n";
     file << "  \"virtualKey\": " << settings.virtualKey << ",\n";
+    file << "  \"appSuggestionsEnabled\": " << (settings.appSuggestionsEnabled ? "true" : "false") << ",\n";
     file << "  \"desktopViewMode\": \""
          << QuickNavigationDesktopViewModeToJson(
                 settings.desktopViewMode)

@@ -49,7 +49,7 @@ SD_IPC_FIELDS(DockSettings,
     v.followComponentCornerRadius, v.cornerRadius, v.attentionDotSizeScale, v.attentionDotOffset);
 SD_IPC_FIELDS(NavigationSettings,
     v.enabled, v.modifiers, v.virtualKey, v.desktopViewMode, v.lastCollapsed, v.layout, v.prefixes, v.defaultEngine, v.engines, v.colors,
-    v.mappingViewMode, v.widgetSortByInitial);
+    v.mappingViewMode, v.widgetSortByInitial, v.appSuggestionsEnabled);
 SD_IPC_FIELDS(QuickNavigationLayout, v.expandedWidth, v.collapsedWidth, v.maximumHeight,
     v.visibleRows, v.padding, v.searchHeight, v.iconSize, v.gridGap, v.rowGap,
     v.fontSize, v.secondaryFontSize, v.searchFontSize, v.resultRowHeight, v.labelLines,

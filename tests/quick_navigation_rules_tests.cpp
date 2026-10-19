@@ -73,6 +73,9 @@ void TestViewModePersistenceValues()
                 QuickNavigationDesktopViewMode::Initial &&
             rules::NextQuickNavigationDesktopViewMode(
                 QuickNavigationDesktopViewMode::Initial) ==
+                QuickNavigationDesktopViewMode::Frequency &&
+            rules::NextQuickNavigationDesktopViewMode(
+                QuickNavigationDesktopViewMode::Frequency) ==
                 QuickNavigationDesktopViewMode::Tile,
         "view mode button must cycle through all modes");
     Check(
@@ -116,11 +119,13 @@ void TestViewModeFilePersistence()
         QuickNavigationDesktopViewMode::Tile,
         QuickNavigationDesktopViewMode::Source,
         QuickNavigationDesktopViewMode::Initial,
+        QuickNavigationDesktopViewMode::Frequency,
     };
     for (const auto mode : modes)
     {
         NavigationSettings saved;
         saved.desktopViewMode = mode;
+        saved.appSuggestionsEnabled = mode != QuickNavigationDesktopViewMode::Tile;
         saved.mappingViewMode = mode == QuickNavigationDesktopViewMode::Tile
             ? QuickNavigationDesktopViewMode::Initial : QuickNavigationDesktopViewMode::Tile;
         saved.widgetSortByInitial = {{"collection-a", true}, {"collection-b", false}, {"escaped-\"id\\", true}};
@@ -134,6 +139,8 @@ void TestViewModeFilePersistence()
                 path.c_str(), loaded) &&
                 loaded.desktopViewMode == mode,
             "navigation view mode must round trip");
+        Check(loaded.appSuggestionsEnabled == saved.appSuggestionsEnabled,
+            "enabled and disabled suggestion preferences survive reload");
         Check(loaded.mappingViewMode == saved.mappingViewMode &&
                 loaded.widgetSortByInitial == saved.widgetSortByInitial,
             "mapping and each stable widget ID retain independent choices after reload");
@@ -153,6 +160,7 @@ void TestViewModeFilePersistence()
         QuickNavigationDesktopViewMode::Source;
     legacyLoaded.mappingViewMode = QuickNavigationDesktopViewMode::Initial;
     legacyLoaded.widgetSortByInitial = {{"old-widget", true}};
+    legacyLoaded.appSuggestionsEnabled = true;
     Check(
         LoadNavigationSettings(
             path.c_str(), legacyLoaded) &&
@@ -162,6 +170,8 @@ void TestViewModeFilePersistence()
     Check(legacyLoaded.mappingViewMode == QuickNavigationDesktopViewMode::Source &&
             legacyLoaded.widgetSortByInitial.empty(),
         "old files default mapping to source and widgets to original order without stale reused state");
+    Check(!legacyLoaded.appSuggestionsEnabled,
+        "legacy settings keep suggestions off, even when reusing a populated object");
 
     {
         std::ofstream invalid(
@@ -170,6 +180,7 @@ void TestViewModeFilePersistence()
         invalid <<
             "{\"desktopViewMode\":"
             "\"unsupported\",\"mappingViewMode\":\"unsupported\","
+            "\"appSuggestionsEnabled\":\"true\","
             "\"widgetSortByInitial\":{\"valid\":true,\"invalid\":\"initial\"}}";
     }
     NavigationSettings invalidLoaded;
@@ -184,7 +195,50 @@ void TestViewModeFilePersistence()
     Check(invalidLoaded.mappingViewMode == QuickNavigationDesktopViewMode::Source &&
             invalidLoaded.widgetSortByInitial == std::map<std::string, bool>{{"valid", true}},
         "invalid mapping modes use source and malformed sorting values cannot invent a choice");
+    Check(!invalidLoaded.appSuggestionsEnabled, "malformed suggestion values cannot enable the feature");
+    NavigationSettings mappingOnly;
+    mappingOnly.mappingViewMode = QuickNavigationDesktopViewMode::Frequency;
+    NormalizeNavigationSettings(mappingOnly);
+    Check(mappingOnly.mappingViewMode == QuickNavigationDesktopViewMode::Source,
+        "the desktop-only frequency mode cannot enter folder mapping preferences");
     DeleteFileW(path.c_str());
+}
+
+void TestLaunchFrequencyAndSuggestions()
+{
+    // Tile identities: unrecorded Dock pin, used collection shortcut, another
+    // unrecorded shortcut, most-used loose shortcut, tied collection shortcut.
+    // Frequency must not fall back to alphabetical or unordered-map iteration.
+    Check(rules::LaunchFrequencyOrder({0, 3, 0, 8, 3}) == std::vector<size_t>{3, 1, 4, 0, 2},
+        "recorded apps lead by count; equal and missing counts retain Tile order");
+    Check(rules::LaunchFrequencyOrder({0, 0, 0}) == std::vector<size_t>{0, 1, 2},
+        "a new installation retains Tile order in frequency mode");
+    Check(rules::LaunchFrequencyOrder({0, 3, 0, 8, 3}, true, 2) == std::vector<size_t>{3, 1},
+        "suggestions select only recorded applications up to the current column count");
+    Check(rules::LaunchFrequencyOrder({0, 3, 0, 8, 3}, true, 1) == std::vector<size_t>{3} &&
+        rules::LaunchFrequencyOrder({0, 3, 0, 8, 3}, true, 8) == std::vector<size_t>{3, 1, 4},
+        "narrow rows clip suggestions and wide rows never pad with unrecorded apps");
+    Check(rules::LaunchFrequencyOrder({0, -1, 0}, true, 6).empty() &&
+        rules::LaunchFrequencyOrder({}, true, 6).empty(),
+        "empty or invalid usage history produces no suggestion section");
+    NavigationSettings settings;
+    Check(!rules::ShowAppSuggestions(settings, true, false, false, false),
+        "suggestions are off by default");
+    settings.appSuggestionsEnabled = true;
+    for (const auto mode : {QuickNavigationDesktopViewMode::Tile, QuickNavigationDesktopViewMode::Source,
+        QuickNavigationDesktopViewMode::Initial, QuickNavigationDesktopViewMode::Frequency})
+    {
+        settings.desktopViewMode = mode;
+        Check(rules::ShowAppSuggestions(settings, true, false, false, false) ==
+            (mode != QuickNavigationDesktopViewMode::Frequency),
+            "enabled suggestions appear only in desktop modes other than frequency");
+    }
+    settings.desktopViewMode = QuickNavigationDesktopViewMode::Tile;
+    Check(!rules::ShowAppSuggestions(settings, false, false, false, false) &&
+        !rules::ShowAppSuggestions(settings, true, true, false, false) &&
+        !rules::ShowAppSuggestions(settings, true, false, true, false) &&
+        !rules::ShowAppSuggestions(settings, true, false, false, true),
+        "widget tabs, search, slot pickers and collapsed lists retain their original content");
 }
 
 void TestPinyinInitials()
@@ -1513,6 +1567,7 @@ int main()
     TestViewModePersistenceValues();
     TestExtendedNavigationKeyNames();
     TestViewModeFilePersistence();
+    TestLaunchFrequencyAndSuggestions();
     TestPinyinInitials();
     TestApplicationIconCacheIdentity();
     TestSourceOwnership();

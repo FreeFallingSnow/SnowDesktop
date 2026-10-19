@@ -2548,5 +2548,9 @@
   "settings.dock.attentionDot.title": "Punto de aviso del Dock",
   "settings.dock.attentionDot.size": "Tamaño del punto",
   "settings.dock.attentionDot.position": "Posición del punto",
-  "settings.dock.attentionDot.positionHint": "Los valores negativos acercan el punto al centro del ícono; los positivos lo alejan. El desplazamiento es un porcentaje del tamaño del ícono."
+  "settings.dock.attentionDot.positionHint": "Los valores negativos acercan el punto al centro del ícono; los positivos lo alejan. El desplazamiento es un porcentaje del tamaño del ícono.",
+  "app.nav.view_frequency": "Frecuencia de uso",
+  "app.nav.app_suggestions": "Aplicaciones sugeridas",
+  "quickNav.appSuggestions": "Activar aplicaciones sugeridas",
+  "quickNav.appSuggestions.hint": "Muestra una fila de aplicaciones frecuentes al inicio de la página del escritorio. Se oculta al ordenar por frecuencia de uso."
 }

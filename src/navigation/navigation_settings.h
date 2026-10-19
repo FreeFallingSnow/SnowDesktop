@@ -24,6 +24,7 @@ enum class QuickNavigationDesktopViewMode
     Tile,
     Source,
     Initial,
+    Frequency,
 };
 
 inline const char* QuickNavigationDesktopViewModeToJson(
@@ -33,6 +34,7 @@ inline const char* QuickNavigationDesktopViewModeToJson(
     {
     case QuickNavigationDesktopViewMode::Source: return "source";
     case QuickNavigationDesktopViewMode::Initial: return "initial";
+    case QuickNavigationDesktopViewMode::Frequency: return "frequency";
     case QuickNavigationDesktopViewMode::Tile:
     default: return "tile";
     }
@@ -48,6 +50,8 @@ inline bool QuickNavigationDesktopViewModeFromJson(
         mode = QuickNavigationDesktopViewMode::Source;
     else if (value == "initial")
         mode = QuickNavigationDesktopViewMode::Initial;
+    else if (value == "frequency")
+        mode = QuickNavigationDesktopViewMode::Frequency;
     else
         return false;
     return true;
@@ -94,6 +98,7 @@ struct NavigationSettings
     // Missing/false means original (Tile) order; true means alphabetical order.
     std::map<std::string, bool> widgetSortByInitial;
     bool lastCollapsed = false;
+    bool appSuggestionsEnabled = false;
     QuickNavigationLayout layout;
     std::array<std::string, 6> prefixes{"app", "file", "web", "set", "run", "="};
     std::string defaultEngine = "bing";
@@ -171,6 +176,9 @@ inline bool ValidateNavigationSearchConfiguration(const NavigationSettings& sett
 
 inline void NormalizeNavigationSettings(NavigationSettings& settings)
 {
+    // Frequency is a desktop-only choice; mapping tabs retain their own modes.
+    if (settings.mappingViewMode == QuickNavigationDesktopViewMode::Frequency)
+        settings.mappingViewMode = QuickNavigationDesktopViewMode::Source;
     auto& l = settings.layout;
 #define SD_NAV_CLAMP(name, low, high) l.name = std::clamp(l.name, low, high)
     SD_NAV_CLAMP(expandedWidth, 400, 1800); SD_NAV_CLAMP(collapsedWidth, 360, 1400); SD_NAV_CLAMP(maximumHeight, 220, 1400);

@@ -283,7 +283,8 @@ void TestCodec()
         restoredGuide.usageGuideExpanded == false,
         "host fold preference reaches the guide without inventing tutorial state");
     NavigationSettings navigation; navigation.lastCollapsed = true; navigation.layout.collapsedWidth = 700; navigation.colors["searchText"] = "#123456"; navigation.prefixes[0] = "applications";
-    navigation.desktopViewMode = QuickNavigationDesktopViewMode::Initial;
+    navigation.desktopViewMode = QuickNavigationDesktopViewMode::Frequency;
+    navigation.appSuggestionsEnabled = true;
     navigation.mappingViewMode = QuickNavigationDesktopViewMode::Tile;
     navigation.widgetSortByInitial = {{"collection-a", true}, {"collection-b", false}};
     navigation.engines.push_back({"custom","Custom","custom","https://example.com/?q={query}"});

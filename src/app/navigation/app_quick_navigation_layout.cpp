@@ -142,6 +142,8 @@ int DesktopApp::GetQuickNavigationTabsStart(
 void DesktopApp::SetQuickNavigationViewMode(
     QuickNavigationDesktopViewMode mode)
 {
+    const auto options = GetQuickNavigationViewModeOptions();
+    if (std::find(options.begin(), options.end(), mode) == options.end()) return;
     if (GetQuickNavigationViewMode() == mode)
         return;
     if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
@@ -1293,7 +1295,7 @@ bool DesktopApp::HandleQuickNavigationKeyboardInput(WPARAM key)
 
 int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay) const
 {
-    return GetQuickNavigationContentHeight(overlay, BuildQuickNavigationContentModel());
+    return GetQuickNavigationContentHeight(overlay, BuildQuickNavigationContentModel(&overlay));
 }
 
 int DesktopApp::GetQuickNavigationContentHeight(const RECT& overlay,

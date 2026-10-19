@@ -2548,5 +2548,9 @@
   "settings.dock.attentionDot.title": "Point de notification du Dock",
   "settings.dock.attentionDot.size": "Taille du point",
   "settings.dock.attentionDot.position": "Position du point",
-  "settings.dock.attentionDot.positionHint": "Les valeurs négatives rapprochent le point du centre de l'icône ; les valeurs positives l'éloignent. Le décalage est un pourcentage de la taille de l'icône."
+  "settings.dock.attentionDot.positionHint": "Les valeurs négatives rapprochent le point du centre de l'icône ; les valeurs positives l'éloignent. Le décalage est un pourcentage de la taille de l'icône.",
+  "app.nav.view_frequency": "Fréquence de lancement",
+  "app.nav.app_suggestions": "Applications suggérées",
+  "quickNav.appSuggestions": "Activer les suggestions d’applications",
+  "quickNav.appSuggestions.hint": "Afficher une ligne d’applications fréquentes en haut de la page du bureau. Masquée lors du tri par fréquence de lancement."
 }

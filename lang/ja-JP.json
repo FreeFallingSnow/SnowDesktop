@@ -2548,5 +2548,9 @@
   "settings.dock.attentionDot.title": "Dock の通知ドット",
   "settings.dock.attentionDot.size": "ドットのサイズ",
   "settings.dock.attentionDot.position": "ドットの位置",
-  "settings.dock.attentionDot.positionHint": "負の値でアイコンの中心に近づき、正の値で外側に移動します。移動量はアイコンのサイズに対する割合です。"
+  "settings.dock.attentionDot.positionHint": "負の値でアイコンの中心に近づき、正の値で外側に移動します。移動量はアイコンのサイズに対する割合です。",
+  "app.nav.view_frequency": "起動頻度順",
+  "app.nav.app_suggestions": "おすすめのアプリ",
+  "quickNav.appSuggestions": "おすすめのアプリを表示",
+  "quickNav.appSuggestions.hint": "デスクトップページの先頭によく使うアプリを1行表示します。起動頻度順では表示しません。"
 }

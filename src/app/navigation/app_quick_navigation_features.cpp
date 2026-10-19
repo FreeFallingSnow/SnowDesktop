@@ -60,7 +60,7 @@ std::wstring DesktopApp::QuickNavigationTypeLabel() const
 }
 std::wstring DesktopApp::QuickNavigationViewLabel() const
 {
-    constexpr const char* keys[] = {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial"};
+    constexpr const char* keys[] = {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial", "app.nav.view_frequency"};
     return _LW(keys[static_cast<size_t>(GetQuickNavigationViewMode())]);
 }
 QuickNavigationDesktopViewMode DesktopApp::GetQuickNavigationViewMode() const
@@ -82,6 +82,9 @@ std::vector<QuickNavigationDesktopViewMode> DesktopApp::GetQuickNavigationViewMo
 {
     if (quickNavigationActiveWidgetIndex_ < widgets_.size())
         return {QuickNavigationDesktopViewMode::Tile, QuickNavigationDesktopViewMode::Initial};
+    if (quickNavigationActiveWidgetIndex_ == static_cast<size_t>(-1))
+        return {QuickNavigationDesktopViewMode::Tile, QuickNavigationDesktopViewMode::Source,
+            QuickNavigationDesktopViewMode::Initial, QuickNavigationDesktopViewMode::Frequency};
     return {QuickNavigationDesktopViewMode::Tile, QuickNavigationDesktopViewMode::Source,
         QuickNavigationDesktopViewMode::Initial};
 }
@@ -577,7 +580,7 @@ void DesktopApp::DrawQuickNavigationMenus(ID2D1DeviceContext* context)
         RECT label = bounds;
         label.left = quickNavigationMenu_ == QuickNavigationMenu::Types ? icon.right + QuickNavScale(8) : bounds.left + QuickNavScale(10);
         label.right -= QuickNavScale(quickNavigationMenu_ == QuickNavigationMenu::Types ? 90 : 10);
-        constexpr const char* views[] = {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial"};
+        constexpr const char* views[] = {"app.nav.view_tile", "app.nav.view_source", "app.nav.view_initial", "app.nav.view_frequency"};
         DrawD2DTextEllipsis(context, quickNavigationMenu_ == QuickNavigationMenu::Types ? ScopeLabel(type) : _LW(views[static_cast<size_t>(viewModes[i])]), label, quickNavItemTextFormat_.Get(), ToD2DColor(selected ? theme.selectedText : theme.appNameText));
         if (quickNavigationMenu_ == QuickNavigationMenu::Types && i > 0)
         {

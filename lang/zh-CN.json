@@ -2548,5 +2548,9 @@
   "settings.dock.attentionDot.title": "Dock 提醒红点",
   "settings.dock.attentionDot.size": "红点大小",
   "settings.dock.attentionDot.position": "红点位置",
-  "settings.dock.attentionDot.positionHint": "负值向图标中心拉近，正值向外拉远；偏移量按图标尺寸的百分比计算。"
+  "settings.dock.attentionDot.positionHint": "负值向图标中心拉近，正值向外拉远；偏移量按图标尺寸的百分比计算。",
+  "app.nav.view_frequency": "按启动频率排序",
+  "app.nav.app_suggestions": "应用建议",
+  "quickNav.appSuggestions": "开启应用建议栏",
+  "quickNav.appSuggestions.hint": "在桌面页顶部显示一行常用应用，按启动频率排序时隐藏。"
 }

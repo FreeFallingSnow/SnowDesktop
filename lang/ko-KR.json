@@ -2548,5 +2548,9 @@
   "settings.dock.attentionDot.title": "Dock 알림 점",
   "settings.dock.attentionDot.size": "점 크기",
   "settings.dock.attentionDot.position": "점 위치",
-  "settings.dock.attentionDot.positionHint": "음수는 아이콘 중심 쪽으로, 양수는 바깥쪽으로 이동합니다. 이동량은 아이콘 크기에 대한 백분율입니다."
+  "settings.dock.attentionDot.positionHint": "음수는 아이콘 중심 쪽으로, 양수는 바깥쪽으로 이동합니다. 이동량은 아이콘 크기에 대한 백분율입니다.",
+  "app.nav.view_frequency": "실행 빈도순",
+  "app.nav.app_suggestions": "추천 앱",
+  "quickNav.appSuggestions": "추천 앱 표시",
+  "quickNav.appSuggestions.hint": "바탕 화면 페이지 상단에 자주 사용하는 앱을 한 줄로 표시합니다. 실행 빈도순으로 정렬할 때는 숨깁니다."
 }

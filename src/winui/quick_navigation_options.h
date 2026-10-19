@@ -65,6 +65,17 @@ public:
         }
         if (!appearanceOnly_)
         {
+            Panel suggestions;
+            appSuggestions_.Toggled([this](auto&&, auto&&) {
+                if (!sync_) commit_([enabled = appSuggestions_.IsOn()](auto& value) {
+                    value.appSuggestionsEnabled = enabled;
+                });
+            });
+            AddRow(suggestions, "quickNav.appSuggestions", appSuggestions_, [](auto& value) {
+                value.appSuggestionsEnabled = false;
+            });
+            rowStorage_.back()->SetText(L("quickNav.appSuggestions"), L("quickNav.appSuggestions.hint"));
+            root_.Children().Append(suggestions);
             auto prefixes = Group("quickNav.prefixes", [this] {commit_([](auto& value) {value.prefixes = NavigationSettings{}.prefixes;});}, "quickNav.prefixes.hint");
             constexpr const char* typeKeys[] = {"quickNav.type.app", "quickNav.type.file", "quickNav.type.web", "quickNav.type.settings", "quickNav.type.run", "quickNav.type.calculator"};
             for (size_t i = 0; i < prefixes_.size(); ++i)
@@ -167,6 +178,7 @@ public:
         sync_ = true; values_ = values; light_ = light; glass_ = glass; hasValues_ = true;
         if (!appearanceOnly_)
         {
+            appSuggestions_.IsOn(values.appSuggestionsEnabled);
             for (size_t i = 0; i < prefixes_.size(); ++i)
                 if (prefixes_[i].Text() != winrt::to_hstring(values.prefixes[i])) prefixes_[i].Text(winrt::to_hstring(values.prefixes[i]));
             if (enginesChanged) BuildEngines();
@@ -196,6 +208,8 @@ public:
                 L("app.settings.restore_default") + L" · " + L(key));
         }
         for (const auto& [key, row] : rows_) row->SetText(L(key));
+        if (!appearanceOnly_)
+            rowStorage_.front()->SetText(L("quickNav.appSuggestions"), L("quickNav.appSuggestions.hint"));
         if (!appearanceOnly_)
         {
             addEngine_.Content(winrt::box_value(L("quickNav.engine.add")));
@@ -376,6 +390,7 @@ private:
     Panel root_, engineRows_;
     std::vector<Panel> groupPanels_;
     winrt::Microsoft::UI::Xaml::Controls::ComboBox defaultEngine_;
+    winrt::Microsoft::UI::Xaml::Controls::ToggleSwitch appSuggestions_;
     winrt::Microsoft::UI::Xaml::Controls::InfoBar notice_;
     winrt::Microsoft::UI::Xaml::Controls::HyperlinkButton addEngine_;
     std::string expandedEngine_;

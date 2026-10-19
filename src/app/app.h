@@ -1823,7 +1823,7 @@ private:
     static bool IsApplicationsShellLinkTarget(
         IShellLinkW* shellLink,
         const std::wstring& shortcutPath = {});
-    QuickNavigationContentModel BuildQuickNavigationContentModel() const;
+    QuickNavigationContentModel BuildQuickNavigationContentModel(const RECT* overlay = nullptr) const;
     RECT GetQuickNavigationSectionHeaderRect(
         const RECT& overlay, size_t sectionIndex,
         const QuickNavigationContentModel& model) const;

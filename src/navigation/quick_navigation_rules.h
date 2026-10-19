@@ -47,6 +47,8 @@ NextQuickNavigationDesktopViewMode(
     case QuickNavigationDesktopViewMode::Source:
         return QuickNavigationDesktopViewMode::Initial;
     case QuickNavigationDesktopViewMode::Initial:
+        return QuickNavigationDesktopViewMode::Frequency;
+    case QuickNavigationDesktopViewMode::Frequency:
     default:
         return QuickNavigationDesktopViewMode::Tile;
     }
@@ -58,6 +60,8 @@ QuickNavigationDesktopViewModeGlyph(
 {
     switch (mode)
     {
+    case QuickNavigationDesktopViewMode::Frequency:
+        return menu_fluent_glyphs::kShowFrequent;
     case QuickNavigationDesktopViewMode::Source:
         return menu_fluent_glyphs::
             kQuickNavigationSourceView;
@@ -69,6 +73,30 @@ QuickNavigationDesktopViewModeGlyph(
         return menu_fluent_glyphs::
             kQuickNavigationTileView;
     }
+}
+
+// Inputs are in Tile order. Equal counts (including missing records) keep it.
+inline std::vector<size_t> LaunchFrequencyOrder(
+    const std::vector<int>& launchCounts, bool recordedOnly = false,
+    size_t limit = static_cast<size_t>(-1))
+{
+    std::vector<size_t> order;
+    order.reserve(launchCounts.size());
+    for (size_t i = 0; i < launchCounts.size(); ++i)
+        if (!recordedOnly || launchCounts[i] > 0)
+            order.push_back(i);
+    std::stable_sort(order.begin(), order.end(), [&](size_t left, size_t right) {
+        return std::max(0, launchCounts[left]) > std::max(0, launchCounts[right]);
+    });
+    if (order.size() > limit) order.resize(limit);
+    return order;
+}
+
+inline bool ShowAppSuggestions(const NavigationSettings& settings,
+    bool desktopPage, bool searching, bool picking, bool listView)
+{
+    return settings.appSuggestionsEnabled && desktopPage && !searching &&
+        !picking && !listView && settings.desktopViewMode != QuickNavigationDesktopViewMode::Frequency;
 }
 
 inline RECT PlacePanel(RECT work, int width, int height, int margin,
