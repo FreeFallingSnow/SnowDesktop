@@ -211,6 +211,8 @@ struct Service::Impl
         }
         // Temporary issue #29 isolation: preserve collection and the handshake,
         // but omit the synthetic shell-restart notification to applications.
+        // User comparison: no replay, but only four mirrored icons; the initial
+        // snapshot is incomplete on this system, so this is not a full repair.
         WriteDiagnosticLogEntry(L"[Issue29 isolation] synthetic TaskbarCreated broadcast disabled");
     }
     void Run(std::stop_token token)
