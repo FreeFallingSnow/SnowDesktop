@@ -113,13 +113,14 @@ bool LuaScript::SafeReadFlags(WidgetEngine* engine,
  *   2. 根据选中/悬停状态选取填充色与边框色，支持从 Personalization 配置读取；
  *   3. 检测 Lua 脚本是否定义了自定义样式（CustomStyle），若有则覆盖默认颜色；
  *   4. 构造 LuaWidgetTheme 结构体并传递给脚本引擎，供 Lua 渲染时参考；
- *   5. 绘制圆角矩形背景与选中边框；
+ *   5. 绘制圆角矩形背景；
  *   6. 设置裁剪区域，调用脚本引擎的 RenderWidget 执行 Lua 自定义绘制；
  *   7. 从脚本读取 showTitle / bottomBarHover 等标志位；
  *   8. 按组件底栏与悬停状态决定是否绘制底栏、移动和缩放手柄；
  *   9. 若底栏可见，绘制底部渐变条（无自定义样式时）；
  *  10. 若 showTitle 为 true 且存在标题文本，则绘制控件标题；
- *  11. 无底栏时悬浮绘制左下移动手柄，并绘制右下角缩放手柄。
+ *  11. 在内容与渐变之上绘制普通或选中边框及边缘高光；
+ *  12. 无底栏时悬浮绘制左下移动手柄，并绘制右下角缩放手柄。
  *
  * @param context  Direct2D 设备上下文，用于所有绘制调用
  * @param rect     控件的原始矩形区域（未使用，实际采用 GetStandaloneWidgetFrameRect）
@@ -654,8 +655,7 @@ void LuaScript::DrawInternal(ID2D1DeviceContext* context, RECT rect,
                     stops.Get(), &brush)) && brush)
                 {
                     auto* factory = app_->GetD2DFactory();
-                    const float radius = static_cast<float>(Cu(12.0f));
-                    ID2D1Geometry* clipGeo = GetCachedClipGeometry(factory, frame, radius);
+                    ID2D1Geometry* clipGeo = GetCachedClipGeometry(factory, frame, panelRadius);
                     bool pushed = false;
                     if (clipGeo)
                     {
