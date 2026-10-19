@@ -81,10 +81,12 @@ struct WinUiRuntime::Impl
     muxh::DesktopWindowXamlSource xamlSource{nullptr};
     winrt::event_token takeFocusRequestedToken{};
     std::shared_ptr<settings_restore_presentation::PendingFrame> restoreFrame;
+    muxm::CompositionTarget::Rendering_revoker restoreRendering;
     muxm::CompositionTarget::Rendered_revoker restoreRendered;
 
     void CancelRestoreFrame() noexcept
     {
+        restoreRendering.revoke();
         restoreRendered.revoke();
         restoreFrame.reset();
     }
@@ -94,6 +96,11 @@ struct WinUiRuntime::Impl
         if (!restoreFrame || !restoreFrame->IsCurrent() || !xamlSource)
             return;
         const std::weak_ptr<settings_restore_presentation::PendingFrame> weak = restoreFrame;
+        // Rendered observes completed work but does not schedule another frame.
+        // Restoring unchanged bounds can leave an idle Island with no render
+        // work, so briefly request frame ticks until that first render occurs.
+        restoreRendering = muxm::CompositionTarget::Rendering(winrt::auto_revoke,
+            [](const auto&, const auto&) {});
         restoreRendered = muxm::CompositionTarget::Rendered(winrt::auto_revoke,
             [this, weak](const auto&, const auto&) {
                 const auto frame = weak.lock();
@@ -105,6 +112,7 @@ struct WinUiRuntime::Impl
                     const auto compositor = muxh::ElementCompositionPreview::
                         GetElementVisual(xamlSource.Content()).Compositor();
                     const auto dispatcher = dispatcherQueue;
+                    restoreRendering.revoke();
                     restoreRendered.revoke();
                     // Rendered runs after XAML has produced its frame. Submit
                     // that compositor's work on the next queue turn; the Dock's
@@ -130,7 +138,11 @@ struct WinUiRuntime::Impl
                         catch (...) { /* Keep pending for the bounded Dock fallback. */ }
                     });
                 }
-                catch (...) { restoreRendered.revoke(); }
+                catch (...)
+                {
+                    restoreRendering.revoke();
+                    restoreRendered.revoke();
+                }
             });
     }
 
