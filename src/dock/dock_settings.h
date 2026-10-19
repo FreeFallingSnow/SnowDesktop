@@ -188,7 +188,7 @@ inline void NormalizeDockSettings(DockSettings& settings)
 std::wstring GetDockSettingsPath();
 bool IsSystemTaskbarAutoHideEnabled();
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled);
-bool BeginSystemTaskbarMinimizeProtection(HWND source);
+bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed = false);
 bool IsSystemTaskbarAlignmentCentered();
 bool RequestSystemTaskbarAlignmentCentered(bool centered);
 bool IsWindowsSystemLightThemeEnabled();

@@ -480,8 +480,17 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     if (!window) return;
     // Fallback for programmatic minimization and applications which have not
     // yet acquired a synchronous CBT hook. Existing requests are deduplicated.
-    if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window))
-        PrepareDockWindowMinimize(window, L"system-minimize");
+    if (event == EVENT_SYSTEM_MINIMIZESTART && IsDockTaskWindow(window) &&
+        ShouldProtectAutoHideTaskbar(dockSettings_, generalSettings_.dockEnabled,
+            IsSystemTaskbarAutoHideEnabled()))
+    {
+        snowdesktop::dock_taskbar_diagnostics::Begin(window, L"system-minimize");
+        RefreshSystemTaskbarAppearance(false);
+        if (!BeginSystemTaskbarMinimizeProtection(window, true))
+            WriteDiagnosticLogEntry(L"[TaskbarMinimizeProtection] observed minimize protection was not acknowledged by all taskbars",
+                DiagnosticLogLevel::Warning);
+        snowdesktop::dock_taskbar_diagnostics::Record(L"system-minimize-taskbar-protection-observed", window);
+    }
     auto& previewOrder = snowdesktop::dock_window_order::Current();
     if (event == EVENT_OBJECT_DESTROY)
         previewOrder.Forget(window);

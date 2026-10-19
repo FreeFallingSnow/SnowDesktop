@@ -1,9 +1,41 @@
 #pragma once
 
 #include <windows.h>
+#include <cstdint>
+#include <unordered_map>
 
 namespace snowdesktop::taskbar_hook
 {
+inline bool IsRecentTaskbarInput(DWORD recorded, DWORD lastInput, DWORD now) noexcept
+{
+    // A pointer merely resting over the taskbar is not an input-origin signal.
+    // A later click/key/movement elsewhere invalidates the recorded operation.
+    return recorded != 0 && recorded == lastInput && now - recorded <= 500;
+}
+
+class TaskbarMinimizeExemptions
+{
+public:
+    bool Exempts(std::uintptr_t source, bool observed, bool taskbarInput, ULONGLONG now)
+    {
+        std::erase_if(sources_, [now](const auto& entry) { return now - entry.second > 1500; });
+        if (!source) return false;
+        if (taskbarInput)
+        {
+            sources_[source] = now;
+            return true;
+        }
+        // An asynchronous WinEvent belongs to the operation already excluded
+        // by the synchronous pre-minimize hook, even if the pointer moved.
+        if (observed && sources_.contains(source)) return true;
+        // A new application/Dock command with another input must be protected.
+        sources_.erase(source);
+        return false;
+    }
+private:
+    std::unordered_map<std::uintptr_t, ULONGLONG> sources_;
+};
+
 inline bool IsAutoHiddenTaskbar(const RECT& bar, const RECT& screen) noexcept
 {
     if (bar.right <= bar.left || bar.bottom <= bar.top ||

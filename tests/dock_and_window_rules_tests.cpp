@@ -651,6 +651,25 @@ void CheckTaskbarHookLifecycle()
 void CheckTaskbarMinimizeProtection()
 {
     using namespace snowdesktop::taskbar_hook;
+    Check(IsRecentTaskbarInput(1000, 1000, 1100),
+        "a real taskbar click or key operation can identify its own minimize request");
+    Check(!IsRecentTaskbarInput(0, 1000, 1100) &&
+        !IsRecentTaskbarInput(1000, 1050, 1100) && !IsRecentTaskbarInput(1000, 1000, 1501),
+        "hover alone, later input elsewhere and old taskbar interactions do not exempt application minimization");
+    Check(IsRecentTaskbarInput(0xfffffff0, 0xfffffff0, 0x20),
+        "input provenance keeps its age bound across the Windows DWORD tick wrap");
+    TaskbarMinimizeExemptions origins;
+    Check(origins.Exempts(42, false, true, 1000),
+        "the synchronous taskbar-origin minimize is excluded before any taskbar is cloaked");
+    Check(origins.Exempts(42, true, false, 1200),
+        "its asynchronous WinEvent stays excluded after pointer movement changes last input");
+    Check(!origins.Exempts(43, true, false, 1200),
+        "the exclusion belongs to the minimized window and cannot suppress unrelated application protection");
+    Check(!origins.Exempts(42, false, false, 1250) && !origins.Exempts(42, true, false, 1300),
+        "a new application-caption or Dock minimize clears an older taskbar exemption for the same window");
+    Check(origins.Exempts(42, false, true, 2000) &&
+        !origins.Exempts(42, true, false, 3501) && !origins.Exempts(0, false, true, 3600),
+        "expired callbacks and invalid windows cannot inherit taskbar input provenance");
     MinimizeProtection state;
     MinimizeProtectionInput input{1, 1000, 1000, true, false, false, false, true};
     Check(state.Update(input), "a minimize request cloaks immediately before its source becomes iconic");

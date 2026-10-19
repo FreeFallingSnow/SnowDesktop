@@ -12,6 +12,7 @@
 #include "platform/deployment_context.h"
 #include "taskbar_hook/taskbar_hook_protocol.h"
 #include "taskbar_hook/taskbar_native.h"
+#include "taskbar_hook/taskbar_autohide_rules.h"
 #include "taskbar_hook/taskbar_connection.h"
 #include "taskbar_hook/taskbar_failure_feedback.h"
 #include "diagnostics/diagnostic_log.h"
@@ -722,7 +723,7 @@ public:
         return true;
     }
 
-    bool BeginMinimizeProtection(HWND source)
+    bool BeginMinimizeProtection(HWND source, bool observed)
     {
         using namespace snowdesktop::taskbar_hook;
         std::vector<HWND> taskbars;
@@ -732,6 +733,20 @@ public:
             if (!source || !ReadSharedSnapshot(state_, snapshot) ||
                 snapshot.ownerProcessId != GetCurrentProcessId() || !HasMinimizeProtection(snapshot)) return false;
             const ULONGLONG now = GetTickCount64();
+            LASTINPUTINFO lastInput{sizeof(lastInput)};
+            bool taskbarInput = false;
+            if (GetLastInputInfo(&lastInput))
+                for (LONG i = 0; i < snapshot.targetCount; ++i)
+                {
+                    const HWND taskbar = reinterpret_cast<HWND>(snapshot.targets[i].taskbar);
+                    const DWORD recorded = HandleToULong(GetPropW(taskbar, native::kMinimizeInputTickProperty));
+                    taskbarInput |= IsRecentTaskbarInput(recorded, lastInput.dwTime, static_cast<DWORD>(now));
+                }
+            if (minimizeExemptions_.Exempts(reinterpret_cast<std::uintptr_t>(source), observed, taskbarInput, now))
+            {
+                WriteDiagnosticLogEntry(L"[TaskbarMinimizeProtection] taskbar-origin minimize exempted");
+                return true;
+            }
             // The out-of-context WinEvent follows the synchronous pre-minimize
             // hook. It must not restart the cloak after the first request ended.
             if (snapshot.minimizeSource == reinterpret_cast<std::uintptr_t>(source) &&
@@ -923,6 +938,7 @@ private:
     bool appearanceFailureReported_ = false;
     DWORD reportedFailureExplorer_ = 0;
     DWORD reportedFailureError_ = 0;
+    snowdesktop::taskbar_hook::TaskbarMinimizeExemptions minimizeExemptions_;
 };
 
 TaskbarBackdropController& GetTaskbarBackdropController()
@@ -956,9 +972,9 @@ bool IsSystemTaskbarAutoHideEnabled()
     return ReadSystemTaskbarAutoHideEnabled();
 }
 
-bool BeginSystemTaskbarMinimizeProtection(HWND source)
+bool BeginSystemTaskbarMinimizeProtection(HWND source, bool observed)
 {
-    return GetTaskbarBackdropController().BeginMinimizeProtection(source);
+    return GetTaskbarBackdropController().BeginMinimizeProtection(source, observed);
 }
 
 bool RequestSystemTaskbarAutoHideEnabled(bool enabled)

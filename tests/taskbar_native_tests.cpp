@@ -3,6 +3,7 @@
 #include "../src/taskbar_hook/taskbar_classic_appearance.h"
 #include "../src/taskbar_hook/taskbar_material_render.h"
 #include "../src/taskbar_hook/taskbar_connection.h"
+#include "../src/taskbar_hook/taskbar_autohide_rules.h"
 #include "dock/dock_settings.h"
 #include "platform/taskbar_monitor.h"
 #include <dwmapi.h>
@@ -340,6 +341,40 @@ int RunNativeTaskbarTests()
         check(!cloaked() && !secondaryCloaked(), "explicit taskbar access cancels the matching request on every screen");
         SendMessageW(secondary, apply, 0, 0);
         check(!secondaryCloaked(), "appearance refresh cannot rearm a cancelled temporary cloak");
+        const HWND taskbarChild = CreateWindowExW(0, L"STATIC", L"Private taskbar input child",
+            WS_CHILD | WS_VISIBLE, 0, 0, 32, 32, secondary, nullptr, instance, nullptr);
+        check(taskbarChild != nullptr, "create a private descendant as the physical taskbar input recipient");
+        native::ObserveTaskbarInput(source, 1000);
+        check(!GetPropW(window, native::kMinimizeInputTickProperty) &&
+            !GetPropW(secondary, native::kMinimizeInputTickProperty),
+            "input in an ordinary application cannot claim taskbar minimize provenance");
+        arm();
+        MSG click{};
+        check(PostMessageW(taskbarChild, WM_LBUTTONDOWN, 0, 0) &&
+            PeekMessageW(&click, taskbarChild, WM_LBUTTONDOWN, WM_LBUTTONDOWN, PM_REMOVE),
+            "retrieve private taskbar input through the installed thread hook without physical desktop input");
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        check(HandleToULong(GetPropW(secondary, native::kMinimizeInputTickProperty)) == click.time &&
+            click.time && !cloaked() && !secondaryCloaked(),
+            "queued taskbar input publishes its own timestamp before dispatch and cancels both screens");
+        arm();
+        // Substitute only physical event delivery/time, keeping native window
+        // ancestry, property publication, cancellation and real DWM untouched.
+        native::ObserveTaskbarInput(taskbarChild, 1234);
+        SendMessageW(window, apply, 0, 0);
+        SendMessageW(secondary, apply, 0, 0);
+        const DWORD recorded = HandleToULong(GetPropW(secondary, native::kMinimizeInputTickProperty));
+        check(recorded == 1234 && !GetPropW(window, native::kMinimizeInputTickProperty) &&
+            !cloaked() && !secondaryCloaked(),
+            "real taskbar descendant input publishes its origin and releases protection on all screens");
+        TaskbarMinimizeExemptions origins;
+        const auto sourceKey = reinterpret_cast<std::uintptr_t>(source);
+        check(origins.Exempts(sourceKey, false, IsRecentTaskbarInput(recorded, 1234, 1240), 1240) &&
+            origins.Exempts(sourceKey, true, false, 1300) && !cloaked() && !secondaryCloaked(),
+            "taskbar-origin minimize and its later observation leave both taskbars visible");
+        check(!origins.Exempts(sourceKey, false, IsRecentTaskbarInput(recorded, 1400, 1400), 1400),
+            "a subsequent caption or Dock action retains ordinary all-monitor protection");
         arm();
         check(cloaked() && secondaryCloaked(), "the next application minimize starts a new independent cloak");
         temporary.targets[1].shellPanelVisible = TRUE;
@@ -355,6 +390,8 @@ int RunNativeTaskbarTests()
         SendMessageW(secondary, apply, 0, 0);
         check(!cloaked() && !secondaryCloaked() && !GetPropW(window, native::kAttachedProperty) &&
             !GetPropW(secondary, native::kAttachedProperty), "owner shutdown restores both taskbars and detaches temporary protection");
+        check(!GetPropW(secondary, native::kMinimizeInputTickProperty),
+            "detaching removes transient taskbar input provenance");
         DestroyWindow(source);
         DestroyWindow(secondary);
         UnregisterClassW(registration.lpszClassName, instance);

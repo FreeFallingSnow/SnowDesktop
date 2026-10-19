@@ -55,6 +55,7 @@ struct WindowState
     ClassicSurface surface;
     HHOOK menuMouseHook = nullptr;
     HHOOK menuMessageHook = nullptr;
+    HHOOK inputMessageHook = nullptr;
     bool menuLoop = false;
     ULONGLONG contextMenuUntil = 0;
     DWORD externalMenuToken = 0;
@@ -66,6 +67,7 @@ struct WindowState
     {
         if (menuMouseHook) UnhookWindowsHookEx(menuMouseHook);
         if (menuMessageHook) UnhookWindowsHookEx(menuMessageHook);
+        if (inputMessageHook) UnhookWindowsHookEx(inputMessageHook);
         if (owner) CloseHandle(owner);
     }
 };
@@ -283,6 +285,31 @@ LRESULT CALLBACK MenuMouseProc(int code, WPARAM message, LPARAM data) try
 catch (...)
 {
     return CallNextHookEx(nullptr, code, message, data);
+}
+
+LRESULT CALLBACK InputMessageProc(int code, WPARAM removed, LPARAM data) try
+{
+    if (code == HC_ACTION && removed == PM_REMOVE && data)
+    {
+        const auto* message = reinterpret_cast<const MSG*>(data);
+        switch (message->message)
+        {
+        case WM_LBUTTONDOWN: case WM_LBUTTONUP: case WM_LBUTTONDBLCLK:
+        case WM_RBUTTONDOWN: case WM_RBUTTONUP:
+        case WM_NCLBUTTONDOWN: case WM_NCLBUTTONUP:
+        case WM_NCRBUTTONDOWN: case WM_NCRBUTTONUP:
+        case WM_KEYDOWN: case WM_KEYUP: case WM_SYSKEYDOWN: case WM_SYSKEYUP:
+        case WM_POINTERDOWN: case WM_POINTERUP:
+            // MSG.time belongs to this operation, before Explorer dispatches it.
+            ObserveTaskbarInput(message->hwnd, message->time);
+            break;
+        }
+    }
+    return CallNextHookEx(nullptr, code, removed, data);
+}
+catch (...)
+{
+    return CallNextHookEx(nullptr, code, removed, data);
 }
 
 LRESULT CALLBACK MenuMessageProc(int code, WPARAM wParam, LPARAM lParam) try
@@ -508,6 +535,7 @@ bool Detach(HWND window, const std::shared_ptr<WindowState>& state, bool destroy
     RemoveWindowSubclass(window, Subclass, kSubclass);
     RemovePropW(window, kAttachedProperty);
     RemovePropW(window, kContextMenuProperty);
+    RemovePropW(window, kMinimizeInputTickProperty);
     std::lock_guard lock(windowsMutex);
     windows.erase(window);
     return !windows.empty() || StopHooks();
@@ -795,6 +823,29 @@ bool Retire(HWND window) noexcept try
 }
 catch (...) { return false; }
 
+void ObserveTaskbarInput(HWND source, DWORD messageTime) noexcept try
+{
+    if (!source || !messageTime || hookInstanceRetired.load()) return;
+    std::vector<std::pair<HWND, std::shared_ptr<WindowState>>> targets;
+    { std::lock_guard lock(windowsMutex);
+      for (const auto& entry : windows) targets.push_back(entry); }
+    for (const auto& [window, state] : targets)
+    {
+        if (!IsTrayOrigin(source, window) || WaitForSingleObject(state->owner, 0) != WAIT_TIMEOUT) continue;
+        Snapshot snapshot;
+        if (!ReadSharedSnapshot(state->mapping, snapshot) || !snapshot.enabled ||
+            snapshot.ownerProcessId != state->ownerId) continue;
+        SetPropW(window, kMinimizeInputTickProperty, ULongToHandle(messageTime));
+        InterlockedExchange(&state->mapping->minimizeCancelled, snapshot.minimizeSequence);
+        // All taskbar threads release the current request before a subsequent
+        // application minimize can be mistaken for a passive activation.
+        for (const auto& [other, otherState] : targets)
+            if (otherState->mapping == state->mapping)
+                PostMessageW(other, RegisterWindowMessageW(kApplyMessageName), 0, 0);
+    }
+}
+catch (...) {}
+
 void ObserveMenuMessage(HWND source, UINT message) noexcept try
 {
     if (message != WM_ENTERMENULOOP && message != WM_EXITMENULOOP && message != WM_CONTEXTMENU)
@@ -855,7 +906,8 @@ bool Attach(HWND window, SharedState* mapping, bool classic, AppBarMessage appBa
     }
     state->menuMouseHook = SetWindowsHookExW(WH_MOUSE, MenuMouseProc, nullptr, GetCurrentThreadId());
     state->menuMessageHook = SetWindowsHookExW(WH_CALLWNDPROC, MenuMessageProc, nullptr, GetCurrentThreadId());
-    if (!state->menuMouseHook || !state->menuMessageHook ||
+    state->inputMessageHook = SetWindowsHookExW(WH_GETMESSAGE, InputMessageProc, nullptr, GetCurrentThreadId());
+    if (!state->menuMouseHook || !state->menuMessageHook || !state->inputMessageHook ||
         !SetPropW(window, kHookOwnerProperty, pinned) ||
         !SetPropW(window, kAttachedProperty, reinterpret_cast<HANDLE>(1)) ||
         !SetTimer(window, kTimer, 250, nullptr))
