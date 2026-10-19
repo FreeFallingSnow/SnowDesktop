@@ -300,9 +300,17 @@ void ExerciseSecretInput(const x::FrameworkElement& root,
     if (service.secretSuccesses != 1 || service.lastSecretBytes != 16 || password.Password() != L"offline-retry")
         throw std::runtime_error("failed password write lost its draft or replaced the stored value");
     service.failSecretWrites = false;
+    unsigned clearClicks = 0;
+    const auto clearObserved = clear.Click(winrt::auto_revoke,
+        [&](const auto&, const auto&) { ++clearClicks; });
+    const auto beforeClear = service.secretAttempts;
     InvokePreview(clear);
     const auto settleUntil = GetTickCount64() + 800;
     PumpUntil([&] { return GetTickCount64() >= settleUntil; });
+    std::ofstream(output / L"secret-clear.tsv")
+        << "attemptsBefore\tattemptsAfter\tsuccesses\tstoredBytes\tdraftCharacters\tclearClicks\tclearEnabled\n"
+        << beforeClear << '\t' << service.secretAttempts << '\t' << service.secretSuccesses << '\t'
+        << service.lastSecretBytes << '\t' << password.Password().size() << '\t' << clearClicks << '\t' << clear.IsEnabled() << '\n';
     if (service.secretAttempts != 3 || service.secretSuccesses != 2 || service.lastSecretBytes != 0 || !password.Password().empty())
         throw std::runtime_error("clearing a password saved or resurrected its pending draft");
     password.Password(L"offline-final");
