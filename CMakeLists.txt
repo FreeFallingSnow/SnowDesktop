@@ -1422,6 +1422,20 @@ if (BUILD_TESTING)
         LABELS core integration tray)
     add_dependencies(SnowDesktopTrayResidentTests SnowDesktopTaskbarHook)
 
+    # The default command validates only the observer on its own hidden HWND.
+    # Live Shell scenarios require explicit command-line selection; they never
+    # launch the desktop host or change saved application/Wallpaper settings.
+    snowdesktop_add_test(
+        SnowDesktopWallpaperShellProbeTests
+        wallpaper_shell_probe
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/shell/wallpaper_shell_probe.cpp
+        INCLUDE_DIRECTORIES src
+        LINK_LIBRARIES user32 dwmapi
+        COMMAND_ARGUMENTS --self-test
+        LABELS integration shell manual)
+    add_dependencies(SnowDesktopWallpaperShellProbeTests SnowDesktopTaskbarHook)
+
     foreach(marker 1 2)
         add_library(SnowDesktopHookEntryFixture${marker} SHARED tests/platform/hook_entry_fixture.cpp)
         target_compile_features(SnowDesktopHookEntryFixture${marker} PRIVATE cxx_std_20)
