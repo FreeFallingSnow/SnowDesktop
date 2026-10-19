@@ -79,13 +79,8 @@ struct Service::Impl
     std::jthread worker;
     Impl()
     {
-        // Temporary issue #29 isolation build: keep clients and lifetime intact,
-        // but do not connect to Explorer or broadcast tray re-registration.
-        // The controlled Dock launch/exit comparison on 2026-10-19 had no replay;
-        // this diagnostic omission is not a compatible production fallback.
-        snapshot.degraded = true;
-        snapshot.error = ERROR_CANCELLED;
-        WriteDiagnosticLogEntry(L"[Issue29 isolation] tray collector worker disabled");
+        if (stop) worker = std::jthread([this](std::stop_token token) { Run(token); });
+        else { snapshot.degraded = true; snapshot.error = GetLastError(); }
     }
     ~Impl()
     {
@@ -214,11 +209,9 @@ struct Service::Impl
             WriteDiagnosticLogEntry(L"Tray re-registration skipped: collector handshake unavailable", DiagnosticLogLevel::Warning);
             return;
         }
-        DWORD recipients = BSM_APPLICATIONS;
-        // Asynchronous broadcast follows successful collection attachment. It
-        // never restarts Explorer and does not wait on third-party windows.
-        BroadcastSystemMessageW(BSF_POSTMESSAGE | BSF_IGNORECURRENTTASK, &recipients,
-            RegisterWindowMessageW(L"TaskbarCreated"), 0, 0);
+        // Temporary issue #29 isolation: preserve collection and the handshake,
+        // but omit the synthetic shell-restart notification to applications.
+        WriteDiagnosticLogEntry(L"[Issue29 isolation] synthetic TaskbarCreated broadcast disabled");
     }
     void Run(std::stop_token token)
     {
