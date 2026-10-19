@@ -391,12 +391,15 @@ void TestInitialPersonalization()
             "partial legacy and empty appearance files retain their previous load and fallback behavior");
     }
 
-    // Inspection errors are not evidence of a first launch. An invalid Windows
-    // path produces a deterministic error without changing directory ACLs.
+    // An existing profile that cannot currently be read is still an upgrade.
+    HANDLE locked = CreateFileW(path.c_str(), GENERIC_READ, 0, nullptr,
+        OPEN_EXISTING, 0, nullptr);
+    Check(locked != INVALID_HANDLE_VALUE, "lock an existing appearance file against reads");
     PersonalizationSettings blocked;
     const auto expected = blocked;
-    Check(!snowdesktop::LoadInitialPersonalization(root / L"invalid|profile" / path.filename(), blocked) && blocked == expected,
-        "uninspectable profile paths retain legacy defaults instead of choosing a new theme");
+    Check(!load(blocked) && blocked == expected,
+        "unreadable appearance files retain legacy defaults instead of choosing a new theme");
+    if (locked != INVALID_HANDLE_VALUE) CloseHandle(locked);
 }
 
 int main(int argc, char** argv)
