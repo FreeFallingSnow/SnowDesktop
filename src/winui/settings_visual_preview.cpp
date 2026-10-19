@@ -654,6 +654,9 @@ void ExerciseWidgetControls(const x::FrameworkElement& root,
     const auto invalidUntil = GetTickCount64() + 800;
     PumpUntil([&] { return GetTickCount64() >= invalidUntil; });
     check(url.Text() == L"invalid-url" && savedString("url", "https://example.test/api"), "url-invalid-draft-retained");
+    check(WidgetPreviewReset(field("url")).IsEnabled(), "url-invalid-draft-reset-enabled");
+    InvokePreview(WidgetPreviewReset(field("url"))); settle();
+    check(url.Text() == L"https://example.test/api" && savedString("url", "https://example.test/api"), "url-reset-discards-invalid-same-value-draft");
     url.Text(L"https://example.test/edited");
     PumpUntil([&] { return savedString("url", "https://example.test/edited"); });
     check(true, "url-autosave");
@@ -734,6 +737,7 @@ void ExerciseWidgetControls(const x::FrameworkElement& root,
     WidgetPreviewControl<c::TextBox>(durationParts[1]).Text(L"60");
     const auto resetDraftUntil = GetTickCount64() + 800;
     PumpUntil([&] { return GetTickCount64() >= resetDraftUntil; });
+    check(WidgetPreviewReset(field("duration")).IsEnabled(), "duration-invalid-draft-reset-enabled");
     InvokePreview(WidgetPreviewReset(field("duration"))); settle();
     check(service.Field("duration")->currentValue.integer == 90061 &&
         WidgetPreviewControl<c::TextBox>(durationParts[1]).Text() == L"1", "duration-reset-discards-invalid-same-value-draft");

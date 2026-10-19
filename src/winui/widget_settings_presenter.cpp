@@ -1395,6 +1395,7 @@ struct WidgetSettingsPresenter::Impl
                 if (value == field.textObservedValue) return;
                 field.textObservedValue = value;
                 field.textDirty = true;
+                if (field.restoreDefault) field.restoreDefault.IsEnabled(field.enabled);
                 field.draftError.clear();
                 RefreshFieldValidation(field);
                 field.idleCommitTimer.Stop();
@@ -1887,6 +1888,7 @@ struct WidgetSettingsPresenter::Impl
                     {
                         field.durationObservedText[index] = text;
                         field.durationDirty = true;
+                        if (field.restoreDefault) field.restoreDefault.IsEnabled(field.enabled);
                         field.draftError.clear();
                         RefreshFieldValidation(field);
                         field.idleCommitTimer.Stop();
@@ -2855,7 +2857,7 @@ struct WidgetSettingsPresenter::Impl
                 (state.schema.Kind() == wr::WidgetSettingKind::AppSearch &&
                     !state.searchQuery.empty());
             field.restoreDefault.IsEnabled(
-                state.enabled && differsFromDefault);
+                state.enabled && (differsFromDefault || field.textDirty || field.durationDirty));
         }
 
         field.diagnostic.Text(state.diagnosticCode.empty()
@@ -3428,9 +3430,10 @@ struct WidgetSettingsPresenter::Impl
     void RestoreFieldDefault(WidgetFieldControl& field)
     {
         if (!field.restoreDefault || !CanMutateField(field)) return;
-        if (field.durationParts[0])
+        if (field.text || field.durationParts[0])
         {
             field.idleCommitTimer.Stop();
+            field.textDirty = false;
             field.durationDirty = false;
             field.draftError.clear();
         }
