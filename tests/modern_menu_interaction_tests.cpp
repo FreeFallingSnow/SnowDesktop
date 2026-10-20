@@ -1,5 +1,6 @@
 #include "ui/menu/modern_menu.h"
 #include "app/menus/sort_menu.h"
+#include "app/menus/tray_context_menu_placement.h"
 #include "ui/menu/modern_menu_appearance_rules.h"
 #include "shell/shell_extension_menu_presentation.h"
 #include "ui/menu/menu_label.h"
@@ -835,6 +836,112 @@ void CheckLazySubmenuPreparation(HWND owner)
     }
 }
 
+void CheckTrayFlyoutMenuHeight(HWND owner)
+{
+    using namespace snowdesktop::modern_menu;
+    MONITORINFO monitor{sizeof(monitor)};
+    Expect(GetMonitorInfoW(MonitorFromWindow(owner, MONITOR_DEFAULTTONEAREST), &monitor),
+        "tray placement has a monitor work area");
+    const RECT work = monitor.rcWork;
+    const std::vector<Item> rows{
+        {9200, L"Desktop icon settings", L"", true, false, false,
+            {{9210, L"This PC", L"", true}}},
+        {9201, L"Desktop mode", L"", true},
+        {9202, L"Settings", L"", true},
+        {9203, L"Restart Explorer", L"", true},
+        {9204, L"Restart application", L"", true},
+        {9205, L"Exit", L"", true},
+    };
+    // Only the Shell flyout geometry/work-area reservation is a fixture.
+    // The same placement policy as ShowTrayMenu feeds the real popup layout,
+    // viewport, HWND and keyboard dispatch on the isolated test desktop.
+    const auto capture = [&](const Options& options) {
+        RECT bounds{};
+        gDriveMode = DriveMode::Script;
+        gInputPosted = false;
+        gWatchdogFired = false;
+        gMenuScript = [&](HWND root) {
+            Expect(GetWindowRect(root, &bounds), "tray menu bounds are observable");
+            SendMessageW(root, WM_KEYDOWN, VK_END, 0);
+            SendMessageW(root, WM_KEYDOWN, VK_RETURN, 0);
+        };
+        SetTimer(owner, kDriveTimer, 10, nullptr);
+        SetTimer(owner, kWatchdogTimer, 3000, nullptr);
+        const auto result = Show(rows, options);
+        KillTimer(owner, kWatchdogTimer);
+        Expect(!gWatchdogFired && result.command == 9205,
+            "all tray actions remain keyboard accessible");
+        gMenuScript = {};
+        return bounds;
+    };
+    for (const UINT dpi : {96U, 144U, 192U})
+    {
+        Options options;
+        options.owner = owner;
+        options.topmost = true;
+        options.dpi = dpi;
+        options.appearance = Appearance::SystemLightBlur;
+        options.anchor = {(work.left + work.right) / 2, (work.top + work.bottom) / 2};
+        const RECT baseline = capture(options);
+        for (const bool bottomInset : {false, true})
+        {
+            MONITORINFO shellGeometry = monitor;
+            shellGeometry.rcMonitor = work;
+            if (bottomInset) shellGeometry.rcMonitor.bottom += 48;
+            for (const bool nearTop : {true, false})
+            {
+                const LONG top = nearTop ? work.top + 8 : work.bottom - 168;
+                const RECT flyout{work.right - 328, top, work.right - 8, top + 160};
+                const POINT click{flyout.left + 40, flyout.top + 40};
+                const int gap = MulDiv(8, static_cast<int>(dpi), 96);
+                options.anchor = click;
+                snowdesktop::tray_context_menu::PlaceMenuAwayFromTraySurface(
+                    options, click, flyout, shellGeometry, gap);
+                const RECT bounds = capture(options);
+                if (bounds.bottom - bounds.top != baseline.bottom - baseline.top)
+                    std::cerr << "tray flyout height: dpi=" << dpi
+                              << " nearTop=" << nearTop << " bottomInset=" << bottomInset
+                              << " expected=" << baseline.bottom - baseline.top
+                              << " observed=" << bounds.bottom - bounds.top << '\n';
+                Expect(bounds.bottom - bounds.top == baseline.bottom - baseline.top,
+                    "a tray flyout near either screen edge preserves the complete menu height");
+                Expect(bounds.left >= work.left && bounds.right <= work.right &&
+                    bounds.top >= work.top && bounds.bottom <= work.bottom,
+                    "the tray menu stays inside its monitor work area");
+                Expect(nearTop ? bounds.top >= flyout.bottom + gap
+                               : bounds.bottom <= flyout.top - gap,
+                    "the tray menu opens on the spacious side without covering the flyout");
+            }
+        }
+    }
+    struct EdgeCase
+    {
+        RECT surface;
+        RECT work;
+        RootPlacement expected;
+    };
+    const EdgeCase edgeCases[]{
+        {{-1920, -1080, 0, -1032}, {-1920, -1032, 0, 0}, RootPlacement::BelowAnchorRect},
+        {{-1920, -48, 0, 0}, {-1920, -1080, 0, -48}, RootPlacement::AboveAnchorRect},
+        {{-1920, -1080, -1872, 0}, {-1872, -1080, 0, 0}, RootPlacement::RightOfAnchorRect},
+        {{-48, -1080, 0, 0}, {-1920, -1080, -48, 0}, RootPlacement::LeftOfAnchorRect},
+        {{-1864, -800, -1544, -640}, {-1872, -1080, 0, 0}, RootPlacement::RightOfAnchorRect},
+        {{-376, -800, -56, -640}, {-1920, -1080, -48, 0}, RootPlacement::LeftOfAnchorRect},
+    };
+    for (const auto& edgeCase : edgeCases)
+    {
+        MONITORINFO shellGeometry{sizeof(shellGeometry)};
+        shellGeometry.rcMonitor = {-1920, -1080, 0, 0};
+        shellGeometry.rcWork = edgeCase.work;
+        Options options;
+        const POINT click{edgeCase.surface.left + 8, edgeCase.surface.top + 8};
+        snowdesktop::tray_context_menu::PlaceMenuAwayFromTraySurface(
+            options, click, edgeCase.surface, shellGeometry, 8);
+        Expect(options.rootPlacement == edgeCase.expected,
+            "normal taskbars and side flyouts open inward on monitors with negative coordinates");
+    }
+}
+
 void CheckCascadeWorkArea(HWND owner)
 {
     using namespace snowdesktop::modern_menu;
@@ -1271,6 +1378,14 @@ int wmain(int argc, wchar_t** argv)
     SetForegroundWindow(owner);
     SetFocus(owner);
 
+    CheckTrayFlyoutMenuHeight(owner);
+    if (argc == 2 && std::wstring_view(argv[1]) == L"--tray-placement-only")
+    {
+        DestroyWindow(owner);
+        UnregisterClassW(kOwnerClass, GetModuleHandleW(nullptr));
+        std::cout << "tray flyout menu height checks passed\n";
+        return 0;
+    }
     const bool sortNegativeControl = argc == 2 && std::wstring_view(argv[1]) == L"--sort-layout-negative-control";
     CheckSortRows(owner, sortNegativeControl);
     if (sortNegativeControl) return 2; // Expected to fail the same geometry assertion above.
