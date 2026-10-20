@@ -1,4 +1,6 @@
 #include "platform/application_crash_watchdog.h"
+#include "platform/application_hang_watchdog.h"
+#include "common/constants.h"
 #include "platform/application_restart_policy.h"
 #include "platform/crash_restart_history.h"
 #include "platform/owned_window_shutdown.h"
@@ -34,6 +36,159 @@ void Expect(bool condition, const char* message)
         return;
     std::cerr << "FAILED: " << message << '\n';
     ++failures;
+}
+
+// Protect against an idle desktop, normal modal work, delayed raw events and
+// old queued clicks turning into automatic recovery/restart loops. These
+// exercise the production detector; they do not reproduce the Windows fault.
+void TestInputHangDetection()
+{
+    using namespace snowdesktop::application_hang_watchdog;
+    Monitor monitor;
+    auto poll = [&](ULONGLONG now, DWORD ack = 0, bool busy = false) {
+        return monitor.Poll({now, now, ack, true, busy});
+    };
+    Expect(poll(100000) == RecoveryStage::None, "a healthy idle pump needs no recovery");
+    monitor.ObserveClick(100100, 100100);
+    monitor.ObserveClick(100150, 100150);
+    for (ULONGLONG now = 101000; now <= 106000; now += 1000)
+        Expect(poll(now) == RecoveryStage::None, "a single double-click cannot trigger repair");
+    monitor.ObserveClick(106100, 106100);
+    Expect(poll(107000, 106100) == RecoveryStage::None, "received host input clears suspected loss");
+    for (ULONGLONG now = 108000; now <= 118000; now += 1000) poll(now, 106100);
+    monitor.ObserveClick(118100, 118100);
+    monitor.ObserveClick(119200, 119200);
+    for (ULONGLONG now = 119000; now <= 122000; now += 1000)
+        Expect(poll(now, 106100) == RecoveryStage::None, "input loss must persist for the grace period");
+    Expect(poll(123200, 106100) == RecoveryStage::ResetInput,
+        "repeated lost clicks first request input reset");
+    for (ULONGLONG now = 124000; now <= 135000; now += 1000)
+        Expect(poll(now, 106100) == RecoveryStage::None, "old input and idleness cannot escalate recovery");
+    monitor.ObserveClick(135100, 135100);
+    monitor.ObserveClick(136200, 136200);
+    for (ULONGLONG now = 136000; now <= 139000; now += 1000) poll(now, 106100);
+    Expect(poll(140200, 106100) == RecoveryStage::RebindDesktop,
+        "continued NEW lost clicks request desktop rebind before restart");
+    for (ULONGLONG now = 141000; now <= 152000; now += 1000) poll(now, 106100);
+    monitor.ObserveClick(152100, 152100);
+    monitor.ObserveClick(153200, 153200);
+    for (ULONGLONG now = 153000; now <= 156000; now += 1000) poll(now, 106100);
+    Expect(poll(157200, 106100) == RecoveryStage::RestartApplication,
+        "restart requires fresh failed input after both partial repairs");
+    for (ULONGLONG now = 158000; now <= 170000; now += 1000) poll(now, 106100);
+    monitor.ObserveClick(170100, 170100);
+    monitor.ObserveClick(171200, 171200);
+    for (ULONGLONG now = 171000; now <= 176000; now += 1000)
+        Expect(poll(now, 106100) == RecoveryStage::None, "one episode cannot request endless restarts");
+    Expect(poll(177000, 176900) == RecoveryStage::None && monitor.TakeRecoveryConfirmation(),
+        "only a new received host button confirms input delivery after repair");
+    Expect(!monitor.TakeRecoveryConfirmation(), "a confirmation is consumed once");
+
+    for (const int condition : {0, 1, 2, 3})
+    {
+        Monitor guarded;
+        guarded.Poll({1000, 1000, 0, true, false});
+        guarded.ObserveClick(1100, 1100);
+        guarded.ObserveClick(2200, 2200);
+        for (ULONGLONG now = 2000; now <= 5000; now += 1000)
+            guarded.Poll({now, now, 0, true, false});
+        Sample sample{6200, 6200, 0, true, false};
+        if (condition == 0) sample.busy = true;
+        if (condition == 1) sample.enabled = false;
+        if (condition == 2) sample.heartbeat = 1000;
+        if (condition == 3) sample.now = sample.heartbeat = 30000;
+        Expect(guarded.Poll(sample) == RecoveryStage::None,
+            "busy/disabled/stalled pumps and scheduling gaps cannot request an input reset");
+    }
+    Monitor wrapped;
+    constexpr ULONGLONG base = 0x100000000ULL;
+    wrapped.Poll({base - 1000, base - 1000, 0, true, false});
+    wrapped.ObserveClick(base - 500, static_cast<DWORD>(base - 500));
+    wrapped.ObserveClick(base + 1000, 1000);
+    Expect(wrapped.Poll({base + 1500, base + 1500, 1000, true, false}) == RecoveryStage::None,
+        "a real acknowledgement across the 32-bit message-time wrap clears suspicion");
+}
+
+void TestHealthMessageTransport()
+{
+    using namespace snowdesktop::application_hang_watchdog;
+    WNDCLASSW type{};
+    type.lpfnWndProc = DefWindowProcW;
+    type.hInstance = GetModuleHandleW(nullptr);
+    type.lpszClassName = kWindowClassName;
+    RegisterClassW(&type);
+    const HWND window = CreateWindowExW(0, type.lpszClassName, L"health test", 0,
+        0, 0, 0, 0, HWND_MESSAGE, nullptr, type.hInstance, nullptr);
+    Expect(window != nullptr, "isolated health transport window is created");
+    if (!window) return;
+    const auto drain = [] {
+        MSG message{};
+        for (unsigned i = 0; i < 100 && PeekMessageW(&message, nullptr, 0, 0, PM_REMOVE); ++i)
+            DispatchMessageW(&message);
+    };
+    {
+        UiSession session(window);
+        UiSession::Publish(true, false);
+        const auto before = ReadSample(window, GetTickCount64());
+        Expect(before.enabled && !before.busy && before.heartbeat != 0,
+            "real UI session publishes its initial heartbeat and readiness");
+        Expect(PostRecoveryRequest(window, RecoveryStage::RebindDesktop),
+            "external watcher can post a cooperative recovery request");
+        drain();
+        Expect(UiSession::TakeRequest() == RecoveryStage::RebindDesktop &&
+            UiSession::TakeRequest() == RecoveryStage::None,
+            "real thread message hook consumes each recovery request once");
+        const UINT recovery = RegisterWindowMessageW(L"SnowDesktop.Health.Recover.v1");
+        PostMessageW(window, recovery, static_cast<WPARAM>(RecoveryStage::RestartApplication),
+            static_cast<LPARAM>(GetTickCount() - 10001));
+        drain();
+        Expect(UiSession::TakeRequest() == RecoveryStage::None,
+            "a request delayed by a long synchronous call cannot restart a recovered host");
+        PostMessageW(window, WM_LBUTTONDOWN, MK_LBUTTON, 0);
+        // PM_NOREMOVE probes must not be mistaken for delivered input.
+        MSG queued{};
+        PeekMessageW(&queued, window, WM_LBUTTONDOWN, WM_LBUTTONDOWN, PM_NOREMOVE);
+        Expect(ReadSample(window, GetTickCount64()).receivedButtonTime == 0,
+            "looking at a queued click does not acknowledge its delivery");
+        drain();
+        Expect(ReadSample(window, GetTickCount64()).receivedButtonTime != 0,
+            "removing a real host button message acknowledges delivery");
+        UiSession::Publish(true, true);
+        Expect(ReadSample(window, GetTickCount64()).busy, "busy state crosses the production property transport");
+    }
+    Expect(!ReadSample(window, GetTickCount64()).enabled &&
+        ReadSample(window, GetTickCount64()).heartbeat == 0,
+        "UI scope teardown removes health state and stops observation");
+    DestroyWindow(window);
+    UnregisterClassW(type.lpszClassName, type.hInstance);
+}
+
+void TestLocalWindowRebind()
+{
+    using namespace snowdesktop::application_hang_watchdog;
+    WNDCLASSW type{};
+    type.lpfnWndProc = DefWindowProcW;
+    type.hInstance = GetModuleHandleW(nullptr);
+    type.lpszClassName = L"SnowDesktop.Health.RebindFixture";
+    RegisterClassW(&type);
+    const HWND parent = CreateWindowExW(0, type.lpszClassName, L"", WS_POPUP,
+        0, 0, 20, 20, nullptr, nullptr, type.hInstance, nullptr);
+    const HWND child = parent ? CreateWindowExW(0, type.lpszClassName, L"", WS_CHILD,
+        0, 0, 10, 10, parent, nullptr, type.hInstance, nullptr) : nullptr;
+    Expect(parent && child, "rebind fixture creates isolated invisible parent/child windows");
+    if (parent && child)
+    {
+        const LONG_PTR style = GetWindowLongPtrW(child, GWL_STYLE);
+        SetWindowLongPtrW(child, GWLP_USERDATA, 0x534E4F57);
+        Expect(RebindWindow(child, parent) == ERROR_SUCCESS && IsWindow(child) &&
+            GetParent(child) == parent && GetWindowLongPtrW(child, GWL_STYLE) == style &&
+            GetWindowLongPtrW(child, GWLP_USERDATA) == 0x534E4F57,
+            "real Win32 rebind retains the existing window, parent, styles and application state");
+        Expect(RebindWindow(child, nullptr) == ERROR_INVALID_WINDOW_HANDLE && GetParent(child) == parent,
+            "a missing parent cannot orphan the working desktop window");
+    }
+    if (parent) DestroyWindow(parent);
+    UnregisterClassW(type.lpszClassName, type.hInstance);
 }
 
 void TestCrashHistoryRead()
@@ -520,6 +675,9 @@ int wmain(int argc, wchar_t* argv[])
     }
     using namespace snowdesktop::application_restart_policy;
     TestStartupDiagnostics();
+    TestInputHangDetection();
+    TestHealthMessageTransport();
+    TestLocalWindowRebind();
     TestCrashHistoryRead();
     TestUserObjectRecovery();
     TestUserObjectRestartBudget();

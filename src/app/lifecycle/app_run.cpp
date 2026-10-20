@@ -11,6 +11,7 @@
 #include "data/data_paths.h"
 #include "platform/deployment_context.h"
 #include "platform/shell_overlay_window.h"
+#include "platform/application_hang_watchdog.h"
 #include "drag_drop/drag_input_rules.h"
 #include "desktop/desktop_hover_rules.h"
 #include "steam/steam_app_identity.h"
@@ -686,6 +687,7 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     }
     SetPropW(controlHwnd_, L"SnowDesktop.DebugProfile",
         reinterpret_cast<HANDLE>(static_cast<INT_PTR>(snowdesktop::debug_profile::Enabled() ? 1 : 2)));
+    snowdesktop::application_hang_watchdog::UiSession healthSession(controlHwnd_);
     taskbarRestartMsg_ = RegisterWindowMessageW(L"TaskbarCreated");
     systemTaskbarTaskViewStateMsg_ = RegisterWindowMessageW(
         L"SnowDesktop.Taskbar.Dynamic.TaskView.v1");
@@ -1703,6 +1705,8 @@ int DesktopApp::Run(HINSTANCE instance, int showCommand)
     bool running = true;
     while (running && !exitRequested_)
     {
+        PollInputHangRecovery();
+        if (exitRequested_) break;
         ProcessGraphicsDeviceRecovery();
         if (exitRequested_) break;
         HANDLE animationWait = uiAnimationScheduler_.WaitHandle();

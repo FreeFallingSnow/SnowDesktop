@@ -10,11 +10,89 @@
 #include "platform/shell_overlay_window.h"
 #include "platform/foreground_fullscreen.h"
 #include "platform/owned_window_shutdown.h"
+#include "platform/application_hang_watchdog.h"
+#include "platform/user_object_recovery.h"
 #include "shell/shell_extension_service.h"
 
 // Desktop host lifecycle.
 
 DesktopApp::DesktopApp() = default;
+
+void DesktopApp::PollInputHangRecovery()
+{
+    using namespace snowdesktop::application_hang_watchdog;
+    const bool enabled = startupInitializationComplete_ && desktopItemsReady_ &&
+        customDesktopVisible_ && !desktopPassthroughActive_ && !exitRequested_ && !preparedRestart_;
+    const bool busy = reloading_ || layoutReload_.Pending() ||
+        desktopStartupPresentationPending_ || compositionPaintInProgress_ ||
+        graphicsDeviceRecovery_.Pending() || shellFileOperationInFlight_ != 0 ||
+        !pendingRenames_.empty() || dragSession_.HasContext() ||
+        dragDropController_.IsTransportActive() || renameController_.IsActive() ||
+        luaInlineEdit_ || HasActiveContextMenuSession() || settingsWindowOpening_ ||
+        statusBarTaskViewTransition_.Busy(snowdesktop::UiAnimationScheduler::MonotonicMilliseconds());
+    UiSession::Publish(enabled, busy);
+    const auto stage = UiSession::TakeRequest();
+    if (stage == RecoveryStage::None) return;
+    const bool held = (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ||
+        (GetAsyncKeyState(VK_RBUTTON) & 0x8000) || (GetAsyncKeyState(VK_MBUTTON) & 0x8000) ||
+        (GetAsyncKeyState(VK_XBUTTON1) & 0x8000) || (GetAsyncKeyState(VK_XBUTTON2) & 0x8000);
+    const HWND capture = GetCapture();
+    const bool foreignCapture = capture && GetWindowThreadProcessId(capture, nullptr) != GetCurrentThreadId();
+    wchar_t message[256]{};
+    swprintf_s(message, L"HangRecovery stage=%u enabled=%d busy=%d held=%d capture=%p",
+        static_cast<unsigned>(stage), enabled, busy, held, capture);
+    WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Warning);
+    if (!enabled || busy || held || foreignCapture)
+    {
+        WriteDiagnosticLogEntry(L"HangRecovery declined: active operation or held button", DiagnosticLogLevel::Warning);
+        return;
+    }
+
+    // Cancel stale presses only after all physical buttons are up. No menu,
+    // editor, file operation or native OLE transport may be interrupted here.
+    CancelStatusBarActivation();
+    statusBarTaskViewTransition_.Reset();
+    CancelPointerPressWithoutCaptureRelease();
+    if (capture) ReleaseCapture();
+    if (stage == RecoveryStage::RebindDesktop)
+    {
+        // Keep the HWND, model, render resources and widget runtime. Detach
+        // before reattaching: attaching to the same parent alone changes no
+        // cross-process input relationship. Never restart Explorer here.
+        const HWND parent = hwnd_ ? GetParent(hwnd_) : nullptr;
+        if (!parent || !IsWindow(parent))
+        {
+            WriteDiagnosticLogEntry(L"HangRecovery rebind declined: missing desktop parent", DiagnosticLogLevel::Warning);
+            return;
+        }
+        const DWORD rebindError = RebindWindow(hwnd_, parent);
+        if (GetParent(hwnd_) == parent)
+            AttachWindowToDesktopHost(parent);
+        swprintf_s(message, L"HangRecovery rebind completed error=%lu attached=%d",
+            rebindError, GetParent(hwnd_) == parent);
+        WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Warning);
+    }
+    else if (stage == RecoveryStage::RestartApplication)
+    {
+        // Cooperative restart saves current data; a blocked UI is never
+        // terminated using an old 'safe' snapshot from before the blockage.
+        if (!SaveLayoutSlots(false))
+        {
+            WriteDiagnosticLogEntry(L"HangRecovery restart declined: checkpoint failed", DiagnosticLogLevel::Warning);
+            return;
+        }
+        const LSTATUS budget = snowdesktop::user_object_recovery::ReserveRestart(
+            GetTickCount64(), HKEY_CURRENT_USER, L"Software\\SnowDesktop\\HangRecovery");
+        const bool restarted = budget == ERROR_SUCCESS && RequestRestart();
+        swprintf_s(message, L"HangRecovery restart requested=%d budget=%ld", restarted, budget);
+        WriteDiagnosticLogEntry(message, DiagnosticLogLevel::Warning);
+        return;
+    }
+    ReconcileDesktopHoverState(snowdesktop::desktop_hover_rules::ReconcileMode::AllowImmediateActivation);
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    WriteDiagnosticLogEntry(L"HangRecovery awaiting a new received button; completion is not proof of recovery",
+        DiagnosticLogLevel::Warning);
+}
 
 DesktopApp::~DesktopApp()
 {
