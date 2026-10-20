@@ -728,6 +728,7 @@ void DesktopApp::ShowItemContextMenu(
         dockFolderPopupWidget_.fanPopup = dockFolderEntry->fanPopup;
         dockFolderPopupWidget_.showSearchBox = dockFolderEntry->showSearchBox;
         dockFolderPopupWidget_.showFileCategories = dockFolderEntry->showFileCategories;
+        dockFolderPopupWidget_.dateHeaders = dockFolderEntry->dateHeaders;
         dockFolderPopupWidget_.detailShowModified =
             dockFolderEntry->detailShowModified;
         dockFolderPopupWidget_.detailShowType =

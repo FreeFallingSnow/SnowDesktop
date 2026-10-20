@@ -124,6 +124,7 @@ struct DockRecord
     bool fanPopup = false;
     bool showSearchBox = false;
     bool showFileCategories = false;
+    bool dateHeaders = false;
     std::vector<std::string> categoryTabOrder;
     bool detailShowModified = false;
     bool detailShowType = false;

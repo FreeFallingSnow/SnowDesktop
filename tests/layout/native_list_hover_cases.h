@@ -97,9 +97,11 @@ inline void RunHover()
             Access::ListTitlePressed(app, false);
             const POINT icon{row.left + 2, title.y};
             Require(icon.x < text.left, "icon-side pointer is outside the title rectangle");
-            Access::PaintListTitles(app, renderer, rendering.context.Get(), icon);
+            Access::PaintListTitles(app, renderer, rendering.context.Get(), icon, true);
             Require(Access::ListTitleStart(app) == started && Access::ListTitleKey(app) == key,
                 "moving within the item's hover area must retain scrolling outside the title");
+            Require(Access::ScrollingListLayouts(app) == 1,
+                "the icon-side hover draws exactly one scrolling title and leaves all other entries static");
             // The real scheduler advances after an intentionally slow redraw;
             // a bounded wait supplies only the OS clock, not the callback result.
             const auto deadline = GetTickCount64() + 1000;

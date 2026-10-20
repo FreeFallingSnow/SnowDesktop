@@ -236,6 +236,7 @@ void DesktopApp::OpenDockFolderPopupAt(
     dockFolderPopupWidget_.fanPopup = entry.fanPopup;
     dockFolderPopupWidget_.showSearchBox = entry.showSearchBox;
     dockFolderPopupWidget_.showFileCategories = entry.showFileCategories;
+    dockFolderPopupWidget_.dateHeaders = entry.dateHeaders;
     dockFolderPopupWidget_.categoryTabOrder = entry.categoryTabOrder;
     dockFolderPopupWidget_.detailShowModified =
         entry.detailShowModified;
@@ -288,6 +289,7 @@ void DesktopApp::OpenDockFolderPopupAt(
             dockFolderPopupWidget_.listColumns = widgets_[widgetIndex].listColumns;
             dockFolderPopupWidget_.showSearchBox = widgets_[widgetIndex].showSearchBox;
             dockFolderPopupWidget_.showFileCategories = widgets_[widgetIndex].showFileCategories;
+            dockFolderPopupWidget_.dateHeaders = widgets_[widgetIndex].dateHeaders;
             dockFolderPopupWidget_.categoryTabOrder = widgets_[widgetIndex].categoryTabOrder;
             dockFolderPopupWidget_.activeCategoryId = widgets_[widgetIndex].activeCategoryId;
             dockFolderPopupWidget_.fanPopup = widgets_[widgetIndex].fanPopup;
@@ -533,8 +535,16 @@ void DesktopApp::FinalizeCloseCollectionPopup()
         view->EndCategoryTabDrag(false);
         view->EndSearchPointerSelection();
         view->SetSearchFocused(false);
-        if (IsGroupWidgetType(view->GetWidgetData()->type)) view->SetPopupFrame(nullptr);
+        view->SetPopupFrame(nullptr);
     }
+    // A date-grouped folder can have projected its live view even when a
+    // later menu action hides every categorized control before closing.
+    const auto* closingWidget = GetOpenPopupWidget();
+    for (const auto& container : containers_)
+        if (auto* view = dynamic_cast<WidgetContainer*>(container.get());
+            view && view->GetWidgetData() == closingWidget && view->IsPopupHosted())
+            view->SetPopupFrame(nullptr);
+    if (dockFolderPopupContainer_) dockFolderPopupContainer_->SetPopupFrame(nullptr);
     auto pendingOpen =
         std::move(pendingCollectionPopupOpen_);
     pendingCollectionPopupOpen_.reset();

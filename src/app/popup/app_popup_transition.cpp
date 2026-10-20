@@ -527,6 +527,9 @@ void DesktopApp::RefreshDockFolderPopup(
             dockFolderPopupWidget_.listMode =
                 source.listMode;
             dockFolderPopupWidget_.listColumns = source.listColumns;
+            dockFolderPopupWidget_.showSearchBox = source.showSearchBox;
+            dockFolderPopupWidget_.showFileCategories = source.showFileCategories;
+            dockFolderPopupWidget_.dateHeaders = source.dateHeaders;
             dockFolderPopupWidget_.fanPopup = source.fanPopup;
             dockFolderPopupWidget_.showDetails =
                 source.showDetails;
@@ -682,6 +685,9 @@ CommitDockFolderPopupStateToSource()
             source.listMode =
                 dockFolderPopupWidget_.listMode;
             source.listColumns = dockFolderPopupWidget_.listColumns;
+            source.showSearchBox = dockFolderPopupWidget_.showSearchBox;
+            source.showFileCategories = dockFolderPopupWidget_.showFileCategories;
+            source.dateHeaders = dockFolderPopupWidget_.dateHeaders;
             source.categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
             source.activeCategoryId = dockFolderPopupWidget_.activeCategoryId;
             source.fanPopup = dockFolderPopupWidget_.fanPopup;
@@ -736,6 +742,10 @@ CommitDockFolderPopupStateToSource()
         entry.listMode =
             dockFolderPopupWidget_.listMode;
         entry.listColumns = dockFolderPopupWidget_.listColumns;
+        entry.showSearchBox = dockFolderPopupWidget_.showSearchBox;
+        entry.showFileCategories = dockFolderPopupWidget_.showFileCategories;
+        entry.dateHeaders = dockFolderPopupWidget_.dateHeaders;
+        entry.categoryTabOrder = dockFolderPopupWidget_.categoryTabOrder;
         entry.fanPopup = dockFolderPopupWidget_.fanPopup;
         entry.detailShowModified =
             dockFolderPopupWidget_.detailShowModified;

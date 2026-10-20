@@ -636,6 +636,7 @@ struct DockEntry
     bool fanPopup = false;
     bool showSearchBox = false;
     bool showFileCategories = false;
+    bool dateHeaders = false;
     std::vector<std::wstring> categoryTabOrder;
     bool detailShowModified = false;
     bool detailShowType = false;

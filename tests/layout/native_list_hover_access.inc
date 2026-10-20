@@ -17,6 +17,7 @@
         source.id = L"hover-source"; source.type = DesktopWidgetType::FolderMapping;
         source.cellScale = 2; source.bounds = {30, 30, 1100, 850};
         source.gridCell.pageId = app.gridPages_[0].id;
+        source.gridSpan = {4, 6};
         source.listMode = true; source.listColumns = columns;
         source.showSearchBox = source.showFileCategories = false;
         source.dateHeaders = source.privacyMode = false;
@@ -83,6 +84,11 @@
         return offset.value_or(-1);
     }
     static auto ListTitleToken(const DesktopApp& app) { return app.listTitleHoverFrameToken_; }
+    static size_t ScrollingListLayouts(const DesktopApp& app)
+    {
+        return static_cast<size_t>(std::count_if(app.componentListTextLayoutCache_.begin(),
+            app.componentListTextLayoutCache_.end(), [](const auto& entry) { return entry.first.ends_with(L"\x1fscroll"); }));
+    }
     static const auto& ListTitleKey(const DesktopApp& app) { return app.listTitleHoverKey_; }
     static RECT ListTitleHoverRect(const DesktopApp& app) { return app.listTitleHoverRect_; }
     static void ListTitleElapsed(DesktopApp& app, double elapsed)
@@ -103,3 +109,31 @@
         app.componentListTextLayoutCache_.clear(); app.componentListTextShadowCache_.clear();
         app.componentListTextFormat_.Reset(); app.dwriteFactory_.Reset();
     }
+    static void SeedPopupDisplayMenu(DesktopApp& app, const std::filesystem::path& folder, bool mapped)
+    {
+        SeedListTitleScene(app, 2, false, true);
+        app.widgets_[0].sourceFolderPath = folder.wstring();
+        app.dockFolderPopupWidget_ = app.widgets_[0];
+        app.dockFolderPopupWidget_.id = kDockFolderPopupWidgetId;
+        app.dockFolderPopupWidget_.gridCell = {kDockPageId, 0, 0};
+        app.dockFolderPopupWidget_.gridSpan = {1, 1};
+        app.dockFolderPopupWidget_.listMode = false;
+        app.dockFolderPopupWidget_.dateHeaders = false;
+        DockEntry entry;
+        entry.type = mapped ? DockEntryType::FolderMapping : DockEntryType::DesktopItem;
+        entry.reference = mapped ? app.widgets_[0].id : folder.wstring();
+        app.dockEntries_ = {entry};
+        app.dockFolderPopupMappingWidgetId_ = mapped ? entry.reference : L"";
+        app.dockFolderPopupSourceId_ = std::to_wstring(static_cast<int>(entry.type)) + L":" + ToUpperInvariant(entry.reference);
+        app.dockFolderPopupOpen_ = app.dockFolderPopupAvailable_ = true;
+        app.popupAnchoredToDock_ = true; app.popupWidgetIndex_ = static_cast<size_t>(-1);
+        app.dockFolderPopupContainer_ = std::make_unique<FolderMapping>(&app.dockFolderPopupWidget_, &app);
+        app.desktopItemsReady_ = true;
+    }
+    static void AppendPopupDisplayMenu(DesktopApp& app, HMENU menu) { app.AppendDockFolderPopupDisplayMenu(menu); }
+    static bool PopupDisplayCommand(DesktopApp& app, UINT command) { return app.ExecuteDockFolderPopupDisplayCommand(command); }
+    static const DesktopWidget& PopupDisplay(const DesktopApp& app) { return app.dockFolderPopupWidget_; }
+    static FolderMapping* DatePopupView(DesktopApp& app) { return app.GetDateGroupedPopupView(app.popupRect_); }
+    static RECT PopupDisplayItemRect(DesktopApp& app, size_t index)
+    { return app.GetCollectionPopupItemRect(app.popupRect_, index); }
+    static void ClearPopupMenuIcons(DesktopApp& app) { app.ClearMenuIcons(); }

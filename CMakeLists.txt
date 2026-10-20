@@ -356,6 +356,7 @@ set(SNOWDESKTOP_SOURCES
     src/app/input/app_pointer_release.cpp
     src/app/popup/app_popup_geometry.cpp
     src/app/popup/app_popup_dwell_interaction.cpp
+    src/app/popup/app_popup_context_menu.cpp
     src/app/popup/app_popup_lifecycle.cpp
     src/app/popup/app_popup_render.cpp
     src/app/popup/app_popup_transition.cpp
@@ -2876,7 +2877,9 @@ if (BUILD_TESTING)
         COMMAND SnowDesktopNativeDragIntegrationTests --list-title-hover)
     add_test(NAME native_list_title_font_isolation
         COMMAND SnowDesktopNativeDragIntegrationTests --list-title-fonts)
-    set_tests_properties(native_list_title_hover native_list_title_font_isolation PROPERTIES
+    add_test(NAME native_popup_display_menu
+        COMMAND SnowDesktopNativeDragIntegrationTests --popup-display-menu)
+    set_tests_properties(native_list_title_hover native_list_title_font_isolation native_popup_display_menu PROPERTIES
         REQUIRED_FILES "$<TARGET_FILE:SnowDesktopNativeDragIntegrationTests>"
         TIMEOUT 90 LABELS "integration;interaction;widget;rendering")
 

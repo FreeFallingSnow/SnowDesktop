@@ -475,7 +475,7 @@ void DesktopApp::ShowWidgetContextMenu(
             ? _LW("app.interact.popup_container")
             : _LW("app.interact.large_folder"));
     const auto appendFanToggle = [&]() {
-        if (widget.gridCell.pageId != kDockPageId) return;
+        if (widget.gridCell.pageId != kDockPageId && popupWidgetIndex_ != widgetIndex) return;
         const auto label = statusLabel(_LW("app.interact.popup_fan"),
             widget.fanPopup ? _LW("app.interact.on") : _LW("app.interact.off"));
         AppendMenuW(menu, MF_STRING, kContextPopupFan, label.c_str());
@@ -1031,6 +1031,7 @@ void DesktopApp::ShowWidgetContextMenu(
             dockFolderPopupWidget_.listColumns = source.listColumns;
             dockFolderPopupWidget_.showSearchBox = source.showSearchBox;
             dockFolderPopupWidget_.showFileCategories = source.showFileCategories;
+            dockFolderPopupWidget_.dateHeaders = source.dateHeaders;
             dockFolderPopupWidget_.categoryTabOrder = source.categoryTabOrder;
             dockFolderPopupWidget_.activeCategoryId = source.activeCategoryId;
             dockFolderPopupWidget_.fanPopup = source.fanPopup;

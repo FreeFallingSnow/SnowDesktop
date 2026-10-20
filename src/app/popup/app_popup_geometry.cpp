@@ -14,7 +14,7 @@ bool DesktopApp::UsesCategorizedPopupControls(const DesktopWidget& widget) const
         ? widget.folderEntries.size() : widget.itemKeys.size();
     return (popupAnchoredToDock_ || snowdesktop::single_cell_widget::IsSingleCell(widget)) &&
         (widget.type == DesktopWidgetType::FileCategories || widget.type == DesktopWidgetType::FolderMapping) &&
-        (widget.showSearchBox || widget.showFileCategories) &&
+        (widget.showSearchBox || widget.showFileCategories || widget.dateHeaders) &&
         // Match the known-file reservation used by the opening geometry. Use
         // the full source so filtering to no results keeps search accessible.
         snowdesktop::dock_folder_popup_read::HasCategorizedContent(
@@ -50,6 +50,19 @@ ScrollingItemWidget* DesktopApp::GetGroupPopupView() const
         if (auto* view = dynamic_cast<ScrollingItemWidget*>(container.get());
             view && view->GetWidgetData() == widget) return view;
     return nullptr;
+}
+
+FolderMapping* DesktopApp::GetDateGroupedPopupView(const RECT& popup) const
+{
+    const auto* widget = GetOpenPopupWidget();
+    if (!widget || widget->type != DesktopWidgetType::FolderMapping ||
+        !widget->dateHeaders || UsesCollectionPopupFan(*widget)) return nullptr;
+    auto* view = dynamic_cast<FolderMapping*>(GetCategorizedPopupView());
+    if (!view) return nullptr;
+    const RECT frame = GetCategorizedPopupFrame(popup);
+    view->SetPopupFrame(&frame);
+    view->GetWidgetData()->scrollOffset = popupScrollOffset_;
+    return view;
 }
 
 size_t DesktopApp::GetPopupFolderEntryIndex(const DesktopWidget& widget, size_t visibleIndex) const
@@ -729,6 +742,7 @@ DesktopApp::GetOpenCollectionPopupLayoutMetrics() const
 
 RECT DesktopApp::GetCollectionPopupContentRect(const RECT& popup) const
 {
+    if (auto* view = GetDateGroupedPopupView(popup)) return view->GetContentViewportRect();
     if (auto* group = GetGroupPopupView())
     {
         const RECT frame = GetCategorizedPopupFrame(popup);
@@ -861,6 +875,7 @@ int DesktopApp::GetCollectionPopupRowCount(const DesktopWidget& widget, const RE
 
 int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, const RECT& popup) const
 {
+    if (auto* view = GetDateGroupedPopupView(popup)) return view->GetMaxScrollOffset();
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT content = GetCollectionPopupContentRect(popup);
     if (dockTrayPopup_ && &widget == &dockTrayPopup_->widget)
@@ -894,6 +909,7 @@ int DesktopApp::GetCollectionPopupMaxScrollOffset(const DesktopWidget& widget, c
 
 RECT DesktopApp::GetCollectionPopupItemRect(const RECT& popup, size_t linearIndex) const
 {
+    if (auto* view = GetDateGroupedPopupView(popup)) return view->GetMemberLayoutRect(linearIndex);
     const auto metrics = GetOpenCollectionPopupLayoutMetrics();
     RECT content = GetCollectionPopupContentRect(popup);
     if (dockTrayPopup_)

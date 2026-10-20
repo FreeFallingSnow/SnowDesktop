@@ -43,6 +43,7 @@ inline DockEntry Restore(const layout_storage::DockRecord& saved,
     entry.fanPopup = saved.fanPopup;
     entry.showSearchBox = saved.showSearchBox;
     entry.showFileCategories = saved.showFileCategories;
+    entry.dateHeaders = saved.dateHeaders;
     for (const auto& id : saved.categoryTabOrder) entry.categoryTabOrder.push_back(decode(id));
     entry.detailShowModified = saved.detailShowModified;
     entry.detailShowType = saved.detailShowType;
@@ -93,6 +94,7 @@ inline void Write(std::ostream& file, const DockEntry& entry, Escape escape)
          << ", \"fanPopup\": " << (entry.fanPopup ? "true" : "false")
          << ", \"showSearchBox\": " << (entry.showSearchBox ? "true" : "false")
          << ", \"showFileCategories\": " << (entry.showFileCategories ? "true" : "false")
+         << ", \"dateHeaders\": " << (entry.dateHeaders ? "true" : "false")
          << ", \"detailShowModified\": "
          << (entry.detailShowModified ? "true" : "false")
          << ", \"detailShowType\": "

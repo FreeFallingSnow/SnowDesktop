@@ -3363,6 +3363,9 @@ private:
     /** @brief 刷新当前悬浮 Dock 集合弹窗的几何与宿主裁剪。 */
     void RefreshOpenCollectionPopupGeometry();
     void CommitDockFolderPopupStateToSource();
+    void AppendDockFolderPopupDisplayMenu(HMENU menu);
+    bool ExecuteDockFolderPopupDisplayCommand(UINT command);
+    FolderMapping* GetDateGroupedPopupView(const RECT& popup) const;
     void SortDockFolderPopupContents(int mode, bool ascending);
     void ShowDockFolderPopupSortMenu(POINT screenPoint);
     void ShowDockFolderPopupContextMenu(

@@ -1080,6 +1080,8 @@ ShowDockFolderPopupContextMenu(
     }
     else
     {
+        AppendDockFolderPopupDisplayMenu(menu);
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         const bool canPaste = dockFolderPopupAvailable_ &&
             HasPasteableFileClipboardData();
         AppendMenuW(
@@ -1171,6 +1173,12 @@ ShowDockFolderPopupContextMenu(
     DestroyMenu(menu);
     ClearMenuIcons();
 
+    if (!itemMenu && ExecuteDockFolderPopupDisplayCommand(command))
+    {
+        RestoreDesktopWindowLayer();
+        RestoreInteractionInputFocus();
+        return;
+    }
     if (selectedPaths.size() == 1 && ExecuteIconOverrideMenu(command, selectedPaths.front())) return;
     if (const auto sort = snowdesktop::sort_menu::ResolveCommand(command))
         SortDockFolderPopupContents(sort->mode, sort->ascending);
