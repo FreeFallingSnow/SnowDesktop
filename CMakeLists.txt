@@ -1438,6 +1438,17 @@ if (BUILD_TESTING)
         LABELS integration shell manual)
     add_dependencies(SnowDesktopWallpaperShellProbeTests SnowDesktopTaskbarHook)
 
+    # Self-contained reproduction tool for sharing with wallpaper developers.
+    # The default test only exercises its own hidden observer window.
+    snowdesktop_add_test(
+        SnowDesktopWallpaperMinimalReproTests
+        wallpaper_minimal_repro
+        NATIVE_WINDOW_COMPATIBILITY
+        SOURCES tests/shell/wallpaper_minimal_repro.cpp
+        LINK_LIBRARIES user32
+        COMMAND_ARGUMENTS --self-test
+        LABELS integration shell manual)
+
     foreach(marker 1 2)
         add_library(SnowDesktopHookEntryFixture${marker} SHARED tests/platform/hook_entry_fixture.cpp)
         target_compile_features(SnowDesktopHookEntryFixture${marker} PRIVATE cxx_std_20)
