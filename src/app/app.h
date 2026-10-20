@@ -945,8 +945,6 @@ private:
      * 此方法重新查找并附加到新的宿主窗口。
      */
     void RecoverDesktopHostAfterExplorerRestart();
-    /** @brief 在最外层消息泵处理看门狗请求，不在菜单/OLE 嵌套回调内重建宿主。 */
-    void PollInputHangRecovery();
     /** @brief 监听桌面宿主窗口状态，检测 Explorer 重启事件。 */
     void WatchDesktopHost();
     /** @brief 捕获当前活动显示器拓扑的稳定签名。 */
