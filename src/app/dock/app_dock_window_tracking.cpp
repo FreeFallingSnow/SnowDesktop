@@ -499,15 +499,7 @@ void DesktopApp::HandleDockWindowListChanged(HWND window, DWORD event)
     if (dockWindowTransition_)
     {
         if (event == EVENT_SYSTEM_MINIMIZESTART)
-        {
             dockWindowTransition_->ObserveNativeMinimize(window);
-            if (generalSettings_.dockEnabled && dockSettings_.summonOnAppMinimize &&
-                !reloading_ && IsDockTaskWindow(window))
-            {
-                if (const auto target = dockWindowTransition_->ResolveMinimizeTarget(window))
-                    KeepDockTopmostForAction(target->anchor);
-            }
-        }
         else if (event == EVENT_SYSTEM_MINIMIZEEND || event == EVENT_OBJECT_DESTROY)
             dockWindowTransition_->ForgetNativeMinimize(window);
     }

@@ -196,14 +196,13 @@ HWND DesktopApp::KeepDockTopmostForAction(const RECT& anchorScreen, bool retainP
             ((GetAsyncKeyState(VK_MBUTTON) & 0x8000) ? 4u : 0u);
         if (!IsWindowVisible(ownedHost->hwnd))
         {
-            const HWND targetWindow = ownedHost->hwnd;
             const bool alreadyPromoted = ownedHost->promoted;
             ShowFloatingDock(monitor);
             // Synchronization may rebuild the host collection. Reacquire the
             // actual revealed host before assigning animation ownership.
             for (const auto& revealed : persistentDockHosts_)
             {
-                if (revealed && revealed->hwnd == targetWindow && revealed->promoted &&
+                if (revealed && revealed->active && revealed->monitor == monitor && revealed->promoted &&
                     IsWindowVisible(revealed->hwnd))
                 {
                     revealed->windowActionPromotion.Begin(alreadyPromoted, retainPromotion);

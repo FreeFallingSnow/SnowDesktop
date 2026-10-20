@@ -399,6 +399,21 @@ void DesktopApp::InitializeDockWindowTransition()
                 return DockWindowTransition::MinimizeTarget{dockWindow, monitor, anchor};
             },
             [this](const DockWindowTransition::MinimizeTarget& target) {
+                // The observer retains the Dock selected by the original
+                // action, including a click on a different monitor. Reuse it
+                // for native animations instead of resolving from the source.
+                if (generalSettings_.dockEnabled && !reloading_ &&
+                    dockSettings_.summonOnAppMinimize &&
+                    !snowdesktop::fullscreen::ObserveMonitor(target.monitor).has_value())
+                {
+                    for (const auto& host : persistentDockHosts_)
+                        if (host && host->active && host->hwnd == target.dock &&
+                            host->monitor == target.monitor && IsWindow(host->hwnd))
+                        {
+                            KeepDockTopmostForAction(target.anchor);
+                            break;
+                        }
+                }
                 PersistentDockHost* matching = nullptr;
                 snowdesktop::dock_minimize_completion::DismissForFullscreen(target,
                     [this, &matching](const auto& candidate) {
