@@ -926,6 +926,8 @@ private:
     [[nodiscard]] bool RequestRestart();
     /** @brief 确保各个独立 UI 动画轨道均已启动。 */
     void EnsureUiAnimationFrame();
+    std::optional<float> ResolveListTitleHover(const std::wstring& owner,
+        const std::wstring& key, RECT viewport, bool popup, float overflow, float scale);
     void RequestDockAnimationPresentation(DockContainer& dock);
     void RequestDesktopDockAnimationPresentation(const RECT& dirty);
     /** @brief 取消所有应用内 UI 动画轨道。 */
@@ -2444,6 +2446,7 @@ private:
     void SetIconBeautifyEnabled(bool enabled);
     void SetIconBeautifySettings(
         const snowdesktop::IconBeautifySettings& settings,
+        bool beautifyFileThumbnails,
         snowdesktop::IconBeautifyUpdateKind updateKind =
             snowdesktop::IconBeautifyUpdateKind::Commit);
     /** @brief 应用页面到显示器的映射关系（编排清理/补齐/重排/映射）。 */
@@ -3114,7 +3117,7 @@ private:
     bool ShouldBeautifyIconBitmap(bool iconIsMediaThumbnail) const
     {
         return snowdesktop::icon_render_rules::ShouldBeautify(
-            iconBeautifySettings_.enabled, iconIsMediaThumbnail);
+            iconBeautifySettings_.enabled, iconIsMediaThumbnail, beautifyFileThumbnails_);
     }
 
     /**
@@ -3621,6 +3624,11 @@ private:
     RECT dockAnimationDesktopDirty_{};
     snowdesktop::UiScheduleToken pageNotifyAnimationFrameToken_ = 0;
     snowdesktop::UiScheduleToken pointerRecoveryFrameToken_ = 0;
+    snowdesktop::UiScheduleToken listTitleHoverFrameToken_ = 0;
+    std::wstring listTitleHoverOwner_, listTitleHoverKey_;
+    RECT listTitleHoverRect_{};
+    bool listTitleHoverPopup_ = false;
+    double listTitleHoverStarted_ = 0.0, listTitleHoverLastDraw_ = 0.0;
     bool compositionCommitPending_ = false;
     ULONGLONG desktopInteractionTraceId_ = 0;
     ULONGLONG desktopInteractionTraceUntil_ = 0;
@@ -4073,6 +4081,7 @@ private:
     bool titleEllipsis_ = true;
     int shortcutArrowMode_ = 0;
     bool groupComponentBadges_ = true;
+    bool beautifyFileThumbnails_ = false;
     snowdesktop::IconBeautifySettings iconBeautifySettings_{};
     std::wstring primaryMonitorId_;
     std::wstring firstPageMonitorId_;   // 持久化：锁定显示首屏的显示器

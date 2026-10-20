@@ -479,6 +479,8 @@ bool DecodeWidgets(const JsonValue& root, Document& document,
                 record.dissolveWhenSingle, error) ||
             !ReadBoolean(object, "listMode", path + ".listMode",
                 record.listMode, error) ||
+            !ReadInteger(object, "listColumns", path + ".listColumns",
+                record.listColumns, error) ||
             !ReadBoolean(object, "fanPopup", path + ".fanPopup",
                 record.fanPopup, error) ||
             !ReadBoolean(object, "showDetails", path + ".showDetails",
@@ -599,6 +601,8 @@ bool DecodeDockEntries(const JsonValue& root, Document& document,
             !ReadStringArray(object, "categoryTabOrder", path + ".categoryTabOrder", record.categoryTabOrder, error) ||
             !ReadBoolean(object, "listMode",
                 path + ".listMode", record.listMode, error) ||
+            !ReadInteger(object, "listColumns", path + ".listColumns",
+                record.listColumns, error) ||
             !ReadBoolean(object, "fanPopup", path + ".fanPopup",
                 record.fanPopup, error) ||
             !ReadBoolean(object, "detailShowModified",
@@ -795,6 +799,8 @@ bool DecodeDocument(const JsonValue& root, Document& document,
             decoded.groupComponentBadges, error) ||
         !ReadOptionalRootBoolean(root, "iconBeautifyEnabled",
             decoded.iconBeautifyEnabled, error) ||
+        !ReadOptionalRootBoolean(root, "beautifyFileThumbnails",
+            decoded.beautifyFileThumbnails, error) ||
         !ReadOptionalBoolean(root, "iconBeautifyGlassEnabled", "iconBeautifyGlassEnabled",
             decoded.iconBeautifyGlassEnabled, error) ||
         !ReadOptionalFloat(root, "iconBeautifyGlassBlurRadius", "iconBeautifyGlassBlurRadius",

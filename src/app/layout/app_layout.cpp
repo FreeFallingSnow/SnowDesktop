@@ -215,6 +215,7 @@ void DesktopApp::LoadLayoutSlots()
         shortcutArrowMode_ = std::clamp(
             *document.shortcutArrowMode, 0, 2);
     groupComponentBadges_ = document.groupComponentBadges.value_or(true);
+    beautifyFileThumbnails_ = document.beautifyFileThumbnails.value_or(false);
 
     // Missing beautification fields are the compatibility path for old layouts.
     iconBeautifySettings_ = document.iconBeautifyPreset
@@ -416,6 +417,7 @@ void DesktopApp::LoadLayoutSlots()
             widget.autoCollectCategoryIds.push_back(Utf8ToWide(category));
         widget.dissolveWhenSingle = saved.dissolveWhenSingle;
         widget.listMode = saved.listMode;
+        widget.listColumns = std::clamp(saved.listColumns, 1, 4);
         widget.fanPopup = saved.fanPopup;
         if (hasTrustedDetailColumns)
         {
@@ -461,6 +463,7 @@ void DesktopApp::LoadLayoutSlots()
                 widget.detailShowModified,
                 widget.detailShowType,
                 widget.detailShowSize);
+        widget.listColumns = snowdesktop::list_detail_rules::ListColumns(widget);
         widget.dateHeaders =
             widget.type == DesktopWidgetType::CollectionGroup
                 ? false : saved.dateHeaders;
@@ -1033,6 +1036,7 @@ bool DesktopApp::SaveLayoutSlots(bool notifyFailure)
          << ",\n  \"shortcutArrowMode\": " << shortcutArrowMode_
          << ",\n  \"groupComponentBadges\": " << (groupComponentBadges_ ? "true" : "false")
          << ",\n  \"iconBeautifyEnabled\": " << (iconBeautifySettings_.enabled ? "true" : "false")
+         << ",\n  \"beautifyFileThumbnails\": " << (beautifyFileThumbnails_ ? "true" : "false")
          << ",\n  \"iconBeautifyPreset\": " << static_cast<int>(iconBeautifySettings_.preset)
          << ",\n  \"iconBeautifyGlassEnabled\": " << (iconBeautifySettings_.glassEnabled ? "true" : "false")
          << ",\n  \"iconBeautifyGlassBlurRadius\": " << iconBeautifySettings_.glassBlurRadius

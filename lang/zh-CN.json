@@ -2555,5 +2555,7 @@
   "settings.debug.forceRestartHotkey": "强制重启软件快捷键",
   "settings.debug.forceRestartHotkey.description": "立即结束并重新启动软件，未保存的更改会丢失。",
   "settings.dock.summonOnAppMinimize": "应用最小化时唤起 Dock",
-  "settings.dock.summonOnAppMinimize.description": "关闭后，仅在自定义动画播放时临时唤起 Dock；系统默认动画不会唤起。"
+  "settings.dock.summonOnAppMinimize.description": "关闭后，仅在自定义动画播放时临时唤起 Dock；系统默认动画不会唤起。",
+  "app.settings.beautify_file_thumbnails": "对文件缩略图美化",
+  "app.interact.list_columns": "列表列数"
 }

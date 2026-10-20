@@ -2555,5 +2555,7 @@
   "settings.debug.forceRestartHotkey": "Raccourci de redémarrage forcé",
   "settings.debug.forceRestartHotkey.description": "Ferme et redémarre immédiatement l’application. Les modifications non enregistrées seront perdues.",
   "settings.dock.summonOnAppMinimize": "Afficher le Dock à la réduction d’une application",
-  "settings.dock.summonOnAppMinimize.description": "Si désactivé, le Dock apparaît temporairement pendant les animations personnalisées ; les animations du système ne l’affichent pas."
+  "settings.dock.summonOnAppMinimize.description": "Si désactivé, le Dock apparaît temporairement pendant les animations personnalisées ; les animations du système ne l’affichent pas.",
+  "app.settings.beautify_file_thumbnails": "Embellir les miniatures des fichiers",
+  "app.interact.list_columns": "Colonnes de la liste"
 }

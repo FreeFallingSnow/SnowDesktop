@@ -2555,5 +2555,7 @@
   "settings.debug.forceRestartHotkey": "強制再起動のショートカット",
   "settings.debug.forceRestartHotkey.description": "アプリを直ちに終了して再起動します。保存されていない変更は失われます。",
   "settings.dock.summonOnAppMinimize": "アプリの最小化時に Dock を表示",
-  "settings.dock.summonOnAppMinimize.description": "オフの場合、カスタムアニメーションの再生中のみ Dock を一時的に表示します。システム標準のアニメーションでは表示しません。"
+  "settings.dock.summonOnAppMinimize.description": "オフの場合、カスタムアニメーションの再生中のみ Dock を一時的に表示します。システム標準のアニメーションでは表示しません。",
+  "app.settings.beautify_file_thumbnails": "ファイルのサムネイルを美化",
+  "app.interact.list_columns": "リストの列数"
 }

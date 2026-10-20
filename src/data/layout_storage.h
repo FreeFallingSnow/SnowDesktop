@@ -78,6 +78,7 @@ struct WidgetRecord
     std::vector<std::string> autoCollectCategoryIds;
     bool dissolveWhenSingle = false;
     bool listMode = false;
+    int listColumns = 1;
     bool fanPopup = false;
     bool showDetails = false;
     bool detailShowModified = false;
@@ -119,6 +120,7 @@ struct DockRecord
     bool folderSortAscending = true;
     std::vector<std::string> folderItems;
     bool listMode = false;
+    int listColumns = 1;
     bool fanPopup = false;
     bool showSearchBox = false;
     bool showFileCategories = false;
@@ -165,6 +167,7 @@ struct Document
     std::optional<int> shortcutArrowMode;
     std::optional<bool> groupComponentBadges;
     std::optional<bool> iconBeautifyEnabled;
+    std::optional<bool> beautifyFileThumbnails;
     std::optional<int> iconBeautifyPreset;
     std::optional<bool> iconBeautifyGlassEnabled;
     std::optional<float> iconBeautifyGlassBlurRadius;

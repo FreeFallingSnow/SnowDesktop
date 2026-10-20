@@ -2555,5 +2555,7 @@
   "settings.debug.forceRestartHotkey": "Force restart shortcut",
   "settings.debug.forceRestartHotkey.description": "Immediately terminates and restarts the app. Unsaved changes will be lost.",
   "settings.dock.summonOnAppMinimize": "Summon Dock when an app is minimized",
-  "settings.dock.summonOnAppMinimize.description": "When off, custom animations reveal the Dock only until they finish; system animations do not reveal it."
+  "settings.dock.summonOnAppMinimize.description": "When off, custom animations reveal the Dock only until they finish; system animations do not reveal it.",
+  "app.settings.beautify_file_thumbnails": "Beautify file thumbnails",
+  "app.interact.list_columns": "List columns"
 }

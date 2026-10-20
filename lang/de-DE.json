@@ -2555,5 +2555,7 @@
   "settings.debug.forceRestartHotkey": "Tastenkombination für erzwungenen Neustart",
   "settings.debug.forceRestartHotkey.description": "Beendet die App sofort und startet sie neu. Nicht gespeicherte Änderungen gehen verloren.",
   "settings.dock.summonOnAppMinimize": "Dock beim Minimieren einer App einblenden",
-  "settings.dock.summonOnAppMinimize.description": "Wenn deaktiviert, wird das Dock nur während benutzerdefinierter Animationen vorübergehend eingeblendet; bei Systemanimationen bleibt es ausgeblendet."
+  "settings.dock.summonOnAppMinimize.description": "Wenn deaktiviert, wird das Dock nur während benutzerdefinierter Animationen vorübergehend eingeblendet; bei Systemanimationen bleibt es ausgeblendet.",
+  "app.settings.beautify_file_thumbnails": "Dateivorschaubilder verschönern",
+  "app.interact.list_columns": "Listenspalten"
 }

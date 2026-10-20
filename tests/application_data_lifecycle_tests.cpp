@@ -4,6 +4,9 @@
 #include "icons/large_icon_backup.h"
 #include "icons/icon_appearance_codec.h"
 #include "data/layout_storage.h"
+#include "data/dock_layout_codec.h"
+#include "data/widget_layout_codec.h"
+#include <sstream>
 #include "layout/page_management_rules.h"
 #include "common/json_value.h"
 #include "common/json_string.h"
@@ -1796,6 +1799,51 @@ int main()
             titleSettingsLayout.scrollingTitleLines.value_or(0) == 1 &&
             titleSettingsLayout.titleEllipsis.has_value() && !*titleSettingsLayout.titleEllipsis,
         "restart retains title limits and direct truncation alongside the original weight");
+    // Exercise the same writers used by SaveLayoutSlots, then the typed reader.
+    for (int columns = 1; columns <= 4; ++columns)
+    {
+        DesktopWidget view;
+        view.id = L"columns-widget";
+        view.gridCell.pageId = L"page-a";
+        view.listMode = true;
+        snowdesktop::list_detail_rules::SetListColumns(view, columns);
+        DockEntry dock;
+        dock.reference = L"folder-a";
+        dock.listMode = true;
+        snowdesktop::list_detail_rules::SetListColumns(dock, columns);
+        const auto encode = [](const std::wstring& value) {
+            return std::string(value.begin(), value.end());
+        };
+        std::ostringstream document;
+        document << "{\"widgets\":[";
+        snowdesktop::widget_layout_codec::Write(document, view, encode, encode);
+        document << "],\"dockEntries\":[";
+        snowdesktop::dock_layout_codec::Write(document, dock, encode);
+        document << "]}";
+        snowdesktop::layout_storage::Document parsed;
+        Expect(snowdesktop::layout_storage::ParseDocument(document.str(), parsed, &layoutError) &&
+                parsed.widgets.size() == 1 && parsed.dockEntries.size() == 1 &&
+                parsed.widgets.front().listColumns == columns &&
+                parsed.dockEntries.front().listColumns == columns,
+            "production widget and Dock codecs round-trip all four list column choices");
+        if (!parsed.dockEntries.empty())
+        {
+            const auto restored = snowdesktop::dock_layout_codec::Restore(parsed.dockEntries.front(),
+                std::vector<DesktopWidget>{}, [](const std::string& value) {
+                    return std::wstring(value.begin(), value.end());
+                }, [](const std::wstring& value) { return value; });
+            Expect(restored.listColumns == columns, "Dock popup restoration retains list column count");
+        }
+    }
+    snowdesktop::layout_storage::Document legacyColumns;
+    Expect(snowdesktop::layout_storage::ParseDocument(
+            "{\"widgets\":[{\"id\":\"legacy\",\"page\":\"page-a\",\"x\":0,\"y\":0}],"
+            "\"dockEntries\":[{\"ref\":\"folder\"}]}", legacyColumns, &layoutError) &&
+            legacyColumns.widgets.front().listColumns == 1 && legacyColumns.dockEntries.front().listColumns == 1,
+        "older layouts without a list column field remain single-column");
+    Expect(!snowdesktop::layout_storage::ParseDocument(
+            "{\"widgets\":[{\"id\":\"bad\",\"page\":\"page-a\",\"x\":0,\"y\":0,\"listColumns\":\"three\"}]}",
+            legacyColumns, &layoutError), "list column field rejects non-integer values");
     const std::string detailsLayoutText =
         "{\"layoutSchemaVersion\":1,"
         "\"widgetContentOptionsSchemaVersion\":4,"
@@ -1917,6 +1965,7 @@ int main()
             "{\"iconBeautifyEnabled\":true,\"iconBeautifyMode\":0}",
             legacyBeautifyLayout, &layoutError) &&
             legacyBeautifyLayout.iconBeautifyEnabled.value_or(false) &&
+            !legacyBeautifyLayout.beautifyFileThumbnails.value_or(false) &&
             !legacyBeautifyLayout.iconBeautifyPreset.has_value() &&
             !legacyBeautifyLayout.iconBeautifyShape.has_value() &&
             !legacyBeautifyLayout.iconBeautifyFinish.has_value() &&
@@ -1925,6 +1974,17 @@ int main()
             !legacyBeautifyLayout.iconBeautifyFilterStrength.has_value() &&
             !legacyBeautifyLayout.iconBeautifyContentScale.has_value(),
         "legacy icon beautify layouts keep new fields optional");
+    for (const bool enabled : {true, false})
+    {
+        snowdesktop::layout_storage::Document thumbnails;
+        const auto json = std::string("{\"beautifyFileThumbnails\":") + (enabled ? "true}" : "false}");
+        Expect(snowdesktop::layout_storage::ParseDocument(json, thumbnails, &layoutError) &&
+                thumbnails.beautifyFileThumbnails.has_value() && *thumbnails.beautifyFileThumbnails == enabled,
+            "layout loading retains both enabled and explicitly disabled file thumbnail beautification");
+    }
+    Expect(!snowdesktop::layout_storage::ParseDocument(
+            "{\"beautifyFileThumbnails\":1}", legacyBeautifyLayout, &layoutError),
+        "file thumbnail beautification rejects a non-boolean setting");
     snowdesktop::layout_storage::Document iconBeautifyLayout;
     Expect(snowdesktop::layout_storage::ParseDocument(
             "{\"iconBeautifyPreset\":5,"
