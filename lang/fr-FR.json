@@ -2553,5 +2553,7 @@
   "app.nav.app_suggestions": "Applications suggérées",
   "quickNav.appSuggestions": "Activer les suggestions d’applications",
   "settings.debug.forceRestartHotkey": "Raccourci de redémarrage forcé",
-  "settings.debug.forceRestartHotkey.description": "Ferme et redémarre immédiatement l’application. Les modifications non enregistrées seront perdues."
+  "settings.debug.forceRestartHotkey.description": "Ferme et redémarre immédiatement l’application. Les modifications non enregistrées seront perdues.",
+  "settings.dock.summonOnAppMinimize": "Afficher le Dock à la réduction d’une application",
+  "settings.dock.summonOnAppMinimize.description": "Si désactivé, le Dock apparaît temporairement pendant les animations personnalisées ; les animations du système ne l’affichent pas."
 }

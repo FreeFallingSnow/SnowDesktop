@@ -2553,5 +2553,7 @@
   "app.nav.app_suggestions": "추천 앱",
   "quickNav.appSuggestions": "추천 앱 표시",
   "settings.debug.forceRestartHotkey": "강제 재시작 단축키",
-  "settings.debug.forceRestartHotkey.description": "앱을 즉시 종료하고 다시 시작합니다. 저장하지 않은 변경 사항은 손실됩니다."
+  "settings.debug.forceRestartHotkey.description": "앱을 즉시 종료하고 다시 시작합니다. 저장하지 않은 변경 사항은 손실됩니다.",
+  "settings.dock.summonOnAppMinimize": "앱 최소화 시 Dock 표시",
+  "settings.dock.summonOnAppMinimize.description": "끄면 사용자 지정 애니메이션이 재생되는 동안에만 Dock을 일시적으로 표시합니다. 시스템 기본 애니메이션에서는 표시하지 않습니다."
 }

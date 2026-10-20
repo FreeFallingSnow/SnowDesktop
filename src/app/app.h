@@ -806,6 +806,7 @@ private:
         // Promotion is per monitor. Selection only identifies the Host that
         // currently owns pointer/keyboard-associated actions.
         bool promoted = false;
+        snowdesktop::floating_dock_rules::WindowActionPromotion windowActionPromotion;
         // Passive drag-edge reveal is intentionally separate from manual
         // promotion. It may borrow the floating Z band without starting a
         // keyboard session, and its leave timer must never collapse a Host
@@ -1272,7 +1273,8 @@ private:
     bool FullscreenBlocksDockReveal(DockRevealSource source, HMONITOR monitor) const;
     bool EnsureFloatingDockVisibleForAssociatedSurface(
         POINT anchorScreen);
-    HWND KeepDockTopmostForAction(const RECT& anchorScreen);
+    HWND KeepDockTopmostForAction(const RECT& anchorScreen, bool retainPromotion = true);
+    void ReleaseTemporaryDockActionPromotion();
     void CloseFloatingDock(
         FloatingDockCloseFocusPolicy focusPolicy =
             FloatingDockCloseFocusPolicy::RestorePrevious);

@@ -2553,5 +2553,7 @@
   "app.nav.app_suggestions": "應用程式建議",
   "quickNav.appSuggestions": "開啟應用程式建議列",
   "settings.debug.forceRestartHotkey": "強制重新啟動軟體快捷鍵",
-  "settings.debug.forceRestartHotkey.description": "立即結束並重新啟動軟體，未儲存的變更將會遺失。"
+  "settings.debug.forceRestartHotkey.description": "立即結束並重新啟動軟體，未儲存的變更將會遺失。",
+  "settings.dock.summonOnAppMinimize": "應用程式最小化時喚起 Dock",
+  "settings.dock.summonOnAppMinimize.description": "關閉後，僅在自訂動畫播放時暫時喚起 Dock；系統預設動畫不會喚起。"
 }

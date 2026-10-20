@@ -1199,6 +1199,7 @@ bool LoadDockSettings(const wchar_t* path, DockSettings& settings)
     }
     ReadBoolField(text, "floatingEdgeSwipeEnabled",
         settings.floatingEdgeSwipeEnabled);
+    ReadBoolField(text, "summonOnAppMinimize", settings.summonOnAppMinimize);
     if (ReadDoubleField(text, "edgeRevealGesture", value))
         settings.edgeRevealGesture = value == 1 ? 1 : 0;
     if (ReadDoubleField(text, "edgeHoverDelayMs", value))
@@ -1379,6 +1380,8 @@ bool SaveDockSettings(const wchar_t* path, const DockSettings& settings)
     file << "  \"floatingEdgeSwipeEnabled\": "
          << (settings.floatingEdgeSwipeEnabled ? "true" : "false")
          << ",\n";
+    file << "  \"summonOnAppMinimize\": "
+         << (settings.summonOnAppMinimize ? "true" : "false") << ",\n";
     file << "  \"edgeRevealGesture\": " << settings.edgeRevealGesture << ",\n";
     file << "  \"edgeHoverDelayMs\": "
          << snowdesktop::dock_settings_rules::NormalizeEdgeHoverDelayMs(settings.edgeHoverDelayMs) << ",\n";

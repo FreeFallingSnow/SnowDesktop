@@ -6786,6 +6786,21 @@ int main(int argc, char** argv)
         "a closed application must keep the existing launch gesture");
     {
         const DockSettings defaults;
+        Check(defaults.summonOnAppMinimize,
+            "new and upgraded settings summon Dock on application minimization by default");
+        snowdesktop::floating_dock_rules::WindowActionPromotion promotion;
+        promotion.Begin(false, false);
+        Check(promotion.Release(false) && !promotion.Release(false),
+            "an animation-only promotion is released once when its presentation retires");
+        promotion.Begin(true, false);
+        Check(!promotion.Release(false), "minimizing must preserve a Dock that was already manually summoned");
+        promotion.Begin(false, false);
+        promotion.Retain();
+        Check(!promotion.Release(false), "an explicit summon during animation takes over the borrowed promotion");
+        promotion.Begin(false, false);
+        Check(!promotion.Release(true), "enabling minimize summon during animation retains the Dock");
+        promotion.Begin(false, true);
+        Check(!promotion.Release(false), "a retained summon must not acquire animation-only dismissal ownership");
         Check(!defaults.singleClickLaunchItems,
             "upgrading without a single-click preference must retain double-click launching");
         Check(rules::ShouldWaitForDockLaunchDoubleClick(

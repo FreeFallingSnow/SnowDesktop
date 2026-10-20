@@ -175,8 +175,11 @@ void TestCodec()
     for (const bool enabled : {true, false})
     {
         dockSpace.singleClickLaunchItems = enabled;
+        dockSpace.summonOnAppMinimize = enabled;
         dockSpace.followComponentCornerRadius = enabled;
         const auto restoredDock = Unpack<DockSettings>(Pack(dockSpace));
+        Check(restoredDock.summonOnAppMinimize == enabled,
+            "minimize summon can be enabled and disabled through the settings process");
         Check(restoredDock.followComponentCornerRadius == enabled && restoredDock.cornerRadius == 23.f,
             "Dock radius inheritance and its retained independent value reach the host through settings IPC");
         Check(Unpack<DockSettings>(Pack(dockSpace)).singleClickLaunchItems == enabled,

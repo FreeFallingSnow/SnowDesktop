@@ -95,9 +95,13 @@ bool DesktopApp::HandleDockExternalMinimize(HWND window, DWORD deadline)
     if (!target || !snowdesktop::dock_minimize::RequestIsCurrent(deadline, GetTickCount())) return false;
     const RECT anchor = target->anchor;
     HWND keepBelow = target->dock && IsWindowVisible(target->dock) ? target->dock : nullptr;
-    if (const HWND promotedDock = KeepDockTopmostForAction(anchor))
-        keepBelow = promotedDock;
+    if (dockSettings_.summonOnAppMinimize)
+        if (const HWND promotedDock = KeepDockTopmostForAction(anchor))
+            keepBelow = promotedDock;
     DismissDockWindowPreviewUntilLeave();
     CancelDockWindowActivationObservation(window);
-    return dockWindowTransition_->StartExternalMinimize(window, anchor, deadline, keepBelow);
+    const bool started = dockWindowTransition_->StartExternalMinimize(window, anchor, deadline, keepBelow);
+    if (started && !dockSettings_.summonOnAppMinimize)
+        KeepDockTopmostForAction(anchor, false);
+    return started;
 }

@@ -428,7 +428,8 @@ void DesktopApp::InitializeDockWindowTransition()
         dockWindowTransition_->SetOcclusionRectsProvider([this] {
             return GetDockWindowTransitionOcclusionRects();
         });
-        dockWindowTransition_->SetPresentationCallback([this](HWND) {
+        dockWindowTransition_->SetPresentationCallback([this](HWND presentation) {
+            if (!presentation) ReleaseTemporaryDockActionPromotion();
             ApplyFloatingDockLayerPolicy();
         });
         dockWindowTransition_->SetDiagnosticCallback([this](const wchar_t* message) {

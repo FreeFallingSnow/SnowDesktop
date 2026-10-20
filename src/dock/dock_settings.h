@@ -84,6 +84,7 @@ struct DockSettings : DockLayoutSettings
     UINT floatingHotkeyModifiers = MOD_CONTROL | MOD_ALT;
     UINT floatingHotkeyVirtualKey = 'D';
     bool floatingEdgeSwipeEnabled = true;
+    bool summonOnAppMinimize = true;
     int edgeRevealGesture = 0; // 0=swipe, 1=hover; preserve existing swipe preferences.
     int edgeHoverDelayMs = snowdesktop::dock_settings_rules::kDefaultEdgeHoverDelayMs;
     DockFullscreenPolicy fullscreenPolicy = DockFullscreenPolicy::FullProtection;

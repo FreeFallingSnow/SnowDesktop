@@ -12,6 +12,27 @@
 namespace snowdesktop::floating_dock_rules
 {
 
+// A window animation borrows promotion only when the user has not already
+// summoned this monitor's Dock. An explicit summon takes over that lifetime.
+class WindowActionPromotion
+{
+public:
+    void Begin(bool alreadyPromoted, bool retain) noexcept
+    {
+        if (retain) temporary_ = false;
+        else if (!alreadyPromoted) temporary_ = true;
+    }
+    void Retain() noexcept { temporary_ = false; }
+    bool Release(bool retain) noexcept
+    {
+        const bool dismiss = temporary_ && !retain;
+        temporary_ = false;
+        return dismiss;
+    }
+private:
+    bool temporary_ = false;
+};
+
 // Use the client area, so maximized windows with title bars are not fullscreen.
 inline bool ShouldBlockFullscreenEdgeSwipe(
     bool enabled, const RECT& client, const RECT& monitor) noexcept

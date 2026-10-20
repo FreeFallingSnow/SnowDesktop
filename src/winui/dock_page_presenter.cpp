@@ -452,6 +452,7 @@ struct DockPagePresenter::Impl
     muxc::ToggleSwitch keepWhenDesktopHiddenToggle{nullptr};
     muxc::ToggleSwitch allowDesktopContentOverlapToggle{nullptr};
     muxc::ToggleSwitch showOnlyWhenSummonedToggle{nullptr};
+    muxc::ToggleSwitch summonOnAppMinimizeToggle{nullptr};
     ContinuousControl thicknessScale;
     ContinuousControl edgeDistanceScale;
     ContinuousControl mergedIconScale;
@@ -493,6 +494,7 @@ struct DockPagePresenter::Impl
     SettingRow showFrequentItemsRow;
     SettingRow allowDesktopContentOverlapRow;
     SettingRow showOnlyWhenSummonedRow;
+    SettingRow summonOnAppMinimizeRow;
     SettingRow taskbarSettingsRow;
     SettingRow windowsSystemThemeRow;
     SettingRow restartExplorerRow;
@@ -555,6 +557,7 @@ struct DockPagePresenter::Impl
     winrt::event_token keepWhenDesktopHiddenToken{};
     winrt::event_token allowDesktopContentOverlapToken{};
     winrt::event_token showOnlyWhenSummonedToken{};
+    winrt::event_token summonOnAppMinimizeToken{};
     winrt::event_token taskbarSettingsToken{};
     winrt::event_token restartExplorerToken{};
     winrt::event_token taskbarThemeToken{};
@@ -687,6 +690,7 @@ struct DockPagePresenter::Impl
         keepWhenDesktopHiddenToggle = muxc::ToggleSwitch{};
         allowDesktopContentOverlapToggle = muxc::ToggleSwitch{};
         showOnlyWhenSummonedToggle = muxc::ToggleSwitch{};
+        summonOnAppMinimizeToggle = muxc::ToggleSwitch{};
         for (const auto& toggle : {
                  floatingShortcutToggle,
                  floatingEdgeSwipeToggle,
@@ -696,7 +700,8 @@ struct DockPagePresenter::Impl
                  showFrequentItemsToggle,
                  keepWhenDesktopHiddenToggle,
                  allowDesktopContentOverlapToggle,
-                 showOnlyWhenSummonedToggle})
+                 showOnlyWhenSummonedToggle,
+                 summonOnAppMinimizeToggle})
         {
             toggle.HorizontalAlignment(mux::HorizontalAlignment::Right);
         }
@@ -750,6 +755,8 @@ struct DockPagePresenter::Impl
         allowDesktopContentOverlapRow.Initialize(
             allowDesktopContentOverlapToggle);
         showOnlyWhenSummonedRow.Initialize(showOnlyWhenSummonedToggle);
+        summonOnAppMinimizeRow.Initialize(summonOnAppMinimizeToggle);
+        summonOnAppMinimizeRow.SetControlAlignment(mux::HorizontalAlignment::Right);
         floatingEdgeSwipeRow.SetControlAlignment(
             mux::HorizontalAlignment::Right);
         showWindowsButtonRow.SetControlAlignment(
@@ -805,6 +812,7 @@ struct DockPagePresenter::Impl
         fullscreenCard.content.Children().Append(
             presenter_controls::SettingsDisclosureRow(fullscreenExceptionsExpander));
         edgeSwipeCard.content.Children().Append(showOnlyWhenSummonedRow.root);
+        edgeSwipeCard.content.Children().Append(summonOnAppMinimizeRow.root);
         edgeSwipeCard.content.Children().Append(shortcutsHost);
         edgeSwipeCard.content.Children().Append(floatingEdgeSwipeRow.root);
         edgeSwipeCard.content.Children().Append(edgeRevealGestureRow.root);
@@ -1518,6 +1526,12 @@ struct DockPagePresenter::Impl
                         settings.showOnlyWhenSummoned = value;
                     });
             });
+        summonOnAppMinimizeToken = summonOnAppMinimizeToggle.Toggled(
+            [this](const auto&, const auto&) {
+                const bool value = summonOnAppMinimizeToggle.IsOn();
+                EmitDock(SettingsUpdateMode::PreviewAndCommit,
+                    [value](DockSettings& settings) { settings.summonOnAppMinimize = value; });
+            });
         windowsSystemThemeToken = windowsSystemThemeChoices.SelectionChanged(
             [this](const auto&, const auto&) {
                 if (!taskbarInputReady || closed || updatingControls ||
@@ -2094,6 +2108,7 @@ struct DockPagePresenter::Impl
                     settings.showOnlyWhenSummoned,
                     settings.allowDesktopContentOverlap));
         showOnlyWhenSummonedToggle.IsOn(settings.showOnlyWhenSummoned);
+        summonOnAppMinimizeToggle.IsOn(settings.summonOnAppMinimize);
         windowsSystemThemeValue = IsClassicSystemTaskbar()
             ? std::clamp(settings.classicTaskbarSystemTheme, -1, 1) + 1
             : (IsWindowsSystemLightThemeEnabled() ? 0 : 1);
@@ -2174,6 +2189,7 @@ struct DockPagePresenter::Impl
         singleClickLaunchItemsRow.SetEnabled(dockEnabled);
         frequentItemCount.root.Visibility(showFrequentItemsToggle.IsOn() ? mux::Visibility::Visible : mux::Visibility::Collapsed);
         showOnlyWhenSummonedRow.SetEnabled(dockEnabled);
+        summonOnAppMinimizeRow.SetEnabled(dockEnabled);
         edgeSwipeCard.root.IsHitTestVisible(dockEnabled);
         fullscreenCard.root.IsHitTestVisible(dockEnabled);
         layoutCard.root.IsHitTestVisible(dockEnabled);
@@ -2923,6 +2939,11 @@ struct DockPagePresenter::Impl
             L("settings.dock.showOnlyWhenSummoned.description",
                 L"Show the Dock by swiping along its screen edge or "
                   "dragging an item to that edge."));
+        summonOnAppMinimizeRow.SetText(
+            L("settings.dock.summonOnAppMinimize", L"Summon Dock when an app is minimized"),
+            L("settings.dock.summonOnAppMinimize.description",
+                L"When off, custom animations reveal the Dock only until they finish; system animations do not reveal it."));
+        muxa::AutomationProperties::SetName(summonOnAppMinimizeToggle, summonOnAppMinimizeRow.label.Text());
         suppressTaskbarRow.SetText(L("settings.dock.suppressTaskbar", L"Always hide the system taskbar"),
             L("settings.dock.suppressTaskbar.description", L"Hide the taskbar on Dock displays; show it for system panels."));
         muxa::AutomationProperties::SetName(suppressTaskbarToggle, suppressTaskbarRow.label.Text());
@@ -3289,6 +3310,8 @@ struct DockPagePresenter::Impl
             return dockEnabledToggle; // Retained data field has no page control.
         if (id == "dock.showOnlyWhenSummoned" || id == "dock.autoHide")
             return dockTarget(showOnlyWhenSummonedToggle);
+        if (id == "dock.summonOnAppMinimize")
+            return dockTarget(summonOnAppMinimizeToggle);
         if (id == "taskbar.systemSettings" || id == "taskbar.autoHide" ||
             id == "taskbar.alignment") return taskbarSettingsLink;
         if (id == "taskbar.systemTheme" || id == "taskbar.systemPanel")
@@ -3474,6 +3497,7 @@ struct DockPagePresenter::Impl
             allowDesktopContentOverlapToggle.Toggled(
                 allowDesktopContentOverlapToken);
             showOnlyWhenSummonedToggle.Toggled(showOnlyWhenSummonedToken);
+            summonOnAppMinimizeToggle.Toggled(summonOnAppMinimizeToken);
             taskbarSettingsLink.Click(taskbarSettingsToken);
             windowsSystemThemeChoices.SelectionChanged(
                 windowsSystemThemeToken);
