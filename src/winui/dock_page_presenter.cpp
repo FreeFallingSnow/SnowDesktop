@@ -719,7 +719,14 @@ struct DockPagePresenter::Impl
         for (const auto& button : {startIconRestore, searchIconRestore}) muxc::Grid::SetColumn(button, 1);
         for (const auto& button : {startIconBeautify, searchIconBeautify})
         {
-            muxc::Grid::SetColumn(button, 2); button.Width(32); button.MinWidth(32); button.Padding({6,6,6,6});
+            muxc::Grid::SetColumn(button, 2);
+            button.Width(32);
+            button.Height(32);
+            button.MinWidth(32);
+            button.MinHeight(32);
+            button.Padding({0, 0, 0, 0});
+            button.HorizontalContentAlignment(mux::HorizontalAlignment::Center);
+            button.VerticalContentAlignment(mux::VerticalAlignment::Center);
             button.VerticalAlignment(mux::VerticalAlignment::Center);
         }
         startActions.Children().Append(startIconChoose); startActions.Children().Append(startIconRestore);
@@ -2936,7 +2943,10 @@ struct DockPagePresenter::Impl
         muxa::AutomationProperties::SetName(reserveScreenSpaceToggle, reserveScreenSpaceRow.label.Text());
         for (const auto& button : {startIconBeautify, searchIconBeautify})
         {
-            muxc::SymbolIcon icon(muxc::Symbol::Edit); button.Content(icon);
+            muxc::FontIcon icon;
+            icon.Glyph(L"\xE70F");
+            icon.FontSize(16);
+            button.Content(icon);
             const auto label = L("iconAppearance.edit", L"Adjust this icon’s appearance");
             muxa::AutomationProperties::SetName(button, label);
             muxc::ToolTipService::SetToolTip(button, winrt::box_value(label));
