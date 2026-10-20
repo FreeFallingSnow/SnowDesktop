@@ -97,6 +97,14 @@ void CheckRetainedMenuHit(HWND app, HWND bar, HWND other, HWND differentThreadMe
     wchar_t actualClass[32]{};
     Require(GetClassNameW(submenu, actualClass, 32) && wcscmp(actualClass, L"#32768") == 0,
         "late-menu fixture retains the actual native menu class name");
+    Require(session.NativeMenuOverlapping({280, 250, 440, 330}) == submenu,
+        "a confirmed native menu can anchor the panel after the placement hook expires");
+    Require(!session.NativeMenuOverlapping({220, 100, 420, 220}),
+        "a native menu outside the panel cannot change its layer");
+    foreground_fixture::menuOwner = other;
+    Require(!session.NativeMenuOverlapping({280, 250, 440, 330}),
+        "a changed menu owner cannot reuse the native menu layer anchor");
+    foreground_fixture::menuOwner = app;
     const POINT inside{300, 270};
     foreground_fixture::pointedWindow = submenu;
     Require(session.ContainsPoint(inside), "LATE_NATIVE_SUBMENU_MUST_REMAIN_INSIDE");

@@ -78,7 +78,7 @@ struct SystemPanel::Impl
     bool pointerRefreshPending=false;
     NativePointerHoverState pointerHover;
     bool scrollbarDragging=false;int scrollbarPointerStart=0,scrollbarOffsetStart=0;
-    bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;HWND retainedAbove=nullptr;
+    bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;
     std::vector<RECT> cards;float scale=1;int width=0,height=0;bool showing=false,closing=false,modal=false,destroying=false;tray::MenuRetentionSession context;WPARAM closeGeneration=0;
     Impl(SettingsChanged c,SystemCalendarActions dates,std::function<bool(std::string_view,POINT)> drop,UiAnimationScheduler* timing,IDCompositionDesktopDevice* graphics,IDWriteFactory* fonts,Background draw)
         :changed(std::move(c)),calendar(std::move(dates)),dropOutside(std::move(drop)),background(std::move(draw)),scheduler(timing),composition(graphics),text(fonts){}
@@ -326,7 +326,7 @@ struct SystemPanel::Impl
             backdropDirty=!prepared;
             // A rebuilt helper starts hidden even when the content HWND is
             // already shown. Restore the pair without changing keyboard focus.
-            if(showing)SyncTrayMenuLayer(true);
+            if(showing)SyncTrayMenuLayer();
             backdrop.SetVisible(showing);
         }
         else if(!Glass())backdrop.Reset();if(moved||shape)Pose();if(moved||shape||contentChanged)PublishGeometry();
@@ -421,7 +421,7 @@ struct SystemPanel::Impl
         if(calendarInputs)calendarInputs->Clear();if(oldModel)oldModel->Close();CancelPrompt();
         if(window){KillTimer(window,1);KillTimer(window,kTrayMenuTimer);backdrop.HidePopupWindowPair(window);backdrop.SetPopupTopmost(false);ShowWindow(window,SW_HIDE);}
         if(oldRequest&&oldRequest->tray&&oldModel){oldRequest->tray->CancelFocusReturn(oldRequest->owner);for(const auto& n:oldModel->View().nodes)if(n.id.starts_with("tray:"))oldRequest->tray->SetGeometry(n.id.substr(5),{});}
-        oldModel.reset();oldRequest.reset();context.Reset();retainedAbove=nullptr;slide.ResetHidden();closing=false;if(accessibility)accessibility->RefreshEvents();
+        oldModel.reset();oldRequest.reset();context.Reset();slide.ResetHidden();closing=false;if(accessibility)accessibility->RefreshEvents();
     }
     void Queue(Request request)
     {
@@ -434,16 +434,20 @@ struct SystemPanel::Impl
     }
     void ArmContext(const std::string& key)
     {ClearPointerHover();context.Reset();if(current&&current->tray)for(const auto& i:current->tray->Current().icons)if(i.key==key){context.Arm(reinterpret_cast<HWND>(i.identity.window),i.identity.process,window,current->owner);if(context.process)SetTimer(window,kTrayMenuTimer,50,nullptr);break;}}
-    void SyncTrayMenuLayer(bool force=false)
+    void SyncTrayMenuLayer()
     {
         HWND above=nullptr;
         for(const auto& binding:context.popups)if(context.LivePopup(binding)){above=reinterpret_cast<HWND>(binding.window);break;}
-        if(!force&&above==retainedAbove)return;
+        if(!above&&context.menuThread)
+        {
+            RECT bounds{};
+            if(GetWindowRect(window,&bounds))above=context.NativeMenuOverlapping(bounds);
+        }
         // Move only our own pair. A non-topmost custom menu otherwise remains
-        // covered by the overflow panel even after its focus is retained.
+        // covered by the overflow panel even after its focus is retained. A
+        // confirmed native menu can also outlive the short SHOW-event hook.
         const bool topmost=!above||(GetWindowLongPtrW(above,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
         backdrop.SetPopupWindowPairZOrder(window,above?above:HWND_TOPMOST,topmost,above);
-        retainedAbove=above;
     }
     bool RetainTrayMenu(HWND foreground)
     {

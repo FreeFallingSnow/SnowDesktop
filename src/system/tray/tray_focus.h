@@ -92,6 +92,38 @@ struct MenuRetentionSession
             (!observedMenuThread&&!Related(info.hwndMenuOwner)))return false;
         menuOwner=info.hwndMenuOwner;menuThread=thread;return true;
     }
+    HWND NativeMenuOverlapping(const RECT& panelBounds)const
+    {
+        if(!menuThread||!menuOwner||!BelongsToTarget(menuOwner)||
+            GetWindowThreadProcessId(menuOwner,nullptr)!=menuThread)return nullptr;
+        GUITHREADINFO info{sizeof(info)};
+        if(!GetGUIThreadInfo(menuThread,&info)||
+            !(info.flags&(GUI_INMENUMODE|GUI_POPUPMENUMODE|GUI_SYSTEMMENUMODE))||
+            info.hwndMenuOwner!=menuOwner)return nullptr;
+        struct Search {const MenuRetentionSession* session;RECT bounds;HWND lowest=nullptr;} search{this,panelBounds};
+        EnumThreadWindows(menuThread,[](HWND window,LPARAM parameter)->BOOL
+        {
+            auto& search=*reinterpret_cast<Search*>(parameter);
+            DWORD process=0;
+            const DWORD thread=GetWindowThreadProcessId(window,&process);
+            if(thread!=search.session->menuThread||process!=search.session->process||
+                !IsWindowVisible(window)||!(GetWindowLongPtrW(window,GWL_STYLE)&WS_POPUP))return TRUE;
+            wchar_t name[64]{};GetClassNameW(window,name,static_cast<int>(std::size(name)));
+            if(wcscmp(name,L"#32768")!=0)return TRUE;
+            const HWND owner=GetWindow(window,GW_OWNER);
+            if(!owner||!search.session->BelongsToTarget(owner)||
+                GetAncestor(owner,GA_ROOTOWNER)!=GetAncestor(search.session->menuOwner,GA_ROOTOWNER))return TRUE;
+            RECT bounds{},intersection{};
+            if(!GetWindowRect(window,&bounds)||!IntersectRect(&intersection,&bounds,&search.bounds))return TRUE;
+            // Place the panel below the lowest overlapping menu, including a
+            // root and any submenu on this confirmed menu thread.
+            if(!search.lowest)search.lowest=window;
+            else for(HWND current=search.lowest;current;current=GetWindow(current,GW_HWNDNEXT))
+                if(current==window){search.lowest=window;break;}
+            return TRUE;
+        },reinterpret_cast<LPARAM>(&search));
+        return search.lowest;
+    }
     bool ContainsPoint(POINT screen)const
     {
         if(!tracker.Armed()||!BelongsToTarget(target)||
