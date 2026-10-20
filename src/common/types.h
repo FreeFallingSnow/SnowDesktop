@@ -517,6 +517,7 @@ struct DesktopWidget
     std::vector<std::wstring> autoCollectCategoryIds;
     bool dissolveWhenSingle = false; // Only groups created by the pair-drop gesture.
     bool listMode = false;
+    int listColumns = 1;
     bool fanPopup = false; // Per-object popup layout; preserves the inline view.
     bool showDetails = false;
     bool detailShowModified = false;
@@ -631,6 +632,7 @@ struct DockEntry
     // options on the Dock entry so they can use the same list/detail view as
     // widget-backed folder popups.
     bool listMode = false;
+    int listColumns = 1;
     bool fanPopup = false;
     bool showSearchBox = false;
     bool showFileCategories = false;

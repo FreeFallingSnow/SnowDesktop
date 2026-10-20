@@ -1,4 +1,5 @@
 #include "test_source_boundary.h"
+#include "layout/list_columns_cases.h"
 #include "widgets/single_cell_widget_rules.h"
 #include "layout/layout_scroll_save.h"
 #include "layout/layout_scroll_save_rules.h"
@@ -1911,6 +1912,7 @@ void CheckStatusBarFullscreenDockSession()
 
 int main(int argc, char** argv)
 {
+    snowdesktop::tests::list_columns::Run(Check);
     {
         namespace single = snowdesktop::single_cell_widget;
         for (const auto type : {DesktopWidgetType::Collection, DesktopWidgetType::FileCategories,

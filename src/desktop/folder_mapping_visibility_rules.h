@@ -103,6 +103,7 @@ inline bool ReplaceDockEntry(DockEntry& entry, DesktopWidget& widget)
     widget.folderSortAscending = entry.folderSortAscending;
     widget.itemKeys = entry.folderItemKeys;
     widget.listMode = entry.listMode;
+    widget.listColumns = entry.listColumns;
     widget.fanPopup = entry.fanPopup;
     widget.showSearchBox = entry.showSearchBox;
     widget.showFileCategories = entry.showFileCategories;

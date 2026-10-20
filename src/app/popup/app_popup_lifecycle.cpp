@@ -232,6 +232,7 @@ void DesktopApp::OpenDockFolderPopupAt(
         entry.folderItemKeys;
     dockFolderPopupWidget_.listMode =
         entry.listMode;
+    dockFolderPopupWidget_.listColumns = entry.listColumns;
     dockFolderPopupWidget_.fanPopup = entry.fanPopup;
     dockFolderPopupWidget_.showSearchBox = entry.showSearchBox;
     dockFolderPopupWidget_.showFileCategories = entry.showFileCategories;
@@ -284,6 +285,7 @@ void DesktopApp::OpenDockFolderPopupAt(
                     itemKeys;
             dockFolderPopupWidget_.listMode =
                 widgets_[widgetIndex].listMode;
+            dockFolderPopupWidget_.listColumns = widgets_[widgetIndex].listColumns;
             dockFolderPopupWidget_.showSearchBox = widgets_[widgetIndex].showSearchBox;
             dockFolderPopupWidget_.showFileCategories = widgets_[widgetIndex].showFileCategories;
             dockFolderPopupWidget_.categoryTabOrder = widgets_[widgetIndex].categoryTabOrder;

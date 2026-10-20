@@ -1,5 +1,6 @@
 #include "app/app.h"
 #include "layout/page_navigation_rules.h"
+#include "widget/runtime/widget_item_layout.h"
 #include "core/drag_source_rebind.h"
 #include "core/transient_drag_slot.h"
 #include "drag_drop/file_source_eligibility.h"
@@ -489,7 +490,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 snowdesktop::popup_drag_rules::
                     IsAfterInsertionMidpoint(
                         itemRect, client,
-                        (UsesCollectionPopupList(dockFolderPopupWidget_) || UsesCollectionPopupFan(dockFolderPopupWidget_)))
+                        ((UsesCollectionPopupList(dockFolderPopupWidget_) && GetCollectionPopupColumnCount(popup) == 1) || UsesCollectionPopupFan(dockFolderPopupWidget_)))
                 ? HitRegion::SortAfter
                 : HitRegion::SortBefore;
             if (UsesCollectionPopupFan(dockFolderPopupWidget_))
@@ -527,10 +528,12 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                 const bool after = edge != 0;
                 const auto popupMetrics =
                     GetOpenCollectionPopupLayoutMetrics();
-                const long gutter =
-                    (UsesCollectionPopupList(dockFolderPopupWidget_) || UsesCollectionPopupFan(dockFolderPopupWidget_))
-                    ? popupMetrics.gapY / 2
-                    : popupMetrics.gapX / 2;
+                const bool listLayout = UsesCollectionPopupList(dockFolderPopupWidget_);
+                const long gutter = listLayout
+                    ? static_cast<long>(snowdesktop::widget_item_layout::InsertionBoundaryPad(
+                        GetCollectionPopupItemRect(popup, 0), GetCollectionPopupItemRect(popup, 1),
+                        GetCollectionPopupColumnCount(popup) > 1))
+                    : UsesCollectionPopupFan(dockFolderPopupWidget_) ? popupMetrics.gapY / 2 : popupMetrics.gapX / 2;
                 const long long distance = UsesCollectionPopupFan(dockFolderPopupWidget_)
                     ? snowdesktop::collection_popup_layout::FanInsertionDistanceSquared(
                         snowdesktop::collection_popup_layout::FanInsertionLine(
@@ -539,7 +542,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
                     : snowdesktop::popup_drag_rules::
                         InsertionEdgeDistanceSquared(
                             itemRect, clipped, client,
-                            (UsesCollectionPopupList(dockFolderPopupWidget_) || UsesCollectionPopupFan(dockFolderPopupWidget_)),
+                            ((UsesCollectionPopupList(dockFolderPopupWidget_) && GetCollectionPopupColumnCount(popup) == 1) || UsesCollectionPopupFan(dockFolderPopupWidget_)),
                             after, gutter);
                 if (distance >=
                     bestDistanceSquared)
@@ -655,7 +658,7 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             region = snowdesktop::popup_drag_rules::
                     IsAfterInsertionMidpoint(
                         itemRect, client,
-                        (UsesCollectionPopupList(widgets_[popupWidgetIndex_]) || UsesCollectionPopupFan(widgets_[popupWidgetIndex_])))
+                        ((UsesCollectionPopupList(widgets_[popupWidgetIndex_]) && GetCollectionPopupColumnCount(popup) == 1) || UsesCollectionPopupFan(widgets_[popupWidgetIndex_])))
                 ? HitRegion::SortAfter
                 : HitRegion::SortBefore;
         }
@@ -703,10 +706,12 @@ bool DesktopApp::HitTestPopupForDrag(POINT client,
             const auto popupMetrics =
                 GetOpenCollectionPopupLayoutMetrics();
             const bool listMode =
-                (UsesCollectionPopupList(widgets_[popupWidgetIndex_]) || UsesCollectionPopupFan(widgets_[popupWidgetIndex_]));
-            const long gutter = listMode
-                ? popupMetrics.gapY / 2
-                : popupMetrics.gapX / 2;
+                ((UsesCollectionPopupList(widgets_[popupWidgetIndex_]) && GetCollectionPopupColumnCount(popup) == 1) || UsesCollectionPopupFan(widgets_[popupWidgetIndex_]));
+            const long gutter = UsesCollectionPopupList(widgets_[popupWidgetIndex_])
+                ? static_cast<long>(snowdesktop::widget_item_layout::InsertionBoundaryPad(
+                    GetCollectionPopupItemRect(popup, 0), GetCollectionPopupItemRect(popup, 1),
+                    GetCollectionPopupColumnCount(popup) > 1))
+                : listMode ? popupMetrics.gapY / 2 : popupMetrics.gapX / 2;
             const long long distanceSquared = UsesCollectionPopupFan(widgets_[popupWidgetIndex_])
                 ? snowdesktop::collection_popup_layout::FanInsertionDistanceSquared(
                     snowdesktop::collection_popup_layout::FanInsertionLine(

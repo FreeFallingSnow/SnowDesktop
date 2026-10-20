@@ -465,6 +465,23 @@ void DesktopApp::ShowItemContextMenu(
             kContextWidgetToggleListMode,
             displayTypeLabel.c_str());
 
+        HMENU columnsMenu = CreatePopupMenu();
+        if (columnsMenu)
+        {
+            const int selected = snowdesktop::list_detail_rules::ListColumns(*dockFolderEntry);
+            for (int columns = 1; columns <= 4; ++columns)
+            {
+                const UINT id = kContextWidgetListColumnsFirst + columns - 1;
+                AppendMenuW(columnsMenu, MF_STRING | (columns == selected ? MF_CHECKED : 0),
+                    id, std::to_wstring(columns).c_str());
+                SetMenuItemIcon(columnsMenu, id, snowdesktop::menu_fluent_glyphs::kContentLayout,
+                    MenuIconFont::FluentRegular);
+            }
+            AppendMenuW(menu, MF_POPUP | (dockFolderEntry->listMode ? 0 : MF_GRAYED),
+                reinterpret_cast<UINT_PTR>(columnsMenu), _LW("app.interact.list_columns"));
+            SetMenuItemIcon(menu, reinterpret_cast<UINT_PTR>(columnsMenu),
+                snowdesktop::menu_fluent_glyphs::kContentLayout, MenuIconFont::FluentRegular);
+        }
         detailsMenu = CreatePopupMenu();
         if (detailsMenu)
         {
@@ -709,6 +726,7 @@ void DesktopApp::ShowItemContextMenu(
         }
         dockFolderPopupWidget_.listMode =
             dockFolderEntry->listMode;
+        dockFolderPopupWidget_.listColumns = dockFolderEntry->listColumns;
         dockFolderPopupWidget_.fanPopup = dockFolderEntry->fanPopup;
         dockFolderPopupWidget_.showSearchBox = dockFolderEntry->showSearchBox;
         dockFolderPopupWidget_.showFileCategories = dockFolderEntry->showFileCategories;
@@ -917,11 +935,21 @@ void DesktopApp::ShowItemContextMenu(
             applyDockFolderDisplayChange();
         }
         break;
+    case kContextWidgetListColumnsFirst:
+    case kContextWidgetListColumnsFirst + 1:
+    case kContextWidgetListColumnsFirst + 2:
+    case kContextWidgetListColumnsLast:
     case kContextWidgetToggleListMode:
         if (dockFolderEntry)
         {
-            dockFolderEntry->listMode =
-                !dockFolderEntry->listMode;
+            if (command == kContextWidgetToggleListMode)
+                dockFolderEntry->listMode = !dockFolderEntry->listMode;
+            else
+            {
+                if (!dockFolderEntry->listMode) break;
+                snowdesktop::list_detail_rules::SetListColumns(*dockFolderEntry,
+                    static_cast<int>(command - kContextWidgetListColumnsFirst) + 1);
+            }
             applyDockFolderDisplayChange();
         }
         break;
@@ -958,6 +986,7 @@ void DesktopApp::ShowItemContextMenu(
                 dockFolderEntry->detailShowSize =
                     !dockFolderEntry->detailShowSize;
             }
+            dockFolderEntry->listColumns = 1;
             const auto positions =
                 snowdesktop::list_detail_rules::
                     NormalizePositions(

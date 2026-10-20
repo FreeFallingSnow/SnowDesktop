@@ -7,6 +7,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <utility>
 
 namespace snowdesktop::widget_item_layout
@@ -167,7 +168,7 @@ inline Layout ResolveGrid(RECT viewport, int columns,
 }
 
 inline Layout ResolveList(RECT viewport, int minimumRowHeight,
-    layout_spacing_rules::ContentSpacing spacing)
+    layout_spacing_rules::ContentSpacing spacing, int columns = 1)
 {
     Layout result;
     result.viewport = viewport;
@@ -175,13 +176,19 @@ inline Layout ResolveList(RECT viewport, int minimumRowHeight,
     result.horizontal.start = viewport.left;
     result.horizontal.extent = std::max<int>(
         1, viewport.right - viewport.left);
-    result.horizontal.count = 1;
+    result.horizontal.count = std::clamp(columns, 1, 4);
     result.horizontal.edge = std::min(
         std::max(0, (result.horizontal.extent - 1) / 2),
         DesiredGap(minimumRowHeight, kGapPercentX, spacing.horizontal) / 2);
     result.horizontal.cell = std::max(
         1, result.horizontal.extent - result.horizontal.edge * 2);
-    result.horizontal.gap = 0;
+    result.horizontal.gap = result.horizontal.count > 1
+        ? std::min(DesiredGap(minimumRowHeight, kGapPercentX, spacing.horizontal),
+            std::max(0, (result.horizontal.cell - result.horizontal.count) /
+                (result.horizontal.count - 1))) : 0;
+    result.horizontal.cell = std::max(1,
+        (result.horizontal.cell - (result.horizontal.count - 1) * result.horizontal.gap) /
+            result.horizontal.count);
     result.vertical = ResolveScrollingAxis(
         viewport.top, minimumRowHeight,
         kGapPercentY, spacing.vertical);
@@ -300,6 +307,36 @@ inline std::pair<std::size_t, std::size_t> VisibleRange(
         std::min(itemCount,
             static_cast<std::size_t>(std::max(firstRow, lastRow)) * columns)
     };
+}
+
+// Date groups can end with partial rows. Use the displayed rows rather than
+// an index/column quotient when moving vertically across their headers.
+template<class Bounds>
+inline int VerticalNeighbor(std::size_t count, int current, bool down, Bounds bounds)
+{
+    if (current < 0 || static_cast<std::size_t>(current) >= count) return current;
+    const RECT origin = bounds(static_cast<std::size_t>(current));
+    int result = current;
+    auto bestRow = std::numeric_limits<long long>::max();
+    auto bestColumn = bestRow;
+    for (std::size_t index = 0; index < count; ++index)
+    {
+        const RECT candidate = bounds(index);
+        if (candidate.right <= candidate.left || candidate.bottom <= candidate.top) continue;
+        const long long row = down ? static_cast<long long>(candidate.top) - origin.top
+            : static_cast<long long>(origin.top) - candidate.top;
+        if (row <= 0) continue;
+        const long long dx = static_cast<long long>(candidate.left) + candidate.right -
+            origin.left - origin.right;
+        const long long column = dx < 0 ? -dx : dx;
+        if (row < bestRow || (row == bestRow && column < bestColumn))
+        {
+            bestRow = row;
+            bestColumn = column;
+            result = static_cast<int>(index);
+        }
+    }
+    return result;
 }
 
 inline int ScrollOffsetToReveal(

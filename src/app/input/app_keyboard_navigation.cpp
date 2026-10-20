@@ -731,12 +731,11 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                         keyboardNavMemberIndex_),
                     itemCount - 1)
                 : 0;
-        const int columns =
-            (widget.listMode || widget.dateHeaders)
-                ? 1
-                : memberColumns();
-        if (arrowKey == VK_UP &&
-            current < static_cast<size_t>(columns))
+        const int columns = memberColumns();
+        const bool firstVisualRow = columns > 1
+            ? group->GetMemberLayoutRect(current).top == group->GetMemberLayoutRect(0).top
+            : current < static_cast<size_t>(columns);
+        if (arrowKey == VK_UP && firstVisualRow)
         {
             if (groupSearching)
             {
@@ -755,6 +754,10 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         else if (arrowKey == VK_LEFT) --next;
         else if (arrowKey == VK_RIGHT) ++next;
         else return;
+        if (columns > 1 && (arrowKey == VK_UP || arrowKey == VK_DOWN))
+            next = snowdesktop::widget_item_layout::VerticalNeighbor(itemCount,
+                static_cast<int>(current), arrowKey == VK_DOWN,
+                [&](size_t index) { return group->GetMemberLayoutRect(index); });
         if (next >= 0 &&
             static_cast<size_t>(next) < itemCount)
             selectItem(static_cast<size_t>(next));
@@ -905,9 +908,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
                     break;
                 }
             }
-            const int columns = widget.listMode
-                ? 1
-                : memberColumns();
+            const int columns = memberColumns();
             if (current >= 0 && current < columns)
             {
                 focusTab(activeTab, false);
@@ -927,8 +928,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         columns = memberColumns();
         if (widget.listMode)
         {
-            columns = 1;
-            isListMode = true;
+            isListMode = columns == 1;
         }
         break;
     case DesktopWidgetType::Collection:
@@ -937,8 +937,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         columns = memberColumns();
         if (widget.listMode || widget.dateHeaders)
         {
-            columns = 1;
-            isListMode = true;
+            isListMode = columns == 1;
         }
         break;
     case DesktopWidgetType::FolderMapping:
@@ -946,8 +945,7 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         columns = memberColumns();
         if (widget.listMode || widget.dateHeaders)
         {
-            columns = 1;
-            isListMode = true;
+            isListMode = columns == 1;
         }
         break;
     default:
@@ -960,8 +958,8 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
         popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
         popupWidgetIndex_ < widgets_.size())
     {
-        isListMode = UsesCollectionPopupList(widget);
         columns = GetCollectionPopupColumnCount(popupRect_);
+        isListMode = UsesCollectionPopupList(widget) && columns == 1;
     }
 
     // FileCategories：获取当前可见项目键列表（受搜索/分类标签页过滤）
@@ -1226,8 +1224,26 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
 
     int nextRow = currentRow;
     int nextCol = currentCol;
+    WidgetContainer* navigationView = nullptr;
+    for (const auto& container : containers_)
+    {
+        auto* view = dynamic_cast<WidgetContainer*>(container.get());
+        if (view && view->GetWidgetData() == &widget) { navigationView = view; break; }
+    }
+    const bool flatPopup = popupWidgetIndex_ == keyboardNavWidgetIndex_ &&
+        popupWidgetIndex_ < widgets_.size() && !GetGroupPopupView();
+    const auto memberBounds = [&](size_t index) {
+        return flatPopup ? GetCollectionPopupItemRect(popupRect_, index) :
+            navigationView ? navigationView->GetMemberLayoutRect(index) : RECT{};
+    };
+    const bool geometricRows = columns > 1 && !IsRectEmptyRect(memberBounds(currentIdx));
+    const bool firstVisualRow = geometricRows
+        ? memberBounds(currentIdx).top == memberBounds(0).top : currentRow == 0;
+    const int verticalNext = geometricRows && (arrowKey == VK_UP || arrowKey == VK_DOWN)
+        ? snowdesktop::widget_item_layout::VerticalNeighbor(memberCount, currentIdx,
+            arrowKey == VK_DOWN, memberBounds) : -1;
 
-    if (arrowKey == VK_UP && currentRow == 0 &&
+    if (arrowKey == VK_UP && firstVisualRow &&
         (!categoryIds.empty() || searchAvailable))
     {
         if (!categoryIds.empty())
@@ -1240,10 +1256,12 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     switch (arrowKey)
     {
     case VK_UP:
+        if (verticalNext >= 0) break;
         nextRow = currentRow - 1;
         if (nextRow < 0) return;
         break;
     case VK_DOWN:
+        if (verticalNext >= 0) break;
         nextRow = currentRow + 1;
         if (nextRow >= totalRows) return;
         break;
@@ -1286,7 +1304,9 @@ void DesktopApp::NavigateWidgetMembers(WPARAM arrowKey)
     }
 
     int nextIdx;
-    if (isListMode)
+    if (verticalNext >= 0)
+        nextIdx = verticalNext;
+    else if (isListMode)
     {
         if (arrowKey == VK_UP || arrowKey == VK_LEFT)
             nextIdx = currentIdx - 1;

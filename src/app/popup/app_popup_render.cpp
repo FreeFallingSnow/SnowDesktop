@@ -260,6 +260,8 @@ void DesktopApp::DrawCollectionPopup(
     popupListStyle.bounds = popupRect_;
     popupListStyle.cellScale = popupMetrics.scale;
     popupListStyle.listMode = UsesCollectionPopupList(widget);
+    popupListStyle.id = widget.id;
+    popupListStyle.listColumns = snowdesktop::list_detail_rules::ListColumns(widget);
     popupListStyle.showDetails = widget.showDetails;
     popupListStyle.detailShowModified =
         widget.detailShowModified;

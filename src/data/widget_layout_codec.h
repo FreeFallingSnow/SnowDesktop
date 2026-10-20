@@ -114,6 +114,7 @@ inline void Write(std::ostream& file, const DesktopWidget& w, Escape escape, Enc
          << ", \"autoCollect\": " << (w.autoCollect ? "true" : "false")
          << ", \"dissolveWhenSingle\": " << (w.dissolveWhenSingle ? "true" : "false")
          << ", \"listMode\": " << (w.listMode ? "true" : "false")
+         << ", \"listColumns\": " << snowdesktop::list_detail_rules::ListColumns(w)
          << ", \"fanPopup\": " << (w.fanPopup ? "true" : "false")
          << ", \"showDetails\": "
          << (snowdesktop::list_detail_rules::HasMetadataColumns(

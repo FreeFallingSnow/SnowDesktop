@@ -267,6 +267,7 @@ public:
         savedBounds_ = sourceData_->bounds;
         savedCellScale_ = sourceData_->cellScale;
         savedListMode_ = sourceData_->listMode;
+        savedListColumns_ = sourceData_->listColumns;
         savedShowDetails_ = sourceData_->showDetails;
         savedDetailShowModified_ = sourceData_->detailShowModified;
         savedDetailShowType_ = sourceData_->detailShowType;
@@ -299,6 +300,7 @@ public:
         sourceData_->bounds = groupData_->bounds;
         sourceData_->cellScale = groupData_->cellScale;
         sourceData_->listMode = groupData_->listMode;
+        sourceData_->listColumns = groupData_->listColumns;
         sourceData_->showDetails = groupData_->showDetails;
         sourceData_->detailShowModified = groupData_->detailShowModified;
         sourceData_->detailShowType = groupData_->detailShowType;
@@ -357,6 +359,7 @@ public:
         sourceData_->bounds = savedBounds_;
         sourceData_->cellScale = savedCellScale_;
         sourceData_->listMode = savedListMode_;
+        sourceData_->listColumns = savedListColumns_;
         sourceData_->showDetails = savedShowDetails_;
         sourceData_->detailShowModified = savedDetailShowModified_;
         sourceData_->detailShowType = savedDetailShowType_;
@@ -391,6 +394,7 @@ private:
     RECT savedBounds_{};
     float savedCellScale_ = 1.0f;
     bool savedListMode_ = false;
+    int savedListColumns_ = 1;
     bool savedShowDetails_ = false;
     bool savedDetailShowModified_ = false;
     bool savedDetailShowType_ = false;
@@ -442,7 +446,7 @@ snowdesktop::widget_item_layout::Layout FileGroupSearchLocalLayout(
         return snowdesktop::widget_item_layout::ResolveList(
             content,
             std::max(group->GetListRowHeight(),
-                metrics.minimumListHeight), group->GetListSpacing());
+                metrics.minimumListHeight), group->GetListSpacing(), snowdesktop::list_detail_rules::ListColumns(*data));
     return snowdesktop::widget_item_layout::ResolveGrid(
         content, group->IsPopupHosted()
             ? snowdesktop::collection_popup_layout::ResolveGridColumnCount(

@@ -115,6 +115,39 @@ inline constexpr bool HasMetadataColumns(
     return showModified || showType || showSize;
 }
 
+// Metadata uses a single full-width row. Older files omit listColumns.
+template<class View>
+inline int ListColumns(const View& view)
+{
+    return HasMetadataColumns(view.detailShowModified, view.detailShowType,
+        view.detailShowSize) ? 1 : std::clamp(view.listColumns, 1, 4);
+}
+
+template<class View>
+inline void SetListColumns(View& view, int columns)
+{
+    view.listColumns = std::clamp(columns, 1, 4);
+    if (view.listColumns > 1)
+    {
+        view.detailShowModified = false;
+        view.detailShowType = false;
+        view.detailShowSize = false;
+    }
+}
+
+// Pause at both ends so the beginning and extension remain readable.
+inline float HoverTitleOffset(double elapsedMs, float overflow, float scale)
+{
+    if (overflow <= 0.5f) return 0.0f;
+    const double travelMs = overflow / std::max(1.0f, 32.0f * scale) * 1000.0;
+    const double phase = std::fmod(std::max(0.0, elapsedMs), 1600.0 + travelMs * 2.0);
+    if (phase < 800.0) return 0.0f;
+    if (phase < 800.0 + travelMs)
+        return static_cast<float>((phase - 800.0) / travelMs) * overflow;
+    if (phase < 1600.0 + travelMs) return overflow;
+    return static_cast<float>(1.0 - (phase - 1600.0 - travelMs) / travelMs) * overflow;
+}
+
 inline Columns BuildColumns(
     int availableWidth,
     bool showModified,

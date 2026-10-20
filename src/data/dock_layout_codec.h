@@ -39,6 +39,7 @@ inline DockEntry Restore(const layout_storage::DockRecord& saved,
     for (const auto& key : saved.folderItems)
         entry.folderItemKeys.push_back(decode(key));
     entry.listMode = saved.listMode;
+    entry.listColumns = std::clamp(saved.listColumns, 1, 4);
     entry.fanPopup = saved.fanPopup;
     entry.showSearchBox = saved.showSearchBox;
     entry.showFileCategories = saved.showFileCategories;
@@ -65,6 +66,7 @@ inline DockEntry Restore(const layout_storage::DockRecord& saved,
     entry.detailModifiedPosition = positions.modified;
     entry.detailTypePosition = positions.type;
     entry.detailSizePosition = positions.size;
+    entry.listColumns = snowdesktop::list_detail_rules::ListColumns(entry);
     return entry;
 }
 
@@ -87,6 +89,7 @@ inline void Write(std::ostream& file, const DockEntry& entry, Escape escape)
                 ? "true" : "false")
          << ", \"listMode\": "
          << (entry.listMode ? "true" : "false")
+         << ", \"listColumns\": " << snowdesktop::list_detail_rules::ListColumns(entry)
          << ", \"fanPopup\": " << (entry.fanPopup ? "true" : "false")
          << ", \"showSearchBox\": " << (entry.showSearchBox ? "true" : "false")
          << ", \"showFileCategories\": " << (entry.showFileCategories ? "true" : "false")

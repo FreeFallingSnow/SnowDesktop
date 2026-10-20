@@ -419,6 +419,22 @@ void DesktopApp::ShowWidgetContextMenu(
             snowdesktop::menu_fluent_glyphs::kAutoCollect);
     };
     const auto appendDetailsMenu = [&]() {
+        HMENU columnsMenu = CreatePopupMenu();
+        if (columnsMenu)
+        {
+            const int selected = snowdesktop::list_detail_rules::ListColumns(widget);
+            for (int columns = 1; columns <= 4; ++columns)
+            {
+                const UINT id = kContextWidgetListColumnsFirst + columns - 1;
+                AppendMenuW(columnsMenu, MF_STRING | (columns == selected ? MF_CHECKED : 0),
+                    id, std::to_wstring(columns).c_str());
+                setFluentIcon(columnsMenu, id, snowdesktop::menu_fluent_glyphs::kContentLayout);
+            }
+            AppendMenuW(menu, MF_POPUP | (widget.listMode ? 0 : MF_GRAYED),
+                reinterpret_cast<UINT_PTR>(columnsMenu), _LW("app.interact.list_columns"));
+            setFluentIcon(menu, reinterpret_cast<UINT_PTR>(columnsMenu),
+                snowdesktop::menu_fluent_glyphs::kContentLayout);
+        }
         detailsMenu = CreatePopupMenu();
         if (!detailsMenu) return;
         AppendMenuW(detailsMenu,
@@ -1013,6 +1029,7 @@ void DesktopApp::ShowWidgetContextMenu(
         {
             dockFolderPopupWidget_.listMode =
                 source.listMode;
+            dockFolderPopupWidget_.listColumns = source.listColumns;
             dockFolderPopupWidget_.showSearchBox = source.showSearchBox;
             dockFolderPopupWidget_.showFileCategories = source.showFileCategories;
             dockFolderPopupWidget_.categoryTabOrder = source.categoryTabOrder;
@@ -1150,8 +1167,23 @@ void DesktopApp::ShowWidgetContextMenu(
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         break;
+    case kContextWidgetListColumnsFirst:
+    case kContextWidgetListColumnsFirst + 1:
+    case kContextWidgetListColumnsFirst + 2:
+    case kContextWidgetListColumnsLast:
     case kContextWidgetToggleListMode:
-        widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;
+        if (command == kContextWidgetToggleListMode)
+            widgets_[widgetIndex].listMode = !widgets_[widgetIndex].listMode;
+        else
+        {
+            auto& view = widgets_[widgetIndex];
+            if (!view.listMode) break;
+            snowdesktop::list_detail_rules::SetListColumns(view,
+                static_cast<int>(command - kContextWidgetListColumnsFirst) + 1);
+            view.showDetails = snowdesktop::list_detail_rules::HasMetadataColumns(
+                view.detailShowModified, view.detailShowType, view.detailShowSize);
+            view.scrollOffset = 0;
+        }
         for (auto& c : containers_)
         {
             auto* wc = dynamic_cast<WidgetContainer*>(c.get());
@@ -1196,6 +1228,7 @@ void DesktopApp::ShowWidgetContextMenu(
         }
         if (enabling)
         {
+            detailWidget.listColumns = 1;
             const snowdesktop::list_detail_rules::DividerPositions positions{
                 detailWidget.detailModifiedPosition,
                 detailWidget.detailTypePosition,

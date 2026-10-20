@@ -522,6 +522,54 @@ void DesktopApp::RequestDesktopDockAnimationPresentation(const RECT& dirty)
     });
 }
 
+std::optional<float> DesktopApp::ResolveListTitleHover(const std::wstring& owner,
+    const std::wstring& key, RECT viewport, bool popup, float overflow, float scale)
+{
+    if (owner.empty() || overflow <= 0.5f || !PtInRect(&viewport, lastMousePoint_) ||
+        mouseDown_ || dragSession_.IsActive() || HasActiveContextMenuSession() ||
+        renameController_.IsActive() || !snowdesktop::animation::RuntimeAnimationsEnabled() ||
+        (popup ? !IsCollectionPopupInteractive() : IsPointOccludedByOpenPopup(lastMousePoint_)))
+        return std::nullopt;
+    const double now = snowdesktop::UiAnimationScheduler::MonotonicMilliseconds();
+    if (listTitleHoverOwner_ != owner || listTitleHoverKey_ != key ||
+        listTitleHoverPopup_ != popup || !EqualRect(&listTitleHoverRect_, &viewport))
+    {
+        listTitleHoverOwner_ = owner;
+        listTitleHoverKey_ = key;
+        listTitleHoverRect_ = viewport;
+        listTitleHoverPopup_ = popup;
+        listTitleHoverStarted_ = now;
+    }
+    listTitleHoverLastDraw_ = now;
+    if (!listTitleHoverFrameToken_)
+    {
+        listTitleHoverFrameToken_ = uiAnimationScheduler_.StartAnimation(
+            popup ? snowdesktop::UiAnimationSurface::Popup : snowdesktop::UiAnimationSurface::Desktop,
+            [this](double frameTime) {
+                const bool keep = PtInRect(&listTitleHoverRect_, lastMousePoint_) &&
+                    !mouseDown_ && !dragSession_.IsActive() && !HasActiveContextMenuSession() &&
+                    !renameController_.IsActive() && snowdesktop::animation::RuntimeAnimationsEnabled() &&
+                    frameTime - listTitleHoverLastDraw_ < 250.0 &&
+                    (listTitleHoverPopup_ ? IsCollectionPopupInteractive() :
+                        !IsPointOccludedByOpenPopup(lastMousePoint_));
+                const auto ownerId = listTitleHoverOwner_;
+                const bool isPopup = listTitleHoverPopup_;
+                if (!keep)
+                {
+                    listTitleHoverFrameToken_ = 0;
+                    listTitleHoverOwner_.clear();
+                    listTitleHoverKey_.clear();
+                }
+                if (isPopup)
+                    InvalidateCollectionPopupAnimation(true);
+                else if (QueueDesktopWidgetComposition(ownerId))
+                    (void)PresentQueuedDesktopWidgetComposition();
+                return keep;
+            });
+    }
+    return snowdesktop::list_detail_rules::HoverTitleOffset(now - listTitleHoverStarted_, overflow, scale);
+}
+
 void DesktopApp::CancelUiAnimationFrame()
 {
     snowdesktop::UiScheduleToken* const tracks[] = {
@@ -534,6 +582,7 @@ void DesktopApp::CancelUiAnimationFrame()
         &dockMagnificationAnimationFrameToken_,
         &pageNotifyAnimationFrameToken_,
         &pointerRecoveryFrameToken_,
+        &listTitleHoverFrameToken_,
         &floatingDockHoverTailToken_,
         &desktopWidgetHoverTailToken_,
     };

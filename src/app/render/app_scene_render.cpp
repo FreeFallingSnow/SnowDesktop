@@ -473,14 +473,14 @@ void DesktopApp::DrawDynamicOverlays(
                 const RECT content =
                     GetCollectionPopupContentRect(popup);
                 const auto metrics = GetOpenCollectionPopupLayoutMetrics();
-                const bool listMode = UsesCollectionPopupList(*openPopupWidget);
+                const bool listMode = UsesCollectionPopupList(*openPopupWidget) && GetCollectionPopupColumnCount(popup) == 1;
                 const bool fanMode = UsesCollectionPopupFan(*openPopupWidget);
                 // List rows use their own font/spacing-dependent geometry.
                 // Both sides of a boundary must meet halfway across that gap.
-                popupInsertionPad = listMode && !fanMode
+                popupInsertionPad = UsesCollectionPopupList(*openPopupWidget) && !fanMode
                     ? snowdesktop::widget_item_layout::InsertionBoundaryPad(
                         GetCollectionPopupItemRect(popup, 0),
-                        GetCollectionPopupItemRect(popup, 1), false)
+                        GetCollectionPopupItemRect(popup, 1), !listMode)
                     : static_cast<float>(fanMode ? metrics.gapY : metrics.gapX) * 0.5f;
                 const long insertionGutter =
                     static_cast<long>(std::ceil(popupInsertionPad)) + 2;
@@ -587,7 +587,7 @@ void DesktopApp::DrawDynamicOverlays(
                 }
                 else
                     targetSlot->DrawDropIndicatorWithStyle(ctx, targetRegion,
-                        UsesCollectionPopupList(*openPopupWidget) ? BarStyle::HBar : BarStyle::VBar,
+                        UsesCollectionPopupList(*openPopupWidget) && GetCollectionPopupColumnCount(popupTargetRect) == 1 ? BarStyle::HBar : BarStyle::VBar,
                         popupInsertionPad);
             }
             else
