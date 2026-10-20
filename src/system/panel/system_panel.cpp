@@ -79,6 +79,7 @@ struct SystemPanel::Impl
     NativePointerHoverState pointerHover;
     bool scrollbarDragging=false;int scrollbarPointerStart=0,scrollbarOffsetStart=0;
     bool trayPreview=false;std::optional<D2D1_RECT_F> dropIndicator;
+    DWORD trayLayerTraceStarted=0,trayLayerTraceLast=0;unsigned trayLayerTraceCount=0;
     std::vector<RECT> cards;float scale=1;int width=0,height=0;bool showing=false,closing=false,modal=false,destroying=false;tray::MenuRetentionSession context;WPARAM closeGeneration=0;
     Impl(SettingsChanged c,SystemCalendarActions dates,std::function<bool(std::string_view,POINT)> drop,UiAnimationScheduler* timing,IDCompositionDesktopDevice* graphics,IDWriteFactory* fonts,Background draw)
         :changed(std::move(c)),calendar(std::move(dates)),dropOutside(std::move(drop)),background(std::move(draw)),scheduler(timing),composition(graphics),text(fonts){}
@@ -433,29 +434,99 @@ struct SystemPanel::Impl
         else if(next==SystemPanelTransition<Request>::Action::Close&&(showing||modal))Animate(false);
     }
     void ArmContext(const std::string& key)
-    {ClearPointerHover();context.Reset();if(current&&current->tray)for(const auto& i:current->tray->Current().icons)if(i.key==key){context.Arm(reinterpret_cast<HWND>(i.identity.window),i.identity.process,window,current->owner);if(context.process)SetTimer(window,kTrayMenuTimer,50,nullptr);break;}}
+    {
+        ClearPointerHover();context.Reset();trayLayerTraceStarted=GetTickCount();trayLayerTraceLast=0;trayLayerTraceCount=0;
+        if(current&&current->tray)for(const auto& i:current->tray->Current().icons)if(i.key==key)
+        {context.Arm(reinterpret_cast<HWND>(i.identity.window),i.identity.process,window,current->owner);if(context.process)SetTimer(window,kTrayMenuTimer,50,nullptr);break;}
+    }
     void SyncTrayMenuLayer()
     {
         HWND above=nullptr;
-        for(const auto& binding:context.popups)if(context.LivePopup(binding)){above=reinterpret_cast<HWND>(binding.window);break;}
+        unsigned anchorSource=0;
+        for(const auto& binding:context.popups)if(context.LivePopup(binding)){above=reinterpret_cast<HWND>(binding.window);anchorSource=1;break;}
         if(!above&&context.menuThread)
         {
             RECT bounds{};
-            if(GetWindowRect(window,&bounds))above=context.NativeMenuOverlapping(bounds);
+            if(GetWindowRect(window,&bounds)){above=context.NativeMenuOverlapping(bounds);if(above)anchorSource=2;}
+        }
+        const DWORD now=GetTickCount();
+        const bool trace=context.process&&trayLayerTraceCount<12&&
+            (!trayLayerTraceCount||static_cast<DWORD>(now-trayLayerTraceLast)>=1000);
+        struct NativeSurvey {RECT panel{};DWORD process=0;HWND owner=nullptr,overlap=nullptr,overlapOwner=nullptr;unsigned visible=0,intersecting=0,related=0;} survey;
+        GUITHREADINFO gui{sizeof(gui)};
+        BOOL haveGui=FALSE;
+        HWND foreground=nullptr;
+        DWORD foregroundProcess=0;
+        DWORD foregroundThread=0;
+        bool panelTopmostBefore=false,menuAboveBefore=false;
+        if(trace)
+        {
+            ++trayLayerTraceCount;trayLayerTraceLast=now;
+            GetWindowRect(window,&survey.panel);survey.process=context.process;survey.owner=context.menuOwner;
+            const DWORD thread=context.menuThread?context.menuThread:context.targetThread;
+            if(thread)
+            {
+                haveGui=GetGUIThreadInfo(thread,&gui);
+                EnumThreadWindows(thread,[](HWND candidate,LPARAM parameter)->BOOL
+                {
+                    auto& state=*reinterpret_cast<NativeSurvey*>(parameter);
+                    DWORD process=0;GetWindowThreadProcessId(candidate,&process);
+                    if(process!=state.process||!IsWindowVisible(candidate))return TRUE;
+                    wchar_t name[64]{};GetClassNameW(candidate,name,static_cast<int>(std::size(name)));
+                    if(wcscmp(name,L"#32768")!=0)return TRUE;
+                    ++state.visible;
+                    RECT bounds{},intersection{};
+                    if(!GetWindowRect(candidate,&bounds)||!IntersectRect(&intersection,&bounds,&state.panel))return TRUE;
+                    ++state.intersecting;
+                    const HWND owner=GetWindow(candidate,GW_OWNER);
+                    if(owner&&state.owner&&GetAncestor(owner,GA_ROOTOWNER)==GetAncestor(state.owner,GA_ROOTOWNER))++state.related;
+                    if(!state.overlap){state.overlap=candidate;state.overlapOwner=owner;}
+                    return TRUE;
+                },reinterpret_cast<LPARAM>(&survey));
+            }
+            foreground=GetForegroundWindow();foregroundThread=GetWindowThreadProcessId(foreground,&foregroundProcess);
+            panelTopmostBefore=(GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
+            if(survey.overlap)
+                for(HWND candidate=survey.overlap;candidate;candidate=GetWindow(candidate,GW_HWNDNEXT))
+                    if(candidate==window){menuAboveBefore=true;break;}
         }
         // Move only our own pair. A non-topmost custom menu otherwise remains
         // covered by the overflow panel even after its focus is retained. A
         // confirmed native menu can also outlive the short SHOW-event hook.
         const bool topmost=!above||(GetWindowLongPtrW(above,GWL_EXSTYLE)&WS_EX_TOPMOST)!=0;
-        backdrop.SetPopupWindowPairZOrder(window,above?above:HWND_TOPMOST,topmost,above);
+        const bool positioned=backdrop.SetPopupWindowPairZOrder(window,above?above:HWND_TOPMOST,topmost,above);
+        if(trace)
+        {
+            bool menuAboveAfter=false;
+            if(survey.overlap)
+                for(HWND candidate=survey.overlap;candidate;candidate=GetWindow(candidate,GW_HWNDNEXT))
+                    if(candidate==window){menuAboveAfter=true;break;}
+            wchar_t message[1024]{};
+            swprintf_s(message,L"[TrayMenuLayer] age=%lu pid=%lu target=%p targetThread=%lu menuThread=%lu menuOwner=%p observed=%u foreground=%p/%lu/%lu gui=%u/0x%lX/%p native=%u/%u/%u sample=%p/%p anchor=%p/%u panelTop=%u/%u menuAbove=%u/%u requestedTop=%u positioned=%u",
+                static_cast<DWORD>(now-trayLayerTraceStarted),context.process,context.target,context.targetThread,
+                context.menuThread,context.menuOwner,context.tracker.ObservedMenu()?1u:0u,
+                foreground,foregroundProcess,foregroundThread,haveGui?1u:0u,gui.flags,gui.hwndMenuOwner,
+                survey.visible,survey.intersecting,survey.related,survey.overlap,survey.overlapOwner,
+                above,anchorSource,panelTopmostBefore?1u:0u,
+                (GetWindowLongPtrW(window,GWL_EXSTYLE)&WS_EX_TOPMOST)?1u:0u,
+                menuAboveBefore?1u:0u,menuAboveAfter?1u:0u,topmost?1u:0u,positioned?1u:0u);
+            WriteDiagnosticLogEntry(message,DiagnosticLogLevel::Info);
+        }
     }
     bool RetainTrayMenu(HWND foreground)
     {
         if(!current||!current->tray)return false;
-        const bool wasObserved=context.tracker.ObservedMenu();
+        const bool wasObserved=context.tracker.ObservedMenu(),wasArmed=context.process!=0;
         const bool retained=context.Active(foreground,current->tray->MenuPopups(context.target));
         if(retained)SyncTrayMenuLayer();
         if(!wasObserved&&context.tracker.ObservedMenu())WriteDiagnosticLogEntry(L"Tray overflow retained for the gesture's observed menu",DiagnosticLogLevel::Debug);
+        if(wasArmed&&!retained)
+        {
+            wchar_t message[192]{};
+            swprintf_s(message,L"[TrayMenuLayer] retention ended age=%lu observed=%u foreground=%p",
+                static_cast<DWORD>(GetTickCount()-trayLayerTraceStarted),wasObserved?1u:0u,foreground);
+            WriteDiagnosticLogEntry(message,DiagnosticLogLevel::Info);
+        }
         if(!context.process||context.tracker.ObservedMenu())KillTimer(window,kTrayMenuTimer);
         return retained;
     }
